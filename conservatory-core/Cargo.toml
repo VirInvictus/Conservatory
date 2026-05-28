@@ -1,0 +1,15 @@
+[package]
+name = "conservatory-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Phase 1 (spec §17) wires in tokio + rusqlite for the single-writer worker,
+# read pool, migrations, and fixtures, plus the tag reader. Dependency-free
+# skeleton for now; every addition follows the sign-off rule (spec §11).
+[dependencies]
+
+[dev-dependencies]

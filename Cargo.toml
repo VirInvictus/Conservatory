@@ -1,0 +1,82 @@
+[workspace]
+resolver = "3"
+members = ["conservatory-core", "conservatory-search", "conservatory-cli", "conservatory"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/virinvictus/Conservatory"
+authors = ["Brandon LaRocque <larocque.brandon@gmail.com>"]
+
+[workspace.dependencies]
+# Dependency catalog for the planned build (spec §11). Declared here as the
+# agreed version set; member crates wire them in per-phase. Nothing is pulled
+# until a member actually depends on it. New crates still require sign-off
+# (spec §11), so the open choices below stay commented until decided.
+
+# Async + IO
+tokio = { version = "1.42", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "stream"] }
+
+# Storage
+rusqlite = { version = "0.32", features = ["bundled", "chrono", "trace"] }
+
+# Feed parsing (podcasts, ported from belfry-core at Phase 6)
+feed-rs = "2.2"
+quick-xml = "0.37"
+
+# Playback
+libmpv2 = "4.1"
+
+# Tag read/write (music). OPEN, spec §7.1: lofty (read+write, broad coverage)
+# is the leading candidate, symphonia the decoder/fallback. Decide at Phase 1/2.
+# lofty = "0.21"
+# symphonia = "0.5"
+
+# HTML / chapters / images
+ammonia = "4.0"
+id3 = "1.16"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+
+# Credentials (libsecret)
+oo7 = "0.3"
+
+# D-Bus (MPRIS2 + suspend inhibitor)
+zbus = { version = "5.2", default-features = false, features = ["tokio"] }
+
+# Serde / config
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Misc
+regex = "1.11"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+url = "2.5"
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# HTTP types (transitive via reqwest; explicit because FetchOutcome surfaces Bytes)
+bytes = "1.7"
+
+# Test infrastructure
+tempfile = "3.14"
+wiremock = "0.6"
+
+# GTK (Phase 3+)
+gtk4 = { version = "0.9", features = ["v4_16"] }
+libadwaita = { version = "0.7", features = ["v1_7"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

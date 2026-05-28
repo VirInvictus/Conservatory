@@ -1,0 +1,9 @@
+# Build profile. 'development' relaxes optimization and enables debug
+# tooling; 'default' is the release profile used for Flatpak.
+option(
+    'profile',
+    type: 'combo',
+    choices: ['default', 'development'],
+    value: 'default',
+    description: 'Build profile',
+)

@@ -1,0 +1,18 @@
+[package]
+name = "conservatory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "conservatory"
+path = "src/main.rs"
+
+# gtk4 + libadwaita wire in at Phase 3 (spec §17). The GUI binary stays a
+# placeholder until then so the workspace builds without the GTK toolchain.
+[dependencies]
+conservatory-core = { path = "../conservatory-core" }
+conservatory-search = { path = "../conservatory-search" }

@@ -1,0 +1,12 @@
+[package]
+name = "conservatory-search"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# The grammar shape is ported from atrium-search but stays an independent
+# implementation (spec §2.2). Dependency-free skeleton for now.
+[dependencies]

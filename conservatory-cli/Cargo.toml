@@ -1,0 +1,18 @@
+[package]
+name = "conservatory-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "conservatory-cli"
+path = "src/main.rs"
+
+# Real verbs (import, organize, search, tag, queue, podcast, stats) land at
+# Phase 2+ (spec §9); clap wires in then.
+[dependencies]
+conservatory-core = { path = "../conservatory-core" }
+conservatory-search = { path = "../conservatory-search" }

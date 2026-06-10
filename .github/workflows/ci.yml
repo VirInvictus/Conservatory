@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: cargo ${{ matrix.action }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        action: [fmt, clippy, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      # No system libraries are needed yet: rusqlite is `bundled` (it compiles
+      # its own SQLite) and no crate pulls GTK/libmpv at Phase 1a. The
+      # libgtk-4-dev / libadwaita-1-dev / libmpv-dev install step lands with the
+      # GTK browse (Phase 3) and playback (Phase 4) crates.
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --all --check
+        if: matrix.action == 'fmt'
+        run: cargo fmt --all --check
+
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        if: matrix.action == 'clippy'
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test --workspace
+        if: matrix.action == 'test'
+        run: cargo test --workspace

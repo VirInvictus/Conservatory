@@ -12,7 +12,7 @@
 
 ## 1. Mission Statement
 
-Conservatory is **Calibre for audio**: a native GNOME library manager that *owns and organizes* your music and podcasts on disk, presented through a foobar2000 Columns UI browse surface, played through a libmpv daily-driver engine that runs both media types from a single queue.
+Conservatory is **Calibre for audio**: a native GNOME library manager that *owns and organizes* your music, podcasts, and audiobooks on disk, presented through a foobar2000 Columns UI browse surface, played through a libmpv daily-driver engine that runs all three media types from a single queue.
 
 Four commitments, in priority order:
 
@@ -20,9 +20,9 @@ Four commitments, in priority order:
 
 2. **Calibre-shaped, Columns UI browse.** Every list view is a queryable database. The default music surface is a faceted, hierarchical Columns UI browser (the design proven in `deadbeef-cui`, freed from being a player plugin), backed by the full Calibre-style search expression grammar (§3.4). Sortable columns, multi-select bulk actions, saved Perspectives. The browse panes filter; the grammar searches; they are the same surface.
 
-3. **One engine, one queue, two media types.** Music tracks and podcast episodes share a single libmpv engine and a single play queue. Each queued item carries its own playback profile: gapless and ReplayGain for an album track, Smart Speed and Voice Boost for an episode. A first-class, mixed music-and-podcast listening queue is the standout feature and the reason Belfry is absorbed rather than kept separate (§6.1).
+3. **One engine, one queue, three media types.** Music tracks, podcast episodes, and audiobooks share a single libmpv engine and a single play queue. Each queued item carries its own playback profile: gapless and ReplayGain for an album track, Smart Speed and Voice Boost for a spoken-word item (episode or audiobook). A first-class, mixed listening queue is the standout feature and the reason Belfry is absorbed rather than kept separate (§6.1). Audiobooks are long-form speech, so they ride the same absorbed speech engine as podcasts (variable speed, Smart Speed, Voice Boost, sleep timer, chapters, first-class resume); they differ in being *owned and curated* rather than ephemeral (§5.7).
 
-4. **A daily-driver player, not a previewer.** For libraries Conservatory manages, it is the place you listen, replacing deadbeef. Gapless, ReplayGain, crossfade, output-device selection, MPRIS, media keys (§6). This is required, not optional: because Conservatory moves files, any external player's in-place references go stale the moment a library is re-shelved.
+4. **A daily-driver player, not a previewer.** For libraries Conservatory manages, it is the place you listen, replacing deadbeef (and, for audiobooks, Cozy). Gapless, ReplayGain, crossfade, output-device selection, MPRIS, media keys (§6). This is required, not optional: because Conservatory moves files, any external player's in-place references go stale the moment a library is re-shelved.
 
 Reference apps:
 
@@ -30,6 +30,8 @@ Reference apps:
 - **foobar2000 / Columns UI / Facets**, via **`deadbeef-cui`** (Brandon's own) — the faceted, multi-pane, metadata-first browse layout for large collections.
 - **beets** (Adrian Sampson et al.) — the `lastgenre` canonicalization model (curated genre whitelist plus tree) that informs the shelf-genre normalization in §5.2.
 - **Overcast** and **Castro**, via **Belfry** (Brandon's own) — the absorbed podcast engine (Smart Speed, Voice Boost) and the Inbox → Queue → Played triage model.
+- **Cozy** (Julian Geywitz et al.) — the audiobook side: a GTK4 / libadwaita audiobook player for Linux. Its data model (Book → Chapter → file), import/scan, and browse surface inform Conservatory's Audiobooks tab (§3.8); its GStreamer player layer does not (Conservatory uses libmpv throughout).
+- **Audiobookshelf** (advplyr et al.) — the audiobook metadata model and organization conventions: author vs narrator, series with decimal sequence, the `Author/Series/Title (Year)/` layout, and the sidecar conventions (§4.5, §5.7, §7.5).
 - **Atrium** and **Viaduct** (Brandon's own) — the single-writer SQLite worker pattern and the search-expression grammar shape.
 - **Hermitage** (Brandon's own) — cover art as the visual unit; per-album accent extracted from cover hue (median-cut quantizer).
 
@@ -76,7 +78,8 @@ It matters acutely here because Conservatory has several independent producers w
 │  [Data Layer]                                 │
 │   ├─ Writer task (rusqlite, WAL)              │
 │   ├─ Read-only pool                           │
-│   └─ FTS5 (tracks, albums, shows, episodes)   │
+│   └─ FTS5 (tracks, albums, shows, episodes,   │
+│            books)                             │
 └──────────┬───────────────────────────────────┘
            │ (tokio mpsc + glib channel)
     ┌──────┴────────────────────┐
@@ -99,23 +102,25 @@ Four crates, matching the Belfry / Atrium discipline that every non-GUI surface 
 
 ### 2.3 Widget Tree
 
-A top-level view switcher selects between **Music** and **Podcasts**, with a persistent Now-bar across both.
+A top-level view switcher selects between **Music**, **Podcasts**, and **Audiobooks**, with a persistent Now-bar across all three.
 
 ```text
 AdwApplicationWindow
 ├── AdwBreakpoint (narrow → split views collapse)
 └── AdwToastOverlay
     └── AdwToolbarView
-        ├── AdwHeaderBar (AdwViewSwitcher: Music | Podcasts; search; jobs; menu)
+        ├── AdwHeaderBar (AdwViewSwitcher: Music | Podcasts | Audiobooks; search; jobs; menu)
         └── AdwViewStack
             ├── "Music"
             │   └── faceted Columns UI panes (1–5, §3.3) over a track list
-            └── "Podcasts"
-                └── AdwNavigationSplitView (sidebar triage + episode list + detail)
+            ├── "Podcasts"
+            │   └── AdwNavigationSplitView (sidebar triage + episode list + detail)
+            └── "Audiobooks"
+                └── AdwNavigationSplitView (shelf grid + book detail + chapter list, §3.8)
         └── AdwBin (now_bar — persistent transport, the unified queue's head)
 ```
 
-The Music view is the deadbeef-cui layout as a first-class window: N configurable hierarchical filter panes (default Genre → Album Artist → Album) feeding a sortable track list. The Podcasts view is Belfry's three-pane triage layout.
+The Music view is the deadbeef-cui layout as a first-class window: N configurable hierarchical filter panes (default Genre → Album Artist → Album) feeding a sortable track list. The Podcasts view is Belfry's three-pane triage layout. The Audiobooks view is Cozy's shelf layout: a cover-grid library, a book detail pane with the chapter list and per-book speed / sleep controls, and the same filter bar as the other surfaces.
 
 ---
 
@@ -158,7 +163,7 @@ The music browse model, lifted from `deadbeef-cui` and rebuilt over Conservatory
 
 ### 3.4 Filtering, Search, and Perspectives
 
-One grammar, both surfaces, the Atrium/Belfry shape. The filter bar above any list accepts the full expression language; `Ctrl+F` focuses it; there is no separate search mode.
+One grammar, all three surfaces, the Atrium/Belfry shape. The filter bar above any list accepts the full expression language; `Ctrl+F` focuses it; there is no separate search mode.
 
 | Field | Example |
 |---|---|
@@ -168,6 +173,7 @@ One grammar, both surfaces, the Atrium/Belfry shape. The filter bar above any li
 | `rating:`, `bitrate:`, `duration:`, `format:` | `rating:>=4 AND format:flac` |
 | `is:played`, `is:starred`, `is:queued` | `is:starred AND genre:jazz` |
 | podcast fields (`show:`, `is:in_inbox`, `pub:` …) | as Belfry §3.7 |
+| audiobook fields (`author:`, `narrator:`, `series:`, `is:finished`) | `author:"Brandon Sanderson" AND is:finished false` |
 
 Boolean (`AND`/`OR`/`NOT`), match modifiers (substring / `=`exact / `~`regex / `?`fuzzy), comparison and range, date keywords, sort modifiers (`sort:KEY`, `sort:-KEY`). Forgiving parser: malformed input degrades to substring match with a yellow filter-bar tint, never an error. **Perspectives** are named saved expressions (Calibre saved searches, Atrium's term), stored as text and re-parsed on load so they inherit later grammar additions. A Perspective can target tracks, albums, or episodes and can be a queue source (§6.1).
 
@@ -182,6 +188,15 @@ The unified queue (§6.1) is the spine. The Now-bar persists across Music and Po
 ### 3.7 Podcasts Tab
 
 Belfry's Inbox → Queue → Played triage, intact (Belfry §3.3–3.4): a sidebar of triage lists, shows, and tags; an episode list; a detail/now-playing pane. Per-show overrides for speed, Smart Speed, Voice Boost, skip, retention, and inbox policy. The only structural change from Belfry is that the **Queue is the shared unified queue**, so an episode and an album track can sit next to each other in it.
+
+### 3.8 Audiobooks Tab
+
+Cozy's library, rebuilt over Conservatory's database. A **shelf grid** of book covers (accent-tinted, the Hermitage unit) is the primary surface; selecting a book opens a detail pane with its **chapter list**, progress, author and narrator, series and sequence, and per-book **playback speed** and **sleep-timer** controls. The same filter bar and grammar (§3.4) apply, with the audiobook fields (`author:`, `narrator:`, `series:`, `is:finished`).
+
+- **The book is the unit.** A book is one logical item with ordered chapters. Chapters come from either embedded M4B markers or a multi-file folder (one file per chapter); the engine treats both identically (§6.1). A book is a *single* entry in the unified queue, and chapter navigation happens *within* the playing item, not by enqueueing each chapter separately.
+- **Resume is first-class.** Unlike a music track, you always resume a book where you left off, to the second, across restarts (§6.4). The shelf surfaces in-progress books first.
+- **Owned, not ephemeral.** Audiobooks are curated and moved into the managed tree like music (§5.7), not treated as disposable downloads like podcast episodes. The file mover (§5.4) and embedded-tag write-back (§5.5) apply.
+- **Triage is lighter than podcasts.** Books have a simple New / In progress / Finished state derived from progress, not the full Inbox → Queue → Played model; they enter the unified queue on demand.
 
 ---
 
@@ -261,20 +276,100 @@ Ported from Belfry §4.1 (`shows`, `episodes`, `playback`, `show_settings`, `lis
 CREATE TABLE queue (
     id          INTEGER PRIMARY KEY,
     position    INTEGER NOT NULL,       -- explicit, drag-reorderable
-    kind        TEXT NOT NULL CHECK (kind IN ('track','episode')),
+    kind        TEXT NOT NULL CHECK (kind IN ('track','episode','audiobook')),
     track_id    INTEGER REFERENCES tracks(id)   ON DELETE CASCADE,
     episode_id  INTEGER REFERENCES episodes(id) ON DELETE CASCADE,
-    CHECK ( (kind='track'   AND track_id   IS NOT NULL AND episode_id IS NULL)
-         OR (kind='episode' AND episode_id IS NOT NULL AND track_id   IS NULL) )
+    book_id     INTEGER REFERENCES books(id)    ON DELETE CASCADE,  -- audiobook = one queue entry (§3.8)
+    CHECK ( (kind='track'     AND track_id   IS NOT NULL AND episode_id IS NULL AND book_id IS NULL)
+         OR (kind='episode'   AND episode_id IS NOT NULL AND track_id   IS NULL AND book_id IS NULL)
+         OR (kind='audiobook' AND book_id    IS NOT NULL AND track_id   IS NULL AND episode_id IS NULL) )
 );
 CREATE INDEX idx_queue_position ON queue(position);
 ```
 
-The engine reads `queue` into an in-memory `Vec<PlayableItem>` (§6.1); position writes are debounced. Resume position for long items (mixes, episodes) lives in the per-kind state tables (`tracks.last_played` / Belfry's `playback`).
+The engine reads `queue` into an in-memory `Vec<PlayableItem>` (§6.1); position writes are debounced. A whole audiobook is a single queue entry; its chapters are navigated within the item, not enqueued one by one (§3.8). Resume position for long items (mixes, episodes, books) lives in the per-kind state tables (`tracks.last_played` / Belfry's `playback` / the `book_playback` table, §4.5).
 
 ### 4.4 FTS5
 
-`track_fts` (title, artist, album), `album_fts` (title, album artist), plus Belfry's `episode_fts` and `show_fts`. Triggers keep them in sync. Not transcripts (§14).
+`track_fts` (title, artist, album), `album_fts` (title, album artist), plus Belfry's `episode_fts` and `show_fts`, plus `book_fts` (title, author, narrator, series). Triggers keep them in sync. Not transcripts (§14).
+
+### 4.5 Audiobooks (draft schema)
+
+Modeled on Audiobookshelf's relational shape and Cozy's Book → Chapter → file model. A **book** is the unit; **chapters** are ordered and come from either embedded M4B markers or one-file-per-chapter folders; **authors** and **narrators** are distinct roles (many-to-many); **series** carries a decimal sequence. Resume state is a single row per book (the podcast `playback` analogue, never lost).
+
+```sql
+CREATE TABLE book_people (              -- authors and narrators share a table, role-tagged
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    sort_name   TEXT NOT NULL,          -- "Sanderson, Brandon"; drives path + sort
+    UNIQUE (sort_name)
+);
+
+CREATE TABLE series (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    UNIQUE (name)
+);
+
+CREATE TABLE books (
+    id              INTEGER PRIMARY KEY,
+    title           TEXT NOT NULL,
+    subtitle        TEXT,
+    series_id       INTEGER REFERENCES series(id),
+    series_sequence REAL,               -- decimal: "Book 1.5"
+    year            INTEGER,
+    publisher       TEXT,
+    isbn            TEXT,
+    asin            TEXT,
+    description     TEXT,
+    language        TEXT,
+    shelf_genre     TEXT,               -- same decoupling as music (§5.2); single-valued path input
+    cover_path      TEXT,
+    accent_rgb      INTEGER,            -- packed RGB, median-cut from cover (§7.4)
+    folder_path     TEXT NOT NULL,      -- managed; rendered from the audiobook template (§5.7)
+    rating          INTEGER DEFAULT 0,
+    starred         INTEGER DEFAULT 0,
+    added_at        INTEGER
+);
+
+-- Author / narrator links (role-tagged many-to-many).
+CREATE TABLE book_authors (
+    book_id   INTEGER REFERENCES books(id)        ON DELETE CASCADE,
+    person_id INTEGER REFERENCES book_people(id)  ON DELETE CASCADE,
+    PRIMARY KEY (book_id, person_id)
+);
+CREATE TABLE book_narrators (
+    book_id   INTEGER REFERENCES books(id)        ON DELETE CASCADE,
+    person_id INTEGER REFERENCES book_people(id)  ON DELETE CASCADE,
+    PRIMARY KEY (book_id, person_id)
+);
+
+-- Ordered chapters. `file_path` + `file_offset` lets one row address either a
+-- standalone per-chapter file (offset 0) or a span inside a single M4B.
+CREATE TABLE book_chapters (
+    id          INTEGER PRIMARY KEY,
+    book_id     INTEGER REFERENCES books(id) ON DELETE CASCADE,
+    idx         INTEGER NOT NULL,       -- 0-based order within the book
+    title       TEXT,
+    file_path   TEXT NOT NULL,          -- managed; under the book folder
+    file_offset REAL NOT NULL DEFAULT 0,-- seconds into file_path where this chapter starts
+    duration    REAL,                   -- seconds
+    UNIQUE (book_id, idx)
+);
+
+-- First-class resume (§6.4). One row per book; never append-only (a book is one thing you resume).
+CREATE TABLE book_playback (
+    book_id        INTEGER PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
+    position       REAL NOT NULL DEFAULT 0,  -- absolute seconds across the whole book
+    finished       INTEGER NOT NULL DEFAULT 0,
+    last_played    INTEGER,
+    speed          REAL,                     -- per-book override; NULL = global default
+    smart_speed    INTEGER,                  -- per-book override; NULL = global default
+    voice_boost    INTEGER                   -- per-book override; NULL = global default
+);
+```
+
+A book's `format`, `bitrate`, and `sample_rate` are read per chapter file at import; the engine resolves the book's total duration by summing chapter durations. The curated layer that a re-import cannot rebuild (rating, starred, `book_playback`, shelf-genre override) is what the backup protects (§5.6).
 
 ---
 
@@ -334,6 +429,22 @@ Although the database owns organization, Conservatory **writes curated metadata 
 
 Conservatory is not filesystem-canonical, so the Belfry rescan contract does not apply unchanged. The contract here is weaker and explicit: **the managed tree plus embedded tags can rebuild a library's tracks, albums, and artists**; the database-exclusive data that a re-import cannot recover is the *curated* layer (shelf-genre overrides, ratings, play counts, starred, Perspectives, queue, podcast triage/listening state). That curated layer is what the nightly DB backup and the JSON export protect. The integration suite verifies the rebuildable subset against a fixture library.
 
+### 5.7 Audiobooks On-Disk: a rendered template (owned, like music)
+
+Audiobooks are curated, not ephemeral, so they adopt the **music model, not the podcast model**: the database owns the layout and the file mover (§5.4) relocates them, with dry-run and undo. They are *not* managed downloads (§5.3). The default template, modeled on the Audiobookshelf convention:
+
+```text
+<library root>/
+└── Audiobooks/
+    └── <Author sort_name>/
+        └── <Series>/                       (omitted when the book is standalone)
+            └── <NN. ><Title> (<Year>)/
+                ├── <chapter files or book.m4b>
+                └── cover.jpg
+```
+
+Default template string: `Audiobooks/{author}/{series}/{series_index2}. {title} ({year})`. The `{series}` and `{series_index}` components collapse cleanly when a book is standalone (no empty `()` or stray separators, the §5.1 sanitization rule). A book resolves to exactly one path: one author component (the first credited author's `sort_name`, multi-author books bucket under the primary), one optional series. New path tokens (`{author}`, `{narrator}`, `{series}`, `{series_index}`) are documented in `docs/path-template.md`. Single-file M4B books keep their one file inside the book folder; multi-file books keep their chapter files there. As with music, `shelf_genre` (single-valued) is available as an optional template token but is not in the default audiobook layout.
+
 ---
 
 ## 6. Playback Engine
@@ -347,12 +458,12 @@ The engine plays a queue of:
 ```rust
 struct PlayableItem {
     path_or_url: Source,     // local managed file, or stream URL for an undownloaded episode
-    kind: MediaKind,         // Track | Episode
-    profile: PlaybackProfile // resolved per-kind + per-show/per-album overrides
+    kind: MediaKind,         // Track | Episode | Audiobook
+    profile: PlaybackProfile // resolved per-kind + per-show/per-album/per-book overrides
 }
 ```
 
-The queue (§4.3) interleaves both kinds freely. On advance, the engine applies the item's profile (the right `af` filter chain, ReplayGain mode, gapless/crossfade behaviour) before playing. This single abstraction is what lets one queue, one Now-bar, one MPRIS surface, and one set of media keys serve both music and podcasts.
+The queue (§4.3) interleaves all three kinds freely. On advance, the engine applies the item's profile (the right `af` filter chain, ReplayGain mode, gapless/crossfade behaviour) before playing. This single abstraction is what lets one queue, one Now-bar, one MPRIS surface, and one set of media keys serve music, podcasts, and audiobooks. An `Audiobook` item spans its book's ordered chapters (§4.5): chapter advance is *internal* to the item (no gap, the chapter boundary is just a seek across files or within an M4B), and the queue advances to the next item only when the book finishes.
 
 ### 6.2 Music Profile
 
@@ -365,9 +476,11 @@ The queue (§4.3) interleaves both kinds freely. On advance, the engine applies 
 
 Smart Speed (silence-skip via `silenceremove` + pitch-preserving `rubberband`) and Voice Boost (compression + EQ + loudness normalization), ported verbatim from Belfry §5.1–5.3, including the time-saved session accounting. Per-show overrides as in Belfry.
 
+**Audiobooks share this profile.** An audiobook is long-form speech, so it uses the same spoken-word filter graph (variable speed, Smart Speed, Voice Boost), resolved with per-book overrides from `book_playback` (§4.5) instead of per-show ones. The only audiobook-specific behaviour is chapter navigation within the item (§6.1) and the first-class resume in §6.4; no new filter chain is introduced.
+
 ### 6.4 State Persistence
 
-Position written on pause, seek (debounced), item end, app quit, and every 30 s during playback (the Belfry insurance interval). Resume offset of a few seconds for context on long items. Music play counts and `last_played` update on completion; episode listening sessions are append-only (Belfry §5.4).
+Position written on pause, seek (debounced), item end, app quit, and every 30 s during playback (the Belfry insurance interval). Resume offset of a few seconds for context on long items. Music play counts and `last_played` update on completion; episode listening sessions are append-only (Belfry §5.4). Audiobook position is stored as an absolute offset across the whole book in `book_playback.position` (§4.5), with `finished` set on completion; a book is the canonical "resume where I left off" case, so its position write is not best-effort but the same insurance-interval discipline as everything else.
 
 ### 6.5 System Integration
 
@@ -391,7 +504,17 @@ Tagging from a canonical source (matching tracks to MusicBrainz, fetching author
 
 ### 7.4 Cover Art and Accent
 
-Cover art is the visual unit (Hermitage). On import, extract or locate cover art, store at `cover.jpg` in the album folder, and compute a dominant-hue accent (median-cut quantizer) into `albums.accent_rgb` for the browse and Now Playing surfaces.
+Cover art is the visual unit (Hermitage). On import, extract or locate cover art, store at `cover.jpg` in the album (or book) folder, and compute a dominant-hue accent (median-cut quantizer) into `albums.accent_rgb` / `books.accent_rgb` for the browse and Now Playing surfaces.
+
+### 7.5 Audiobook Metadata
+
+Audiobook tags are notoriously sparse and inconsistent, so Conservatory reads from several local sources, in priority order, and never reaches the network in v1:
+
+1. **Embedded tags** in the M4B / MP3 files (title, author from artist/album-artist, narrator from composer, series and sequence where present, year, publisher).
+2. **Sidecar files** in the book folder, the Audiobookshelf conventions: `.opf` (parsed for the full metadata set, via the already-present `quick-xml`), `desc.txt` (description), `reader.txt` (narrator), `cover.jpg` (cover).
+3. **Folder structure** as a last resort: `Author/Series/Title (Year)/` parsed for the fields the tags and sidecars did not supply.
+
+Anything still missing is filled by hand in the detail pane; bulk editing (§3.5) applies. **Chapters** come from embedded M4B markers first, then from a one-file-per-chapter folder layout; deriving chapters by silence detection (the m4b-tool technique) is an optional, opt-in step left **open** (§16.11). **Online metadata providers** (Audible / Audnexus / Google Books, the Audiobookshelf model) are out of v1 scope and tracked as an open decision (§16.10), the audiobook analogue of the MusicBrainz question (§7.3): Conservatory assumes reasonably-tagged or reasonably-foldered files unless and until a provider is taken on.
 
 ---
 
@@ -416,6 +539,8 @@ conservatory-cli play <selector>               # hand off to standalone mpv
 conservatory-cli stats                         # library + listening stats
 conservatory-cli podcast add|remove|refresh|download <spec>   # Belfry verbs
 conservatory-cli import-opml|export-opml
+conservatory-cli audiobook import <path> [--copy|--move]      # import a book (folder or m4b)
+conservatory-cli audiobook set <book-selector> field=value... # author/narrator/series/sequence/...
 conservatory-cli embed-tags <selector> [--dry-run]   # write DB metadata into files
 conservatory-cli backup|restore                # DB snapshot
 ```
@@ -448,6 +573,13 @@ replaygain = "album"          # "off" | "track" | "album"
 [podcasts]
 library_subdir = "Podcasts"
 max_concurrent_downloads = 3
+
+[audiobooks]
+library_subdir = "Audiobooks"
+path_template = "Audiobooks/{author}/{series}/{series_index:02}. {title} ({year})"
+default_speed = 1.0           # per-book overrides live in book_playback (§4.5)
+smart_speed = true            # spoken-word profile shared with podcasts (§6.3)
+voice_boost = false
 ```
 
 ---
@@ -491,7 +623,8 @@ GTK4 + libadwaita pull a ~150 MB C-side floor (measured in Viaduct); the targets
 - Transcripts (Belfry's stance inherited; 2.x maybe at most).
 - Video as a first-class format (audio extraction only).
 - Windows / macOS; GNOME-native, deliberately.
-- Becoming a from-scratch metadata authority. Even if MusicBrainz tagging (§7.3) is taken on, Conservatory consumes a canonical source; it does not try to out-Picard Picard on match quality.
+- Becoming a from-scratch metadata authority. Even if MusicBrainz tagging (§7.3) or an audiobook metadata provider (§7.5, §16.10) is taken on, Conservatory consumes a canonical source; it does not try to out-Picard Picard on match quality.
+- Audiobook DRM. Audible / OverDrive de-DRM and account-linked download (Libation's domain) are out; Conservatory imports DRM-free files (restating the DRM non-goal above, for audiobooks).
 
 ---
 
@@ -507,7 +640,7 @@ App ID: `org.gnome.Conservatory` (GNOME Circle) or `io.github.virinvictus.Conser
 
 ## 16. Risks and Open Questions
 
-1. **Scope.** This is the largest thing in Brandon's backlog: a library manager, a daily-driver player, and an absorbed podcast client, with a unified queue. It competes with Atrium (still pre-1.0) for the "one big project" slot, and as of v0.0.1 the build has begun *concurrently* with Atrium rather than after it. That concurrency is the risk this section originally warned against; it is now accepted by deliberate decision. The mitigation is no longer deferral but hard phasing (§17): every phase must leave a usable artifact, so attention can swing back to Atrium between phases without leaving Conservatory half-built. If the concurrency proves to be a mistake, the phasing is what makes a pause cheap.
+1. **Scope.** This is the largest thing in Brandon's backlog: a music library manager, a daily-driver player, an absorbed podcast client, and an audiobook library, all sharing a unified queue. The audiobook tab (§3.8, added after the initial design) widens the scope further, mitigated by it being a thin layer over the already-absorbed spoken-word engine and landing last (Phase 7). It competes with Atrium (still pre-1.0) for the "one big project" slot, and as of v0.0.1 the build has begun *concurrently* with Atrium rather than after it. That concurrency is the risk this section originally warned against; it is now accepted by deliberate decision. The mitigation is no longer deferral but hard phasing (§17): every phase must leave a usable artifact, so attention can swing back to Atrium between phases without leaving Conservatory half-built. If the concurrency proves to be a mistake, the phasing is what makes a pause cheap.
 2. **Moving the user's files.** The file-ownership model is the headline risk. A move bug damages a real library. The dry-run, undo journal, and crash-safe replay (§5.4) are release-blocking, not nice-to-have.
 3. **Genre instability.** Genre-first physical shelving amplifies the least stable tag into file moves. The shelf-genre field plus rendered template (§5.1–5.2) keep raw tags off disk and make re-shelving cheap, but this is the part most likely to need revision in practice. The genre-tree rollup is the escape hatch if flat shelving churns too much.
 4. **Genre vocabulary seed (OPEN).** Ship a default alias map / whitelist (beets `lastgenre` or the MusicBrainz genre list) or start empty and user-built? Decide at implementation.
@@ -515,13 +648,18 @@ App ID: `org.gnome.Conservatory` (GNOME Circle) or `io.github.virinvictus.Conser
 6. **EQ / DSP depth (OPEN).** None, a simple EQ, or a deadbeef-class DSP chain?
 7. **ReplayGain scan vs read (OPEN).** Scan values in-app, or only read existing tags?
 8. **Belfry absorption timing.** Belfry must not be retired until Conservatory reaches podcast parity; `belfry-core`'s worker migrates rather than being rewritten. The `~/.gitrepos` CLAUDE.md project map needs a note when that happens.
-9. **libmpv per-item profile switching.** Swapping filter graphs between a music track and a podcast episode mid-queue needs prototyping; gapless within an album plus profile switching at album/kind boundaries is the tricky bit.
+9. **libmpv per-item profile switching.** Swapping filter graphs between a music track and a podcast episode mid-queue needs prototyping; gapless within an album plus profile switching at album/kind boundaries is the tricky bit. Audiobooks add no new graph (they share the spoken-word profile, §6.3), but chapter advance *within* a book must be gapless across files or M4B spans, which is the same boundary problem one level down.
+10. **Audiobook metadata provider (OPEN).** Ship an online provider (Audible / Audnexus / Google Books, the Audiobookshelf model) or assume locally-tagged/foldered files plus manual edit? Default is out (§7.5), revisited only if curation friction demands it. The audiobook analogue of §7.3.
+11. **Audiobook chapterize (OPEN).** For books that arrive as one long file with no chapter markers, derive chapters by silence detection (the m4b-tool technique) on import, or leave them chapterless until the user runs an explicit step? Default is opt-in only.
+12. **Audiobook integration (settled).** Audiobooks land as a third tab (§3.8) reusing the absorbed Belfry spoken-word engine, with a book as one unified-queue entry and chapters as intra-item navigation (§6.1), and metadata from local sources only in v1 (§7.5). This was a deliberate decision (the alternative was a separate audiobook engine/profile and chapter-as-queue-item granularity); recorded here, with the alternatives, in case the choice needs revisiting.
 
 ---
 
-## 17. Phasing (the build is deferred)
+## 17. Phasing
 
-The build was originally deferred until Atrium reached a real shipping milestone, on the reasoning that two concurrent flagship-scale projects is the failure mode to avoid. That deferral has been lifted by deliberate decision; the build has begun alongside Atrium. The discipline that replaces it is hard phasing: each stage below must be usable on its own, so work can move between Conservatory and Atrium without stranding either. The original rationale is kept here rather than deleted, because it is the thing to re-read if the concurrency turns out to be a mistake.
+Hard phasing is the active discipline: each stage below must be usable on its own, so work can move between Conservatory and Atrium without stranding either. This replaced an earlier plan to defer the build entirely until Atrium reached a real shipping milestone (the reasoning being that two concurrent flagship-scale projects is the failure mode to avoid). That deferral was lifted by deliberate decision and the build has begun alongside Atrium; the original rationale is kept here, not deleted, because it is the thing to re-read if the concurrency turns out to be a mistake.
+
+The phases below are the contract-level shape. `roadmap.md` breaks each into independently shippable sub-phases (1a/1b, 2a–2d, and so on), each with its own checklist, tests, and a usable-artifact exit; consult it for the working plan.
 
 - **Phase 0 (done).** This spec; design. Workspace skeleton bootstrapped at v0.0.1: the four crates, portfolio docs, build files, CI scaffold. No feature code yet.
 - **Phase 1.** `conservatory-core` foundation: SQLite worker + read pool + migrations + fixtures (port from `belfry-core`), tag read, the data model.
@@ -530,8 +668,9 @@ The build was originally deferred until Atrium reached a real shipping milestone
 - **Phase 4.** Playback: libmpv engine, music profile, unified queue, Now-bar, MPRIS. A daily-driver music player.
 - **Phase 5.** Bulk editing + embedded-tag write-back.
 - **Phase 6.** Podcasts: absorb the Belfry subsystem behind the Podcasts tab, hook episodes into the unified queue. Podcast parity reached; Belfry can retire.
+- **Phase 7.** Audiobooks: a third tab over the absorbed spoken-word engine. The book/chapter/series data model and local-source import (headless), then the Audiobooks browse tab, then playback (chapters + first-class resume) reusing the Phase 6 engine. Placed after Phase 6 because it reuses that engine; the audiobook *manager* could in principle land earlier, but the deliberate choice is to keep it whole and post-podcast (§16.12).
 
-The manager half (Phases 1–3) must be usable before the player half is finished, and the player must be usable before podcasts arrive. No phase leaves the app non-functional.
+The manager half (Phases 1–3) must be usable before the player half is finished, and the player must be usable before podcasts arrive. Audiobooks (Phase 7) come last because they lean on the podcast engine; each is a hard phase that leaves a usable artifact. No phase leaves the app non-functional.
 
 ---
 
@@ -545,6 +684,6 @@ Standard portfolio layout:
 - `data/` — `.ui` XML, icons, GSettings schema, AppStream metainfo, Flatpak manifest, bundled fonts (registered via fontconfig at first run; never assume host fonts).
 - `conservatory-core/`, `conservatory-search/`, `conservatory-cli/`, `conservatory/` — workspace members.
 - `tests/` — integration tests alongside in-crate unit tests; the file-mover dry-run/undo and the re-import contract (§5.6) get dedicated fixture-backed suites.
-- `docs/` — schema, keymap, path-template reference, genre normalization notes, libmpv profile reference.
+- `docs/` — schema, keymap, path-template reference, genre normalization notes, libmpv profile reference, search grammar. Audiobook design is folded into these (schema, path-template, libmpv-profiles, search-grammar) rather than a separate doc.
 
 CI matches the portfolio: `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check` on Linux. Tests required from day one.

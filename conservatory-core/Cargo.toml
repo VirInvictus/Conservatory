@@ -7,9 +7,17 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-# Phase 1 (spec §17) wires in tokio + rusqlite for the single-writer worker,
-# read pool, migrations, and fixtures, plus the tag reader. Dependency-free
-# skeleton for now; every addition follows the sign-off rule (spec §11).
+# Phase 1a (spec §17) wires in tokio + rusqlite for the single-writer worker,
+# read pool, and migration runner. Each crate is already in the agreed
+# workspace catalog (spec §11); later sub-phases activate the rest.
 [dependencies]
+tokio = { workspace = true }
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }

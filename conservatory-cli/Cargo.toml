@@ -11,8 +11,12 @@ authors.workspace = true
 name = "conservatory-cli"
 path = "src/main.rs"
 
-# Real verbs (import, organize, search, tag, queue, podcast, stats) land at
-# Phase 2+ (spec §9); clap wires in then.
+# Phase 1a ships the `debug-roundtrip` verb (the worker/pool usable artifact).
+# The real verbs (import, organize, search, tag, queue, podcast, stats) land at
+# Phase 2+ (spec §9).
 [dependencies]
 conservatory-core = { path = "../conservatory-core" }
 conservatory-search = { path = "../conservatory-search" }
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }

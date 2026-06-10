@@ -4,11 +4,11 @@ Per-project guidance. Overrides `~/.claude/CLAUDE.md` only where they conflict.
 
 ## What Conservatory is
 
-"Calibre for audio": a native GNOME library manager for music and podcasts. The database owns the library and the app moves files to match it (the inversion of Lattice/Belfry's filesystem-canonical stance). Browse is the deadbeef-cui Columns UI as a first-class window; playback is a libmpv daily-driver engine; one unified queue interleaves music tracks and podcast episodes.
+"Calibre for audio": a native GNOME library manager for music, podcasts, and audiobooks. The database owns the library and the app moves files to match it (the inversion of Lattice/Belfry's filesystem-canonical stance). Browse is the deadbeef-cui Columns UI as a first-class window; playback is a libmpv daily-driver engine; one unified queue interleaves music tracks, podcast episodes, and audiobooks. The three media types are three tabs (Music | Podcasts | Audiobooks); audiobooks (spec §3.8) reuse the absorbed Belfry spoken-word engine and land last, at Phase 7.
 
-Read `spec.md` before changing semantics. Read `roadmap.md` before scoping work. Read `ATTRIBUTIONS.md` before adding deps.
+Read `spec.md` before changing semantics. Read `roadmap.md` before scoping work. Read `ATTRIBUTIONS.md` before adding deps. Read `docs/search-grammar.md` before touching `conservatory-search` (it settles the cross-project lineage: structure from `atrium-search`, semantics from CalibreQuarry, FTS5 plumbing from Viaduct). Other design references live in `docs/` (schema, path-template, genre-normalization, libmpv-profiles, keymap).
 
-Reference apps: **Calibre** (library-as-database, file ownership, save-to-disk template), **foobar2000 / Columns UI** via **deadbeef-cui** (faceted browse), **beets** (genre canonicalization), **Overcast / Castro** via **Belfry** (the absorbed podcast engine and triage model), **Atrium / Viaduct** (single-writer worker + search grammar shape), **Hermitage** (cover-as-visual-unit, accent extraction).
+Reference apps: **Calibre** (library-as-database, file ownership, save-to-disk template), **foobar2000 / Columns UI** via **deadbeef-cui** (faceted browse), **beets** (genre canonicalization), **Overcast / Castro** via **Belfry** (the absorbed podcast engine and triage model), **Cozy** (audiobook data model + browse UI; `~/.gitrepos/cozy/`), **Audiobookshelf** (audiobook metadata model + folder conventions; `~/.gitrepos/audiobookshelf/`), **Atrium / Viaduct** (single-writer worker + search grammar shape), **Hermitage** (cover-as-visual-unit, accent extraction).
 
 ## Hard rules specific to Conservatory
 

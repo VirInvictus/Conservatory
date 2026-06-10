@@ -1,0 +1,81 @@
+//! Worker command enum (spec §2.1).
+//!
+//! Each variant carries a `oneshot::Sender` reply channel so callers await
+//! their own result. Consumers never construct `Command` directly: they call
+//! typed methods on [`crate::db::WorkerHandle`]. The enum is internal to `db`.
+//!
+//! Phase 1a carried the debug round-trip; Phase 1b adds the music inserts the
+//! import pipeline and fixture builder need. Update/delete and queue/podcast
+//! commands land in later sub-phases.
+
+use tokio::sync::oneshot;
+
+use crate::db::models::{Album, Artist, Track};
+use crate::errors::Result;
+
+pub(crate) enum Command {
+    /// Write a key/value through the debug probe table (Phase 1a artifact).
+    ProbeWrite {
+        key: String,
+        value: String,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Insert an artist, returning its new id.
+    InsertArtist {
+        artist: Artist,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Insert an album, returning its new id.
+    InsertAlbum {
+        album: Album,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Insert a track, returning its new id.
+    InsertTrack {
+        track: Track,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Resolve a raw genre name to its id, creating it on first sight.
+    GetOrCreateGenre {
+        name: String,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Link a track to a genre (idempotent).
+    LinkTrackGenre {
+        track_id: i64,
+        genre_id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Ack a shutdown request. The loop exits naturally once every
+    /// `WorkerHandle` clone has dropped and the channel closes.
+    Shutdown { reply: oneshot::Sender<()> },
+
+    /// Test-only: panic inside the handler to exercise the
+    /// panic-catch-and-restart loop. The reply is dropped by the panic, which
+    /// the caller observes as `WorkerChannelClosed`.
+    #[cfg(test)]
+    Panic,
+}
+
+impl Command {
+    /// Stable string name for tracing instrumentation.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Self::ProbeWrite { .. } => "probe_write",
+            Self::InsertArtist { .. } => "insert_artist",
+            Self::InsertAlbum { .. } => "insert_album",
+            Self::InsertTrack { .. } => "insert_track",
+            Self::GetOrCreateGenre { .. } => "get_or_create_genre",
+            Self::LinkTrackGenre { .. } => "link_track_genre",
+            Self::Shutdown { .. } => "shutdown",
+            #[cfg(test)]
+            Self::Panic => "panic",
+        }
+    }
+}

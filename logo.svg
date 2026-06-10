@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  Conservatory — placeholder logo.
+  A Victorian glasshouse / palm house: a domed central hall flanked by two
+  symmetric arched wings, crowned with a finial, its glazing bars and arched
+  entrance picked out in the libadwaita accent. The cream structure carries a
+  faint warm glow clipped to its interior — a hall where a collection is kept
+  and cultivated (spec §15). No waveforms, headphones, or play triangles; the
+  architecture does the work, the music reading comes from context.
+  Replace before 1.0.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Conservatory">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3584e4"/>
+      <stop offset="1" stop-color="#1a5fb4"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.62" r="0.55">
+      <stop offset="0" stop-color="#ffdf9e" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#ffdf9e" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="hall">
+      <path d="M 58 196 L 58 140 Q 79 122 100 128 L 100 116
+               C 100 68 156 68 156 116 L 156 128 Q 177 122 198 140 L 198 196 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- App tile -->
+  <rect x="24" y="24" width="208" height="208" rx="32" fill="url(#tile)"/>
+
+  <!-- Plinth -->
+  <rect x="52" y="194" width="152" height="8" rx="3" fill="#F4F1EA"/>
+
+  <!-- Glasshouse silhouette -->
+  <path d="M 58 196 L 58 140 Q 79 122 100 128 L 100 116
+           C 100 68 156 68 156 116 L 156 128 Q 177 122 198 140 L 198 196 Z"
+        fill="#F4F1EA"/>
+
+  <!-- Warm interior glow, clipped to the hall -->
+  <rect x="52" y="64" width="152" height="140" fill="url(#glow)" clip-path="url(#hall)"/>
+
+  <!-- Glazing bars + dome ribs (the glass), clipped to the hall -->
+  <g clip-path="url(#hall)" stroke="#1a5fb4" stroke-width="2.2" stroke-linecap="round" opacity="0.34">
+    <!-- vertical mullions -->
+    <line x1="72"  y1="190" x2="72"  y2="132"/>
+    <line x1="86"  y1="190" x2="86"  y2="130"/>
+    <line x1="110" y1="190" x2="110" y2="118"/>
+    <line x1="146" y1="190" x2="146" y2="118"/>
+    <line x1="170" y1="190" x2="170" y2="130"/>
+    <line x1="184" y1="190" x2="184" y2="132"/>
+    <!-- horizontal transom -->
+    <line x1="60" y1="172" x2="196" y2="172"/>
+    <!-- dome ribs, fanned from the apex -->
+    <line x1="128" y1="86" x2="104" y2="116"/>
+    <line x1="128" y1="86" x2="118" y2="117"/>
+    <line x1="128" y1="86" x2="140" y2="117"/>
+    <line x1="128" y1="86" x2="152" y2="116"/>
+  </g>
+
+  <!-- Arched entrance -->
+  <path d="M 118 196 L 118 176 Q 118 166 128 166 Q 138 166 138 176 L 138 196 Z"
+        fill="#18539f"/>
+
+  <!-- Finial -->
+  <line x1="128" y1="80" x2="128" y2="62" stroke="#F4F1EA" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="128" cy="57" r="4" fill="#F4F1EA"/>
+</svg>

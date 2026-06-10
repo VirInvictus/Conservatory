@@ -1,0 +1,13 @@
+[package]
+name = "conservatory-audiobooks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Compile-time plugin crate (spec §2.2): the audiobook subsystem lands here at
+# Phase 7 (sidecar/tag import, chapter resolver, book-state logic, the
+# Audiobooks CLI verbs and GTK tab). Dependency-free stub until then.
+[dependencies]

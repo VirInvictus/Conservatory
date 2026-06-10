@@ -19,6 +19,15 @@ These run alongside every phase rather than belonging to one; called out here so
 - [x] Workspace skeleton: four crates, portfolio docs, GPL-3 license, build files.
 - [x] Build deferral lifted; build proceeds concurrently with Atrium (spec §16.1, §17).
 
+## Phase 0.5 — Plugin restructure (v0.0.2) ✅
+
+Music is the native program; podcasts and audiobooks become **compile-time plugins**: feature-gated workspace crates, on by default, internal-only API (spec §2.2, §16.13). Landed between Phases 1b and 1c, while zero podcast/audiobook code existed, so it was a workspace/docs change rather than a code migration.
+
+- [x] Stub plugin crates `conservatory-podcasts` (filled at Phase 6) and `conservatory-audiobooks` (filled at Phase 7), so the feature wiring exists from day one.
+- [x] `podcasts` / `audiobooks` features on both binaries (default on); bare invocation prints the enabled plugin set.
+- [x] CI: a `music-only` job (`--no-default-features` clippy + test on both binaries) keeps the music-only build green forever.
+- [x] The boundary rule recorded (spec §2.2, §4): plugins are code and dependencies, not the database. All schema stays in core's single append-only migration ledger; the unified queue stays a core commitment.
+
 ---
 
 ## Phase 1 — `conservatory-core` foundation
@@ -196,11 +205,11 @@ A daily-driver music player. Profile switching at album/kind boundaries (spec §
 
 ## Phase 6 — Podcasts (absorb Belfry)
 
-Podcast parity. Belfry retires only when 6c lands (spec §16.8, CLAUDE.md). The fetch/parse port is `belfry-core`'s; Viaduct contributes the HTTP-client baseline.
+Podcast parity. Belfry retires only when 6c lands (spec §16.8, CLAUDE.md). The fetch/parse port is `belfry-core`'s; Viaduct contributes the HTTP-client baseline. The subsystem lands as the **`conservatory-podcasts` plugin crate** (spec §2.2), which is where the heavy dependencies (`reqwest`, `feed-rs`, `ammonia`, `id3`, `oo7`) get pulled; its schema still lands in core's migration ledger (the boundary rule).
 
 ### Phase 6a — Fetch/parse port (headless)
 
-- [ ] Schema: port Belfry's podcast tables (`shows`, `episodes`, `playback`, `show_settings`, `listening_sessions`, `chapters`, `tags`, `show_tags`), with triage Queue state expressed through the unified `queue` table rather than a per-episode flag (spec §4.2). Episode `episode_fts` / `show_fts` added to the FTS set.
+- [ ] Schema: port Belfry's podcast tables (`shows`, `episodes`, `playback`, `show_settings`, `listening_sessions`, `chapters`, `tags`, `show_tags`), with triage Queue state expressed through the unified `queue` table rather than a per-episode flag (spec §4.2). Episode `episode_fts` / `show_fts` added to the FTS set. The migration lands in `conservatory-core`'s ledger, not the plugin crate (spec §2.2).
 - [ ] Fetch loop ported from `belfry-core`: per-show polling with conditional GET (ETag / Last-Modified) and jittered intervals. The shared `reqwest` client baseline is ported from Viaduct's `network/http.rs` (gzip/brotli, rustls, pool caps, connect + request timeouts, descriptive User-Agent).
 - [ ] Parse: `feed-rs` plus a hand-rolled `podcast:` namespace handler; episode identity by `(show_id, guid)`; three-source chapter precedence; show-note sanitize (`ammonia`). Dependency sign-off for `feed-rs`/`quick-xml`/`ammonia`/`id3`/`reqwest`/`oo7` (spec §11).
 - [ ] HTTP Basic auth credentials in libsecret via `oo7`.
@@ -232,11 +241,11 @@ Podcast parity. Belfry retires only when 6c lands (spec §16.8, CLAUDE.md). The 
 
 ## Phase 7 — Audiobooks (the third tab)
 
-Audiobooks are the third media type (spec §3.8). They are long-form speech, so they reuse the absorbed spoken-word engine (Smart Speed, Voice Boost, variable speed, sleep timer) from Phase 6c and the unified queue; that is why this phase lands after podcast parity. The data model, import, and browse surface are modeled on **Cozy** (the GTK4/libadwaita audiobook player); the metadata model and folder conventions on **Audiobookshelf**; chapter handling technique on **m4b-tool** (all three cloned under `~/.gitrepos/` as read-only reference, ATTRIBUTIONS.md). Belfry's retirement at 6c is unaffected. Metadata is local-source-only in v1 (online providers deferred, spec §16.10).
+Audiobooks are the third media type (spec §3.8), landing as the **`conservatory-audiobooks` plugin crate** (spec §2.2). They are long-form speech, so they reuse the absorbed spoken-word engine (Smart Speed, Voice Boost, variable speed, sleep timer) from Phase 6c and the unified queue; that is why this phase lands after podcast parity. The data model, import, and browse surface are modeled on **Cozy** (the GTK4/libadwaita audiobook player); the metadata model and folder conventions on **Audiobookshelf**; chapter handling technique on **m4b-tool** (all three cloned under `~/.gitrepos/` as read-only reference, ATTRIBUTIONS.md). Belfry's retirement at 6c is unaffected. Metadata is local-source-only in v1 (online providers deferred, spec §16.10).
 
 ### Phase 7a — Audiobook model + import (headless)
 
-- [ ] Schema (numbered migration, spec §4.5): `book_people` (authors + narrators, role-tagged), `series`, `books`, `book_authors`, `book_narrators`, `book_chapters`, `book_playback`. `book_fts` (title, author, narrator, series) trigger-synced (spec §4.4). The unified `queue` gains the `audiobook` kind + `book_id` (spec §4.3).
+- [ ] Schema (numbered migration, spec §4.5): `book_people` (authors + narrators, role-tagged), `series`, `books`, `book_authors`, `book_narrators`, `book_chapters`, `book_playback`. `book_fts` (title, author, narrator, series) trigger-synced (spec §4.4). The unified `queue` gains the `audiobook` kind + `book_id` (spec §4.3). The migration lands in `conservatory-core`'s ledger, not the plugin crate (spec §2.2).
 - [ ] Tag + sidecar reader: embedded M4B/ID3 tags, then the Audiobookshelf sidecar conventions (`.opf` via the existing `quick-xml`, `desc.txt`, `reader.txt`, `cover.jpg`), then folder structure, into a book draft (author, narrator, series + decimal sequence, year, publisher, ISBN/ASIN, description, language). Author and narrator are distinct roles.
 - [ ] Chapter resolver: embedded M4B markers → else one-file-per-chapter folder → (opt-in, deferred per spec §16.11) silence detection. Each chapter is a `(file_path, file_offset, duration)` row addressing either a standalone file or an M4B span.
 - [ ] Audiobook path template: `Audiobooks/{author}/{series}/{series_index:02}. {title} ({year})`, series components collapsing for standalone books (spec §5.7). New tokens (`{author}`, `{narrator}`, `{series}`, `{series_index}`) extend the Phase 2a engine. Import moves/copies into the managed tree via the Phase 2c mover (dry-run + undo): books are owned like music, not ephemeral like podcasts.

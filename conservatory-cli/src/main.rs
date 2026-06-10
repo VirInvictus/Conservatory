@@ -42,12 +42,29 @@ enum Command {
     },
 }
 
+/// The compile-time plugins this binary was built with (spec §2.2). The match
+/// on an empty slice (rather than `is_empty`) keeps clippy's compile-time-
+/// constant lints quiet across both feature sets.
+fn plugin_list() -> String {
+    let plugins: &[&str] = &[
+        #[cfg(feature = "podcasts")]
+        "podcasts",
+        #[cfg(feature = "audiobooks")]
+        "audiobooks",
+    ];
+    match plugins {
+        [] => "none (music-only build)".to_string(),
+        _ => plugins.join(", "),
+    }
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Some(Command::DebugRoundtrip { db }) => debug_roundtrip(db),
         Some(Command::DebugFixture { db, scale }) => debug_fixture(db, scale),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
+            println!("plugins: {}", plugin_list());
             println!("Phase 1a: try `debug-roundtrip <db>`. Real verbs land at Phase 2 (spec §9).");
             Ok(())
         }

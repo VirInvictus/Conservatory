@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GNOME-50%2B-4a86cf" alt="GNOME 50+">
-  <img src="https://img.shields.io/badge/status-v0.0.1%20%C2%B7%20Phase%201-orange" alt="Status: v0.0.1, Phase 1">
+  <img src="https://img.shields.io/badge/status-v0.0.2%20%C2%B7%20Phase%201-orange" alt="Status: v0.0.2, Phase 1">
 </p>
 
 ---
@@ -15,7 +15,7 @@
 
 **Calibre for audio.**
 
-A native GNOME library manager that owns and organizes your music and podcasts on disk, presented through a foobar2000 Columns UI browse surface and played through a libmpv daily-driver engine that runs both media types from a single queue. v0.0.1: the workspace skeleton is in place and Phase 1 is underway.
+A native GNOME library manager that owns and organizes your music and podcasts on disk, presented through a foobar2000 Columns UI browse surface and played through a libmpv daily-driver engine that runs both media types from a single queue. v0.0.2: the database spine (single-writer SQLite worker, read pool, numbered migrations, the music schema) is shipped, and the workspace is structured around compile-time plugins with music as the native program.
 
 ## Why this exists
 
@@ -36,7 +36,7 @@ Conservatory absorbs Brandon's podcast client, Belfry. Belfry's Phase 1 work is 
 
 ## Status
 
-v0.0.1, Phase 1 underway. The workspace skeleton builds clean and the four crates are wired together; feature code is just starting.
+v0.0.2, Phase 1 underway (1a and 1b shipped, 1c next). The database layer is real: single-writer worker, read-only pool, numbered migrations, the music schema with FTS5, and CLI smoke verbs over all of it.
 
 - [`spec.md`](spec.md) — the design contract.
 - [`roadmap.md`](roadmap.md) — the six-phase plan, broken into independently shippable sub-phases.
@@ -46,12 +46,16 @@ v0.0.1, Phase 1 underway. The workspace skeleton builds clean and the four crate
 
 ## Workspace
 
-Four crates, matching the Belfry / Atrium discipline that every non-GUI surface stays CLI-testable:
+Six crates, matching the Belfry / Atrium discipline that every non-GUI surface stays CLI-testable. Music is the native program; podcasts and audiobooks are **compile-time plugins**: feature-gated crates, on by default, with all schema staying in core's single migration ledger (spec §2.2).
 
-- `conservatory-core` — headless data layer: SQLite worker, import pipeline, file mover, playback, podcast fetch.
-- `conservatory-search` — the Calibre-shaped search expression language (see [`docs/search-grammar.md`](docs/search-grammar.md)).
+- `conservatory-core` — headless data layer and the music-native engine: SQLite worker, all migrations, import pipeline, file mover, playback host and profiles, the unified queue.
+- `conservatory-search` — the Calibre-shaped search expression language (see [`docs/search-grammar.md`](docs/search-grammar.md)); deliberately feature-free.
+- `conservatory-podcasts` — plugin crate: the absorbed Belfry podcast subsystem (Phase 6).
+- `conservatory-audiobooks` — plugin crate: the audiobook subsystem (Phase 7).
 - `conservatory-cli` — headless binary: import, organize, search, tag, queue, podcast ops, stats.
 - `conservatory` — the GTK4 / libadwaita binary.
+
+Both binaries take `--no-default-features` for a music-only build (no podcast or audiobook code compiled in), which CI keeps green alongside the full build.
 
 ## Stack
 

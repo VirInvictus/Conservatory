@@ -1,0 +1,13 @@
+[package]
+name = "conservatory-podcasts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Compile-time plugin crate (spec §2.2): the Belfry absorption lands here at
+# Phase 6, pulling its heavy dependencies (reqwest, feed-rs, quick-xml,
+# ammonia, id3, oo7) with it. Dependency-free stub until then.
+[dependencies]

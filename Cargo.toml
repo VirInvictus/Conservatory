@@ -1,9 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["conservatory-core", "conservatory-search", "conservatory-cli", "conservatory"]
+members = [
+    "conservatory-core",
+    "conservatory-search",
+    "conservatory-podcasts",
+    "conservatory-audiobooks",
+    "conservatory-cli",
+    "conservatory",
+]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 rust-version = "1.85"
 license = "GPL-3.0-or-later"
@@ -18,12 +25,13 @@ authors = ["Brandon LaRocque <larocque.brandon@gmail.com>"]
 
 # Async + IO
 tokio = { version = "1.42", features = ["full"] }
+# reqwest is pulled by conservatory-podcasts (Phase 6), not core.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "stream"] }
 
 # Storage
 rusqlite = { version = "0.32", features = ["bundled", "chrono", "trace"] }
 
-# Feed parsing (podcasts, ported from belfry-core at Phase 6)
+# Feed parsing (pulled by conservatory-podcasts at Phase 6, ported from belfry-core)
 feed-rs = "2.2"
 quick-xml = "0.37"
 
@@ -35,12 +43,13 @@ libmpv2 = "4.1"
 # lofty = "0.21"
 # symphonia = "0.5"
 
-# HTML / chapters / images
+# HTML / chapters / images (ammonia + id3 are pulled by conservatory-podcasts;
+# image is core, for cover decode + accent)
 ammonia = "4.0"
 id3 = "1.16"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
-# Credentials (libsecret)
+# Credentials (libsecret; pulled by conservatory-podcasts for HTTP Basic auth)
 oo7 = "0.3"
 
 # D-Bus (MPRIS2 + suspend inhibitor)

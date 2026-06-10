@@ -1,9 +1,9 @@
 # Conservatory — Application Specification
 
-**Version:** 0.0.1 (in development; Phase 0 design is complete and the Phase 1 bootstrap has begun. The build is no longer deferred, see §17)
+**Version:** 0.0.2 (in development; Phase 1a/1b shipped, and the workspace is restructured around compile-time plugins, see §2.2)
 **Target:** GNOME 50+, GTK4 ≥ 4.16, libadwaita ≥ 1.7
 **Language:** Rust (2024 Edition)
-**Build System:** Cargo workspace (`conservatory-core` + `conservatory-search` + `conservatory-cli` + `conservatory`) / Meson wrapper for Flatpak packaging
+**Build System:** Cargo workspace (`conservatory-core` + `conservatory-search` + `conservatory-podcasts` + `conservatory-audiobooks` + `conservatory-cli` + `conservatory`) / Meson wrapper for Flatpak packaging
 **License:** GNU GPL v3.0 or later (forced by librubberband in the absorbed Smart Speed chain, the same license chain as Belfry; see §15)
 
 > **Status note.** This is the design contract. The decisions below are settled enough to build against. As of v0.0.1 the workspace skeleton exists and Phase 1 (§17) is underway; the build is no longer deferred (the original deferral and its rationale are preserved in §16.1 and §17 for the record, since they are the thing to re-read if the concurrency with Atrium proves a mistake). Provisional detail (exact schema columns, CLI verbs, config keys) follows the established portfolio patterns from Atrium and Belfry and will firm up at implementation time. Genuinely open decisions are collected in §16, not scattered as silent guesses.
@@ -89,14 +89,20 @@ It matters acutely here because Conservatory has several independent producers w
 
 `LibraryChanges`, `PlaybackChanges`, and `JobProgress` are coalescing batch types delivered through a `glib::MainContext` channel. UI updates apply as deltas, never full reloads (the deadbeef-cui rebuild discipline: never scroll the facets back to the top on an unrelated event).
 
-### 2.2 Crate Layout
+### 2.2 Crate Layout (the compile-time plugin model)
 
-Four crates, matching the Belfry / Atrium discipline that every non-GUI surface stays CLI-testable:
+Six crates. **Music is the native program; podcasts and audiobooks are compile-time plugins**: feature-gated workspace crates, compiled into the binaries when their feature is on. The default build ships all three media types; `--no-default-features` is the music-only build, kept green by CI from day one. The plugin API is internal-only (first-party plugins, free to change between versions); there is no dynamic loading, no IPC, and no third-party plugin surface. The layout keeps the Belfry / Atrium discipline that every non-GUI surface stays CLI-testable:
 
-- **`conservatory-core`** — headless data layer. SQLite worker plus read pool; tag read/write; the import pipeline, path-template engine, shelf-genre resolver, and file mover; the libmpv host plus playback profiles; the unified queue model; the podcast fetch/parse pipeline (ported from `belfry-core`); OPML import/export; cover-art decode plus accent extraction. GUI-free.
-- **`conservatory-search`** — the Calibre-shaped search expression language (lex / parse / AST / evaluator / SQL translator), typed against Conservatory's domain (Track / Album / Artist / Show / Episode). The grammar *shape* is ported from `atrium-search`; the implementation is independent so the projects evolve without coupling (the Belfry precedent; record it in `ATTRIBUTIONS.md`).
-- **`conservatory-cli`** — headless binary: import, organize, search, tag, queue, podcast ops, stats. See §9.
-- **`conservatory`** — the GTK4 binary. Depends on the three above.
+- **`conservatory-core`** — headless data layer and the music-native engine. SQLite worker plus read pool; **all schema and migrations, including the podcast and audiobook tables** (the boundary rule below); tag read/write; the import pipeline, path-template engine, shelf-genre resolver, and file mover; the libmpv host plus **all playback profiles**, including the spoken-word Smart Speed / Voice Boost profile both plugins resolve against (it is filter-graph configuration the unified queue applies on advance, not plugin code); the unified queue model; cover-art decode plus accent extraction. GUI-free.
+- **`conservatory-search`** — the Calibre-shaped search expression language (lex / parse / AST / evaluator / SQL translator), typed against Conservatory's domain (Track / Album / Artist / Show / Episode / Book). The grammar *shape* is ported from `atrium-search`; the implementation is independent so the projects evolve without coupling (the Belfry precedent; record it in `ATTRIBUTIONS.md`). Deliberately feature-free: every field, podcast and audiobook included, is always compiled in; a field over an absent or empty table matches nothing, which keeps trait-object field registration out of the hot path.
+- **`conservatory-podcasts`** — plugin crate, filled at Phase 6: the absorbed Belfry subsystem (per-show fetch loop with conditional GET, `feed-rs` plus the `podcast:` namespace handler, Inbox → Queue → Played triage, OPML round-trip) and its heavy dependencies (`reqwest`, `feed-rs`, `quick-xml`, `ammonia`, `id3`, `oo7`), plus the podcast CLI verbs and the Podcasts tab.
+- **`conservatory-audiobooks`** — plugin crate, filled at Phase 7: the tag + sidecar reader (§7.5), chapter resolver, book-state derivation, the audiobook CLI verbs, and the Audiobooks tab.
+- **`conservatory-cli`** — headless binary: import, organize, search, tag, queue, podcast ops, stats. See §9. Defines the `podcasts` / `audiobooks` features (default on) that pull the plugin crates.
+- **`conservatory`** — the GTK4 binary, with the same two features; the Podcasts and Audiobooks tabs exist only when their feature is on.
+
+> **The boundary rule: plugins are code and dependencies, not the database.** All schema, including the podcast and audiobook tables and the unified `queue`, lives in `conservatory-core`'s single append-only migration ledger and applies in every build. Queue foreign keys therefore stay valid in all builds, `user_version` never diverges between a music-only and a full build opening the same library, and a music-only build simply has empty podcast/book tables. Plugin crates never own migrations.
+
+> **No speculative extension traits.** Because the plugin API is internal-only, the seams between core and the plugin crates are firmed up when their consumers exist: the engine/queue seam at Phase 4, the first real plugin at Phase 6. Until then the plugin crates are dependency-isolated homes, not a trait API designed before its second consumer.
 
 > **Library-graduation watch.** The path-template engine plus file mover (§5) is domain-light and could justify a standalone crate later, and the playback engine is now eyed by two efforts (this and Belfry's lineage). Neither is at graduation point yet; flag again if either grows a stable, reusable public surface.
 
@@ -121,6 +127,8 @@ AdwApplicationWindow
 ```
 
 The Music view is the deadbeef-cui layout as a first-class window: N configurable hierarchical filter panes (default Genre → Album Artist → Album) feeding a sortable track list. The Podcasts view is Belfry's three-pane triage layout. The Audiobooks view is Cozy's shelf layout: a cover-grid library, a book detail pane with the chapter list and per-book speed / sleep controls, and the same filter bar as the other surfaces.
+
+The Podcasts and Audiobooks tabs are plugin surfaces (§2.2): the view switcher offers only the tabs whose features are compiled in, and a music-only build opens straight into the Music view with no switcher.
 
 ---
 
@@ -202,7 +210,7 @@ Cozy's library, rebuilt over Conservatory's database. A **shelf grid** of book c
 
 ## 4. Data Model
 
-WAL mode, foreign keys on, `synchronous=NORMAL`. Single writer; read commands open read-only at the process level. FTS5 on titles. Migrations versioned via `user_version`, append-only and backwards-compatible post-1.0 (the Atrium discipline).
+WAL mode, foreign keys on, `synchronous=NORMAL`. Single writer; read commands open read-only at the process level. FTS5 on titles. Migrations versioned via `user_version`, append-only and backwards-compatible post-1.0 (the Atrium discipline). All migrations live in `conservatory-core` and apply in every build, plugin features on or off (the §2.2 boundary rule): the podcast and audiobook tables exist, empty, even in a music-only build, so `user_version` never diverges between builds opening the same library.
 
 ### 4.1 Music (draft schema)
 
@@ -652,6 +660,7 @@ App ID: `org.gnome.Conservatory` (GNOME Circle) or `io.github.virinvictus.Conser
 10. **Audiobook metadata provider (OPEN).** Ship an online provider (Audible / Audnexus / Google Books, the Audiobookshelf model) or assume locally-tagged/foldered files plus manual edit? Default is out (§7.5), revisited only if curation friction demands it. The audiobook analogue of §7.3.
 11. **Audiobook chapterize (OPEN).** For books that arrive as one long file with no chapter markers, derive chapters by silence detection (the m4b-tool technique) on import, or leave them chapterless until the user runs an explicit step? Default is opt-in only.
 12. **Audiobook integration (settled).** Audiobooks land as a third tab (§3.8) reusing the absorbed Belfry spoken-word engine, with a book as one unified-queue entry and chapters as intra-item navigation (§6.1), and metadata from local sources only in v1 (§7.5). This was a deliberate decision (the alternative was a separate audiobook engine/profile and chapter-as-queue-item granularity); recorded here, with the alternatives, in case the choice needs revisiting.
+13. **Plugin restructure (settled, v0.0.2).** Music is the native program; podcasts and audiobooks are compile-time plugins: feature-gated workspace crates (§2.2), on by default, internal-only API, with all schema staying in core's single migration ledger. The unified queue remains a core commitment, which is precisely why the queue, the libmpv host, and every playback profile stay in core. Alternatives considered and rejected: dynamic `.so` loading (Rust has no stable ABI; Flatpak sandbox friction; per-plugin schema versioning breaks the append-only ledger) and out-of-process plugins over D-Bus (the gapless profile swap of §16.9 and the §13 latency budgets suffer across a process boundary). Feature-gated crates can later become dynamically loaded if a third-party ecosystem is ever wanted; the reverse migration is not cheap, so this is the conservative end to start from.
 
 ---
 
@@ -667,8 +676,8 @@ The phases below are the contract-level shape. `roadmap.md` breaks each into ind
 - **Phase 3.** GTK browse: the Columns UI faceted view + search grammar + track list. A working library browser.
 - **Phase 4.** Playback: libmpv engine, music profile, unified queue, Now-bar, MPRIS. A daily-driver music player.
 - **Phase 5.** Bulk editing + embedded-tag write-back.
-- **Phase 6.** Podcasts: absorb the Belfry subsystem behind the Podcasts tab, hook episodes into the unified queue. Podcast parity reached; Belfry can retire.
-- **Phase 7.** Audiobooks: a third tab over the absorbed spoken-word engine. The book/chapter/series data model and local-source import (headless), then the Audiobooks browse tab, then playback (chapters + first-class resume) reusing the Phase 6 engine. Placed after Phase 6 because it reuses that engine; the audiobook *manager* could in principle land earlier, but the deliberate choice is to keep it whole and post-podcast (§16.12).
+- **Phase 6.** Podcasts: absorb the Belfry subsystem as the `conservatory-podcasts` plugin crate (§2.2) behind the Podcasts tab, hook episodes into the unified queue. The podcast schema lands in core's ledger; the behaviour lands in the plugin. Podcast parity reached; Belfry can retire.
+- **Phase 7.** Audiobooks: the `conservatory-audiobooks` plugin crate (§2.2), a third tab over the absorbed spoken-word engine. The book/chapter/series data model and local-source import (headless), then the Audiobooks browse tab, then playback (chapters + first-class resume) reusing the Phase 6 engine. Placed after Phase 6 because it reuses that engine; the audiobook *manager* could in principle land earlier, but the deliberate choice is to keep it whole and post-podcast (§16.12).
 
 The manager half (Phases 1–3) must be usable before the player half is finished, and the player must be usable before podcasts arrive. Audiobooks (Phase 7) come last because they lean on the podcast engine; each is a hard phase that leaves a usable artifact. No phase leaves the app non-functional.
 
@@ -682,7 +691,7 @@ Standard portfolio layout:
 - `VERSION` is the single source of truth; `Cargo.toml` (workspace and each member) matches.
 - `LICENSE` (GPL-3.0-or-later), `logo.svg`.
 - `data/` — `.ui` XML, icons, GSettings schema, AppStream metainfo, Flatpak manifest, bundled fonts (registered via fontconfig at first run; never assume host fonts).
-- `conservatory-core/`, `conservatory-search/`, `conservatory-cli/`, `conservatory/` — workspace members.
+- `conservatory-core/`, `conservatory-search/`, `conservatory-podcasts/`, `conservatory-audiobooks/`, `conservatory-cli/`, `conservatory/` — workspace members (`conservatory-podcasts` and `conservatory-audiobooks` are the compile-time plugin crates, §2.2).
 - `tests/` — integration tests alongside in-crate unit tests; the file-mover dry-run/undo and the re-import contract (§5.6) get dedicated fixture-backed suites.
 - `docs/` — schema, keymap, path-template reference, genre normalization notes, libmpv profile reference, search grammar. Audiobook design is folded into these (schema, path-template, libmpv-profiles, search-grammar) rather than a separate doc.
 

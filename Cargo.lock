@@ -179,26 +179,34 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "conservatory"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
+ "conservatory-audiobooks",
  "conservatory-core",
+ "conservatory-podcasts",
  "conservatory-search",
 ]
 
 [[package]]
+name = "conservatory-audiobooks"
+version = "0.0.2"
+
+[[package]]
 name = "conservatory-cli"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "clap",
+ "conservatory-audiobooks",
  "conservatory-core",
+ "conservatory-podcasts",
  "conservatory-search",
  "tokio",
 ]
 
 [[package]]
 name = "conservatory-core"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -211,8 +219,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "conservatory-podcasts"
+version = "0.0.2"
+
+[[package]]
 name = "conservatory-search"
-version = "0.0.1"
+version = "0.0.2"
 
 [[package]]
 name = "core-foundation-sys"

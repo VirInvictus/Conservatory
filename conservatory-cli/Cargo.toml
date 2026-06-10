@@ -11,12 +11,21 @@ authors.workspace = true
 name = "conservatory-cli"
 path = "src/main.rs"
 
+# Compile-time plugins (spec §2.2): the default build ships all three media
+# types; `--no-default-features` is the music-only build, which CI keeps green.
+[features]
+default = ["podcasts", "audiobooks"]
+podcasts = ["dep:conservatory-podcasts"]
+audiobooks = ["dep:conservatory-audiobooks"]
+
 # Phase 1a ships the `debug-roundtrip` verb (the worker/pool usable artifact).
 # The real verbs (import, organize, search, tag, queue, podcast, stats) land at
 # Phase 2+ (spec §9).
 [dependencies]
 conservatory-core = { path = "../conservatory-core" }
 conservatory-search = { path = "../conservatory-search" }
+conservatory-podcasts = { path = "../conservatory-podcasts", optional = true }
+conservatory-audiobooks = { path = "../conservatory-audiobooks", optional = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

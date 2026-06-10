@@ -13,6 +13,8 @@
 
 Versioned via `PRAGMA user_version`, append-only and backwards-compatible post-1.0 (the Atrium discipline). Each migration is a numbered step that bumps `user_version`. This is deliberately **not** Viaduct's `CREATE TABLE IF NOT EXISTS` setup: the library is the user's irreplaceable data, so the schema history is an explicit ledger, not an idempotent best-effort. The mover's re-import contract (spec §5.6) and the nightly backup protect the curated layer that a re-import cannot rebuild.
 
+**All schema is core-owned, regardless of plugin features** (spec §2.2): the podcast and audiobook tables land in `conservatory-core`'s single ledger at Phases 6a/7a and apply in every build, so a music-only build (`--no-default-features`) has the same `user_version` and the same (empty) tables as a full build. Plugin crates never own migrations; the plugin boundary is code and dependencies, not the database.
+
 ## Music tables (draft, spec §4.1)
 
 ```sql

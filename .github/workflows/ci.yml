@@ -43,3 +43,25 @@ jobs:
       - name: cargo test --workspace
         if: matrix.action == 'test'
         run: cargo test --workspace
+
+  # The music-only build (spec §2.2): both binaries with the podcasts and
+  # audiobooks plugin features off. Kept green from day one so the feature
+  # gating can't rot between now and Phases 6/7.
+  music-only:
+    name: music-only (no default features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo clippy (music-only)
+        run: cargo clippy -p conservatory-cli -p conservatory --no-default-features --all-targets -- -D warnings
+
+      - name: cargo test (music-only)
+        run: cargo test -p conservatory-cli -p conservatory --no-default-features

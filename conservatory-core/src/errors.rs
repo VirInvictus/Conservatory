@@ -14,6 +14,12 @@ pub enum Error {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("tag error: {0}")]
+    Tag(#[from] lofty::error::LoftyError),
+
+    #[error("image error: {0}")]
+    Image(#[from] image::ImageError),
+
     #[error("worker channel closed")]
     WorkerChannelClosed,
 

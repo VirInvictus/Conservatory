@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 rust-version = "1.85"
 license = "GPL-3.0-or-later"
@@ -38,10 +38,10 @@ quick-xml = "0.37"
 # Playback
 libmpv2 = "4.1"
 
-# Tag read/write (music). OPEN, spec §7.1: lofty (read+write, broad coverage)
-# is the leading candidate, symphonia the decoder/fallback. Decide at Phase 1/2.
-# lofty = "0.21"
-# symphonia = "0.5"
+# Tag read/write (music). Signed off at Phase 1c (spec §7.1): lofty (read+write,
+# broad coverage) over symphonia (decode-only), so one library serves both the
+# 1c tag read and the 5b embedded write-back.
+lofty = "0.21"
 
 # HTML / chapters / images (ammonia + id3 are pulled by conservatory-podcasts;
 # image is core, for cover decode + accent)

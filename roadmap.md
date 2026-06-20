@@ -54,14 +54,14 @@ The headless engine's spine. Nothing user-facing ships here, but every later pha
 
 *Usable artifact:* a fixture library loads into the schema; counts and basic lookups verify through the read pool. (Shipped as `conservatory-cli debug-fixture <db> --scale small|medium|large`.)
 
-### Phase 1c — Tag read + cover/accent
+### Phase 1c — Tag read + cover/accent ✅
 
-- [ ] Dependency sign-off: `lofty` vs `symphonia` for tag read (spec §7.1, §11). Decide and record before adding. Leading candidate is `lofty` (read + write, broad coverage).
-- [ ] Tag reader: read embedded tags into the import draft (title, artists, album, track/disc no, year, raw multi-value genres, ReplayGain, format/bitrate/sample-rate, duration).
-- [ ] Cover art + accent: extract or locate cover art and compute the per-album accent via a median-cut quantizer into `albums.accent_rgb` (the Hermitage pattern, spec §7.4). Sign off `image` features here.
-- [ ] Tests: read a set of fixture files (one per format: flac/mp3/opus/m4a) into a draft; accent extraction is deterministic against a fixed cover.
+- [x] Dependency sign-off: `lofty` over `symphonia` for tag read (spec §7.1, §11; ATTRIBUTIONS.md). `lofty` (read + write, broad coverage) serves both the 1c read and the 5b write-back; `symphonia` is decode-only and would need a second crate for writes.
+- [x] Tag reader: read embedded tags into the import draft (title, artists, album, track/disc no + totals, year, raw multi-value genres, ReplayGain, format/bitrate/sample-rate, duration). `src/tags.rs`: `read_track` → `TrackDraft`. Raw genres kept verbatim (the §5.2 decoupling); splitting is Phase 2b's job.
+- [x] Cover art + accent: extract embedded cover or locate a sibling cover file, and compute the accent via a median-cut quantizer (`albums.accent_rgb` is populated at Phase 2 import; 1c computes the value headless). `src/accent.rs`, ported from Hermitage (docs/accent.md, spec §7.4). `image` signed off with jpeg + png features (webp deferred).
+- [x] Tests: read committed per-format fixtures (flac/mp3/opus/m4a) into a draft (`tests/tags.rs`); accent extraction is deterministic against synthesized covers (`src/accent.rs` unit tests). Fixtures regenerable via `examples/gen_audio_fixtures.rs` (ffmpeg + lofty), CI stays hermetic.
 
-*Usable artifact:* reading a real audio file yields a populated track/album draft with an accent colour, headless.
+*Usable artifact:* `conservatory-cli debug-tags <file>` reads a real audio file into a populated draft with an accent colour, headless.
 
 ---
 

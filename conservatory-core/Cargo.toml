@@ -17,6 +17,9 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 chrono = { workspace = true }
+# Phase 1c: tag read (lofty) and cover decode + accent extraction (image).
+lofty = { workspace = true }
+image = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

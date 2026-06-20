@@ -7,11 +7,17 @@
 //! pipeline (ported from `belfry-core` at Phase 6).
 //!
 //! Phase 1a (spec §17) lands the spine: the single-writer SQLite worker, the
-//! read-only pool, and the numbered-migration runner. The data model, tag
-//! read, and the rest follow in later sub-phases.
+//! read-only pool, and the numbered-migration runner. Phase 1b adds the music
+//! data model and FTS5; Phase 1c adds tag read and cover-art accent extraction.
+//! The import pipeline, playback, podcasts, and audiobooks follow.
 
+pub mod accent;
 pub mod db;
 pub mod errors;
+pub mod tags;
+
+pub use accent::{compute_accent, find_cover_bytes};
+pub use tags::{EmbeddedCover, TrackDraft, read_track};
 
 /// Workspace version, surfaced for the CLI and GUI binaries.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

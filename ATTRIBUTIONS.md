@@ -39,5 +39,7 @@ Recorded here as dependencies are signed off (spec §11) and added to the worksp
 | `clap` | MIT OR Apache-2.0 | `conservatory-cli` argument parsing (the `debug-roundtrip` verb) | 1a |
 | `anyhow` | MIT OR Apache-2.0 | Error context in the CLI binary | 1a |
 | `tempfile` | MIT OR Apache-2.0 | Test-only: temporary databases in the integration and unit suites | 1a (dev) |
+| `lofty` | MIT OR Apache-2.0 | Embedded-tag read (`read_track` into the import draft); the write side feeds 5b write-back | 1c |
+| `image` | MIT OR Apache-2.0 | Cover-art decode (jpeg/png) for the median-cut accent (`compute_accent`) | 1c |
 
 System libraries planned: `libmpv` (with the ffmpeg filter library: `silenceremove`, `rubberband`, `acompressor`, `equalizer`, `loudnorm`), `gtk4`, `libadwaita`, `libsecret` (via `oo7`). Full per-dependency license notes will be filled in as each lands.

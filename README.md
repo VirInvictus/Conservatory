@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GNOME-50%2B-4a86cf" alt="GNOME 50+">
-  <img src="https://img.shields.io/badge/status-v0.0.2%20%C2%B7%20Phase%201-orange" alt="Status: v0.0.2, Phase 1">
+  <img src="https://img.shields.io/badge/status-v0.0.9%20%C2%B7%20Phase%203-orange" alt="Status: v0.0.9, Phase 3">
 </p>
 
 ---
@@ -15,7 +15,7 @@
 
 **Calibre for audio.**
 
-A native GNOME library manager that owns and organizes your music and podcasts on disk, presented through a foobar2000 Columns UI browse surface and played through a libmpv daily-driver engine that runs both media types from a single queue. v0.0.2: the database spine (single-writer SQLite worker, read pool, numbered migrations, the music schema) is shipped, and the workspace is structured around compile-time plugins with music as the native program.
+A native GNOME library manager that owns and organizes your music and podcasts on disk, presented through a foobar2000 Columns UI browse surface and played through a libmpv daily-driver engine that runs both media types from a single queue. v0.0.9: the manager is usable headless (import, organize, shelf-genre resolution, and crash-safe file moves with dry-run + undo), the Calibre-style search grammar is in, and the GTK Columns UI browse window is taking shape. The workspace is structured around compile-time plugins with music as the native program.
 
 ## Why this exists
 
@@ -36,13 +36,20 @@ Conservatory absorbs Brandon's podcast client, Belfry. Belfry's Phase 1 work is 
 
 ## Status
 
-v0.0.2, Phase 1 underway (1a and 1b shipped, 1c next). The database layer is real: single-writer worker, read-only pool, numbered migrations, the music schema with FTS5, and CLI smoke verbs over all of it.
+v0.0.9, Phase 3 in progress. Phases 1 (data layer) and 2 (import/organize) are complete and Phase 3 (browse) is underway:
+
+- **Phase 1** — single-writer SQLite worker, read-only pool, numbered migrations, the music schema with FTS5, the embedded-tag reader (`lofty`), and median-cut cover accents.
+- **Phase 2 — the manager is usable headless.** Point the CLI at a folder and get an organized, database-owned library: tag read → resolve → shelf-genre derivation → path-template render → crash-safe move (dry-run preview, undo journal, roll-forward recovery). Verbs: `import`, `organize`, `shelf-genre-set`.
+- **Phase 3a** — `conservatory-search`, the Calibre-style expression grammar (lex → parse → eval + all-or-nothing SQL translate, bm25 + recency ranking), exposed as `conservatory-cli search`.
+- **Phase 3b** — the first GTK4/libadwaita code: the deadbeef-cui faceted browse window (Genre → Album Artist → Album panes + a track table), with facet logic kept headless in core.
+
+Next: Phase 3c (sortable/multi-select track list, the filter bar wired to the grammar, Perspectives), then Phase 4 (playback).
 
 - [`spec.md`](spec.md) — the design contract.
-- [`roadmap.md`](roadmap.md) — the six-phase plan, broken into independently shippable sub-phases.
+- [`roadmap.md`](roadmap.md) — the phased plan, broken into independently shippable sub-phases.
 - [`patchnotes.md`](patchnotes.md) — release notes (newest at top).
 - [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md) — design lineage, dependency licenses, and the GPL-3-via-rubberband chain.
-- [`docs/`](docs/) — design references: [schema](docs/schema.md), [path templates](docs/path-template.md), [genre normalization](docs/genre-normalization.md), [search grammar](docs/search-grammar.md), [libmpv profiles](docs/libmpv-profiles.md), [keymap](docs/keymap.md).
+- [`docs/`](docs/) — design references: [schema](docs/schema.md), [import](docs/import.md), [path templates](docs/path-template.md), [genre normalization](docs/genre-normalization.md), [file mover](docs/mover.md), [cover accent](docs/accent.md), [search grammar](docs/search-grammar.md), [libmpv profiles](docs/libmpv-profiles.md), [keymap](docs/keymap.md).
 
 ## Workspace
 
@@ -63,16 +70,14 @@ Both binaries take `--no-default-features` for a music-only build (no podcast or
 - **GTK 4.16+ / libadwaita 1.7+**
 - **SQLite** via `rusqlite` (bundled, FTS5): single-writer worker, read-only pool, WAL mode
 - **`tokio`** runtime; **`reqwest`** for podcast fetch; **`feed-rs`** + **`quick-xml`** for feeds (Phase 6)
-- **Tag read/write** via `lofty` (and/or `symphonia`); **`image`** for cover decode and accent extraction
+- **Tag read/write** via `lofty` (signed off over `symphonia`, spec §7.1); **`image`** for cover decode and accent extraction
 - **libmpv** via `libmpv2` + ffmpeg's `silenceremove` / `acompressor` / `equalizer` / `loudnorm` / `rubberband` filters
 - **`oo7`** for libsecret credential storage (HTTP Basic per-show auth)
 - **`zbus`** for MPRIS2 and the suspend inhibitor
 - **Meson** wrapper over Cargo for Flatpak packaging
 - **Memory budget:** < 200 MB idle, < 300 MB active on a 50k-track library (see [`spec.md`](spec.md) §13)
 
-## Building (placeholder; real build instructions firm up as phases land)
-
-The workspace skeleton currently builds clean but does nothing user-facing yet.
+## Building
 
 ```bash
 # Native (development)
@@ -80,8 +85,21 @@ cargo build --workspace
 cargo test --workspace
 
 # CI gate (matches the portfolio)
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
+```
+
+The headless manager works today:
+
+```bash
+# Import a folder into a database-owned library (copies by default)
+cargo run -p conservatory-cli -- import library.db /path/to/album ~/Music/Conservatory
+
+# Search it with the full grammar
+cargo run -p conservatory-cli -- search library.db 'genre:ambient AND year:>=1990'
+
+# Launch the (work-in-progress) browse window
+cargo run -p conservatory -- library.db
 ```
 
 System build dependencies (Fedora 44):

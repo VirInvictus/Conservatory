@@ -1,6 +1,6 @@
 # Keymap (draft proposal)
 
-> **Status: provisional.** No GUI exists yet (the GTK binary arrives at roadmap Phase 3). This is a proposed keymap to be finalized as the browse (Phase 3) and playback (Phase 4) surfaces land, not a description of current behaviour. It encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** GNOME/libadwaita conventions are followed where one exists.
+> **Status: provisional.** The browse window exists (Phase 3b) but key bindings are not wired yet; they begin landing with the filter bar (`Ctrl+F`) at Phase 3c and the playback transport at Phase 4. This is a proposed keymap to be finalized as those surfaces land, not a description of current behaviour. It encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** GNOME/libadwaita conventions are followed where one exists.
 
 ## Global
 

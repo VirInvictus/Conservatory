@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-> **Status: design reference; draft schema.** The first migrations land at roadmap Phase 1a/1b. This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
+> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b) and `0002` (move journal, Phase 2c). The podcast, audiobook, and unified-queue tables below are still draft (they land at their phases). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
 
 ## Connection discipline
 

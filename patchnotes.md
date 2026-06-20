@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.0.9
+
+Phase 3b shipped: the first GTK4/libadwaita code. `conservatory` is now a launching app with the deadbeef-cui "Columns UI" faceted browse (spec §3.3).
+
+- **Facet logic (`conservatory-core/src/db/facets.rs`, headless + tested):** `facet_rows` (distinct values of Genre / Album Artist / Album with `COUNT(DISTINCT track)`, narrowed by upstream selections) and `facet_tracks` (the leaf set). Genre is multi-valued: a track tagged `Electronic; Ambient` counts under both rows (the §5.2 decoupling). The CLAUDE.md hard rule keeps the logic in core; the GTK binary only renders. `debug-facets <db>` exercises it headless.
+- **GTK browse window (`conservatory/src/ui/`, programmatic):** an `adw::ApplicationWindow` with a row of facet panes (`ListView` + `MultiSelection`, each topped by an `[All (N)]` row, memoized counts) and a minimal leaf track list. Selecting facet rows narrows the downstream panes and the leaf (the cascade); the real sortable track list lands at 3c.
+- **Coalescing:** ported Viaduct's `CoalescingQueue` (interval + max-interval flush, dedup) to debounce selection changes into one cascade recompute per multi-select drag, never per row (spec §2.1).
+- **CI:** the `libgtk-4-dev` / `libadwaita-1-dev` install lands in both jobs.
+
+Deferred: user-reconfigurable + persisted pane order (Phase 10 config); the sortable track list + filter bar (3c); `BatchUpdate` / live deltas (until an in-GUI writer, 5a).
+
 ## v0.0.8
 
 Phase 3a shipped: the `conservatory-search` expression engine and a CLI `search` verb (the first piece of Phase 3, GTK browse).

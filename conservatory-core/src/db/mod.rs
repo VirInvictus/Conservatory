@@ -2,6 +2,7 @@
 
 mod command;
 mod connection;
+pub mod facets;
 pub mod fixtures;
 pub mod migrations;
 pub mod models;
@@ -14,6 +15,7 @@ mod writes;
 #[cfg(test)]
 mod fts_tests;
 
+pub use facets::{FacetField, FacetFilter, FacetRow, TrackBrief, facet_rows, facet_tracks};
 pub use migrations::CURRENT_VERSION;
 pub use models::{Album, Artist, Genre, Track};
 pub use pool::ReadPool;

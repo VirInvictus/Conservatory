@@ -1,26 +1,40 @@
-//! Conservatory GTK4 binary. The GUI arrives at Phase 3 (spec §17); until
-//! then this is a placeholder so the workspace builds without the GTK
-//! toolchain present.
+//! Conservatory GTK4/libadwaita binary. Phase 3b launches the faceted browse
+//! window (spec §3.3); the player, podcasts, and audiobooks tabs follow in later
+//! phases. All data logic lives in `conservatory-core`; this binary renders.
 
-/// The compile-time plugins this binary was built with (spec §2.2); the
-/// Podcasts and Audiobooks tabs exist only when their feature is on. The match
-/// on an empty slice (rather than `is_empty`) keeps clippy's compile-time-
-/// constant lints quiet across both feature sets.
-fn plugin_list() -> String {
-    let plugins: &[&str] = &[
-        #[cfg(feature = "podcasts")]
-        "podcasts",
-        #[cfg(feature = "audiobooks")]
-        "audiobooks",
-    ];
-    match plugins {
-        [] => "none (music-only build)".to_string(),
-        _ => plugins.join(", "),
-    }
+use std::path::PathBuf;
+
+use libadwaita as adw;
+
+use adw::prelude::*;
+use gtk4::glib;
+
+mod ui;
+
+const APP_ID: &str = "org.virinvictus.Conservatory";
+
+fn main() -> glib::ExitCode {
+    let app = adw::Application::builder().application_id(APP_ID).build();
+
+    app.connect_activate(|app| {
+        let db = std::env::args()
+            .nth(1)
+            .map(PathBuf::from)
+            .or_else(default_db_path);
+        let window = ui::window::ConservatoryWindow::new(app, db);
+        window.present();
+    });
+
+    // Pass only argv0 to GApplication so a positional DB path is not treated as a
+    // file to "open"; the activate handler reads the real args itself.
+    let argv0 = std::env::args().next().unwrap_or_default();
+    app.run_with_args(&[argv0])
 }
 
-fn main() {
-    println!("Conservatory {}", conservatory_core::VERSION);
-    println!("plugins: {}", plugin_list());
-    println!("GUI not built yet (Phase 3, see spec.md §17). Use conservatory-cli.");
+/// The default library location (XDG data dir). Browse is empty if it's absent.
+fn default_db_path() -> Option<PathBuf> {
+    let mut path = glib::user_data_dir();
+    path.push("conservatory");
+    path.push("library.db");
+    Some(path)
 }

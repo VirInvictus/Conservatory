@@ -20,10 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No system libraries are needed yet: rusqlite is `bundled` (it compiles
-      # its own SQLite) and no crate pulls GTK/libmpv at Phase 1a. The
-      # libgtk-4-dev / libadwaita-1-dev / libmpv-dev install step lands with the
-      # GTK browse (Phase 3) and playback (Phase 4) crates.
+      # The GUI binary (Phase 3b) needs GTK4 + libadwaita; rusqlite stays
+      # `bundled`. The libmpv-dev install joins this list at Phase 4 (playback).
+      - name: Install GTK system libraries
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -52,6 +52,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install GTK system libraries
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

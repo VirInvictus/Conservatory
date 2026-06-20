@@ -43,5 +43,7 @@ Recorded here as dependencies are signed off (spec §11) and added to the worksp
 | `image` | MIT OR Apache-2.0 | Cover-art decode (jpeg/png) for the median-cut accent (`compute_accent`) | 1c |
 | `regex` | MIT OR Apache-2.0 | `~regex` match in `conservatory-search`'s in-memory evaluator | 3a |
 | `chrono` | MIT OR Apache-2.0 | Date keywords/precision in `conservatory-search` (also used by core for timestamps) | 1a / 3a |
+| `gtk4` | MIT (bindings); GTK4 lib LGPL-2.1-or-later | The GUI toolkit for the browse window and all later GTK surfaces | 3b |
+| `libadwaita` | MIT (bindings); libadwaita lib LGPL-2.1-or-later | GNOME/Adwaita application window, header bar, and widgets | 3b |
 
 System libraries planned: `libmpv` (with the ffmpeg filter library: `silenceremove`, `rubberband`, `acompressor`, `equalizer`, `loudnorm`), `gtk4`, `libadwaita`, `libsecret` (via `oo7`). Full per-dependency license notes will be filled in as each lands.

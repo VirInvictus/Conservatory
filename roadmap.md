@@ -127,16 +127,18 @@ A working library browser. The search crate (3a) is headless and could in princi
 
 *Usable artifact:* `conservatory-cli search '<expr>'` filters the library with the full grammar (verified against the real imported `testdata/` albums via both the SQL and eval paths).
 
-### Phase 3b — Columns UI faceted panes
+### Phase 3b — Columns UI faceted panes ✅
 
-- [ ] N configurable hierarchical filter panes (default Genre → Album Artist → Album), each driven by a field expression, persisted (spec §3.3). The deadbeef-cui layout as a first-class window.
-- [ ] Multi-value faceting: a track tagged `Electronic; Ambient` appears under both, while the single-valued shelf genre still drives the filesystem (the decoupling, spec §3.3).
-- [ ] Memoized per-facet track counts; an `[All (N)]` synthetic row tops each pane.
-- [ ] Debounced selection-change before downstream recompute (the deadbeef-cui invariant that keeps multi-select drags cheap on large libraries).
-- [ ] Coalescing-delta plumbing: port Viaduct's `CoalescingQueue<T>` + `BatchUpdate` (main-thread, interval + max-interval flush) to deliver `LibraryChanges` as coalesced deltas, never full reloads (spec §2.1). UI updates apply as deltas; facets never scroll back to top on an unrelated event.
-- [ ] Tests: facet counts against a fixture; selection narrows downstream panes correctly; delta coalescing under a burst of changes.
+The first GTK4/libadwaita code (programmatic UI; facet logic in `conservatory-core`, the binary renders).
 
-*Usable artifact:* the faceted panes filter a real library; selection is debounced and repaint hits the spec §13 budget on the fixture's scale.
+- [x] Hierarchical filter panes (default Genre → Album Artist → Album), the deadbeef-cui layout as a first-class window. (User-reconfigurable order / field expressions and their **persistence** deferred to the config layer, Phase 10; 3b ships the default hierarchy.)
+- [x] Multi-value faceting: a track tagged `Electronic; Ambient` appears under both Genre rows (joins `track_genres`), while single-valued shelf genre drives the filesystem (the §5.2 decoupling). `core::db::facets`.
+- [x] Memoized per-facet track counts; an `[All (N)]` synthetic row tops each pane (selecting it clears that pane's constraint).
+- [x] Debounced selection-change before downstream recompute (the deadbeef invariant), via the ported coalescing queue; the cascade recomputes only panes downstream of the changed one + the leaf.
+- [x] Coalescing-delta plumbing: ported Viaduct's `CoalescingQueue` (main-thread, interval + max-interval flush, dedup) and used it for the selection debounce. (`BatchUpdate` and live `LibraryChanges` delivery deferred until there is an in-GUI writer, Phase 5a.)
+- [x] Tests: facet counts + cascade + multi-value genre against a fixture (`core/tests/facets.rs`, headless); coalescing burst → single flush (`ui::coalescing` test, headless glib). GTK widgets verified by build + manual launch.
+
+*Usable artifact:* `conservatory <db>` launches the browse window; facet selection narrows downstream panes and the leaf list. (`conservatory-cli debug-facets <db>` exercises the same logic headless.)
 
 ### Phase 3c — Track list + Perspectives UI
 

@@ -19,10 +19,12 @@ default = ["podcasts", "audiobooks"]
 podcasts = ["dep:conservatory-podcasts"]
 audiobooks = ["dep:conservatory-audiobooks"]
 
-# gtk4 + libadwaita wire in at Phase 3 (spec §17). The GUI binary stays a
-# placeholder until then so the workspace builds without the GTK toolchain.
+# GTK4 + libadwaita land at Phase 3b (the faceted browse window). The build now
+# needs the system gtk4 / libadwaita dev libraries (CI installs them).
 [dependencies]
 conservatory-core = { path = "../conservatory-core" }
 conservatory-search = { path = "../conservatory-search" }
 conservatory-podcasts = { path = "../conservatory-podcasts", optional = true }
 conservatory-audiobooks = { path = "../conservatory-audiobooks", optional = true }
+gtk4 = { workspace = true }
+libadwaita = { workspace = true }

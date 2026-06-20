@@ -142,6 +142,13 @@ enum Command {
         #[arg(long, value_enum, default_value_t = Format::Tsv)]
         format: Format,
     },
+
+    /// Phase 3b smoke test: dump the faceted-browse panes (Genre → Album Artist
+    /// → Album) with counts and the leaf track total. Read-only.
+    DebugFacets {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
 }
 
 /// The compile-time plugins this binary was built with (spec §2.2). The match
@@ -188,6 +195,7 @@ fn main() -> Result<()> {
             value,
         }) => shelf_genre_set(db, album_id, value),
         Some(Command::Search { db, query, format }) => search(db, query, format),
+        Some(Command::DebugFacets { db }) => debug_facets(db),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
@@ -559,6 +567,34 @@ async fn run_shelf_genre_set(db: PathBuf, album_id: i64, value: String) -> Resul
         .with_context(|| format!("setting shelf genre for album {album_id}"))?;
     worker.shutdown_ack().await.context("shutdown ack")?;
     println!("album {album_id} shelf genre set to {value:?}; run `organize` to move it");
+    Ok(())
+}
+
+fn debug_facets(db: PathBuf) -> Result<()> {
+    use conservatory_core::db::{FacetField, facet_rows, facet_tracks};
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+
+    for (label, field) in [
+        ("Genre", FacetField::Genre),
+        ("Album Artist", FacetField::AlbumArtist),
+        ("Album", FacetField::Album),
+    ] {
+        let rows = facet_rows(&conn, field, &[]).context("facet rows")?;
+        let total: i64 = rows.iter().map(|r| r.count).sum();
+        println!(
+            "=== {label} [All ({} {})] ===",
+            rows.len(),
+            label.to_lowercase()
+        );
+        for row in &rows {
+            println!("  {:>5}  {}", row.count, row.value);
+        }
+        let _ = total;
+    }
+
+    let leaf = facet_tracks(&conn, &[]).context("facet tracks")?;
+    println!("\nleaf: {} track(s)", leaf.len());
     Ok(())
 }
 

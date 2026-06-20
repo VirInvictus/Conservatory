@@ -7,16 +7,27 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
     ReadPool, library_counts, probe_read, spawn_worker, track_render_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
-    GenreVocab, PathTemplate, TrackFields, compute_accent, find_collisions, find_cover_bytes,
-    read_track, resolve_album,
+    GenreVocab, ImportOptions, ImportReport, PathTemplate, TrackFields, compute_accent,
+    find_collisions, find_cover_bytes, import_folder, read_track, resolve_album,
 };
+
+/// Output format for the report-producing verbs (spec §9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Format {
+    /// Tab-separated (the default; pipe-friendly).
+    Tsv,
+    /// A compact JSON summary object.
+    Json,
+    /// Human-readable lines.
+    Human,
+}
 
 #[derive(Parser)]
 #[command(
@@ -30,9 +41,6 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-// All verbs are `Debug*` smoke tests for now; the shared prefix is intentional
-// and goes away when the real verbs (import, search, ...) land at Phase 2 (§9).
-#[allow(clippy::enum_variant_names)]
 enum Command {
     /// Phase 1a smoke test: open the DB, run migrations, and round-trip a row
     /// through the single-writer worker and the read-only pool.
@@ -72,9 +80,25 @@ enum Command {
         db: PathBuf,
     },
 
-    /// Phase 2c smoke test: render every track's target path and run a crash-safe
-    /// move job under a library root. Dry-run by default (no side effects).
-    DebugOrganize {
+    /// Import a folder (or file) into the library: scan, read tags, resolve, and
+    /// move/copy into the managed tree (spec §5.4). Copies by default.
+    Import {
+        /// Path to the SQLite database (created if absent).
+        db: PathBuf,
+        /// Folder or file to import.
+        source: PathBuf,
+        /// Library root the managed tree is rendered under.
+        root: PathBuf,
+        /// Consume the originals (move) instead of copying them.
+        #[arg(long)]
+        r#move: bool,
+        #[arg(long, value_enum, default_value_t = Format::Tsv)]
+        format: Format,
+    },
+
+    /// Re-render the managed tree from the database and move files to match
+    /// (after a shelf-genre or metadata change). Dry-run by default.
+    Organize {
         /// Path to the SQLite database.
         db: PathBuf,
         /// Library root the relative DB paths hang off.
@@ -88,6 +112,19 @@ enum Command {
         /// Undo a previously-applied job by id instead of organizing.
         #[arg(long, value_name = "JOB_ID")]
         undo: Option<i64>,
+        #[arg(long, value_enum, default_value_t = Format::Tsv)]
+        format: Format,
+    },
+
+    /// Set an album's shelf genre (a path-affecting edit; run `organize` after to
+    /// move the album).
+    ShelfGenreSet {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Album id.
+        album_id: i64,
+        /// The new shelf genre.
+        value: String,
     },
 }
 
@@ -114,17 +151,30 @@ fn main() -> Result<()> {
         Some(Command::DebugTags { file }) => debug_tags(file),
         Some(Command::DebugPaths { db }) => debug_paths(db),
         Some(Command::DebugShelfGenre { db }) => debug_shelf_genre(db),
-        Some(Command::DebugOrganize {
+        Some(Command::Import {
+            db,
+            source,
+            root,
+            r#move,
+            format,
+        }) => import(db, source, root, r#move, format),
+        Some(Command::Organize {
             db,
             root,
             apply,
             copy,
             undo,
-        }) => debug_organize(db, root, apply, copy, undo),
+            format,
+        }) => organize(db, root, apply, copy, undo, format),
+        Some(Command::ShelfGenreSet {
+            db,
+            album_id,
+            value,
+        }) => shelf_genre_set(db, album_id, value),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
-            println!("Phase 1a: try `debug-roundtrip <db>`. Real verbs land at Phase 2 (spec §9).");
+            println!("Try `import <db> <folder> <root>`, then `organize <db> <root> --apply`.");
             Ok(())
         }
     }
@@ -267,18 +317,106 @@ fn debug_shelf_genre(db: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn debug_organize(
+fn import(db: PathBuf, source: PathBuf, root: PathBuf, r#move: bool, format: Format) -> Result<()> {
+    block_on(run_import(db, source, root, r#move, format))
+}
+
+async fn run_import(
+    db: PathBuf,
+    source: PathBuf,
+    root: PathBuf,
+    r#move: bool,
+    format: Format,
+) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    // Heal any job interrupted by a previous crash before starting a new one.
+    mover::recover(&worker, &pool).await.context("recovery")?;
+
+    let opts = ImportOptions {
+        library_root: root,
+        mode: if r#move {
+            MoveMode::Move
+        } else {
+            MoveMode::Copy
+        },
+    };
+    let report = import_folder(&worker, &pool, &source, &opts)
+        .await
+        .context("import")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+
+    print_import_report(&report, format);
+    if !report.conflicts.is_empty() {
+        anyhow::bail!(
+            "import refused: {} conflict(s); nothing imported",
+            report.conflicts.len()
+        );
+    }
+    Ok(())
+}
+
+fn print_import_report(r: &ImportReport, format: Format) {
+    let job = r.job_id.map(|j| j.to_string());
+    match format {
+        Format::Json => println!(
+            "{{\"files_scanned\":{},\"skipped\":{},\"artists\":{},\"albums\":{},\"tracks\":{},\"job_id\":{},\"conflicts\":{}}}",
+            r.files_scanned,
+            r.skipped_unreadable,
+            r.artists,
+            r.albums,
+            r.tracks,
+            job.as_deref().unwrap_or("null"),
+            r.conflicts.len(),
+        ),
+        Format::Tsv => {
+            println!("files_scanned\tskipped\tartists\talbums\ttracks\tjob_id\tconflicts");
+            println!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                r.files_scanned,
+                r.skipped_unreadable,
+                r.artists,
+                r.albums,
+                r.tracks,
+                job.as_deref().unwrap_or(""),
+                r.conflicts.len(),
+            );
+        }
+        Format::Human => {
+            print!("scanned {} file(s)", r.files_scanned);
+            if r.skipped_unreadable > 0 {
+                print!(", {} unreadable", r.skipped_unreadable);
+            }
+            println!();
+            match r.job_id {
+                Some(j) => println!(
+                    "imported {} track(s) across {} album(s) / {} artist(s) (job {j})",
+                    r.tracks, r.albums, r.artists
+                ),
+                None if !r.conflicts.is_empty() => {
+                    println!(
+                        "refused: {} conflict(s); nothing imported",
+                        r.conflicts.len()
+                    );
+                    for c in &r.conflicts {
+                        println!("  {c:?}");
+                    }
+                }
+                None => println!("nothing to import"),
+            }
+        }
+    }
+}
+
+fn organize(
     db: PathBuf,
     root: PathBuf,
     apply: bool,
     copy: bool,
     undo: Option<i64>,
+    format: Format,
 ) -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("building current-thread runtime")?;
-    runtime.block_on(run_organize(db, root, apply, copy, undo))
+    block_on(run_organize(db, root, apply, copy, undo, format))
 }
 
 async fn run_organize(
@@ -287,6 +425,7 @@ async fn run_organize(
     apply: bool,
     copy: bool,
     undo: Option<i64>,
+    format: Format,
 ) -> Result<()> {
     let worker = spawn_worker(db.clone()).context("spawning worker")?;
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
@@ -331,12 +470,12 @@ async fn run_organize(
     }
 
     if apply {
-        // Heal any job interrupted by a previous crash before starting a new one.
         let recovered = mover::recover(&worker, &pool).await.context("recovery")?;
         if recovered > 0 {
             println!("recovered {recovered} interrupted job(s)");
         }
         let mode = if copy { MoveMode::Copy } else { MoveMode::Move };
+        let count = ops.len();
         let job_id = mover::apply(
             &worker,
             &pool,
@@ -348,30 +487,71 @@ async fn run_organize(
         )
         .await
         .context("applying move job")?;
-        println!(
-            "applied job {job_id}: {} track(s) organized under {}",
-            rows.len(),
-            root.display()
-        );
+        match format {
+            Format::Json => println!("{{\"job_id\":{job_id},\"tracks\":{count}}}"),
+            _ => println!(
+                "applied job {job_id}: {count} track(s) organized under {}",
+                root.display()
+            ),
+        }
     } else {
         let preview = mover::plan(ops);
-        for op in &preview.ops {
-            println!("{}  ->  {}", op.src.display(), op.dst.display());
+        match format {
+            Format::Json => println!(
+                "{{\"to_move\":{},\"in_place\":{},\"conflicts\":{}}}",
+                preview.ops.len(),
+                preview.skipped,
+                preview.conflicts.len(),
+            ),
+            Format::Tsv => {
+                for op in &preview.ops {
+                    println!("{}\t{}", op.src.display(), op.dst.display());
+                }
+            }
+            Format::Human => {
+                for op in &preview.ops {
+                    println!("{}  ->  {}", op.src.display(), op.dst.display());
+                }
+                println!(
+                    "\n{} to move, {} already in place, {} conflict(s)",
+                    preview.ops.len(),
+                    preview.skipped,
+                    preview.conflicts.len()
+                );
+                for conflict in &preview.conflicts {
+                    println!("  conflict: {conflict:?}");
+                }
+                println!("(dry-run; pass --apply to execute)");
+            }
         }
-        println!(
-            "\n{} to move, {} already in place, {} conflict(s)",
-            preview.ops.len(),
-            preview.skipped,
-            preview.conflicts.len()
-        );
-        for conflict in &preview.conflicts {
-            println!("  conflict: {conflict:?}");
-        }
-        println!("(dry-run; pass --apply to execute)");
     }
 
     worker.shutdown_ack().await.context("shutdown ack")?;
     Ok(())
+}
+
+fn shelf_genre_set(db: PathBuf, album_id: i64, value: String) -> Result<()> {
+    block_on(run_shelf_genre_set(db, album_id, value))
+}
+
+async fn run_shelf_genre_set(db: PathBuf, album_id: i64, value: String) -> Result<()> {
+    let worker = spawn_worker(db).context("spawning worker")?;
+    worker
+        .set_album_shelf_genre(album_id, value.clone())
+        .await
+        .with_context(|| format!("setting shelf genre for album {album_id}"))?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("album {album_id} shelf genre set to {value:?}; run `organize` to move it");
+    Ok(())
+}
+
+/// Run a future on a fresh current-thread runtime (the CLI's worker pattern).
+fn block_on<F: std::future::Future<Output = Result<()>>>(fut: F) -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building current-thread runtime")?
+        .block_on(fut)
 }
 
 fn now_secs() -> i64 {

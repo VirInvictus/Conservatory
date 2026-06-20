@@ -72,6 +72,38 @@ impl WorkerHandle {
             .await
     }
 
+    /// Resolve an artist by sort_name, creating it on first sight (import).
+    pub async fn get_or_create_artist(
+        &self,
+        name: String,
+        sort_name: String,
+        musicbrainz_id: Option<String>,
+    ) -> Result<i64> {
+        self.dispatch(|reply| Command::GetOrCreateArtist {
+            name,
+            sort_name,
+            musicbrainz_id,
+            reply,
+        })
+        .await
+    }
+
+    /// Resolve an album by (album_artist_id, title), creating it on first sight.
+    pub async fn get_or_create_album(&self, album: Album) -> Result<i64> {
+        self.dispatch(|reply| Command::GetOrCreateAlbum { album, reply })
+            .await
+    }
+
+    /// Set an album's shelf genre.
+    pub async fn set_album_shelf_genre(&self, album_id: i64, shelf_genre: String) -> Result<()> {
+        self.dispatch(|reply| Command::SetAlbumShelfGenre {
+            album_id,
+            shelf_genre,
+            reply,
+        })
+        .await
+    }
+
     /// Insert a track, returning its new id.
     pub async fn insert_track(&self, track: Track) -> Result<i64> {
         self.dispatch(|reply| Command::InsertTrack { track, reply })
@@ -246,6 +278,29 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::InsertAlbum { album, reply } => {
             let _ = reply.send(writes::insert_album(conn, &album));
+        }
+        Command::GetOrCreateArtist {
+            name,
+            sort_name,
+            musicbrainz_id,
+            reply,
+        } => {
+            let _ = reply.send(writes::get_or_create_artist(
+                conn,
+                &name,
+                &sort_name,
+                musicbrainz_id.as_deref(),
+            ));
+        }
+        Command::GetOrCreateAlbum { album, reply } => {
+            let _ = reply.send(writes::get_or_create_album(conn, &album));
+        }
+        Command::SetAlbumShelfGenre {
+            album_id,
+            shelf_genre,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_album_shelf_genre(conn, album_id, &shelf_genre));
         }
         Command::InsertTrack { track, reply } => {
             let _ = reply.send(writes::insert_track(conn, &track));

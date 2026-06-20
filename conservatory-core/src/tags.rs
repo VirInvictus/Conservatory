@@ -34,6 +34,10 @@ pub struct TrackDraft {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album_artist: Option<String>,
+    /// Embedded sort-name tags, when present (`ARTISTSORT` / `ALBUMARTISTSORT`).
+    /// The resolver prefers these over deriving a sort name from the display name.
+    pub artist_sort: Option<String>,
+    pub album_artist_sort: Option<String>,
     pub album: Option<String>,
     pub track_no: Option<u32>,
     pub track_total: Option<u32>,
@@ -69,6 +73,8 @@ pub fn read_track(path: &Path) -> Result<TrackDraft> {
         title: None,
         artist: None,
         album_artist: None,
+        artist_sort: None,
+        album_artist_sort: None,
         album: None,
         track_no: None,
         track_total: None,
@@ -97,6 +103,12 @@ fn fill_from_tag(draft: &mut TrackDraft, tag: &Tag) {
     draft.title = tag.title().map(|c| c.to_string());
     draft.artist = tag.artist().map(|c| c.to_string());
     draft.album_artist = tag.get_string(&ItemKey::AlbumArtist).map(str::to_string);
+    draft.artist_sort = tag
+        .get_string(&ItemKey::TrackArtistSortOrder)
+        .map(str::to_string);
+    draft.album_artist_sort = tag
+        .get_string(&ItemKey::AlbumArtistSortOrder)
+        .map(str::to_string);
     draft.album = tag.album().map(|c| c.to_string());
     draft.track_no = tag.track();
     draft.track_total = tag.track_total();

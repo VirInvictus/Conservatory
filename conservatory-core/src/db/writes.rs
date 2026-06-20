@@ -4,7 +4,7 @@
 //! update/delete land with the editor and mover in later phases. Reads never
 //! come through here: they use the read pool (`reads.rs`).
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{Album, Artist, Track};
 use crate::errors::Result;
@@ -15,6 +15,61 @@ pub(crate) fn insert_artist(conn: &Connection, artist: &Artist) -> Result<i64> {
         params![artist.name, artist.sort_name, artist.musicbrainz_id],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Resolve an artist by its `sort_name` (the unique key, the Calibre author_sort
+/// trick), creating it on first sight (Phase 2d import). The display `name` of an
+/// existing artist is left as-is.
+pub(crate) fn get_or_create_artist(
+    conn: &Connection,
+    name: &str,
+    sort_name: &str,
+    musicbrainz_id: Option<&str>,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO artists (name, sort_name, musicbrainz_id) VALUES (?1, ?2, ?3)
+         ON CONFLICT(sort_name) DO NOTHING",
+        params![name, sort_name, musicbrainz_id],
+    )?;
+    let id = conn.query_row(
+        "SELECT id FROM artists WHERE sort_name = ?1",
+        params![sort_name],
+        |r| r.get(0),
+    )?;
+    Ok(id)
+}
+
+/// Resolve an album by `(album_artist_id, title)`, creating it (with the supplied
+/// derived fields) on first sight (Phase 2d). Album identity is artist + title;
+/// a compilation has `album_artist_id = NULL` (the NULL-aware match handles it).
+pub(crate) fn get_or_create_album(conn: &Connection, album: &Album) -> Result<i64> {
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM albums
+             WHERE title = ?1
+               AND ((album_artist_id IS NULL AND ?2 IS NULL) OR album_artist_id = ?2)",
+            params![album.title, album.album_artist_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match existing {
+        Some(id) => Ok(id),
+        None => insert_album(conn, album),
+    }
+}
+
+/// Set an album's shelf genre (the §5.2 filed-under value). A path-affecting edit;
+/// the caller re-renders the tree (`organize`) to move the album (Phase 2d).
+pub(crate) fn set_album_shelf_genre(
+    conn: &Connection,
+    album_id: i64,
+    shelf_genre: &str,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE albums SET shelf_genre = ?2 WHERE id = ?1",
+        params![album_id, shelf_genre],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn insert_album(conn: &Connection, album: &Album) -> Result<i64> {

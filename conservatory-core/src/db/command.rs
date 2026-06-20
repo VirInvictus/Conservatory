@@ -29,6 +29,27 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<i64>>,
     },
 
+    /// Resolve an artist by sort_name, creating it on first sight (import).
+    GetOrCreateArtist {
+        name: String,
+        sort_name: String,
+        musicbrainz_id: Option<String>,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Resolve an album by (album_artist_id, title), creating it on first sight.
+    GetOrCreateAlbum {
+        album: Album,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Set an album's shelf genre (a path-affecting edit; re-organize to move).
+    SetAlbumShelfGenre {
+        album_id: i64,
+        shelf_genre: String,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Insert an album, returning its new id.
     InsertAlbum {
         album: Album,
@@ -108,6 +129,9 @@ impl Command {
         match self {
             Self::ProbeWrite { .. } => "probe_write",
             Self::InsertArtist { .. } => "insert_artist",
+            Self::GetOrCreateArtist { .. } => "get_or_create_artist",
+            Self::GetOrCreateAlbum { .. } => "get_or_create_album",
+            Self::SetAlbumShelfGenre { .. } => "set_album_shelf_genre",
             Self::InsertAlbum { .. } => "insert_album",
             Self::InsertTrack { .. } => "insert_track",
             Self::GetOrCreateGenre { .. } => "get_or_create_genre",

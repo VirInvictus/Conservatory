@@ -99,13 +99,13 @@ The headline risk (spec §5.4, CLAUDE.md hard rule). Release-blocking, not nice-
 
 *Usable artifact:* `conservatory-cli debug-organize <db> <root> [--apply] [--undo <id>]` plans, applies, and fully undoes a real move job; a crash between any two steps leaves a recoverable state (roll-forward on next run).
 
-### Phase 2d — Import pipeline + CLI verbs
+### Phase 2d — Import pipeline + CLI verbs ✅
 
-- [ ] Wire the pipeline: scan/drop → read tags (1c) → resolve into DB → derive `shelf_genre` (2b) → render target (2a) → move/copy (2c).
-- [ ] CLI: `import`, `organize` (re-render the tree from the DB), `tag set`, `shelf-genre set` (spec §9). Output `--tsv` (default) / `--json` / `--human`.
-- [ ] Tests: end-to-end import of a fixture folder; `organize` after a `shelf-genre set` moves the album; CLI output-format snapshots.
+- [x] Wire the pipeline: scan/drop → read tags (1c) → resolve into DB → derive `shelf_genre` (2b) → render target (2a) → move/copy (2c). `src/import/` (scan + resolve + two-pass pipeline; resolve in memory then a conflict pre-check before any DB write, so a refused import changes nothing). Accent (1c) computed + stored per album.
+- [x] CLI: `import` (copy default, `--move`), `organize` (re-render from DB; dry-run/`--apply`/`--undo`), `shelf-genre-set` (spec §9). Output `--tsv` (default) / `--json` / `--human`. (`tag set` deferred to the Phase 5a editor; `--json` is a compact numeric summary until serde is signed off.)
+- [x] Tests: `tests/import.rs` (end-to-end import of the committed per-format fixtures into a managed tree; copy keeps sources / move consumes them; re-import refused and DB unchanged; `shelf-genre-set` then `organize` moves the album) + the resolver/scan unit tests. Verified by hand against two real albums (mp3 + opus) from the library.
 
-*Usable artifact:* **the manager is usable headless.** Point the CLI at a folder and get an organized, database-owned library.
+*Usable artifact:* **the manager is usable headless.** `conservatory-cli import <db> <folder> <root>` gives an organized, database-owned library; `organize`/`shelf-genre-set` re-shelve it.
 
 ---
 

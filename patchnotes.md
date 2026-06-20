@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.7
+
+Phase 2d shipped: the import pipeline and real CLI verbs. **The manager is usable headless** (the Phase 2 exit): point the CLI at a folder and get an organized, database-owned library.
+
+- **Import pipeline (`src/import/`):** scan a folder → read tags → resolve artists/albums/genres → derive shelf genre + accent → render targets → move/copy into the managed tree. Runs in two passes: an in-memory resolution + conflict pre-check, then (only if clear) the persist + move, so a conflicting import leaves the database untouched. Import inserts at the source path and runs the journaled mover, so it is undoable and crash-safe like organize.
+- **Resolver:** album grouping by `(artist, title)`; album artist from the shared album-artist tag, else shared track artist, else Various Artists; artist identity by `sort_name` (embedded `ARTISTSORT` preferred, else a leading-article derivation); album identity `(album_artist_id, title)` so re-imports reuse the album.
+- **CLI:** `import <db> <source> <root>` (copies by default; `--move` to consume), `organize` (re-render from the DB; dry-run/`--apply`/`--undo`), `shelf-genre-set`. Output `--tsv` (default) / `--json` / `--human`. The old `debug-organize` is promoted to `organize`.
+- **Worker:** `get_or_create_artist`/`get_or_create_album`/`set_album_shelf_genre`. The tag reader now also reads embedded sort-name tags.
+- **Tests:** `tests/import.rs` end-to-end (import into a managed tree, copy-vs-move, re-import refusal, shelf-genre-set → organize) plus resolver/scan unit tests; hand-verified against two real albums (mp3 + opus).
+
 ## v0.0.6
 
 Phase 2c shipped: the crash-safe file mover. This is the trust-critical, release-blocking subsystem (spec §5.4); moving the user's files is the headline risk.

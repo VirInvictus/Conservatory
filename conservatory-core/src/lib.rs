@@ -14,12 +14,14 @@
 pub mod accent;
 pub mod db;
 pub mod errors;
+pub mod import;
 pub mod mover;
 pub mod path_template;
 pub mod shelf_genre;
 pub mod tags;
 
 pub use accent::{compute_accent, find_cover_bytes};
+pub use import::{ImportOptions, ImportReport, import_folder};
 pub use mover::{Conflict, MoveKind, MoveMode, MoveOp, MovePlan, plan};
 pub use path_template::{DEFAULT_MUSIC_TEMPLATE, PathTemplate, TrackFields, find_collisions};
 pub use shelf_genre::{AlbumGenreInput, GenreVocab, normalize, resolve_album, resolve_shelf_genre};

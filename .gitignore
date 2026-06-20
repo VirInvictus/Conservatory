@@ -24,6 +24,10 @@ data/gschemas.compiled
 # Memory-diagnostic capture file produced by `--debug` runs.
 debug-memory.log
 
+# Local real-album import test data (copied from the music library, not committed).
+# Used to exercise the Phase 2d import pipeline against real files.
+/testdata/
+
 # Editor / OS detritus
 .DS_Store
 *.swp

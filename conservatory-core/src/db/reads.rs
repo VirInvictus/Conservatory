@@ -120,6 +120,40 @@ pub fn track_render_rows(conn: &Connection) -> Result<Vec<TrackRenderRow>> {
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// Per-track raw genre lists for one album, used by the shelf-genre resolver
+/// (spec §5.2). One inner `Vec` per track, in track id order; a track with no
+/// genres contributes an empty `Vec` so track counts stay accurate.
+pub fn album_track_genres(conn: &Connection, album_id: i64) -> Result<Vec<Vec<String>>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id AS track_id, g.name AS genre
+         FROM tracks t
+         LEFT JOIN track_genres tg ON tg.track_id = t.id
+         LEFT JOIN genres g ON g.id = tg.genre_id
+         WHERE t.album_id = ?1
+         ORDER BY t.id",
+    )?;
+    let rows = stmt.query_map(params![album_id], |row| {
+        Ok((
+            row.get::<_, i64>("track_id")?,
+            row.get::<_, Option<String>>("genre")?,
+        ))
+    })?;
+
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut current_id: Option<i64> = None;
+    for row in rows {
+        let (track_id, genre) = row?;
+        if current_id != Some(track_id) {
+            out.push(Vec::new());
+            current_id = Some(track_id);
+        }
+        if let Some(name) = genre {
+            out.last_mut().expect("row pushed above").push(name);
+        }
+    }
+    Ok(out)
+}
+
 fn epoch_to_dt(secs: Option<i64>) -> Option<DateTime<Utc>> {
     secs.and_then(|s| Utc.timestamp_opt(s, 0).single())
 }

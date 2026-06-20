@@ -504,7 +504,7 @@ MPRIS2 (`org.mpris.MediaPlayer2`) with full metadata for the current item regard
 
 ### 7.2 Genre Normalization
 
-The alias map and priority list of §5.2. **Open:** whether Conservatory ships a default vocabulary (beets' `lastgenre` whitelist, or the MusicBrainz genre list) or starts empty and is user-built (§16).
+The alias map and priority list of §5.2. **Settled (§16.4):** Conservatory starts empty and user-built, shipping no default vocabulary; the schema supports seeding one (beets' `lastgenre` whitelist or the MusicBrainz genre list) later without a migration.
 
 ### 7.3 MusicBrainz
 
@@ -651,7 +651,7 @@ App ID: `org.gnome.Conservatory` (GNOME Circle) or `io.github.virinvictus.Conser
 1. **Scope.** This is the largest thing in Brandon's backlog: a music library manager, a daily-driver player, an absorbed podcast client, and an audiobook library, all sharing a unified queue. The audiobook tab (§3.8, added after the initial design) widens the scope further, mitigated by it being a thin layer over the already-absorbed spoken-word engine and landing last (Phase 7). It competes with Atrium (still pre-1.0) for the "one big project" slot, and as of v0.0.1 the build has begun *concurrently* with Atrium rather than after it. That concurrency is the risk this section originally warned against; it is now accepted by deliberate decision. The mitigation is no longer deferral but hard phasing (§17): every phase must leave a usable artifact, so attention can swing back to Atrium between phases without leaving Conservatory half-built. If the concurrency proves to be a mistake, the phasing is what makes a pause cheap.
 2. **Moving the user's files.** The file-ownership model is the headline risk. A move bug damages a real library. The dry-run, undo journal, and crash-safe replay (§5.4) are release-blocking, not nice-to-have.
 3. **Genre instability.** Genre-first physical shelving amplifies the least stable tag into file moves. The shelf-genre field plus rendered template (§5.1–5.2) keep raw tags off disk and make re-shelving cheap, but this is the part most likely to need revision in practice. The genre-tree rollup is the escape hatch if flat shelving churns too much.
-4. **Genre vocabulary seed (OPEN).** Ship a default alias map / whitelist (beets `lastgenre` or the MusicBrainz genre list) or start empty and user-built? Decide at implementation.
+4. **Genre vocabulary seed (settled, Phase 2b).** Start **empty and user-built**: Conservatory ships no default alias map or whitelist. `shelf_genre` derives from the raw tags as they are (case-folded, split, deduped), and `genre_aliases` / `genre_priority` are populated only as the user maps them. This avoids vendoring and maintaining a third-party list and avoids baking in someone else's genre opinions; the schema already supports seeding a vocabulary later (beets `lastgenre` or MusicBrainz) without a migration, so the door is open if curation friction demands it.
 5. **MusicBrainz tagging (OPEN).** In scope or assume pre-tagged files? Default is out; revisit if curation friction demands it.
 6. **EQ / DSP depth (OPEN).** None, a simple EQ, or a deadbeef-class DSP chain?
 7. **ReplayGain scan vs read (OPEN).** Scan values in-app, or only read existing tags?

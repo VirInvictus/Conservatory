@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.0.5
+
+Phase 2b shipped: the shelf-genre resolver that decides each album's filed-under genre.
+
+- **Resolver (`src/shelf_genre.rs`):** `normalize` splits raw tags on `;` `/` `,`, case-folds for matching, and maps through the alias vocabulary, keeping canonical/original casing in the output. `resolve_shelf_genre` runs the spec §5.2 priority chain (manual override → single album-level tag → most-common normalized track genre, ties broken by `genre_priority` rank then first-seen → `Unknown`). `resolve_album` is the DB-driven entry point; raw `track_genres` are read but never mutated (the §5.2 decoupling).
+- **Genre vocabulary (spec §16.4, now settled):** empty and user-built. Conservatory ships no default alias map or priority list; the schema can seed one (beets `lastgenre` or MusicBrainz) later without a migration.
+- **DB + CLI:** `album_track_genres` reads an album's per-track genres; `debug-shelf-genre <db>` derives and compares against the stored value (the headless usable artifact).
+
 ## v0.0.4
 
 Phase 2a shipped: the path-template engine that renders the on-disk tree from the database.

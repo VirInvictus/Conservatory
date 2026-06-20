@@ -13,7 +13,8 @@ use conservatory_core::db::{
     ReadPool, library_counts, probe_read, spawn_worker, track_render_rows,
 };
 use conservatory_core::{
-    PathTemplate, TrackFields, compute_accent, find_collisions, find_cover_bytes, read_track,
+    GenreVocab, PathTemplate, TrackFields, compute_accent, find_collisions, find_cover_bytes,
+    read_track, resolve_album,
 };
 
 #[derive(Parser)]
@@ -62,6 +63,13 @@ enum Command {
         /// Path to the SQLite database.
         db: PathBuf,
     },
+
+    /// Phase 2b smoke test: derive each album's shelf genre from its track tags
+    /// and compare against the stored value. Read-only.
+    DebugShelfGenre {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
 }
 
 /// The compile-time plugins this binary was built with (spec §2.2). The match
@@ -86,6 +94,7 @@ fn main() -> Result<()> {
         Some(Command::DebugFixture { db, scale }) => debug_fixture(db, scale),
         Some(Command::DebugTags { file }) => debug_tags(file),
         Some(Command::DebugPaths { db }) => debug_paths(db),
+        Some(Command::DebugShelfGenre { db }) => debug_shelf_genre(db),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
@@ -202,6 +211,33 @@ fn debug_paths(db: PathBuf) -> Result<()> {
     for (path, idx) in &collisions {
         println!("  collision: {} ({} tracks)", path.display(), idx.len());
     }
+    Ok(())
+}
+
+fn debug_shelf_genre(db: PathBuf) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let vocab = GenreVocab::load(&conn).context("loading genre vocabulary")?;
+
+    let albums = conservatory_core::db::list_albums(&conn).context("listing albums")?;
+    let mut mismatches = 0;
+    for album in &albums {
+        let derived = resolve_album(&conn, album.id, &vocab).context("resolving shelf genre")?;
+        let stored = album.shelf_genre.as_deref().unwrap_or("-");
+        let flag = if stored == derived { " " } else { "*" };
+        if stored != derived {
+            mismatches += 1;
+        }
+        println!(
+            "{flag} {:>4}  stored={stored:<16} derived={derived}",
+            album.id
+        );
+    }
+    println!(
+        "\n{} albums, {} differ from stored (*)",
+        albums.len(),
+        mismatches
+    );
     Ok(())
 }
 

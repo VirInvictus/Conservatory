@@ -1,6 +1,6 @@
 # Genre Normalization Notes
 
-> **Status: design reference, not yet implemented.** The shelf-genre resolver lands at roadmap Phase 2b. This expands spec §5.2 and §7.2 and is the contract that resolver builds against.
+> **Status: implemented at Phase 2b.** `conservatory-core/src/shelf_genre.rs` implements this contract (`normalize`, `resolve_shelf_genre`, DB-driven `resolve_album`). This expands spec §5.2 and §7.2.
 
 ## The problem
 
@@ -21,7 +21,7 @@ Runs before the resolution chain. Given a raw genre string:
 2. **Case-fold** each.
 3. **Map** each through `genre_aliases` (`raw → canonical`). For example `IDM → Electronic`, `Hip Hop`/`Rap → Hip-Hop`.
 
-The output is a set of normalized, canonical genre names. The seed source for the alias map is **OPEN** (spec §16.4): ship a default vocabulary (beets' `lastgenre` whitelist, or the MusicBrainz genre list) or start empty and let the user build it. Decide at implementation and record the choice here.
+The output is a set of normalized, canonical genre names. The seed source for the alias map is **settled (spec §16.4): empty and user-built.** Conservatory ships no default vocabulary; `genre_aliases` and `genre_priority` start empty, so normalization is identity-with-cleanup (split, trim, dedup, original casing kept) until the user adds mappings. Case-folding is for matching only; the output keeps the alias's canonical casing, or the raw tag's own casing when unmapped. The schema supports seeding a vocabulary later (beets `lastgenre` or MusicBrainz) without a migration.
 
 ## The resolution chain
 

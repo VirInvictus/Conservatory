@@ -78,14 +78,14 @@ The manager becomes usable headless here. This is the phase that earns the trust
 
 *Usable artifact:* `conservatory-cli debug-paths <db>` renders correct target paths for a fixture library and reports collisions. The engine is pure (`find_collisions` exposes batch collision detection for the Phase 2c mover).
 
-### Phase 2b — Shelf-genre resolver
+### Phase 2b — Shelf-genre resolver ✅
 
-- [ ] Normalization layer: split on `;` `/` `,`, case-fold, map through `genre_aliases` (spec §5.2). Decide §16.4 (ship a default vocabulary, beets `lastgenre` or MusicBrainz, vs start empty and user-built) and record it.
-- [ ] Priority chain: manual override → single album-level tag → most-common normalized track genre (ties broken by `genre_priority`, then first) → `Unknown` bucket.
-- [ ] `shelf_genre` is the only input to the genre folder level; raw `track_genres` are never touched (the decoupling in spec §5.2 and the CLAUDE.md hard rule).
-- [ ] Tests: deterministic derivation against fixtures with agreeing, disagreeing, and absent genres; alias-map application; priority tie-breaks.
+- [x] Normalization layer: split on `;` `/` `,`, case-fold for matching, map through `genre_aliases` (spec §5.2). §16.4 settled: **empty and user-built** (no default vocabulary; the schema can seed one later without a migration). `src/shelf_genre.rs`: `normalize` keeps canonical/original casing in the output.
+- [x] Priority chain: manual override → single album-level tag → most-common normalized track genre (ties broken by `genre_priority` rank, then first-seen) → `Unknown` bucket. `resolve_shelf_genre` (pure) + `resolve_album` (DB-driven).
+- [x] `shelf_genre` is the only input to the genre folder level; raw `track_genres` are read but never touched (the decoupling in spec §5.2 and the CLAUDE.md hard rule).
+- [x] Tests: 10 unit tests (agreeing/disagreeing/absent genres, alias-map application, priority + first-seen tie-breaks, multi-value-in-one-tag split) + a fixture-backed integration test (`tests/shelf_genre.rs`).
 
-*Usable artifact:* the resolver derives a stable `shelf_genre` for any album in a fixture library.
+*Usable artifact:* `conservatory-cli debug-shelf-genre <db>` derives a stable `shelf_genre` for every album in a fixture library (matches the stored value).
 
 ### Phase 2c — File mover (dry-run + undo journal + crash-safe replay)
 

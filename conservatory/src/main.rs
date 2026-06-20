@@ -4,17 +4,41 @@
 
 use std::path::PathBuf;
 
+use gtk4 as gtk;
 use libadwaita as adw;
 
 use adw::prelude::*;
-use gtk4::glib;
+use gtk::glib;
 
 mod ui;
 
 const APP_ID: &str = "org.virinvictus.Conservatory";
 
+/// Compact the Columns UI tables toward the dense deadbeef look (GTK's default
+/// list padding is roomy). Theme/colour follow the system; Kanagawa Dragon is a
+/// later pass.
+const CSS: &str = "\
+columnview.data-table > listview > row > cell { padding-top: 1px; padding-bottom: 1px; }
+columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height: 0; }
+.numeric { font-feature-settings: \"tnum\"; }
+";
+
+fn load_css() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(CSS);
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
 fn main() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).build();
+
+    app.connect_startup(|_| load_css());
 
     app.connect_activate(|app| {
         let db = std::env::args()

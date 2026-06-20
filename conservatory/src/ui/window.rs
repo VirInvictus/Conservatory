@@ -85,17 +85,27 @@ impl ConservatoryWindow {
         ];
         let leaf = build_leaf();
 
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        for pane in &panes {
-            content.append(&pane.view);
-            content.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+        // Facet panes in a row on top; the track table below (a draggable split,
+        // the deadbeef-cui layout).
+        let facet_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        for (i, pane) in panes.iter().enumerate() {
+            if i > 0 {
+                facet_row.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+            }
+            facet_row.append(&pane.view);
         }
-        content.append(&leaf.view);
+
+        let split = gtk::Paned::new(gtk::Orientation::Vertical);
+        split.set_start_child(Some(&facet_row));
+        split.set_end_child(Some(&leaf.view));
+        split.set_resize_start_child(true);
+        split.set_resize_end_child(true);
+        split.set_position(300);
 
         let header = adw::HeaderBar::new();
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
-        toolbar.set_content(Some(&content));
+        toolbar.set_content(Some(&split));
         self.set_content(Some(&toolbar));
 
         *imp.panes.borrow_mut() = panes;

@@ -1,8 +1,12 @@
-//! One faceted-browse pane: a scrollable, multi-selectable list of facet values
-//! with counts, topped by an `[All (N)]` row. Phase 3b. The selection-change
-//! wiring + cascade live in `window` (they need the window's shared state).
+//! One faceted-browse pane: a `ColumnView` with a value column and a right-
+//! aligned `Count` column (the deadbeef-cui Columns UI look), topped by an
+//! `[All (N)]` row. Sortable headers; grid lines; dense rows. Phase 3b. The
+//! selection-change wiring + cascade live in `window`.
+
+use std::cmp::Ordering;
 
 use gtk::gio;
+use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
@@ -14,19 +18,36 @@ use crate::ui::objects::FacetRow;
 /// widget to place in the window.
 pub struct FacetPane {
     pub field: FacetField,
-    pub plural: String,
     pub store: gio::ListStore,
     pub selection: gtk::MultiSelection,
-    pub view: gtk::Box,
+    pub view: gtk::ScrolledWindow,
 }
 
-/// Build a pane for `field`. `plural` labels the `[All (N <plural>)]` row.
+fn to_gtk(o: Ordering) -> gtk::Ordering {
+    match o {
+        Ordering::Less => gtk::Ordering::Smaller,
+        Ordering::Equal => gtk::Ordering::Equal,
+        Ordering::Greater => gtk::Ordering::Larger,
+    }
+}
+
+fn facet(obj: &glib::Object) -> FacetRow {
+    obj.clone().downcast::<FacetRow>().expect("FacetRow")
+}
+
+/// Build a pane for `field`. `title` is the value-column header; `plural` labels
+/// the `[All (N <plural>)]` row.
 pub fn build_pane(field: FacetField, title: &str, plural: &str) -> FacetPane {
     let store = gio::ListStore::new::<FacetRow>();
-    let selection = gtk::MultiSelection::new(Some(store.clone()));
 
-    let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, item| {
+    let view = gtk::ColumnView::new(None::<gtk::SelectionModel>);
+    view.set_show_row_separators(true);
+    view.set_show_column_separators(true);
+    view.add_css_class("data-table");
+
+    // Value column (expands, ellipsizes).
+    let value_factory = gtk::SignalListItemFactory::new();
+    value_factory.connect_setup(|_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
         let label = gtk::Label::builder()
             .xalign(0.0)
@@ -35,75 +56,112 @@ pub fn build_pane(field: FacetField, title: &str, plural: &str) -> FacetPane {
         item.set_child(Some(&label));
     });
     let plural_owned = plural.to_string();
-    factory.connect_bind(move |_, item| {
+    value_factory.connect_bind(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
-        let row = item.item().and_downcast::<FacetRow>().expect("FacetRow");
+        let row = facet(&item.item().expect("item"));
         let label = item.child().and_downcast::<gtk::Label>().expect("Label");
-        label.set_text(&row.display(&plural_owned));
+        label.set_text(&row.value_text(&plural_owned));
     });
+    let value_col = gtk::ColumnViewColumn::new(Some(title), Some(value_factory));
+    value_col.set_expand(true);
+    value_col.set_resizable(true);
+    let value_sorter = gtk::CustomSorter::new(|a, b| {
+        let (a, b) = (facet(a), facet(b));
+        let ord = match (a.is_all(), b.is_all()) {
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            _ => a.value().to_lowercase().cmp(&b.value().to_lowercase()),
+        };
+        to_gtk(ord)
+    });
+    value_col.set_sorter(Some(&value_sorter));
 
-    let list = gtk::ListView::new(Some(selection.clone()), Some(factory));
-    list.add_css_class("navigation-sidebar");
+    // Count column (right-aligned numbers).
+    let count_factory = gtk::SignalListItemFactory::new();
+    count_factory.connect_setup(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        let label = gtk::Label::builder().xalign(1.0).build();
+        label.add_css_class("numeric");
+        item.set_child(Some(&label));
+    });
+    count_factory.connect_bind(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        let row = facet(&item.item().expect("item"));
+        let label = item.child().and_downcast::<gtk::Label>().expect("Label");
+        label.set_text(&row.count().to_string());
+    });
+    let count_col = gtk::ColumnViewColumn::new(Some("Count"), Some(count_factory));
+    count_col.set_fixed_width(64);
+    count_col.set_resizable(true);
+    let count_sorter = gtk::CustomSorter::new(|a, b| {
+        let (a, b) = (facet(a), facet(b));
+        let ord = match (a.is_all(), b.is_all()) {
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            _ => a.count().cmp(&b.count()),
+        };
+        to_gtk(ord)
+    });
+    count_col.set_sorter(Some(&count_sorter));
 
-    let header = gtk::Label::builder()
-        .label(title)
-        .xalign(0.0)
-        .css_classes(["heading"])
-        .margin_start(8)
-        .margin_top(6)
-        .margin_bottom(2)
-        .build();
+    view.append_column(&value_col);
+    view.append_column(&count_col);
+
+    // Sort through the column headers; default by value ascending.
+    let sort_model = gtk::SortListModel::new(Some(store.clone()), view.sorter());
+    let selection = gtk::MultiSelection::new(Some(sort_model));
+    view.set_model(Some(&selection));
+    view.sort_by_column(Some(&value_col), gtk::SortType::Ascending);
 
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
-        .child(&list)
+        .hexpand(true)
+        .width_request(160)
+        .child(&view)
         .build();
-
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    column.set_width_request(200);
-    column.append(&header);
-    column.append(&scroller);
 
     FacetPane {
         field,
-        plural: plural.to_string(),
         store,
         selection,
-        view: column,
+        view: scroller,
     }
 }
 
 impl FacetPane {
-    /// Replace the pane's rows with the `[All (total)]` row plus `rows`, and
-    /// select `[All]` (clearing any prior constraint). The caller suppresses the
-    /// selection-changed signal around this so it does not re-trigger the cascade.
+    /// Replace the rows with the `[All]` row (`distinct` values, `total` tracks)
+    /// plus `rows`, and select `[All]`. The caller suppresses the selection-
+    /// changed signal around this so it does not re-trigger the cascade.
     pub fn set_rows(&self, rows: &[CoreFacetRow], total: i64) {
         self.store.remove_all();
-        self.store.append(&FacetRow::new("", total, true));
+        self.store
+            .append(&FacetRow::all_row(rows.len() as i64, total));
         for r in rows {
-            self.store.append(&FacetRow::new(&r.value, r.count, false));
+            self.store.append(&FacetRow::value_row(&r.value, r.count));
         }
-        // Select the [All] row (index 0), unselecting the rest.
-        self.selection.select_item(0, true);
+        // Select the [All] row wherever it sorts (it is pinned to the top).
+        let n = self.selection.n_items();
+        for i in 0..n {
+            if facet(&self.selection.item(i).expect("item")).is_all() {
+                self.selection.select_item(i, true);
+                break;
+            }
+        }
     }
 
     /// The pane's effective constraint: the selected non-`[All]` values. `[All]`
     /// selected (or nothing selected) means no constraint (empty).
     pub fn effective_values(&self) -> Vec<String> {
-        let n = self.store.n_items();
+        let n = self.selection.n_items();
         let mut values = Vec::new();
         for i in 0..n {
             if !self.selection.is_selected(i) {
                 continue;
             }
-            let row = self
-                .store
-                .item(i)
-                .and_downcast::<FacetRow>()
-                .expect("FacetRow");
+            let row = facet(&self.selection.item(i).expect("item"));
             if row.is_all() {
-                return Vec::new(); // [All] selected => no constraint
+                return Vec::new();
             }
             values.push(row.value());
         }

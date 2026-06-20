@@ -1,6 +1,6 @@
-//! GObject list-model items for the facet panes and the leaf track list. Plain
-//! data carriers (Rust getters, no glib properties) — the factories read them on
-//! bind. Phase 3b.
+//! GObject list-model items for the facet panes and the leaf track table. Plain
+//! data carriers (Rust getters, no glib properties) — the `ColumnView` factories
+//! read them on bind. Phase 3b.
 
 use std::cell::{Cell, RefCell};
 
@@ -16,8 +16,9 @@ mod facet_imp {
     #[derive(Default)]
     pub struct FacetRow {
         pub value: RefCell<String>,
-        pub count: Cell<i64>,
-        pub is_all: Cell<bool>,
+        pub count: Cell<i64>,    // track count (the Count column)
+        pub is_all: Cell<bool>,  // the synthetic `[All]` row
+        pub distinct: Cell<i64>, // distinct value count, for the `[All (N)]` label
     }
 
     #[glib::object_subclass]
@@ -34,11 +35,20 @@ glib::wrapper! {
 }
 
 impl FacetRow {
-    pub fn new(value: &str, count: i64, is_all: bool) -> Self {
+    /// A normal value row.
+    pub fn value_row(value: &str, count: i64) -> Self {
         let obj: Self = glib::Object::new();
         obj.imp().value.replace(value.to_string());
         obj.imp().count.set(count);
-        obj.imp().is_all.set(is_all);
+        obj
+    }
+
+    /// The synthetic top row: `distinct` distinct values, `total` tracks.
+    pub fn all_row(distinct: i64, total: i64) -> Self {
+        let obj: Self = glib::Object::new();
+        obj.imp().is_all.set(true);
+        obj.imp().distinct.set(distinct);
+        obj.imp().count.set(total);
         obj
     }
 
@@ -54,18 +64,17 @@ impl FacetRow {
         self.imp().is_all.get()
     }
 
-    /// The text shown in the pane: the `[All (N)]` synthetic row, else
-    /// `value (count)`.
-    pub fn display(&self, field_plural: &str) -> String {
+    /// The text for the value column: the value, or `[All (N <plural>)]`.
+    pub fn value_text(&self, plural: &str) -> String {
         if self.is_all() {
-            format!("[All ({} {field_plural})]", self.count())
+            format!("[All ({} {plural})]", self.imp().distinct.get())
         } else {
-            format!("{} ({})", self.value(), self.count())
+            self.value()
         }
     }
 }
 
-// --- Track row (leaf list entry) ---
+// --- Track row (leaf table entry) ---
 
 mod track_imp {
     use super::*;
@@ -74,6 +83,8 @@ mod track_imp {
     pub struct TrackRow {
         pub title: RefCell<String>,
         pub artist: RefCell<String>,
+        pub album: RefCell<String>,
+        pub duration: Cell<f64>,
     }
 
     #[glib::object_subclass]
@@ -90,10 +101,17 @@ glib::wrapper! {
 }
 
 impl TrackRow {
-    pub fn new(title: &str, artist: Option<&str>) -> Self {
+    pub fn new(
+        title: &str,
+        artist: Option<&str>,
+        album: Option<&str>,
+        duration: Option<f64>,
+    ) -> Self {
         let obj: Self = glib::Object::new();
         obj.imp().title.replace(title.to_string());
         obj.imp().artist.replace(artist.unwrap_or("").to_string());
+        obj.imp().album.replace(album.unwrap_or("").to_string());
+        obj.imp().duration.set(duration.unwrap_or(0.0));
         obj
     }
 
@@ -103,5 +121,19 @@ impl TrackRow {
 
     pub fn artist(&self) -> String {
         self.imp().artist.borrow().clone()
+    }
+
+    pub fn album(&self) -> String {
+        self.imp().album.borrow().clone()
+    }
+
+    /// `m:ss`, or empty when unknown.
+    pub fn duration_text(&self) -> String {
+        let secs = self.imp().duration.get();
+        if secs <= 0.0 {
+            return String::new();
+        }
+        let total = secs.round() as i64;
+        format!("{}:{:02}", total / 60, total % 60)
     }
 }

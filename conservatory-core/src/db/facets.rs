@@ -34,12 +34,14 @@ pub struct FacetRow {
     pub count: i64,
 }
 
-/// A track as shown in the leaf list (Phase 3c enriches this).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A track as shown in the leaf list (Phase 3c enriches this further).
+#[derive(Debug, Clone, PartialEq)]
 pub struct TrackBrief {
     pub id: i64,
     pub title: String,
     pub artist: Option<String>,
+    pub album: Option<String>,
+    pub duration: Option<f64>,
 }
 
 const VARIOUS: &str = "Various Artists";
@@ -122,7 +124,7 @@ pub fn facet_tracks(conn: &Connection, filters: &[FacetFilter]) -> Result<Vec<Tr
     let mut params = Vec::new();
     let where_sql = filter_sql(filters, &mut params);
     let sql = format!(
-        "SELECT t.id, t.title, ta.name AS artist
+        "SELECT t.id, t.title, t.duration, ta.name AS artist, al.title AS album
          FROM tracks t
          LEFT JOIN artists ta ON ta.id = t.artist_id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -136,6 +138,8 @@ pub fn facet_tracks(conn: &Connection, filters: &[FacetFilter]) -> Result<Vec<Tr
             id: r.get("id")?,
             title: r.get("title")?,
             artist: r.get("artist")?,
+            album: r.get("album")?,
+            duration: r.get("duration")?,
         })
     })?;
     rows.map(|r| r.map_err(Into::into)).collect()

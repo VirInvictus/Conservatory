@@ -9,8 +9,12 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use conservatory_core::db::fixtures::{self, FixtureScale};
-use conservatory_core::db::{ReadPool, library_counts, probe_read, spawn_worker};
-use conservatory_core::{compute_accent, find_cover_bytes, read_track};
+use conservatory_core::db::{
+    ReadPool, library_counts, probe_read, spawn_worker, track_render_rows,
+};
+use conservatory_core::{
+    PathTemplate, TrackFields, compute_accent, find_collisions, find_cover_bytes, read_track,
+};
 
 #[derive(Parser)]
 #[command(
@@ -51,6 +55,13 @@ enum Command {
         /// Path to an audio file (flac / mp3 / opus / m4a / ...).
         file: PathBuf,
     },
+
+    /// Phase 2a smoke test: render the target path for every track in the DB
+    /// from the default template, and report any colliding paths. Read-only.
+    DebugPaths {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
 }
 
 /// The compile-time plugins this binary was built with (spec §2.2). The match
@@ -74,6 +85,7 @@ fn main() -> Result<()> {
         Some(Command::DebugRoundtrip { db }) => debug_roundtrip(db),
         Some(Command::DebugFixture { db, scale }) => debug_fixture(db, scale),
         Some(Command::DebugTags { file }) => debug_tags(file),
+        Some(Command::DebugPaths { db }) => debug_paths(db),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
@@ -153,6 +165,42 @@ fn debug_tags(file: PathBuf) -> Result<()> {
             println!("accent:       #{accent:06X}");
         }
         None => println!("cover:        (none)"),
+    }
+    Ok(())
+}
+
+fn debug_paths(db: PathBuf) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let rows = track_render_rows(&conn).context("reading track render rows")?;
+
+    let template = PathTemplate::default_music();
+    let mut paths = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let fields = TrackFields {
+            shelf_genre: row.shelf_genre.as_deref(),
+            albumartist: row.album_artist_sort.as_deref(),
+            album: row.album.as_deref(),
+            year: row.year,
+            track_no: row.track_no,
+            disc_no: row.disc_no,
+            title: Some(row.title.as_str()),
+            artist: row.track_artist.as_deref(),
+            ext: row.format.as_deref(),
+        };
+        let path = template.render(&fields);
+        println!("{:>6}  {}", row.track_id, path.display());
+        paths.push(path);
+    }
+
+    let collisions = find_collisions(&paths);
+    println!(
+        "\n{} tracks, {} colliding path(s)",
+        rows.len(),
+        collisions.len()
+    );
+    for (path, idx) in &collisions {
+        println!("  collision: {} ({} tracks)", path.display(), idx.len());
     }
     Ok(())
 }

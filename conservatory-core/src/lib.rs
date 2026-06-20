@@ -14,9 +14,11 @@
 pub mod accent;
 pub mod db;
 pub mod errors;
+pub mod path_template;
 pub mod tags;
 
 pub use accent::{compute_accent, find_cover_bytes};
+pub use path_template::{DEFAULT_MUSIC_TEMPLATE, PathTemplate, TrackFields, find_collisions};
 pub use tags::{EmbeddedCover, TrackDraft, read_track};
 
 /// Workspace version, surfaced for the CLI and GUI binaries.

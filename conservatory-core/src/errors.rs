@@ -25,6 +25,9 @@ pub enum Error {
 
     #[error("invalid enum value: {field} = {value:?}")]
     InvalidEnum { field: &'static str, value: String },
+
+    #[error("path template: {0}")]
+    Template(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

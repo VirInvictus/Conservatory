@@ -1,6 +1,21 @@
 # Path Template Reference
 
-> **Status: design reference, not yet implemented.** The path-template engine lands at roadmap Phase 2a. This expands spec §5.1 and is the contract that engine builds against.
+> **Status: implemented (music) at Phase 2a.** `conservatory-core/src/path_template.rs` renders music paths per this contract; the audiobook tokens (§5.7) land with Phase 7. This expands spec §5.1.
+
+## Implementation notes (Phase 2a)
+
+The engine is pure: `PathTemplate::parse` validates a template (unbalanced
+braces, unknown tokens, and malformed format specs are errors), and
+`PathTemplate::render(&TrackFields)` is **infallible** once parsed. A template
+component is rendered, then empty-group artifacts are collapsed, then the result
+is sanitized. Fallbacks keep structural folders non-empty: missing shelf genre →
+`Unknown`, missing album artist → `Various Artists`, missing album →
+`Unknown Album`, missing title → `Untitled`. Optional pieces (year, track, disc,
+track artist) render empty and let their surrounding literals collapse: a missing
+year drops ` (<year>)`, a missing track drops the leading `NN - `. Format specs
+support zero-padding only (`{track:02}`); a value wider than the pad is not
+truncated. `find_collisions` reports tracks that render to the same path, for the
+Phase 2c mover to refuse or disambiguate before moving anything.
 
 ## The model
 

@@ -68,6 +68,58 @@ pub fn list_albums(conn: &Connection) -> Result<Vec<Album>> {
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// A track joined with the album/artist context the path-template engine needs
+/// (spec §5.1, Phase 2a). `album_artist_sort` is `None` for a compilation, which
+/// the renderer buckets under Various Artists. `track_id` carries through so the
+/// caller can pair a rendered path back to its row (the future mover).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackRenderRow {
+    pub track_id: i64,
+    pub shelf_genre: Option<String>,
+    pub album_artist_sort: Option<String>,
+    pub album: Option<String>,
+    pub year: Option<i32>,
+    pub track_no: Option<u32>,
+    pub disc_no: Option<u32>,
+    pub title: String,
+    pub track_artist: Option<String>,
+    pub format: Option<String>,
+}
+
+/// Every track with the album/artist fields needed to render its target path.
+/// Ordered to mirror the default tree (genre → album artist → album → disc/track)
+/// so CLI output and previews read top-down.
+pub fn track_render_rows(conn: &Connection) -> Result<Vec<TrackRenderRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.title, t.track_no, t.disc_no, t.format,
+                al.title AS album, al.shelf_genre, al.year,
+                aa.sort_name AS album_artist_sort,
+                ta.name AS track_artist
+         FROM tracks t
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.album_artist_id = aa.id
+         LEFT JOIN artists ta ON t.artist_id = ta.id
+         ORDER BY al.shelf_genre, aa.sort_name, al.title, t.disc_no, t.track_no",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let track_no: Option<i64> = row.get("track_no")?;
+        let disc_no: Option<i64> = row.get("disc_no")?;
+        Ok(TrackRenderRow {
+            track_id: row.get("id")?,
+            shelf_genre: row.get("shelf_genre")?,
+            album_artist_sort: row.get("album_artist_sort")?,
+            album: row.get("album")?,
+            year: row.get("year")?,
+            track_no: track_no.map(|n| n as u32),
+            disc_no: disc_no.map(|n| n as u32),
+            title: row.get("title")?,
+            track_artist: row.get("track_artist")?,
+            format: row.get("format")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
 fn epoch_to_dt(secs: Option<i64>) -> Option<DateTime<Utc>> {
     secs.and_then(|s| Utc.timestamp_opt(s, 0).single())
 }

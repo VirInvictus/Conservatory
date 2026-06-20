@@ -12,6 +12,8 @@ use tokio::sync::oneshot;
 
 use crate::db::models::{Album, Artist, Track};
 use crate::errors::Result;
+use crate::mover::journal::JobState;
+use crate::mover::{MoveKind, MoveMode, MoveOp};
 
 pub(crate) enum Command {
     /// Write a key/value through the debug probe table (Phase 1a artifact).
@@ -52,6 +54,43 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Journal a move job and all its operations (`pending`) atomically, before
+    /// any file is touched (spec §5.4). Returns the new job id.
+    CreateMoveJob {
+        kind: MoveKind,
+        mode: MoveMode,
+        library_root: String,
+        created_at: i64,
+        ops: Vec<MoveOp>,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Mark an operation done and apply the DB path it implies (track file_path
+    /// + album folder_path), in one transaction.
+    CompleteOperation {
+        op_id: i64,
+        track_id: Option<i64>,
+        album_id: Option<i64>,
+        db_new_path: Option<String>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Restore the pre-move DB path and reset the operation to pending (undo).
+    RevertOperation {
+        op_id: i64,
+        track_id: Option<i64>,
+        album_id: Option<i64>,
+        db_old_path: Option<String>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Set a job's lifecycle state.
+    SetJobState {
+        job_id: i64,
+        state: JobState,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Ack a shutdown request. The loop exits naturally once every
     /// `WorkerHandle` clone has dropped and the channel closes.
     Shutdown { reply: oneshot::Sender<()> },
@@ -73,6 +112,10 @@ impl Command {
             Self::InsertTrack { .. } => "insert_track",
             Self::GetOrCreateGenre { .. } => "get_or_create_genre",
             Self::LinkTrackGenre { .. } => "link_track_genre",
+            Self::CreateMoveJob { .. } => "create_move_job",
+            Self::CompleteOperation { .. } => "complete_operation",
+            Self::RevertOperation { .. } => "revert_operation",
+            Self::SetJobState { .. } => "set_job_state",
             Self::Shutdown { .. } => "shutdown",
             #[cfg(test)]
             Self::Panic => "panic",

@@ -12,6 +12,7 @@ use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
     ReadPool, library_counts, probe_read, spawn_worker, track_render_rows,
 };
+use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
     GenreVocab, PathTemplate, TrackFields, compute_accent, find_collisions, find_cover_bytes,
     read_track, resolve_album,
@@ -70,6 +71,24 @@ enum Command {
         /// Path to the SQLite database.
         db: PathBuf,
     },
+
+    /// Phase 2c smoke test: render every track's target path and run a crash-safe
+    /// move job under a library root. Dry-run by default (no side effects).
+    DebugOrganize {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Library root the relative DB paths hang off.
+        root: PathBuf,
+        /// Execute the move (default is a dry-run preview).
+        #[arg(long)]
+        apply: bool,
+        /// Copy instead of move (leave the source files in place).
+        #[arg(long)]
+        copy: bool,
+        /// Undo a previously-applied job by id instead of organizing.
+        #[arg(long, value_name = "JOB_ID")]
+        undo: Option<i64>,
+    },
 }
 
 /// The compile-time plugins this binary was built with (spec §2.2). The match
@@ -95,6 +114,13 @@ fn main() -> Result<()> {
         Some(Command::DebugTags { file }) => debug_tags(file),
         Some(Command::DebugPaths { db }) => debug_paths(db),
         Some(Command::DebugShelfGenre { db }) => debug_shelf_genre(db),
+        Some(Command::DebugOrganize {
+            db,
+            root,
+            apply,
+            copy,
+            undo,
+        }) => debug_organize(db, root, apply, copy, undo),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
@@ -239,6 +265,120 @@ fn debug_shelf_genre(db: PathBuf) -> Result<()> {
         mismatches
     );
     Ok(())
+}
+
+fn debug_organize(
+    db: PathBuf,
+    root: PathBuf,
+    apply: bool,
+    copy: bool,
+    undo: Option<i64>,
+) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building current-thread runtime")?;
+    runtime.block_on(run_organize(db, root, apply, copy, undo))
+}
+
+async fn run_organize(
+    db: PathBuf,
+    root: PathBuf,
+    apply: bool,
+    copy: bool,
+    undo: Option<i64>,
+) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+
+    if let Some(job_id) = undo {
+        mover::undo(&worker, &pool, job_id)
+            .await
+            .with_context(|| format!("undoing job {job_id}"))?;
+        println!("undid job {job_id}");
+        worker.shutdown_ack().await.context("shutdown ack")?;
+        return Ok(());
+    }
+
+    // Build the operations: src = current managed path, dst = re-rendered target.
+    let rows = {
+        let conn = pool.open().context("opening pool connection")?;
+        track_render_rows(&conn).context("reading track render rows")?
+    };
+    let template = PathTemplate::default_music();
+    let mut ops = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let fields = TrackFields {
+            shelf_genre: row.shelf_genre.as_deref(),
+            albumartist: row.album_artist_sort.as_deref(),
+            album: row.album.as_deref(),
+            year: row.year,
+            track_no: row.track_no,
+            disc_no: row.disc_no,
+            title: Some(row.title.as_str()),
+            artist: row.track_artist.as_deref(),
+            ext: row.format.as_deref(),
+        };
+        let rel = template.render(&fields);
+        ops.push(MoveOp {
+            track_id: Some(row.track_id),
+            album_id: row.album_id,
+            src: root.join(&row.file_path),
+            dst: root.join(&rel),
+            db_old: Some(row.file_path.clone()),
+            db_new: Some(rel.to_string_lossy().into_owned()),
+        });
+    }
+
+    if apply {
+        // Heal any job interrupted by a previous crash before starting a new one.
+        let recovered = mover::recover(&worker, &pool).await.context("recovery")?;
+        if recovered > 0 {
+            println!("recovered {recovered} interrupted job(s)");
+        }
+        let mode = if copy { MoveMode::Copy } else { MoveMode::Move };
+        let job_id = mover::apply(
+            &worker,
+            &pool,
+            MoveKind::Organize,
+            mode,
+            &root,
+            now_secs(),
+            ops,
+        )
+        .await
+        .context("applying move job")?;
+        println!(
+            "applied job {job_id}: {} track(s) organized under {}",
+            rows.len(),
+            root.display()
+        );
+    } else {
+        let preview = mover::plan(ops);
+        for op in &preview.ops {
+            println!("{}  ->  {}", op.src.display(), op.dst.display());
+        }
+        println!(
+            "\n{} to move, {} already in place, {} conflict(s)",
+            preview.ops.len(),
+            preview.skipped,
+            preview.conflicts.len()
+        );
+        for conflict in &preview.conflicts {
+            println!("  conflict: {conflict:?}");
+        }
+        println!("(dry-run; pass --apply to execute)");
+    }
+
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    Ok(())
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn opt<T: std::fmt::Display>(value: &Option<T>) -> String {

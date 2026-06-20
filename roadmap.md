@@ -87,17 +87,17 @@ The manager becomes usable headless here. This is the phase that earns the trust
 
 *Usable artifact:* `conservatory-cli debug-shelf-genre <db>` derives a stable `shelf_genre` for every album in a fixture library (matches the stored value).
 
-### Phase 2c — File mover (dry-run + undo journal + crash-safe replay)
+### Phase 2c — File mover (dry-run + undo journal + crash-safe replay) ✅
 
 The headline risk (spec §5.4, CLAUDE.md hard rule). Release-blocking, not nice-to-have.
 
-- [ ] Dry-run preview: exactly which files move where, with no side effects.
-- [ ] Undo journal written **before** the move and replayed on restart (crash safety). Every relocation is a reversible job.
-- [ ] Conflict handling: duplicate target paths, read-only sources, cross-filesystem moves (copy-then-verify-then-delete), partial-batch failure.
-- [ ] Copy vs move on import is a per-import choice (copy leaves originals; move consumes them).
-- [ ] Tests: a dedicated fixture-backed suite. Move/undo round-trip leaves the tree and DB consistent; a simulated mid-move crash replays the journal cleanly; conflict and cross-filesystem paths; the spec §5.6 re-import contract (managed tree + embedded tags rebuild tracks/albums/artists; curated layer is not recoverable and is what backups protect).
+- [x] Dry-run preview: `mover::plan` is pure (reads the filesystem, changes nothing); reports the operations that would run, conflicts, and in-place skips.
+- [x] Undo journal written **before** the move (SQLite migration `0002`, durable via WAL) and replayed on restart (`mover::recover`, roll-forward, idempotent). Every relocation is a reversible job; `mover::undo` reverts a completed job. The crash-safety ordering is documented in docs/mover.md.
+- [x] Conflict handling: duplicate target paths, missing sources, existing destinations all refuse the job (no overwrite). Cross-filesystem moves use copy → fsync → verify → delete (`fsops::relocate`). Partial-batch failure is covered by the journal + roll-forward replay.
+- [x] Copy vs move is a per-job choice (`MoveMode`; copy leaves originals, move consumes them; undo deletes the copy vs moves the file back).
+- [x] Tests: `tests/mover.rs` (move/undo round-trip leaves tree + DB consistent; simulated mid-move crash rolls forward cleanly; conflict refusal; copy mode; tree↔DB consistency as a §5.6 spot-check) + `fsops` unit tests (rename fast path, idempotent replay, cross-fs copy path). Full §5.6 re-import coverage lands with Phase 2d/5b.
 
-*Usable artifact:* a real folder of files can be imported, organized, and fully undone, with a crash between any two steps leaving a recoverable state.
+*Usable artifact:* `conservatory-cli debug-organize <db> <root> [--apply] [--undo <id>]` plans, applies, and fully undoes a real move job; a crash between any two steps leaves a recoverable state (roll-forward on next run).
 
 ### Phase 2d — Import pipeline + CLI verbs
 

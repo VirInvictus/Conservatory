@@ -96,6 +96,28 @@ CREATE INDEX idx_queue_position ON queue(position);
 
 The engine reads `queue` into an in-memory `Vec<PlayableItem>` (spec §6.1); position writes are debounced. A whole audiobook is a single queue entry (chapters are navigated within it, not enqueued separately). Resume position for long items lives in the per-kind state tables (`tracks.last_played` / the podcast `playback` table / the `book_playback` table).
 
+## Move journal (Phase 2c, spec §5.4)
+
+The crash-safety ledger for the file mover. A job and all its operations are written **before** any file is touched, so a crash mid-move is recoverable by replaying the `pending` operations (roll-forward; see [`mover.md`](mover.md)). DB paths are stored relative to `library_root`; the journal stores absolute `src_path`/`dst_path` for direct filesystem ops.
+
+```sql
+CREATE TABLE move_jobs (
+    id INTEGER PRIMARY KEY, kind TEXT NOT NULL,   -- 'import' | 'organize'
+    mode TEXT NOT NULL,                           -- 'move' | 'copy'
+    library_root TEXT NOT NULL,
+    state TEXT NOT NULL,                          -- 'in_progress' | 'completed' | 'undone' | 'failed'
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE move_operations (
+    id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES move_jobs(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL, track_id INTEGER, album_id INTEGER,
+    src_path TEXT NOT NULL, dst_path TEXT NOT NULL,
+    db_old_path TEXT, db_new_path TEXT,           -- relative DB values, for the path update + undo
+    state TEXT NOT NULL                           -- 'pending' | 'done'
+);
+CREATE INDEX idx_move_ops_job ON move_operations(job_id, seq);
+```
+
 ## Podcast tables (Phase 6, spec §4.2)
 
 Ported from Belfry §4.1 at Phase 6a: `shows`, `episodes`, `playback`, `show_settings`, `listening_sessions`, `chapters`, `tags`, `show_tags`. One change from Belfry: triage Queue state is represented through the unified `queue` table above rather than a per-episode `in_queue` flag. The append-only `listening_sessions` discipline is preserved. Column-level detail migrates into this file as the absorption is implemented.

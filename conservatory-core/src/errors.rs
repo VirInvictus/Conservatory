@@ -28,6 +28,9 @@ pub enum Error {
 
     #[error("path template: {0}")]
     Template(String),
+
+    #[error("move: {0}")]
+    Move(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

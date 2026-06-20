@@ -427,7 +427,7 @@ Podcasts adopt the managed model: `<library root>/Podcasts/<show-slug>/<YYYY-MM-
 4. **Render** the target path from the template (§5.1).
 5. **Move or copy** into the managed tree. In-place vs copy-on-import is a per-import user choice (copy leaves the originals untouched; move consumes them).
 
-Every operation that relocates files is a **job** with: a **dry-run preview** of exactly which files move where, an **undo journal** so the move is reversible, conflict handling (duplicate target paths, read-only sources, cross-filesystem moves), and crash safety (the journal is written before the move, replayed on restart). Moving a user's real files is a trust commitment; the dry-run and undo are not optional.
+Every operation that relocates files is a **job** with: a **dry-run preview** of exactly which files move where, an **undo journal** so the move is reversible, conflict handling (duplicate target paths, read-only sources, cross-filesystem moves), and crash safety (the journal is written before the move, replayed on restart). Moving a user's real files is a trust commitment; the dry-run and undo are not optional. **Implemented at Phase 2c** (`conservatory-core/src/mover/`, journal in migration `0002`); the journal is a SQLite ledger and recovery rolls forward (docs/mover.md).
 
 ### 5.5 Embedded-Tag Write-Back and Portability
 

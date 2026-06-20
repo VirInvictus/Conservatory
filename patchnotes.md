@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.0.6
+
+Phase 2c shipped: the crash-safe file mover. This is the trust-critical, release-blocking subsystem (spec §5.4); moving the user's files is the headline risk.
+
+- **Mover engine (`src/mover/`):** `plan` (pure dry-run preview with conflict detection), `apply` (journal-first, then execute), `undo` (revert a completed job), and `recover` (roll-forward replay of interrupted jobs at startup). The journal is a SQLite ledger (migration `0002`: `move_jobs` + `move_operations`), written before any file is touched and durable via WAL. Recovery rolls forward (completes the move the user asked for); replay is idempotent.
+- **Per-file primitive (`mover::fsops`):** same-filesystem `rename` fast path; cross-filesystem copy → fsync → verify → delete (modeled on Atrium's atomic write). Idempotent: a file already at its target is a no-op, which is what makes crash replay safe.
+- **Conflict policy:** duplicate targets, missing sources, and existing destinations refuse the whole job; nothing moves. Copy-vs-move is a per-job choice.
+- **DB consistency:** completing an operation updates `tracks.file_path` and `albums.folder_path` in the same transaction as marking it done; undo reverts both the tree and the DB.
+- **Worker + CLI:** new journal commands on the single writer (file I/O stays off it); `debug-organize <db> <root> [--apply] [--copy] [--undo <id>]`.
+- **Tests:** the release-blocking suite (`tests/mover.rs`): move/undo round-trip, simulated mid-move crash rolling forward, conflict refusal, copy mode, tree↔DB consistency; plus `fsops` unit tests.
+
 ## v0.0.5
 
 Phase 2b shipped: the shelf-genre resolver that decides each album's filed-under genre.

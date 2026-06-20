@@ -20,6 +20,8 @@ use crate::db::command::Command;
 use crate::db::models::{Album, Artist, Track};
 use crate::db::{connection, migrations, probe, writes};
 use crate::errors::{Error, Result};
+use crate::mover::journal::{self, JobState};
+use crate::mover::{MoveKind, MoveMode, MoveOp};
 
 const CHANNEL_CAPACITY: usize = 64;
 
@@ -88,6 +90,73 @@ impl WorkerHandle {
         self.dispatch(|reply| Command::LinkTrackGenre {
             track_id,
             genre_id,
+            reply,
+        })
+        .await
+    }
+
+    /// Journal a move job and its operations atomically, returning the job id.
+    /// Called before any file is touched (spec §5.4).
+    pub async fn create_move_job(
+        &self,
+        kind: MoveKind,
+        mode: MoveMode,
+        library_root: String,
+        created_at: i64,
+        ops: Vec<MoveOp>,
+    ) -> Result<i64> {
+        self.dispatch(|reply| Command::CreateMoveJob {
+            kind,
+            mode,
+            library_root,
+            created_at,
+            ops,
+            reply,
+        })
+        .await
+    }
+
+    /// Mark an operation done and apply its DB path update.
+    pub async fn complete_operation(
+        &self,
+        op_id: i64,
+        track_id: Option<i64>,
+        album_id: Option<i64>,
+        db_new_path: Option<String>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::CompleteOperation {
+            op_id,
+            track_id,
+            album_id,
+            db_new_path,
+            reply,
+        })
+        .await
+    }
+
+    /// Revert an operation's DB path and reset it to pending (undo).
+    pub async fn revert_operation(
+        &self,
+        op_id: i64,
+        track_id: Option<i64>,
+        album_id: Option<i64>,
+        db_old_path: Option<String>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::RevertOperation {
+            op_id,
+            track_id,
+            album_id,
+            db_old_path,
+            reply,
+        })
+        .await
+    }
+
+    /// Set a move job's lifecycle state.
+    pub async fn set_job_state(&self, job_id: i64, state: JobState) -> Result<()> {
+        self.dispatch(|reply| Command::SetJobState {
+            job_id,
+            state,
             reply,
         })
         .await
@@ -190,6 +259,60 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::link_track_genre(conn, track_id, genre_id));
+        }
+        Command::CreateMoveJob {
+            kind,
+            mode,
+            library_root,
+            created_at,
+            ops,
+            reply,
+        } => {
+            let _ = reply.send(journal::create_job(
+                conn,
+                kind,
+                mode,
+                &library_root,
+                created_at,
+                &ops,
+            ));
+        }
+        Command::CompleteOperation {
+            op_id,
+            track_id,
+            album_id,
+            db_new_path,
+            reply,
+        } => {
+            let _ = reply.send(journal::complete_operation(
+                conn,
+                op_id,
+                track_id,
+                album_id,
+                db_new_path.as_deref(),
+            ));
+        }
+        Command::RevertOperation {
+            op_id,
+            track_id,
+            album_id,
+            db_old_path,
+            reply,
+        } => {
+            let _ = reply.send(journal::revert_operation(
+                conn,
+                op_id,
+                track_id,
+                album_id,
+                db_old_path.as_deref(),
+            ));
+        }
+        Command::SetJobState {
+            job_id,
+            state,
+            reply,
+        } => {
+            let _ = reply.send(journal::set_job_state(conn, job_id, state));
         }
         Command::Shutdown { reply } => {
             let _ = reply.send(());

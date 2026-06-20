@@ -75,6 +75,7 @@ pub fn list_albums(conn: &Connection) -> Result<Vec<Album>> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackRenderRow {
     pub track_id: i64,
+    pub album_id: Option<i64>,
     pub shelf_genre: Option<String>,
     pub album_artist_sort: Option<String>,
     pub album: Option<String>,
@@ -84,6 +85,9 @@ pub struct TrackRenderRow {
     pub title: String,
     pub track_artist: Option<String>,
     pub format: Option<String>,
+    /// The track's current managed path (relative to the library root); the move
+    /// source and the `db_old` value for the journal (Phase 2c).
+    pub file_path: String,
 }
 
 /// Every track with the album/artist fields needed to render its target path.
@@ -91,7 +95,7 @@ pub struct TrackRenderRow {
 /// so CLI output and previews read top-down.
 pub fn track_render_rows(conn: &Connection) -> Result<Vec<TrackRenderRow>> {
     let mut stmt = conn.prepare(
-        "SELECT t.id, t.title, t.track_no, t.disc_no, t.format,
+        "SELECT t.id, t.album_id, t.title, t.track_no, t.disc_no, t.format, t.file_path,
                 al.title AS album, al.shelf_genre, al.year,
                 aa.sort_name AS album_artist_sort,
                 ta.name AS track_artist
@@ -106,6 +110,7 @@ pub fn track_render_rows(conn: &Connection) -> Result<Vec<TrackRenderRow>> {
         let disc_no: Option<i64> = row.get("disc_no")?;
         Ok(TrackRenderRow {
             track_id: row.get("id")?,
+            album_id: row.get("album_id")?,
             shelf_genre: row.get("shelf_genre")?,
             album_artist_sort: row.get("album_artist_sort")?,
             album: row.get("album")?,
@@ -115,6 +120,7 @@ pub fn track_render_rows(conn: &Connection) -> Result<Vec<TrackRenderRow>> {
             title: row.get("title")?,
             track_artist: row.get("track_artist")?,
             format: row.get("format")?,
+            file_path: row.get("file_path")?,
         })
     })?;
     rows.map(|r| r.map_err(Into::into)).collect()

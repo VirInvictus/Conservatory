@@ -23,13 +23,19 @@ pub(crate) struct Migration {
 
 /// The ordered migration ledger, ascending by `version`. Append-only and
 /// backwards-compatible post-1.0 (the Atrium discipline).
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("migrations/0001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("migrations/0001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("migrations/0002_move_journal.sql"),
+    },
+];
 
 /// The `user_version` a fully-migrated database reaches.
-pub const CURRENT_VERSION: i32 = 1;
+pub const CURRENT_VERSION: i32 = 2;
 
 /// Apply any unapplied migrations. Idempotent: running this on a
 /// fully-migrated database is a no-op.
@@ -142,8 +148,16 @@ mod tests {
         run(&mut conn).unwrap();
         assert_eq!(user_version(&conn), CURRENT_VERSION);
 
-        // Spot-check the Phase 1b music schema landed.
-        for t in ["artists", "albums", "tracks", "genres", "track_genres"] {
+        // Spot-check the Phase 1b music schema and the Phase 2c move journal landed.
+        for t in [
+            "artists",
+            "albums",
+            "tracks",
+            "genres",
+            "track_genres",
+            "move_jobs",
+            "move_operations",
+        ] {
             assert!(table_exists(&conn, t), "missing table: {t}");
         }
     }

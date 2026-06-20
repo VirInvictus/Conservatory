@@ -24,3 +24,6 @@ image = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 serde_json = { workspace = true }
+# Test-only: the Phase 3a SQL-vs-eval parity test exercises both search paths
+# against a fixture DB. Core does not depend on the search crate at runtime.
+conservatory-search = { path = "../conservatory-search" }

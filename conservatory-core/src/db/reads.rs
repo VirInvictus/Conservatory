@@ -4,6 +4,8 @@
 //! these. Phase 1b ships counts and basic lookups; richer queries (faceting,
 //! search) arrive with `conservatory-search` at Phase 3.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -124,6 +126,127 @@ pub fn track_render_rows(conn: &Connection) -> Result<Vec<TrackRenderRow>> {
         })
     })?;
     rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// A track projected for search (Phase 3a). The CLI/GUI maps this to
+/// `conservatory_search::SearchItem` for the in-memory fallback path; `track_id`
+/// pairs a match back to its row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchRow {
+    pub track_id: i64,
+    pub title: String,
+    pub artist: Option<String>,
+    pub album_artist: Option<String>,
+    pub album: Option<String>,
+    pub shelf_genre: Option<String>,
+    pub genres: Vec<String>,
+    pub year: Option<i32>,
+    pub added: Option<i64>,
+    pub rating: u8,
+    pub bitrate: Option<i32>,
+    pub duration: Option<f64>,
+    pub format: Option<String>,
+    pub played: bool,
+    pub starred: bool,
+    pub queued: bool,
+}
+
+const GENRE_SEP: char = '\u{1f}'; // unit separator: safe group_concat delimiter
+
+/// Every track with the full search projection (Phase 3a). Genres are aggregated
+/// via `group_concat`; `played`/`queued` are derived. Ordered by track id.
+pub fn search_rows(conn: &Connection) -> Result<Vec<SearchRow>> {
+    // The `queue` table arrives with playback (Phase 4b); until then nothing is
+    // queued, so `is:queued` matches nothing (here and in sql_translate).
+    let sql = format!(
+        "SELECT t.id, t.title, t.added_at, t.rating, t.bitrate, t.duration, t.format,
+                t.play_count, t.starred,
+                ta.name AS track_artist, aa.name AS album_artist,
+                al.title AS album, al.shelf_genre, al.year,
+                (SELECT group_concat(g.name, '{GENRE_SEP}')
+                   FROM track_genres tg JOIN genres g ON g.id = tg.genre_id
+                  WHERE tg.track_id = t.id) AS genres
+         FROM tracks t
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.album_artist_id = aa.id
+         LEFT JOIN artists ta ON t.artist_id = ta.id
+         ORDER BY t.id"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], |row| {
+        let genres: Option<String> = row.get("genres")?;
+        let play_count: i64 = row.get("play_count")?;
+        Ok(SearchRow {
+            track_id: row.get("id")?,
+            title: row.get("title")?,
+            artist: row.get("track_artist")?,
+            album_artist: row.get("album_artist")?,
+            album: row.get("album")?,
+            shelf_genre: row.get("shelf_genre")?,
+            genres: genres
+                .map(|g| g.split(GENRE_SEP).map(str::to_string).collect())
+                .unwrap_or_default(),
+            year: row.get("year")?,
+            added: row.get("added_at")?,
+            rating: row.get::<_, i64>("rating")? as u8,
+            bitrate: row.get("bitrate")?,
+            duration: row.get("duration")?,
+            format: row.get("format")?,
+            played: play_count > 0,
+            starred: row.get("starred")?,
+            queued: false, // no queue table until Phase 4b
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// A bindable value for the search SQL path, mirroring
+/// `conservatory_search::SqlValue` so the CLI/GUI need not depend on rusqlite.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SqlParam {
+    Text(String),
+    Int(i64),
+    Real(f64),
+}
+
+/// Run a translated search `WHERE` fragment against `tracks`, returning the
+/// matching track ids (Phase 3a SQL fast path). The fragment and `params` come
+/// from `conservatory_search::try_translate`; binding happens here so the crate
+/// stays storage-agnostic.
+pub fn search_track_ids(
+    conn: &Connection,
+    where_sql: &str,
+    params: &[SqlParam],
+) -> Result<Vec<i64>> {
+    let sql = format!("SELECT id FROM tracks WHERE {where_sql} ORDER BY id");
+    let bound: Vec<rusqlite::types::Value> = params
+        .iter()
+        .map(|p| match p {
+            SqlParam::Text(s) => rusqlite::types::Value::Text(s.clone()),
+            SqlParam::Int(n) => rusqlite::types::Value::Integer(*n),
+            SqlParam::Real(x) => rusqlite::types::Value::Real(*x),
+        })
+        .collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(bound), |r| r.get(0))?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// FTS5 `bm25` scores for a `track_fts MATCH` query, keyed by track id (Phase 3a
+/// ranking). Lower `bm25` magnitude is a better match; the caller blends it with
+/// recency via `conservatory_search::blend_relevance`.
+pub fn fts_rank(conn: &Connection, match_query: &str) -> Result<HashMap<i64, f64>> {
+    let mut stmt =
+        conn.prepare("SELECT rowid, bm25(track_fts) FROM track_fts WHERE track_fts MATCH ?1")?;
+    let rows = stmt.query_map(params![match_query], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+    })?;
+    let mut out = HashMap::new();
+    for row in rows {
+        let (id, score) = row?;
+        out.insert(id, score);
+    }
+    Ok(out)
 }
 
 /// Per-track raw genre lists for one album, used by the shelf-genre resolver

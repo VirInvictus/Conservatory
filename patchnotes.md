@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.8
+
+Phase 3a shipped: the `conservatory-search` expression engine and a CLI `search` verb (the first piece of Phase 3, GTK browse).
+
+- **Grammar pipeline (`conservatory-search`):** `lex` → `parse` (typed AST + extracted `sort:` specs) → `eval` (in-memory) + `sql_translate` (all-or-nothing SQL `WHERE`, so the two paths never diverge), with `rank` (bm25 + recency). Structure ported from `atrium-search`, semantics from CalibreQuarry, FTS plumbing from Viaduct; an independent implementation. Storage-agnostic (`SqlValue`, no rusqlite, no core); deps `regex` + `chrono` only.
+- **Grammar:** the music field set (`artist`/`albumartist`/`album`/`title`, `genre` vs `shelfgenre`, `year`/`added`, `rating`/`bitrate`/`duration`/`format`, `is:played`/`is:starred`/`is:queued`), match modifiers (substring/`=`/`~`regex/`?`fuzzy), boolean + ranges + date keywords/precision + presence, `sort:` as metadata. The parser is **forgiving** (degrades to substring, never errors). `vl:` perspectives expand at parse time with a cycle guard.
+- **CLI:** `search <db> '<expr>' [--format tsv|json|human]` — SQL fast path when the whole expression translates, else the in-memory evaluator; bare-text hits ranked by bm25 + recency. New core reads `search_rows` / `search_track_ids` / `fts_rank` (the consumer maps `SqlValue` → a core `SqlParam`, keeping core search-free).
+- **Tests:** parse round-trip, per-field eval, per-node SQL, `vl:` cycle guard, and SQL-vs-eval **parity** over a 2,000-track fixture; hand-verified against the real imported albums.
+- **Deferred:** persistent Perspective storage + UI (3c); `is:queued` matches nothing until the queue table lands (4b); podcast/audiobook fields (6/7).
+
 ## v0.0.7
 
 Phase 2d shipped: the import pipeline and real CLI verbs. **The manager is usable headless** (the Phase 2 exit): point the CLI at a folder and get an organized, database-owned library.

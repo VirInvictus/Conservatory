@@ -7,15 +7,20 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    ReadPool, library_counts, probe_read, spawn_worker, track_render_rows,
+    ReadPool, SearchRow, SqlParam, fts_rank, library_counts, probe_read, search_rows,
+    search_track_ids, spawn_worker, track_render_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
     GenreVocab, ImportOptions, ImportReport, PathTemplate, TrackFields, compute_accent,
     find_collisions, find_cover_bytes, import_folder, read_track, resolve_album,
+};
+use conservatory_search::{
+    SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
 };
 
 /// Output format for the report-producing verbs (spec §9).
@@ -126,6 +131,17 @@ enum Command {
         /// The new shelf genre.
         value: String,
     },
+
+    /// Filter the library with the search grammar (spec §3.4). Uses the SQL fast
+    /// path when the whole expression translates, else the in-memory evaluator.
+    Search {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The search expression.
+        query: String,
+        #[arg(long, value_enum, default_value_t = Format::Tsv)]
+        format: Format,
+    },
 }
 
 /// The compile-time plugins this binary was built with (spec §2.2). The match
@@ -171,6 +187,7 @@ fn main() -> Result<()> {
             album_id,
             value,
         }) => shelf_genre_set(db, album_id, value),
+        Some(Command::Search { db, query, format }) => search(db, query, format),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
@@ -543,6 +560,159 @@ async fn run_shelf_genre_set(db: PathBuf, album_id: i64, value: String) -> Resul
     worker.shutdown_ack().await.context("shutdown ack")?;
     println!("album {album_id} shelf genre set to {value:?}; run `organize` to move it");
     Ok(())
+}
+
+fn search(db: PathBuf, query: String, format: Format) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let today = Utc::now().date_naive();
+
+    let parsed = parse(&query);
+    for warning in &parsed.warnings {
+        eprintln!("warning: {warning}");
+    }
+
+    // SQL fast path when the whole expression translates; else in-memory eval.
+    let rows = search_rows(&conn).context("loading search rows")?;
+    let mut matched: Vec<SearchRow> = match try_translate(&parsed.expr, today) {
+        Some(clause) => {
+            let params: Vec<SqlParam> = clause.params.iter().map(to_param).collect();
+            let ids: std::collections::HashSet<i64> = search_track_ids(&conn, &clause.sql, &params)
+                .context("running search SQL")?
+                .into_iter()
+                .collect();
+            rows.into_iter()
+                .filter(|r| ids.contains(&r.track_id))
+                .collect()
+        }
+        None => rows
+            .into_iter()
+            .filter(|r| conservatory_search::evaluate(&parsed.expr, &to_item(r), today))
+            .collect(),
+    };
+
+    // Precompute FTS bm25 for bare-text terms (ranking input).
+    let terms = collect_text_terms(&parsed.expr);
+    let bm = if terms.is_empty() {
+        Default::default()
+    } else {
+        let match_query = terms
+            .iter()
+            .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" ");
+        fts_rank(&conn, &match_query).unwrap_or_default()
+    };
+    order_results(&mut matched, &parsed, &bm);
+
+    match format {
+        Format::Json => println!("{{\"matches\":{}}}", matched.len()),
+        Format::Tsv => {
+            println!("id\ttitle\tartist\talbum");
+            for r in &matched {
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    r.track_id,
+                    r.title,
+                    r.artist.as_deref().unwrap_or(""),
+                    r.album.as_deref().unwrap_or("")
+                );
+            }
+        }
+        Format::Human => {
+            for r in &matched {
+                println!(
+                    "{}  —  {} · {}",
+                    r.title,
+                    r.artist.as_deref().unwrap_or("?"),
+                    r.album.as_deref().unwrap_or("?")
+                );
+            }
+            println!("\n{} match(es)", matched.len());
+        }
+    }
+    Ok(())
+}
+
+/// Order results: explicit `sort:` specs win; else bare-text hits rank by FTS
+/// bm25 (in `bm`) blended with recency; else by title.
+fn order_results(
+    rows: &mut [SearchRow],
+    parsed: &conservatory_search::ParseResult,
+    bm: &std::collections::HashMap<i64, f64>,
+) {
+    use conservatory_search::SortKey;
+    if let Some(spec) = parsed.sorts.first() {
+        rows.sort_by(|a, b| {
+            let ord = match spec.key {
+                SortKey::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+                SortKey::Artist => artist_key(a).cmp(&artist_key(b)),
+                SortKey::Album => album_key(a).cmp(&album_key(b)),
+                SortKey::Year => a.year.cmp(&b.year),
+                SortKey::Added => a.added.cmp(&b.added),
+                SortKey::Rating => a.rating.cmp(&b.rating),
+                SortKey::Duration => a
+                    .duration
+                    .partial_cmp(&b.duration)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            };
+            if spec.descending { ord.reverse() } else { ord }
+        });
+        return;
+    }
+
+    if !bm.is_empty() {
+        let now = Utc::now().timestamp();
+        let score = |r: &SearchRow| {
+            let bm25 = bm.get(&r.track_id).copied().unwrap_or(0.0);
+            let days = r.added.map(|a| (now - a).max(0) / 86_400).unwrap_or(3650);
+            blend_relevance(bm25, days, 30.0)
+        };
+        rows.sort_by(|a, b| {
+            score(b)
+                .partial_cmp(&score(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        return;
+    }
+
+    rows.sort_by_key(|r| r.title.to_lowercase());
+}
+
+fn artist_key(r: &SearchRow) -> String {
+    r.artist.clone().unwrap_or_default().to_lowercase()
+}
+
+fn album_key(r: &SearchRow) -> String {
+    r.album.clone().unwrap_or_default().to_lowercase()
+}
+
+fn to_param(value: &SqlValue) -> SqlParam {
+    match value {
+        SqlValue::Text(s) => SqlParam::Text(s.clone()),
+        SqlValue::Int(n) => SqlParam::Int(*n),
+        SqlValue::Real(x) => SqlParam::Real(*x),
+    }
+}
+
+fn to_item(r: &SearchRow) -> SearchItem {
+    SearchItem {
+        title: r.title.clone(),
+        artist: r.artist.clone(),
+        album_artist: r.album_artist.clone(),
+        album: r.album.clone(),
+        shelf_genre: r.shelf_genre.clone(),
+        genres: r.genres.clone(),
+        year: r.year,
+        added: r.added,
+        rating: r.rating,
+        bitrate: r.bitrate,
+        duration: r.duration,
+        format: r.format.clone(),
+        played: r.played,
+        starred: r.starred,
+        queued: r.queued,
+    }
 }
 
 /// Run a future on a fresh current-thread runtime (the CLI's worker pattern).

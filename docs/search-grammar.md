@@ -1,6 +1,8 @@
 # Search Grammar (`conservatory-search`)
 
-> **Status: design reference, not yet implemented.** `conservatory-search` lands at roadmap Phase 3a. This document is the contract that crate builds against; it expands spec §3.4 and is the thing to read before touching the search crate. Where it describes behaviour in the present tense, read "will."
+> **Status: implemented (music) at Phase 3a.** `conservatory-search` ships the lex → parse → AST → eval + all-or-nothing SQL-translate pipeline with bm25 + recency ranking; the CLI `search` verb is its first consumer. This document expands spec §3.4 and is the thing to read before touching the search crate.
+>
+> **As-built notes (3a):** the parser is fully **infallible** (even unbalanced parens degrade to substring text, not just unknown fields). `vl:` perspectives are **expanded at parse time** via a `PerspectiveResolver` with a cycle guard (a cycle degrades to empty + a warning, not CalibreQuarry's raise), so `eval`/`sql_translate` never see `vl:`. The in-memory fallback is **per-item** (`evaluate`), Atrium-style, not candidate-set. Bare text uses FTS `MATCH` on the SQL path and substring on the eval fallback (the one intentional matching difference; the all-or-nothing rule means only one path runs per query). `is:queued` parses but matches nothing until the `queue` table lands (Phase 4b). Persistent Perspective **storage** (a table + the save/load UI) is deferred to Phase 3c; podcast/audiobook fields to Phases 6/7 (they degrade to substring until then).
 
 ## The one-line design decision
 

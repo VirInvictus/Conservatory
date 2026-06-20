@@ -113,19 +113,19 @@ The headline risk (spec §5.4, CLAUDE.md hard rule). Release-blocking, not nice-
 
 A working library browser. The search crate (3a) is headless and could in principle ship before the GUI; it sits here because the browse surface is its first real consumer.
 
-### Phase 3a — `conservatory-search` crate
+### Phase 3a — `conservatory-search` crate ✅
 
-- [ ] Grammar pipeline ported in *shape* from `atrium-search`, implemented independently (spec §3.4, ATTRIBUTIONS.md): `lex` (string → tokens) → `parse` (tokens → typed AST + extracted `sort:` specs) → `ast` (round-trippable `Expr`) → `eval` (AST → bool, in-memory fallback) and `sql_translate` (AST → SQL `WHERE`, the all-or-nothing dual path: emit SQL only if every node maps cleanly, else fall back so the two evaluators never diverge).
-- [ ] Domain semantics modeled on CalibreQuarry's `search.py` (the Calibre port): datatype-dispatched matching, multi-valued `genre:` faceting (`text_multi`), numeric relops (`rating:>=4`, `bitrate:`, `duration:`), date keywords (`added:thisweek`, ranges), `true`/`false` presence. Typed against the Conservatory domain (Track / Album / Artist / Show / Episode).
-- [ ] Fields per spec §3.4: `artist:`/`albumartist:`/`album:`/`title:`, `genre:` (raw tag) vs `shelfgenre:` (filed-under), `year:`/`added:`, `rating:`/`bitrate:`/`duration:`/`format:`, `is:played`/`is:starred`/`is:queued`. Podcast fields (`show:`, `is:in_inbox`, `pub:`) stubbed for Phase 6.
-- [ ] Match modifiers (substring / `=`exact / `~`regex / `?`fuzzy), boolean `AND`/`OR`/`NOT` with implicit AND, comparison/range, `sort:`/`sort:-` lifted to result metadata.
-- [ ] **Forgiving parser:** malformed input degrades to substring (the yellow filter-bar tint), never an error. Follow Atrium here, not CalibreQuarry's `ParseException`.
-- [ ] Ranking: bare-text hits ordered by FTS5 `bm25` blended with a recency factor (Atrium's `rank` blend) over the 1b FTS5 tables.
-- [ ] **Perspectives** = named saved expressions stored as text and re-parsed on load (so they inherit later grammar additions); they can be a queue source later (§6.1). The composable-saved-search model is Calibre's virtual library (`vl:`), including CalibreQuarry's cycle detection.
-- [ ] CLI: `search '<expression>'` (spec §9). Crate is GUI/storage-agnostic and fuzzable.
-- [ ] Tests: lex/parse round-trip (parse → Display → re-parse stable); SQL-vs-in-memory parity on the translatable subset; degrade-to-substring on malformed input; `vl:`/Perspective cycle guard.
+- [x] Grammar pipeline ported in *shape* from `atrium-search`, implemented independently (spec §3.4, ATTRIBUTIONS.md): `lex` → `parse` (typed AST + extracted `sort:` specs) → `ast` (round-trippable `Expr`) → `eval` (in-memory fallback) and `sql_translate` (all-or-nothing dual path: emit SQL only if every node maps, else fall back). Storage-agnostic (`SqlValue`, no rusqlite); deps `regex` + `chrono` only.
+- [x] Domain semantics modeled on CalibreQuarry: datatype-dispatched matching, multi-valued `genre:` faceting, numeric relops (`rating:>=4`, `bitrate:`, `duration:`), date keywords + precision + ranges (`added:thisweek`, `year:1998..2004`), `true`/`false` presence. Typed against the Track domain (album/artist exposed through it; podcast/audiobook at 6/7).
+- [x] Fields per spec §3.4: `artist:`/`albumartist:`/`album:`/`title:`, `genre:` vs `shelfgenre:`, `year:`/`added:`, `rating:`/`bitrate:`/`duration:`/`format:`, `is:played`/`is:starred`/`is:queued` (`is:queued` matches nothing until the queue table lands at 4b). Podcast/audiobook fields degrade to substring until 6/7.
+- [x] Match modifiers (substring / `=`exact / `~`regex / `?`fuzzy Damerau-Levenshtein), boolean `AND`/`OR`/`NOT` + implicit AND + `!`, comparison/range, `sort:`/`sort:-` lifted to result metadata.
+- [x] **Forgiving parser:** never errors; unknown fields/states/sorts and structural failures (unbalanced parens) degrade to substring + a warning.
+- [x] Ranking: bare-text hits ordered by FTS5 `bm25` blended with recency (`rank::blend_relevance`) over the 1b FTS tables (`fts_rank` read).
+- [x] **Perspectives:** `vl:NAME` expanded at parse time via a `PerspectiveResolver` with cycle detection (forgiving: a cycle degrades to empty + warning). Persistent storage + the save/load UI land at 3c.
+- [x] CLI: `search <db> '<expression>'` (`--tsv`/`--json`/`--human`). Crate is GUI/storage-agnostic and fuzzable.
+- [x] Tests: parse round-trip (parse → Display → re-parse stable); **SQL-vs-eval parity** over a 2k-track fixture (`tests/search_parity.rs`); degrade-to-substring; `vl:` cycle guard; per-field eval + per-node SQL.
 
-*Usable artifact:* `conservatory-cli search '<expr>'` filters the library with the full grammar.
+*Usable artifact:* `conservatory-cli search '<expr>'` filters the library with the full grammar (verified against the real imported `testdata/` albums via both the SQL and eval paths).
 
 ### Phase 3b — Columns UI faceted panes
 

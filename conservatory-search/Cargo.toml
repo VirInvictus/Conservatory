@@ -8,5 +8,8 @@ repository.workspace = true
 authors.workspace = true
 
 # The grammar shape is ported from atrium-search but stays an independent
-# implementation (spec §2.2). Dependency-free skeleton for now.
+# implementation (spec §2.2). Storage-agnostic: only regex (for `~regex` match)
+# and chrono (date keywords/precision); no rusqlite, no conservatory-core.
 [dependencies]
+regex = { workspace = true }
+chrono = { workspace = true }

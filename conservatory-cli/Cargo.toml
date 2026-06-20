@@ -24,6 +24,7 @@ audiobooks = ["dep:conservatory-audiobooks"]
 [dependencies]
 conservatory-core = { path = "../conservatory-core" }
 conservatory-search = { path = "../conservatory-search" }
+chrono = { workspace = true }
 conservatory-podcasts = { path = "../conservatory-podcasts", optional = true }
 conservatory-audiobooks = { path = "../conservatory-audiobooks", optional = true }
 clap = { workspace = true }

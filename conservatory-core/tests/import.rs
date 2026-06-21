@@ -182,6 +182,11 @@ async fn shelf_genre_set_then_organize_moves_the_album() {
     )
     .await
     .unwrap();
+    // The cover follows its album (Phase 5d), as the real organize does, so the
+    // old genre folder is left with no files.
+    conservatory_core::resync_album_covers(&worker, &pool, &lib.root)
+        .await
+        .unwrap();
     worker.shutdown_ack().await.unwrap();
 
     // Every file now lives under Jazz/, and no files remain under Ambient/
@@ -193,12 +198,12 @@ async fn shelf_genre_set_then_organize_moves_the_album() {
     assert_eq!(
         count_files(&lib.root.join("Ambient")),
         0,
-        "no files left in Ambient/"
+        "no files left in Ambient/ (the cover follows the album, Phase 5d)"
     );
     assert_eq!(
         count_files(&lib.root.join("Jazz")),
-        4,
-        "all four files under Jazz/"
+        5,
+        "four audio files + the cover under Jazz/ (Phase 5d)"
     );
 }
 

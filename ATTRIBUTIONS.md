@@ -50,4 +50,6 @@ Recorded here as dependencies are signed off (spec §11) and added to the worksp
 | `zbus` | MIT | D-Bus for MPRIS2 (`org.mpris.MediaPlayer2` + `.Player`, in `core::mpris`) and the logind suspend inhibitor (spec §6.5). Pure-Rust, on the `tokio` feature | 4c-i |
 | `libc` | MIT OR Apache-2.0 | One FFI call — `setlocale(LC_NUMERIC, "C")` before `mpv_create()`, which libmpv requires (a GTK-set locale otherwise makes it fail) | 4c |
 
+External tools (shelled out, not linked): `rsgain` (BSD-2-Clause; the Phase 5c ReplayGain scanner, `replaygain.rs`. Chosen over the `ebur128` Rust crate because rsgain decodes every format itself, including Opus, which a pure-Rust decoder does not; needs bundling for the Flatpak). `flac` + `ffmpeg` are planned for the Phase 8a integrity audit.
+
 System libraries: `libmpv` (Phase 4a; built with the ffmpeg filter library `silenceremove`, `rubberband`, `acompressor`, `equalizer`, `loudnorm` for the Phase 6c spoken-word profile; on Fedora that means RPM Fusion's `ffmpeg-libs`, not `ffmpeg-free-libs`), `gtk4`, `libadwaita`, and `libsecret` (via `oo7`, Phase 6). libmpv links ffmpeg/librubberband, the GPL-forcing chain documented above; the `libmpv2` Rust bindings are MIT but the linked library carries the GPL obligation. Per-dependency notes fill in as each lands.

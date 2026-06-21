@@ -62,8 +62,13 @@ pub(crate) fn position_us(secs: f64) -> i64 {
 }
 
 /// Build the MPRIS `Metadata` (`a{sv}`) from the current track id + resolved
-/// fields. Empty (just a NoTrack id) when nothing is playing.
-fn build_metadata(track_id: Option<i64>, meta: Option<&crate::db::NowPlaying>) -> Metadata {
+/// fields. `root` resolves the album cover path into the `mpris:artUrl` file URL.
+/// Empty (just a NoTrack id) when nothing is playing.
+fn build_metadata(
+    track_id: Option<i64>,
+    meta: Option<&crate::db::NowPlaying>,
+    root: &std::path::Path,
+) -> Metadata {
     let mut m: Metadata = HashMap::new();
     let path = match track_id {
         Some(id) => format!("/org/conservatory/track/{id}"),
@@ -92,6 +97,12 @@ fn build_metadata(track_id: Option<i64>, meta: Option<&crate::db::NowPlaying>) -
             && let Ok(v) = Value::from(position_us(len)).try_to_owned()
         {
             m.insert("mpris:length".to_string(), v);
+        }
+        if let Some(cover) = &np.album_cover_path {
+            let abs = root.join(cover);
+            if let Ok(v) = Value::from(format!("file://{}", abs.display())).try_to_owned() {
+                m.insert("mpris:artUrl".to_string(), v);
+            }
         }
     }
     m
@@ -253,11 +264,16 @@ trait Login1Manager {
 }
 
 /// Serve MPRIS and drive the inhibitor until the runtime is torn down. Spawned
-/// by the GUI: `rt.spawn(mpris::run(player, pool))`.
-pub async fn run(handle: PlayerHandle, pool: ReadPool) -> Result<()> {
+/// by the GUI: `rt.spawn(mpris::run(player, pool, root))`. `root` resolves the
+/// album cover path into `mpris:artUrl`.
+pub async fn run(handle: PlayerHandle, pool: ReadPool, root: std::path::PathBuf) -> Result<()> {
     let snap = handle.snapshot();
     let mut last_track = snap.track_id;
-    let metadata = build_metadata(snap.track_id, current_meta(&pool, snap.track_id).as_ref());
+    let metadata = build_metadata(
+        snap.track_id,
+        current_meta(&pool, snap.track_id).as_ref(),
+        &root,
+    );
 
     let player = Player {
         handle: handle.clone(),
@@ -324,8 +340,11 @@ pub async fn run(handle: PlayerHandle, pool: ReadPool) -> Result<()> {
         }
         if snap.track_id != last_track {
             last_track = snap.track_id;
-            iface.metadata =
-                build_metadata(snap.track_id, current_meta(&pool, snap.track_id).as_ref());
+            iface.metadata = build_metadata(
+                snap.track_id,
+                current_meta(&pool, snap.track_id).as_ref(),
+                &root,
+            );
             let _ = iface.metadata_changed(iface_ref.signal_emitter()).await;
         }
         drop(iface);
@@ -414,11 +433,26 @@ mod tests {
             artist: Some("Boards of Canada".into()),
             album: Some("Music Has the Right".into()),
             length: Some(2.0),
+            album_cover_path: Some("Electronic/Boards of Canada/Music (1998)/cover.jpg".into()),
         };
-        let m = build_metadata(Some(7), Some(&np));
+        let m = build_metadata(Some(7), Some(&np), std::path::Path::new("/lib"));
         assert!(m.contains_key("mpris:trackid"));
         assert!(m.contains_key("xesam:title"));
         assert!(m.contains_key("xesam:artist"));
         assert!(m.contains_key("mpris:length"));
+        assert!(m.contains_key("mpris:artUrl"), "cover path yields artUrl");
+    }
+
+    #[test]
+    fn metadata_without_cover_has_no_arturl() {
+        let np = crate::db::NowPlaying {
+            title: "X".into(),
+            artist: None,
+            album: None,
+            length: None,
+            album_cover_path: None,
+        };
+        let m = build_metadata(Some(1), Some(&np), std::path::Path::new("/lib"));
+        assert!(!m.contains_key("mpris:artUrl"));
     }
 }

@@ -18,6 +18,7 @@ use conservatory_core::PlayerHandle;
 /// attached as the bottom bar.
 pub struct NowBar {
     pub root: gtk::CenterBox,
+    pub cover: gtk::Image,
     pub title: gtk::Label,
     pub artist: gtk::Label,
     pub play_btn: gtk::Button,
@@ -26,6 +27,9 @@ pub struct NowBar {
     pub volume: gtk::ScaleButton,
 }
 
+/// The placeholder shown when the album has no cover on disk.
+const COVER_PLACEHOLDER: &str = "audio-x-generic-symbolic";
+
 /// Build the Now-bar. When a `player` is present, the transport controls are
 /// wired to it; without one (no library / libmpv unavailable) the bar renders
 /// inert.
@@ -33,7 +37,10 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     let root = gtk::CenterBox::new();
     root.add_css_class("now-bar");
 
-    // Left: title (bold) over artist (dim).
+    // Left: cover thumbnail + title (bold) over artist (dim).
+    let cover = gtk::Image::from_icon_name(COVER_PLACEHOLDER);
+    cover.set_pixel_size(40);
+    cover.add_css_class("now-bar-cover");
     let title = gtk::Label::builder()
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -50,7 +57,11 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     info.set_width_request(220);
     info.append(&title);
     info.append(&artist);
-    root.set_start_widget(Some(&info));
+    let left = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    left.set_valign(gtk::Align::Center);
+    left.append(&cover);
+    left.append(&info);
+    root.set_start_widget(Some(&left));
 
     // Centre: prev / play-pause / next.
     let prev_btn = transport_button("media-skip-backward-symbolic", "Previous");
@@ -114,6 +125,7 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
 
     NowBar {
         root,
+        cover,
         title,
         artist,
         play_btn,
@@ -140,5 +152,14 @@ impl NowBar {
         self.play_btn.set_icon_name("media-playback-start-symbolic");
         self.seek.set_sensitive(false);
         self.seek.set_value(0.0);
+        self.set_cover(None);
+    }
+
+    /// Show the album cover from `path`, or the placeholder when absent.
+    pub fn set_cover(&self, path: Option<&std::path::Path>) {
+        match path.filter(|p| p.exists()) {
+            Some(p) => self.cover.set_from_file(Some(p)),
+            None => self.cover.set_icon_name(Some(COVER_PLACEHOLDER)),
+        }
     }
 }

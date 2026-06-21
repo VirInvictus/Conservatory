@@ -1,5 +1,21 @@
 # Patch Notes
 
+## v0.0.22
+
+Phases 5c (ReplayGain scan) and 5d (cover art to disk) shipped together. **Phase 5 — bulk editing, write-back, ReplayGain, and covers — is complete.**
+
+**5c — ReplayGain scan (`rsgain`):**
+- `conservatory-core/src/replaygain.rs` shells `rsgain` (the Lattice invocation: album gain, write tags, clip-protect) to compute ReplayGain 2.0 for an album, then re-reads the written gains and refreshes the DB `replaygain_*` columns the player's profile resolution consults. rsgain was chosen over the `ebur128` Rust crate because the crate only measures decoded PCM and the pure-Rust decoder can't handle Opus (half the library); rsgain decodes every format itself. It is an external tool (ATTRIBUTIONS.md); spec §16.7 is settled.
+- CLI: `replaygain scan <db> <selector> --root <root> [--apply] [--target-lufs N]` (per-album; dry-run lists the albums, `--apply` scans and syncs the DB).
+
+**5d — cover art to disk:**
+- `conservatory-core/src/covers.rs` writes each album's `cover.jpg`/`.png` into the managed folder and records `albums.cover_path`. Import writes covers; `organize` and path-affecting edits **resync** them (covers follow their album to the new folder, the stale one removed). The trust-critical mover is untouched: covers are derived, so they are synced idempotently rather than journaled.
+- CLI `set-cover <db> <album_id> <image> --root` sets an album's cover (and refreshes the accent).
+- The deferred **Now-bar cover thumbnail** and MPRIS **`mpris:artUrl`** are now wired (the Now-bar shows the album art; `mpris:artUrl` is `file://<root>/<cover_path>`).
+- Tests: `tests/replaygain.rs` (hermetic DB-sync + a skip-if-absent rsgain scan over FLAC + Opus) and `tests/covers.rs` (import writes the cover; an edit moves it).
+
+Still deferred: the APE-strip (Phase 8c byte-level pass), the in-dialog GUI cover field (the CLI `set-cover` covers it), online cover fetch.
+
 ## v0.0.21
 
 Phase 5b-ii shipped: the GUI write-back action. Phase 5b (embedded-tag write-back) is complete.

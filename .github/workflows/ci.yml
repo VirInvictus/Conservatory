@@ -24,6 +24,10 @@ jobs:
       # host (Phase 4a) links the system libmpv; rusqlite stays `bundled`.
       - name: Install system libraries
         run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libmpv-dev
+      # rsgain (Phase 5c) is best-effort: the ReplayGain scan test skips when it
+      # is absent, so a missing package never fails CI.
+      - name: Install rsgain (best-effort)
+        run: sudo apt-get install -y rsgain || true
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

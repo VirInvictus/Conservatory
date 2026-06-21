@@ -276,25 +276,25 @@ Headless-first: **5b-i** is the core write + `embed-tags` CLI + tests; **5b-ii**
 
 > **APE-strip deferred.** The Lattice `apestrip` hygiene (strip a stray APEv2 that shadows ID3 on MP3, with optional APE→ID3 migration) is **not** in 5b: lofty reads APE on MPEG but neither writes nor removes it, so a reliable strip needs byte-level surgery (exactly why `apestrip.py` is hand-rolled). Deferred to a byte-level pass, paired with the Phase 8c "detect stray APE" audit. (`embed-tags` writes the canonical ID3v2 correctly; it just cannot remove a pre-existing APE shadow on MPEG.)
 
-### Phase 5c — ReplayGain scan (resolves spec §16.7)
+### Phase 5c — ReplayGain scan (resolves spec §16.7) ✅
 
-Modeled on Lattice's `scripts/replaygain.py` (rsgain over libebur128, ReplayGain 2.0). Phase 4a reads ReplayGain but never scans (the §16.7 open decision); this settles it on the "scan in-app" side so the player can normalize untagged albums.
+Phase 4a reads ReplayGain but never scans (the §16.7 open decision); this settles it on the "scan in-app" side so the player can normalize untagged albums.
 
-- [ ] An in-app ReplayGain 2.0 scanner: compute album + track gain/peak for untagged or partially-tagged albums and write the tags format-aware (ID3 `TXXX`, Vorbis comments, Opus `R128_*`, MP4, WMA), batched as a job with a dry-run preview. Refresh the DB `replaygain_track`/`replaygain_album` columns from the scan so the Phase 4a profile resolution (album → track → off) sees the new values.
-- [ ] Mechanism (**settled**): the `ebur128` Rust crate (the libebur128 binding rsgain itself uses) measures integrated loudness + true peak in-process, and the chosen gain/peak tags are written via lofty (reusing the 5b write-back), so there is **no external binary** (fits the local-first ethos and Flatpak packaging). The RG2.0 math is small (gain = -18 LUFS - integrated; album gain from album-wide loudness). `ebur128` gets its dependency sign-off + ATTRIBUTIONS row when this phase lands. (`rsgain` was the considered alternative; rejected to avoid an external runtime tool.) The read-side per-album coverage audit lands in Phase 8c.
-- [ ] CLI: `replaygain scan <selector> [--dry-run] [--target-lufs N]`.
-- [ ] Tests: scanning an album fixture writes round-trippable gain tags per format and updates the DB columns; an idempotent re-scan is a no-op; coverage classification (missing / partial / album-missing / ok).
+- [x] **Mechanism (settled): `rsgain`** (installed, v3.6), not the `ebur128` crate. The crate measures only decoded PCM and the pure-Rust decoder (symphonia) can't decode Opus (half the library); rsgain decodes every format itself and writes correct RG2.0 tags (incl. Opus R128 + album gain). External tool (ATTRIBUTIONS.md; bundle for Flatpak later). `conservatory-core/src/replaygain.rs`: `scan_album_files` shells `rsgain custom -a -s i -c p -l <lufs>` (the Lattice invocation); `replaygain_from_file` re-reads the written gains.
+- [x] DB refresh: a `set_track_replaygain` worker command updates `tracks.replaygain_*` from the scan, so the Phase 4a profile resolution (album → track → off) sees the values unchanged.
+- [x] CLI: `replaygain scan <db> <selector> --root <root> [--apply] [--target-lufs N]` (per-album grouping; dry-run lists the albums, `--apply` scans + syncs).
+- [x] Tests (`tests/replaygain.rs`): the DB-sync half is hermetic (write a known tag → read → feed the profile); the rsgain scan is a skip-if-absent integration test (covers FLAC + Opus).
 
-*Usable artifact:* untagged albums get correct ReplayGain in-app, so playback normalization works without an external script.
+*Usable artifact:* `conservatory-cli replaygain scan <db> '<expr>' --root <root> --apply` gives untagged albums correct ReplayGain in-app.
 
-### Phase 5d — Cover art to disk + cover management (spec §7.4)
+### Phase 5d — Cover art to disk + cover management (spec §7.4) ✅
 
-Modeled on Lattice's `--extractArt` (format-priority embedded-cover extraction). Implements the §7.4 covers-on-disk story that the Now-bar thumbnail and MPRIS art were deferred behind (Phases 4b-ii-c, 4c-i).
+Implements the §7.4 covers-on-disk story that the Now-bar thumbnail and MPRIS art were deferred behind (Phases 4b-ii-c, 4c-i). The **trust-critical mover is left untouched**: covers are derived (re-extractable from embedded art), so they are synced idempotently after a move, not journaled.
 
-- [ ] Extract the embedded front cover (or a chosen image) to a managed `cover.jpg` beside the album (format priority FLAC > Opus/OGG > M4A > MP3, preferring the type-3 Front Cover), populate `albums.cover_path`, and treat that file as part of the managed layout so the Phase 2c mover relocates and undoes it with the album.
-- [ ] Set / replace an album (or book) cover from a file or from embedded art: the Phase 5a bulk-edit "cover" field becomes real here, and the chosen cover embeds back into the files at write-back (Phase 5b).
-- [ ] Wire the unblocked consumers once `cover_path` is populated: the Now-bar cover thumbnail (4b-ii-c deferral) and MPRIS `mpris:artUrl` (4c-i deferral).
-- [ ] Tests: per-format embedded cover extracts to `cover.jpg`; `cover_path` is populated and moves with the album; the Now-bar / MPRIS art read resolves it.
+- [x] `conservatory-core/src/covers.rs`: `write_cover` (sniff PNG vs JPEG), `sync_album_cover` (write into the album folder, drop a stale cover at the old location), `resync_album_covers` (ensure every album's cover is in its current folder + `cover_path` matches, after a move). Import writes each album's `cover.jpg`/`.png` and records `cover_path`; `organize` and path-affecting edits resync.
+- [x] Set / replace a cover from a file: CLI `set-cover <db> <album_id> <image> --root` (writes the file, updates `cover_path`, refreshes the accent). (The in-dialog GUI cover field is deferred; the CLI verb covers it.)
+- [x] Wired the unblocked consumers: the Now-bar cover thumbnail (a `gtk::Image`, loaded on track change) and MPRIS `mpris:artUrl` (`file://<root>/<cover_path>`, root passed into `mpris::run`).
+- [x] Tests (`tests/covers.rs`): import writes the cover + populates `cover_path` + accent; a year edit + organize moves the cover and updates `cover_path` (old removed). The artUrl mapping is a `mpris::build_metadata` unit test; the Now-bar image is build + manual.
 
 *Usable artifact:* albums show their cover on disk, in the Now-bar, and in the GNOME media controls.
 

@@ -79,6 +79,22 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Update a track's ReplayGain values after a scan (Phase 5c).
+    SetTrackReplayGain {
+        track_id: i64,
+        track_gain: Option<f64>,
+        album_gain: Option<f64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Set an album's cover path, optionally refreshing the accent (Phase 5d).
+    SetAlbumCoverPath {
+        album_id: i64,
+        cover_path: Option<String>,
+        accent_rgb: Option<u32>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Insert a track, returning its new id.
     InsertTrack {
         track: Track,
@@ -221,6 +237,8 @@ impl Command {
             Self::UpdateTrack { .. } => "update_track",
             Self::UpdateAlbum { .. } => "update_album",
             Self::SetTrackGenres { .. } => "set_track_genres",
+            Self::SetTrackReplayGain { .. } => "set_track_replaygain",
+            Self::SetAlbumCoverPath { .. } => "set_album_cover_path",
             Self::InsertTrack { .. } => "insert_track",
             Self::GetOrCreateGenre { .. } => "get_or_create_genre",
             Self::LinkTrackGenre { .. } => "link_track_genre",

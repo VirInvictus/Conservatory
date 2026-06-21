@@ -53,6 +53,9 @@ struct PlannedAlbum {
     shelf_genre: String,
     year: Option<i32>,
     accent: Option<u32>,
+    /// The cover bytes (embedded or sibling), written to disk after the move
+    /// (Phase 5d). The accent is derived from the same bytes.
+    cover: Option<Vec<u8>>,
     folder_rel: Option<PathBuf>,
 }
 
@@ -108,7 +111,8 @@ pub async fn import_folder(
             &vocab,
         );
         let year = group.drafts.iter().find_map(|d| d.year);
-        let accent = album_accent(&group);
+        let cover = album_cover_bytes(&group);
+        let accent = cover.as_deref().and_then(|b| compute_accent(b).ok());
         let title = group.title.clone();
 
         planned_albums.push(PlannedAlbum {
@@ -117,6 +121,7 @@ pub async fn import_folder(
             shelf_genre,
             year,
             accent,
+            cover,
             folder_rel: None,
         });
 
@@ -267,6 +272,20 @@ pub async fn import_folder(
     )
     .await?;
 
+    // Cover to disk (Phase 5d): the move has created the album folders, so write
+    // each album's cover.jpg and record its path. Best-effort: a cover failure
+    // never fails an otherwise-successful import (covers are re-derivable).
+    for (idx, pa) in planned_albums.iter().enumerate() {
+        if let (Some(bytes), Some(folder_rel)) = (&pa.cover, &pa.folder_rel) {
+            let folder = folder_rel.to_string_lossy();
+            if let Ok(cover_path) = crate::covers::sync_album_cover(root, &folder, bytes, None) {
+                let _ = worker
+                    .set_album_cover_path(album_ids[idx], Some(cover_path), None)
+                    .await;
+            }
+        }
+    }
+
     Ok(ImportReport {
         files_scanned,
         skipped_unreadable,
@@ -278,15 +297,11 @@ pub async fn import_folder(
     })
 }
 
-/// The album accent from the first cover found among its drafts (embedded, else a
-/// sibling cover file), median-cut per spec §7.4.
-fn album_accent(group: &AlbumGroup) -> Option<u32> {
-    for draft in &group.drafts {
-        if let Some(bytes) = find_cover_bytes(&draft.source_path, draft)
-            && let Ok(accent) = compute_accent(&bytes)
-        {
-            return Some(accent);
-        }
-    }
-    None
+/// The first cover found among an album's drafts (embedded, else a sibling cover
+/// file). Feeds both the median-cut accent (spec §7.4) and the on-disk cover (5d).
+fn album_cover_bytes(group: &AlbumGroup) -> Option<Vec<u8>> {
+    group
+        .drafts
+        .iter()
+        .find_map(|d| find_cover_bytes(&d.source_path, d))
 }

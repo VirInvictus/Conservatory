@@ -170,6 +170,37 @@ pub(crate) fn set_track_genres(
     Ok(())
 }
 
+/// Update a track's ReplayGain values after a scan (Phase 5c). `None` clears the
+/// column (e.g. a single track scanned without album context has no album gain).
+pub(crate) fn set_track_replaygain(
+    conn: &Connection,
+    track_id: i64,
+    track_gain: Option<f64>,
+    album_gain: Option<f64>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE tracks SET replaygain_track = ?2, replaygain_album = ?3 WHERE id = ?1",
+        params![track_id, track_gain, album_gain],
+    )?;
+    Ok(())
+}
+
+/// Set an album's `cover_path` (Phase 5d), optionally refreshing `accent_rgb` (on
+/// a cover change; `None` keeps the existing accent). `cover_path` is relative to
+/// the library root, like `file_path`.
+pub(crate) fn set_album_cover_path(
+    conn: &Connection,
+    album_id: i64,
+    cover_path: Option<&str>,
+    accent_rgb: Option<u32>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE albums SET cover_path = ?2, accent_rgb = COALESCE(?3, accent_rgb) WHERE id = ?1",
+        params![album_id, cover_path, accent_rgb],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn insert_album(conn: &Connection, album: &Album) -> Result<i64> {
     conn.execute(
         "INSERT INTO albums (

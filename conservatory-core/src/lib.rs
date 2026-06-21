@@ -12,6 +12,7 @@
 //! The import pipeline, playback, podcasts, and audiobooks follow.
 
 pub mod accent;
+pub mod covers;
 pub mod db;
 pub mod edit;
 pub mod errors;
@@ -20,10 +21,12 @@ pub mod mover;
 pub mod mpris;
 pub mod path_template;
 pub mod player;
+pub mod replaygain;
 pub mod shelf_genre;
 pub mod tags;
 
 pub use accent::{compute_accent, find_cover_bytes};
+pub use covers::{resync_album_covers, sync_album_cover, write_cover};
 pub use edit::{
     AlbumEdit, Assignment, Field, TrackEdit, any_path_affecting, build_album_edit,
     build_track_edit, genres_assignment, parse_assignment, replace_in, split_genres,
@@ -35,6 +38,9 @@ pub use player::{
     AudioDevice, EndReason, HostEvent, MpvHost, MusicProfile, PlayableItem, PlaybackConfig,
     PlayerCommand, PlayerHandle, PlayerSnapshot, ReplayGain, StateDebounce, StateEvent,
     resolve_music_profile,
+};
+pub use replaygain::{
+    DEFAULT_TARGET_LUFS, replaygain_from_file, rsgain_available, scan_album_files,
 };
 pub use shelf_genre::{AlbumGenreInput, GenreVocab, normalize, resolve_album, resolve_shelf_genre};
 pub use tags::{EmbeddedCover, TagWrite, TrackDraft, read_track, write_track_tags};

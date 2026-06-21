@@ -205,7 +205,13 @@ impl ConservatoryWindow {
             if let (Some(rt), Some(player), Some(pool)) =
                 (imp.runtime.get(), imp.player.get(), imp.pool.get())
             {
-                rt.spawn(conservatory_core::mpris::run(player.clone(), pool.clone()));
+                // The root resolves the album cover into mpris:artUrl (Phase 5d).
+                let root = imp.library_root.get().cloned().unwrap_or_default();
+                rt.spawn(conservatory_core::mpris::run(
+                    player.clone(),
+                    pool.clone(),
+                    root,
+                ));
             }
         }
 
@@ -974,6 +980,10 @@ impl ConservatoryWindow {
             created_at,
             ops,
         ));
+        // Covers follow their albums after the move (Phase 5d).
+        let _ = rt.block_on(conservatory_core::covers::resync_album_covers(
+            worker, pool, root,
+        ));
     }
 
     /// Embed the curated DB metadata into the selected files (Phase 5b-ii, spec
@@ -1210,6 +1220,24 @@ impl ConservatoryWindow {
                     .unwrap_or_else(|| ("\u{2014}".to_string(), String::new()));
                 now.title.set_text(&title);
                 now.artist.set_text(&artist);
+                drop(labels);
+                // Album cover thumbnail (Phase 5d): resolve the cover path and
+                // load it (placeholder when absent).
+                let cover = imp
+                    .pool
+                    .get()
+                    .and_then(|pool| pool.open().ok())
+                    .and_then(|conn| {
+                        conservatory_core::db::track_metadata(&conn, id)
+                            .ok()
+                            .flatten()
+                    })
+                    .and_then(|np| np.album_cover_path);
+                let abs = match (imp.library_root.get(), cover) {
+                    (Some(root), Some(cp)) => Some(root.join(cp)),
+                    _ => None,
+                };
+                now.set_cover(abs.as_deref());
             }
         }
 

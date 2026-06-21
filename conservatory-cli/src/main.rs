@@ -11,17 +11,18 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    MediaKind, ReadPool, SearchRow, SqlParam, WritebackRow, fts_rank, get_track, library_counts,
-    load_queue, probe_read, read_playback_state, search_rows, search_track_ids, spawn_worker,
-    track_render_rows, writeback_rows,
+    MediaKind, ReadPool, SearchRow, SqlParam, WritebackRow, fts_rank, get_album, get_track,
+    library_counts, load_queue, probe_read, read_playback_state, search_rows, search_track_ids,
+    spawn_worker, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
-    AlbumEdit, Assignment, Field, GenreVocab, ImportOptions, ImportReport, PathTemplate,
-    PlayableItem, PlaybackConfig, TagWrite, TrackDraft, TrackEdit, TrackFields, any_path_affecting,
-    build_album_edit, build_track_edit, compute_accent, find_collisions, find_cover_bytes,
-    genres_assignment, import_folder, parse_assignment, read_track, replace_in, resolve_album,
-    resolve_music_profile, write_track_tags,
+    AlbumEdit, Assignment, DEFAULT_TARGET_LUFS, Field, GenreVocab, ImportOptions, ImportReport,
+    PathTemplate, PlayableItem, PlaybackConfig, TagWrite, TrackDraft, TrackEdit, TrackFields,
+    any_path_affecting, build_album_edit, build_track_edit, compute_accent, find_collisions,
+    find_cover_bytes, genres_assignment, import_folder, parse_assignment, read_track, replace_in,
+    replaygain_from_file, resolve_album, resolve_music_profile, resync_album_covers,
+    rsgain_available, scan_album_files, sync_album_cover, write_track_tags,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -179,6 +180,27 @@ enum Command {
         apply: bool,
     },
 
+    /// Scan + write ReplayGain for the matched tracks via rsgain (spec §16.7,
+    /// Phase 5c). Per-album album gain; refreshes the DB columns the player reads.
+    Replaygain {
+        #[command(subcommand)]
+        action: ReplaygainAction,
+    },
+
+    /// Set an album's cover image: write it into the album folder as cover.jpg
+    /// and record `cover_path` + a refreshed accent (Phase 5d).
+    SetCover {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Album id.
+        album_id: i64,
+        /// The image file to use as the cover.
+        image: PathBuf,
+        /// Library root the album folder hangs off.
+        #[arg(long)]
+        root: PathBuf,
+    },
+
     /// Filter the library with the search grammar (spec §3.4). Uses the SQL fast
     /// path when the whole expression translates, else the in-memory evaluator.
     Search {
@@ -195,6 +217,26 @@ enum Command {
     DebugFacets {
         /// Path to the SQLite database.
         db: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReplaygainAction {
+    /// Scan the matched tracks' albums and write ReplayGain (dry-run by default).
+    Scan {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Search expression selecting the tracks to scan.
+        query: String,
+        /// Library root the relative track paths hang off.
+        #[arg(long)]
+        root: PathBuf,
+        /// Run rsgain and write tags (default is a dry-run report).
+        #[arg(long)]
+        apply: bool,
+        /// Reference loudness in LUFS (RG 2.0 default is -18).
+        #[arg(long, default_value_t = DEFAULT_TARGET_LUFS)]
+        target_lufs: f64,
     },
 }
 
@@ -320,6 +362,22 @@ fn main() -> Result<()> {
             root,
             apply,
         }) => embed_tags(db, query, root, apply),
+        Some(Command::Replaygain {
+            action:
+                ReplaygainAction::Scan {
+                    db,
+                    query,
+                    root,
+                    apply,
+                    target_lufs,
+                },
+        }) => block_on(run_replaygain_scan(db, query, root, apply, target_lufs)),
+        Some(Command::SetCover {
+            db,
+            album_id,
+            image,
+            root,
+        }) => block_on(run_set_cover(db, album_id, image, root)),
         Some(Command::Search { db, query, format }) => search(db, query, format),
         Some(Command::DebugFacets { db }) => debug_facets(db),
         None => {
@@ -638,11 +696,22 @@ async fn run_organize(
         )
         .await
         .context("applying move job")?;
+        // Covers follow their albums after the move (Phase 5d, idempotent).
+        let covers = resync_album_covers(&worker, &pool, &root)
+            .await
+            .context("resyncing covers")?;
         match format {
-            Format::Json => println!("{{\"job_id\":{job_id},\"tracks\":{count}}}"),
+            Format::Json => {
+                println!("{{\"job_id\":{job_id},\"tracks\":{count},\"covers\":{covers}}}")
+            }
             _ => println!(
-                "applied job {job_id}: {count} track(s) organized under {}",
-                root.display()
+                "applied job {job_id}: {count} track(s) organized under {}{}",
+                root.display(),
+                if covers > 0 {
+                    format!(" ({covers} cover(s) moved)")
+                } else {
+                    String::new()
+                }
             ),
         }
     } else {
@@ -1027,7 +1096,18 @@ async fn scoped_organize(
         )
         .await
         .context("applying move job")?;
-        println!("applied move job {job_id}: {count} file(s) re-shelved");
+        // Covers follow their albums after the move (Phase 5d, idempotent).
+        let covers = resync_album_covers(worker, pool, root)
+            .await
+            .context("resyncing covers")?;
+        println!(
+            "applied move job {job_id}: {count} file(s) re-shelved{}",
+            if covers > 0 {
+                format!(" ({covers} cover(s) moved)")
+            } else {
+                String::new()
+            }
+        );
     } else {
         let preview = mover::plan(ops);
         println!(
@@ -1166,6 +1246,109 @@ fn embed_tags(db: PathBuf, query: String, root: PathBuf, apply: bool) -> Result<
             rows.len()
         );
     }
+    Ok(())
+}
+
+async fn run_replaygain_scan(
+    db: PathBuf,
+    query: String,
+    root: PathBuf,
+    apply: bool,
+    target_lufs: f64,
+) -> Result<()> {
+    let pool = ReadPool::new(db.clone(), 3).context("opening read pool")?;
+    let ids = resolve_selector(&pool, &query)?;
+    if ids.is_empty() {
+        println!("no tracks match {query:?}");
+        return Ok(());
+    }
+
+    // Group the matched tracks by album (rsgain computes album gain per set).
+    let rows = {
+        let conn = pool.open().context("opening pool connection")?;
+        track_render_rows(&conn).context("reading render rows")?
+    };
+    let mut by_album: std::collections::BTreeMap<Option<i64>, Vec<(i64, String)>> =
+        std::collections::BTreeMap::new();
+    for r in &rows {
+        if ids.contains(&r.track_id) {
+            by_album
+                .entry(r.album_id)
+                .or_default()
+                .push((r.track_id, r.file_path.clone()));
+        }
+    }
+
+    if !apply {
+        let albums = by_album.len();
+        let tracks: usize = by_album.values().map(Vec::len).sum();
+        for group in by_album.values() {
+            let folder = group
+                .first()
+                .map(|(_, fp)| {
+                    std::path::Path::new(fp)
+                        .parent()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
+            println!("{}\t{} track(s)", folder, group.len());
+        }
+        println!("{albums} album(s) / {tracks} track(s) would be scanned (dry-run; pass --apply)");
+        return Ok(());
+    }
+
+    if !rsgain_available() {
+        anyhow::bail!("rsgain not found on PATH; install it to scan ReplayGain");
+    }
+    let worker = spawn_worker(db).context("spawning worker")?;
+    let mut scanned = 0usize;
+    for group in by_album.values() {
+        let files: Vec<PathBuf> = group.iter().map(|(_, fp)| root.join(fp)).collect();
+        scan_album_files(&files, target_lufs).context("running rsgain")?;
+        for (track_id, fp) in group {
+            let (track_gain, album_gain) = replaygain_from_file(&root.join(fp))?;
+            worker
+                .set_track_replaygain(*track_id, track_gain, album_gain)
+                .await
+                .context("writing replaygain to the DB")?;
+            scanned += 1;
+        }
+    }
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!(
+        "scanned {scanned} track(s) across {} album(s)",
+        by_album.len()
+    );
+    Ok(())
+}
+
+async fn run_set_cover(db: PathBuf, album_id: i64, image: PathBuf, root: PathBuf) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let album = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_album(&conn, album_id)
+            .context("reading album")?
+            .ok_or_else(|| anyhow::anyhow!("no album with id {album_id}"))?
+    };
+    if album.folder_path.is_empty() {
+        anyhow::bail!("album {album_id} has no managed folder yet; import/organize it first");
+    }
+    let bytes = std::fs::read(&image).with_context(|| format!("reading {image:?}"))?;
+    let cover_path = sync_album_cover(
+        &root,
+        &album.folder_path,
+        &bytes,
+        album.cover_path.as_deref(),
+    )?;
+    let accent = compute_accent(&bytes).ok();
+    worker
+        .set_album_cover_path(album_id, Some(cover_path.clone()), accent)
+        .await
+        .context("recording the cover path")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("set cover for album {album_id}: {cover_path}");
     Ok(())
 }
 

@@ -290,13 +290,17 @@ pub struct NowPlaying {
     pub artist: Option<String>,
     pub album: Option<String>,
     pub length: Option<f64>,
+    /// The album cover's path relative to the library root (Phase 5d), for the
+    /// Now-bar thumbnail and MPRIS `mpris:artUrl`. `None` until a cover is on disk.
+    pub album_cover_path: Option<String>,
 }
 
-/// Resolve a track id to its title / artist / album / length (the MPRIS
-/// `Metadata` source). Joins the track artist and album.
+/// Resolve a track id to its title / artist / album / length / cover (the MPRIS
+/// `Metadata` and Now-bar source). Joins the track artist and album.
 pub fn track_metadata(conn: &Connection, track_id: i64) -> Result<Option<NowPlaying>> {
     conn.query_row(
-        "SELECT t.title, t.duration, ar.name AS artist, al.title AS album
+        "SELECT t.title, t.duration, ar.name AS artist, al.title AS album,
+                al.cover_path AS album_cover_path
          FROM tracks t
          LEFT JOIN artists ar ON ar.id = t.artist_id
          LEFT JOIN albums al ON al.id = t.album_id
@@ -308,6 +312,7 @@ pub fn track_metadata(conn: &Connection, track_id: i64) -> Result<Option<NowPlay
                 artist: row.get("artist")?,
                 album: row.get("album")?,
                 length: row.get("duration")?,
+                album_cover_path: row.get("album_cover_path")?,
             })
         },
     )

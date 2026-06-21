@@ -104,6 +104,38 @@ impl WorkerHandle {
         .await
     }
 
+    /// Update a track's ReplayGain values after a scan (Phase 5c).
+    pub async fn set_track_replaygain(
+        &self,
+        track_id: i64,
+        track_gain: Option<f64>,
+        album_gain: Option<f64>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::SetTrackReplayGain {
+            track_id,
+            track_gain,
+            album_gain,
+            reply,
+        })
+        .await
+    }
+
+    /// Set an album's cover path, optionally refreshing the accent (Phase 5d).
+    pub async fn set_album_cover_path(
+        &self,
+        album_id: i64,
+        cover_path: Option<String>,
+        accent_rgb: Option<u32>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::SetAlbumCoverPath {
+            album_id,
+            cover_path,
+            accent_rgb,
+            reply,
+        })
+        .await
+    }
+
     /// Resolve an artist by sort_name, creating it on first sight (import).
     pub async fn get_or_create_artist(
         &self,
@@ -414,6 +446,29 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::set_track_genres(conn, track_id, &genres));
+        }
+        Command::SetTrackReplayGain {
+            track_id,
+            track_gain,
+            album_gain,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_track_replaygain(
+                conn, track_id, track_gain, album_gain,
+            ));
+        }
+        Command::SetAlbumCoverPath {
+            album_id,
+            cover_path,
+            accent_rgb,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_album_cover_path(
+                conn,
+                album_id,
+                cover_path.as_deref(),
+                accent_rgb,
+            ));
         }
         Command::GetOrCreateArtist {
             name,

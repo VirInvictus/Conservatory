@@ -38,6 +38,9 @@ pub enum Error {
     #[error("edit: {0}")]
     Edit(String),
 
+    #[error("replaygain: {0}")]
+    ReplayGain(String),
+
     #[error("dbus: {0}")]
     Dbus(#[from] zbus::Error),
 }

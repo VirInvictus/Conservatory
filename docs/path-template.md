@@ -21,22 +21,34 @@ Phase 2c mover to refuse or disambiguate before moving anything.
 
 The database is truth; the on-disk tree is a **render** of a configurable path template, exactly as Calibre's "save to disk" template and beets' `paths:` config work. Re-shelving an album is a template-or-field change, not a lock-in: change the field, re-render, and the file mover (spec §5.4) relocates the album.
 
-The default template:
+Each media type lives under its own top-level folder beneath the library root:
+`Music/`, `Audiobooks/`, and `Podcasts/` (spec §5.1, §5.7, §5.3), so one library
+root holds all three side by side.
+
+The default music template:
 
 ```text
-{shelf_genre}/{albumartist}/{album} ({year})/{track:02} - {title}
+Music/{shelf_genre}/{albumartist}/{album} ({year})/{track:02} - {title}
 ```
 
 rendered under the library root as:
 
 ```text
 <library root>/
-└── <Shelf Genre>/
-    └── <Album Artist sort_name>/
-        └── <Album> (<Year>)/
-            ├── 01 - <Title>.<ext>
-            └── cover.jpg
+└── Music/
+    └── <Shelf Genre>/
+        └── <Album Artist sort_name>/
+            └── <Album> (<Year>)/
+                ├── 01 - <Title>.<ext>
+                └── cover.jpg
 ```
+
+> **Implementation status (through v0.0.22):** `DEFAULT_MUSIC_TEMPLATE` in
+> `conservatory-core/src/path_template.rs` still omits the `Music/` prefix.
+> Adding it re-shelves an existing managed library into `Music/` on the next
+> `organize`, so it is a deliberate change shipped with updated tests + a note,
+> not silently. The audiobook layout puts standalone books under a literal
+> `Standalone/` folder (spec §5.7).
 
 ## Tokens
 

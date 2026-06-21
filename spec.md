@@ -387,18 +387,23 @@ This is the section that distinguishes Conservatory from everything else Brandon
 
 ### 5.1 Music On-Disk: a rendered template
 
+**Each media type lives under its own top-level folder beneath the library root:** `Music/` (this section), `Audiobooks/` (§5.7), and `Podcasts/` (§5.3). So one library root cleanly holds all three side by side.
+
 The database is truth; the on-disk tree is a *render* of a configurable path template, exactly as Calibre's "save to disk" template and beets' `paths:` config work. The default:
 
 ```text
 <library root>/
-└── <Shelf Genre>/
-    └── <Album Artist sort_name>/
-        └── <Album> (<Year>)/
-            ├── NN - <Title>.<ext>
-            └── cover.jpg
+└── Music/
+    └── <Shelf Genre>/
+        └── <Album Artist sort_name>/
+            └── <Album> (<Year>)/
+                ├── NN - <Title>.<ext>
+                └── cover.jpg
 ```
 
-Default template string: `{shelf_genre}/{albumartist}/{album} ({year})/{track:02} - {title}`. Because the layout is a render of the database, re-shelving an album is a *template-or-field change*, not a lock-in. The template is user-editable; `{shelf_genre}` is the only piece that depends on the genre decision in §5.2.
+Default template string: `Music/{shelf_genre}/{albumartist}/{album} ({year})/{track:02} - {title}`. Because the layout is a render of the database, re-shelving an album is a *template-or-field change*, not a lock-in. The template is user-editable; `{shelf_genre}` is the only piece that depends on the genre decision in §5.2.
+
+> **Implementation status (through v0.0.22):** the shipped `DEFAULT_MUSIC_TEMPLATE` still omits the `Music/` prefix (`{shelf_genre}/…`). Adding the prefix is a pending, deliberate change: it re-shelves an existing managed library into `Music/` on the next `organize`, so it ships with updated tests and a release note.
 
 An **album is the unit that moves.** A single album resolves to exactly one path: one shelf genre and one album artist drive the directory, even when track-level genres or artists disagree. Compilations resolve their album-artist component to a **Various Artists** bucket.
 
@@ -445,13 +450,13 @@ Audiobooks are curated, not ephemeral, so they adopt the **music model, not the 
 <library root>/
 └── Audiobooks/
     └── <Author sort_name>/
-        └── <Series>/                       (omitted when the book is standalone)
+        └── <Series, or "Standalone">/
             └── <NN. ><Title> (<Year>)/
                 ├── <chapter files or book.m4b>
                 └── cover.jpg
 ```
 
-Default template string: `Audiobooks/{author}/{series}/{series_index2}. {title} ({year})`. The `{series}` and `{series_index}` components collapse cleanly when a book is standalone (no empty `()` or stray separators, the §5.1 sanitization rule). A book resolves to exactly one path: one author component (the first credited author's `sort_name`, multi-author books bucket under the primary), one optional series. New path tokens (`{author}`, `{narrator}`, `{series}`, `{series_index}`) are documented in `docs/path-template.md`. Single-file M4B books keep their one file inside the book folder; multi-file books keep their chapter files there. As with music, `shelf_genre` (single-valued) is available as an optional template token but is not in the default audiobook layout.
+Default template string: `Audiobooks/{author}/{series}/{series_index2}. {title} ({year})`. A book always sits under a series level: a series book uses its series name, a standalone book uses the literal **`Standalone`** folder (so every author folder has the same two-level shape, `Author/<series-or-Standalone>/Title`). `{series_index}` collapses cleanly when there is no number (no stray `NN.` separator, the §5.1 sanitization rule). A book resolves to exactly one path: one author component (the first credited author's `sort_name`, multi-author books bucket under the primary), one series-or-Standalone level. New path tokens (`{author}`, `{narrator}`, `{series}`, `{series_index}`) are documented in `docs/path-template.md`. Single-file M4B books keep their one file inside the book folder; multi-file books keep their chapter files there. As with music, `shelf_genre` (single-valued) is available as an optional template token but is not in the default audiobook layout.
 
 ---
 

@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.0.14
+
+Phase 4b-ii-b shipped: a drag-and-drop queue drawer. The queue you're playing is now visible, reorderable, and editable, with the playing track highlighted. (Launch-resume, append, and a cover thumbnail are 4b-ii-c.)
+
+- **The drawer (`conservatory/src/ui/queue_panel.rs`):** a right-side slide-in `gtk::Revealer` (header toggle + `Ctrl+U`) holding a `ListView` of the queue, each row a kind icon over title/artist, the playing row accent-highlighted. Rows are **drag-and-drop reorderable** (the Atrium idiom: the `DragSource` carries the row's position, the `DropTarget` computes Above/Below from the cursor Y, both controllers torn down in `unbind` so they don't leak on recycling). Keyboard too: `Alt+↑/↓` reorder, `Delete` removes, `Ctrl+Shift+C` clears.
+- **Live engine mutation (`conservatory-core/src/player/`):** the engine gained `MoveItem` / `RemoveItem` / `ClearQueue` so editing the queue never restarts the current track. The `current_index` adjustment is pure and unit-tested (`move_current_index` / `remove_current_index`): the playing item follows a move, a remove-before shifts it down, removing the current item reloads what fell into its slot. `MpvHost::stop` unloads on clear.
+- **DB queue is the source of truth (spec §4.3):** double-click now **writes the DB queue through** (`replace_queue_with_tracks`) before playing, and every drawer edit applies the identical `(from, to)` to both `worker.reorder_queue` and `player.move_item`, so the DB position and the engine index stay aligned. New core read `load_queue_display` (queue ⋈ tracks ⋈ artists) backs the drawer; the playing-row highlight follows the engine via the 250 ms snapshot poll.
+- **Tests:** the index helpers (8), `drop_target_position` (Above/Below, dragging up/down, end clamp), an engine null-host integration test that moves and removes queue items and asserts `current_index` tracks correctly *without* restarting the current track, and a `load_queue_display` worker test. The widgets are verified by build + manual launch (the 3b/3c precedent).
+
+Deferred to 4b-ii-c: launch-resume (load the saved queue paused at the cursor on startup), `Ctrl+Enter` append, a Now-bar cover thumbnail, the audible within-album gapless prototype (§16.9), and the `playback_state` queue-entry reference. MPRIS2 + media keys + inhibitor are Phase 4c; the library root moves to config at Phase 10.
+
 ## v0.0.13
 
 Phase 4b-ii-a shipped: the browse window plays music. The threaded engine stands up in the GUI, a persistent Now-bar transport sits at the bottom, and double-clicking a track plays the list you're looking at. (The visible queue panel and drag-and-drop reorder are 4b-ii-b.)

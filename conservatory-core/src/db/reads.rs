@@ -207,6 +207,43 @@ pub fn load_queue(conn: &Connection) -> Result<Vec<QueueItem>> {
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// A unified-queue entry with the display fields the queue panel renders
+/// (Phase 4b-ii-b). `title`/`artist` come from the joined track (empty/None for
+/// a missing or non-track row; episode/book titles arrive at Phases 6/7).
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueueDisplayRow {
+    pub position: i64,
+    pub kind: MediaKind,
+    pub track_id: Option<i64>,
+    pub title: String,
+    pub artist: Option<String>,
+}
+
+/// The unified queue in order, with display fields joined in (Phase 4b-ii-b).
+pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT q.position, q.kind, q.track_id, t.title, ar.name AS artist
+         FROM queue q
+         LEFT JOIN tracks t ON t.id = q.track_id
+         LEFT JOIN artists ar ON ar.id = t.artist_id
+         ORDER BY q.position",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let kind: String = row.get("kind")?;
+        let kind = kind.parse::<MediaKind>().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+        Ok(QueueDisplayRow {
+            position: row.get("position")?,
+            kind,
+            track_id: row.get("track_id")?,
+            title: row.get::<_, Option<String>>("title")?.unwrap_or_default(),
+            artist: row.get("artist")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
 /// A track projected for search (Phase 3a). The CLI/GUI maps this to
 /// `conservatory_search::SearchItem` for the in-memory fallback path; `track_id`
 /// pairs a match back to its row.

@@ -49,6 +49,29 @@ pub fn build_play_queue(
     (items, start)
 }
 
+/// Which side of the drop-target row the dragged row lands on (from the cursor
+/// Y vs the row's mid-height, the GNOME/macOS reorder idiom).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropBias {
+    Above,
+    Below,
+}
+
+/// The final queue position for a drag-and-drop reorder: the item at `from`
+/// dropped onto the row at `dest` with `bias`, in a queue of `count` items. The
+/// result is the `to` index for `reorder_queue`/`move_item` (which both apply
+/// `remove(from)` then `insert(to)`), clamped into range. Pure.
+pub fn drop_target_position(from: usize, dest: usize, bias: DropBias, count: usize) -> usize {
+    // After removing `from`, the dest row sits one slot earlier iff it was after
+    // `from`; insert above it at that slot, below it one past.
+    let dest_prime = if from < dest { dest - 1 } else { dest };
+    let to = match bias {
+        DropBias::Above => dest_prime,
+        DropBias::Below => dest_prime + 1,
+    };
+    to.min(count.saturating_sub(1))
+}
+
 /// Format a number of seconds as `m:ss` (e.g. `3:07`); negatives clamp to 0.
 pub fn fmt_secs(secs: f64) -> String {
     let total = secs.max(0.0) as u64;
@@ -157,6 +180,28 @@ mod tests {
             &PlaybackConfig::default(),
         );
         assert_eq!(start, 0); // activated id 20 is gone
+    }
+
+    #[test]
+    fn drop_position_dragging_down() {
+        // Drag item 0 onto item 3, below it: ends at index 3.
+        assert_eq!(drop_target_position(0, 3, DropBias::Below, 5), 3);
+        // Above item 3: ends at index 2.
+        assert_eq!(drop_target_position(0, 3, DropBias::Above, 5), 2);
+    }
+
+    #[test]
+    fn drop_position_dragging_up() {
+        // Drag item 4 onto item 1, above it: ends at index 1.
+        assert_eq!(drop_target_position(4, 1, DropBias::Above, 5), 1);
+        // Below item 1: ends at index 2.
+        assert_eq!(drop_target_position(4, 1, DropBias::Below, 5), 2);
+    }
+
+    #[test]
+    fn drop_position_clamps_at_the_end() {
+        // Below the last row never exceeds the final index.
+        assert_eq!(drop_target_position(0, 4, DropBias::Below, 5), 4);
     }
 
     #[test]

@@ -195,6 +195,41 @@ impl Engine {
                 self.volume = v.clamp(0, 100);
                 let _ = self.host.set_volume(self.volume);
             }
+            PlayerCommand::MoveItem { from, to } => {
+                let len = self.queue.len();
+                if from < len {
+                    let to = to.min(len - 1);
+                    let item = self.queue.remove(from);
+                    self.queue.insert(to, item);
+                    // The playing item keeps playing; only its index moves.
+                    self.current = move_current_index(self.current, from, to);
+                    self.flush(StateEvent::Seek, false);
+                }
+            }
+            PlayerCommand::RemoveItem { index } => {
+                if index < self.queue.len() {
+                    self.queue.remove(index);
+                    let outcome = remove_current_index(self.current, index, self.queue.len());
+                    self.current = outcome.current;
+                    if outcome.ended {
+                        self.ended = true;
+                        self.set_paused(false);
+                        let _ = self.host.stop();
+                    } else if outcome.reload {
+                        // The playing item was removed; play what fell into its slot.
+                        self.ended = false;
+                        self.load_current();
+                    }
+                    self.flush(StateEvent::Seek, false);
+                }
+            }
+            PlayerCommand::ClearQueue => {
+                self.queue.clear();
+                self.current = None;
+                self.ended = true;
+                self.paused = false;
+                let _ = self.host.stop();
+            }
             PlayerCommand::Stop => {
                 self.set_paused(true);
                 self.flush(StateEvent::Quit, true);
@@ -359,4 +394,142 @@ fn now_secs() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Where `current` lands after the item at `from` moves to `to` (the same
+/// `remove(from)` + `insert(to)` transform the queue uses, so the engine index
+/// stays aligned with the DB positions). Pure.
+pub(crate) fn move_current_index(current: Option<usize>, from: usize, to: usize) -> Option<usize> {
+    let c = current?;
+    Some(if c == from {
+        to // the playing item is the one moved
+    } else if from < c && c <= to {
+        c - 1 // it shifted up to fill the gap left behind
+    } else if to <= c && c < from {
+        c + 1 // it shifted down to make room
+    } else {
+        c
+    })
+}
+
+/// The result of removing a queue entry: where `current` lands, whether the
+/// engine must reload (the playing item was the one removed and another fell
+/// into its slot), and whether the queue has now ended.
+pub(crate) struct RemoveOutcome {
+    pub current: Option<usize>,
+    pub reload: bool,
+    pub ended: bool,
+}
+
+/// Where `current` lands after the item at `index` is removed; `new_len` is the
+/// queue length *after* the removal. Pure.
+pub(crate) fn remove_current_index(
+    current: Option<usize>,
+    index: usize,
+    new_len: usize,
+) -> RemoveOutcome {
+    let Some(c) = current else {
+        return RemoveOutcome {
+            current: None,
+            reload: false,
+            ended: false,
+        };
+    };
+    if index < c {
+        RemoveOutcome {
+            current: Some(c - 1),
+            reload: false,
+            ended: false,
+        }
+    } else if index > c {
+        RemoveOutcome {
+            current: Some(c),
+            reload: false,
+            ended: false,
+        }
+    } else if new_len == 0 {
+        // Removed the only/last item that was playing: queue is empty.
+        RemoveOutcome {
+            current: None,
+            reload: false,
+            ended: true,
+        }
+    } else if index < new_len {
+        // Another item fell into the playing slot: play it.
+        RemoveOutcome {
+            current: Some(index),
+            reload: true,
+            ended: false,
+        }
+    } else {
+        // Removed the playing *last* item; nothing fell into the slot: queue ends.
+        RemoveOutcome {
+            current: Some(new_len - 1),
+            reload: false,
+            ended: true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn move_index_when_current_is_the_moved_item() {
+        assert_eq!(move_current_index(Some(2), 2, 5), Some(5));
+        assert_eq!(move_current_index(Some(0), 0, 3), Some(3));
+    }
+
+    #[test]
+    fn move_index_when_current_is_crossed() {
+        // Moving an earlier item to after current shifts current up by one.
+        assert_eq!(move_current_index(Some(3), 1, 5), Some(2));
+        // Moving a later item to before current shifts current down by one.
+        assert_eq!(move_current_index(Some(2), 5, 0), Some(3));
+    }
+
+    #[test]
+    fn move_index_when_current_is_untouched() {
+        assert_eq!(move_current_index(Some(1), 3, 5), Some(1));
+        assert_eq!(move_current_index(Some(6), 1, 3), Some(6));
+        assert_eq!(move_current_index(None, 1, 3), None);
+    }
+
+    #[test]
+    fn remove_before_current_shifts_down() {
+        let o = remove_current_index(Some(3), 1, 5);
+        assert_eq!(o.current, Some(2));
+        assert!(!o.reload && !o.ended);
+    }
+
+    #[test]
+    fn remove_after_current_is_a_noop() {
+        let o = remove_current_index(Some(2), 4, 5);
+        assert_eq!(o.current, Some(2));
+        assert!(!o.reload && !o.ended);
+    }
+
+    #[test]
+    fn remove_current_reloads_the_next_in_slot() {
+        // Queue had 5, remove the current (index 2); 4 remain, slot 2 reloads.
+        let o = remove_current_index(Some(2), 2, 4);
+        assert_eq!(o.current, Some(2));
+        assert!(o.reload && !o.ended);
+    }
+
+    #[test]
+    fn remove_current_last_ends_the_queue() {
+        // Current was the last (index 4 of 5); after removal 4 remain, none in slot.
+        let o = remove_current_index(Some(4), 4, 4);
+        assert_eq!(o.current, Some(3));
+        assert!(!o.reload && o.ended);
+    }
+
+    #[test]
+    fn remove_current_only_item_empties() {
+        let o = remove_current_index(Some(0), 0, 0);
+        assert_eq!(o.current, None);
+        assert!(!o.reload && o.ended);
+    }
 }

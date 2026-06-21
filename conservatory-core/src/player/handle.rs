@@ -29,6 +29,19 @@ pub enum PlayerCommand {
     Seek(f64),
     /// Set the output volume (0–100).
     SetVolume(i64),
+    /// Move the queue entry at `from` to `to` (live reorder; the playing item
+    /// keeps playing, its index follows). Mirrors `worker.reorder_queue`.
+    MoveItem {
+        from: usize,
+        to: usize,
+    },
+    /// Remove the queue entry at `index` (live; removing the current item
+    /// advances to what fell into its slot). Mirrors `worker.remove_queue_item`.
+    RemoveItem {
+        index: usize,
+    },
+    /// Empty the queue and stop playback (keeps the thread alive).
+    ClearQueue,
     /// Halt playback and persist, but keep the engine thread alive.
     Stop,
     /// Stop and exit the engine thread (joined by [`PlayerHandle::shutdown`]).
@@ -120,6 +133,21 @@ impl PlayerHandle {
 
     pub fn set_volume(&self, volume: i64) {
         let _ = self.tx.send(PlayerCommand::SetVolume(volume));
+    }
+
+    /// Reorder the live queue: move the entry at `from` to `to`.
+    pub fn move_item(&self, from: usize, to: usize) {
+        let _ = self.tx.send(PlayerCommand::MoveItem { from, to });
+    }
+
+    /// Remove the live queue entry at `index`.
+    pub fn remove_item(&self, index: usize) {
+        let _ = self.tx.send(PlayerCommand::RemoveItem { index });
+    }
+
+    /// Empty the live queue and stop playback.
+    pub fn clear_queue(&self) {
+        let _ = self.tx.send(PlayerCommand::ClearQueue);
     }
 
     pub fn stop(&self) {

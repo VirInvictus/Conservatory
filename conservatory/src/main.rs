@@ -27,6 +27,9 @@ columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height
 .rating-stars { color: @accent_color; }
 .filter-warn text { background-color: alpha(@warning_color, 0.20); }
 .now-bar { padding: 4px 10px; border-top: 1px solid alpha(currentColor, 0.12); }
+.queue-row { padding: 4px 8px; }
+.queue-row.playing { background: alpha(@accent_color, 0.16); }
+.queue-list { border-left: 1px solid alpha(currentColor, 0.12); }
 ";
 
 fn load_css() {

@@ -5,5 +5,6 @@ pub mod coalescing;
 pub mod facet_pane;
 pub mod now_bar;
 pub mod objects;
+pub mod queue_panel;
 pub mod track_list;
 pub mod window;

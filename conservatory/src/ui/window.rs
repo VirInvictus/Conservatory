@@ -6,7 +6,9 @@
 //! named saved searches in the sidebar, saved through the worker and reloaded by
 //! re-parsing their text.
 
+use std::cell::Cell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::Duration;
 
 use gtk4 as gtk;
@@ -18,7 +20,7 @@ use gtk::glib;
 
 use conservatory_core::db::{
     FacetFilter, Perspective, ReadPool, WorkerHandle, facet_rows, get_tracks, list_perspectives,
-    spawn_worker,
+    load_queue_display, spawn_worker,
 };
 use conservatory_core::{PlaybackConfig, PlayerHandle};
 
@@ -28,10 +30,20 @@ use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
 use crate::ui::now_bar::{NowBar, build_now_bar};
 use crate::ui::objects::TrackRow;
+use crate::ui::queue_panel::{QueuePanel, build_queue_panel};
 use crate::ui::track_list::{Leaf, build_leaf};
 
 type Coalescer = CoalescingQueue<usize, Box<dyn FnMut(Vec<usize>)>>;
 type FilterCoalescer = CoalescingQueue<(), Box<dyn FnMut(Vec<()>)>>;
+
+/// The queue-drawer keyboard actions (spec §3.1: every gesture has a key).
+#[derive(Clone, Copy)]
+enum QueueKey {
+    MoveUp,
+    MoveDown,
+    Remove,
+    Clear,
+}
 
 mod imp {
     use super::*;
@@ -64,6 +76,11 @@ mod imp {
         pub poll_source: RefCell<Option<glib::SourceId>>,
         pub now_labels: RefCell<HashMap<i64, (String, String)>>,
         pub last_shown: Cell<Option<i64>>,
+        // The queue drawer (Phase 4b-ii-b). `queue_current` is the playing
+        // position, shared with the panel's row factory for the highlight; the
+        // window updates it from the snapshot and rebuilds the drawer.
+        pub queue_panel: OnceCell<QueuePanel>,
+        pub queue_current: OnceCell<Rc<Cell<Option<i64>>>>,
     }
 
     #[glib::object_subclass]
@@ -209,11 +226,37 @@ impl ConservatoryWindow {
         // The persistent Now-bar transport (Phase 4b-ii-a), wired to the engine.
         let now_bar = build_now_bar(imp.player.get().cloned());
 
+        // The slide-in queue drawer (Phase 4b-ii-b). The shared `current` cell
+        // drives the playing-row highlight; a finished drag is delegated back.
+        let queue_current: Rc<Cell<Option<i64>>> = Rc::new(Cell::new(None));
+        let weak = self.downgrade();
+        let on_reorder: Rc<dyn Fn(usize, usize)> = Rc::new(move |from, to| {
+            if let Some(win) = weak.upgrade() {
+                win.on_queue_reorder(from, to);
+            }
+        });
+        let queue_panel = build_queue_panel(queue_current.clone(), on_reorder);
+
+        // Body + the queue drawer, side by side.
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        content.append(&body);
+        content.append(&queue_panel.revealer);
+
         let header = adw::HeaderBar::new();
+        let queue_btn = gtk::Button::from_icon_name("view-list-symbolic");
+        queue_btn.set_tooltip_text(Some("Show / hide the queue (Ctrl+U)"));
+        let weak = self.downgrade();
+        queue_btn.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.toggle_queue();
+            }
+        });
+        header.pack_end(&queue_btn);
+
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
         toolbar.add_top_bar(&filter_bar);
-        toolbar.set_content(Some(&body));
+        toolbar.set_content(Some(&content));
         toolbar.add_bottom_bar(&now_bar.root);
         self.set_content(Some(&toolbar));
 
@@ -221,6 +264,9 @@ impl ConservatoryWindow {
         let _ = imp.leaf.set(leaf);
         let _ = imp.filter_entry.set(filter.clone());
         let _ = imp.now_bar.set(now_bar);
+        let _ = imp.queue_current.set(queue_current);
+        self.install_queue_keys(&queue_panel.list);
+        let _ = imp.queue_panel.set(queue_panel);
 
         // Double-click / Enter on a track plays the visible list from that row
         // (spec §3.6, the deadbeef idiom).
@@ -289,6 +335,7 @@ impl ConservatoryWindow {
                 glib::timeout_add_local(Duration::from_millis(250), move || match weak.upgrade() {
                     Some(win) => {
                         win.refresh_now_bar();
+                        win.refresh_queue_highlight();
                         glib::ControlFlow::Continue
                     }
                     None => glib::ControlFlow::Break,
@@ -361,9 +408,181 @@ impl ConservatoryWindow {
         if items.is_empty() {
             return;
         }
+
+        // Write the DB queue through so it mirrors what the engine plays (the
+        // spec §4.3 source of truth) and the drawer can render + edit it.
+        let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
+        if let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) {
+            let _ = rt.block_on(worker.replace_queue_with_tracks(queue_ids));
+        }
+
         *imp.now_labels.borrow_mut() = labels;
         imp.last_shown.set(None); // force a label refresh on the next poll
+        if let Some(cur) = imp.queue_current.get() {
+            cur.set(Some(start as i64));
+        }
         player.play_queue(items, start);
+        self.reload_queue_panel();
+    }
+
+    /// Re-read the queue from the DB and repopulate the drawer (the playing-row
+    /// highlight comes from the shared `queue_current` the factory reads).
+    fn reload_queue_panel(&self) {
+        let imp = self.imp();
+        let (Some(pool), Some(panel)) = (imp.pool.get(), imp.queue_panel.get()) else {
+            return;
+        };
+        let rows = pool
+            .open()
+            .ok()
+            .and_then(|conn| load_queue_display(&conn).ok())
+            .unwrap_or_default();
+        panel.set_rows(&rows);
+    }
+
+    fn toggle_queue(&self) {
+        if let Some(panel) = self.imp().queue_panel.get() {
+            panel.toggle();
+            if panel.revealer.reveals_child() {
+                self.reload_queue_panel();
+            }
+        }
+    }
+
+    /// Keep the drawer's playing-row highlight in step with the engine: when the
+    /// current index changes, update the shared cell and (if the drawer is open)
+    /// repopulate so the factory restyles.
+    fn refresh_queue_highlight(&self) {
+        let imp = self.imp();
+        let (Some(player), Some(cur)) = (imp.player.get(), imp.queue_current.get()) else {
+            return;
+        };
+        let snap = player.snapshot();
+        let want = if snap.ended {
+            None
+        } else {
+            snap.current_index.map(|i| i as i64)
+        };
+        if cur.get() != want {
+            cur.set(want);
+            if let Some(panel) = imp.queue_panel.get() {
+                if panel.revealer.reveals_child() {
+                    self.reload_queue_panel();
+                }
+            }
+        }
+    }
+
+    /// A drag-and-drop reorder finished: apply `(from, to)` to both the DB queue
+    /// and the live engine queue (identical, so positions stay aligned), then
+    /// repopulate.
+    fn on_queue_reorder(&self, from: usize, to: usize) {
+        let imp = self.imp();
+        if let (Some(rt), Some(worker), Some(player)) =
+            (imp.runtime.get(), imp.worker.get(), imp.player.get())
+        {
+            let _ = rt.block_on(worker.reorder_queue(from as i64, to as i64));
+            player.move_item(from, to);
+            // The highlight follows on the next snapshot poll (the engine's
+            // current_index shifts in lock-step with the DB positions).
+        }
+        self.reload_queue_panel();
+    }
+
+    /// Remove the selected queue row from the DB and the engine.
+    fn queue_remove_selected(&self) {
+        let imp = self.imp();
+        let (Some(rt), Some(worker), Some(player), Some(panel)) = (
+            imp.runtime.get(),
+            imp.worker.get(),
+            imp.player.get(),
+            imp.queue_panel.get(),
+        ) else {
+            return;
+        };
+        let sel = panel.selection.selected();
+        if sel == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        let _ = rt.block_on(worker.remove_queue_item(sel as i64));
+        player.remove_item(sel as usize);
+        self.reload_queue_panel();
+    }
+
+    /// Move the selected queue row by `delta` (the `Alt+↑/↓` reorder).
+    fn queue_move_selected(&self, delta: i32) {
+        let panel = match self.imp().queue_panel.get() {
+            Some(p) => p,
+            None => return,
+        };
+        let sel = panel.selection.selected();
+        let len = panel.store.n_items();
+        if sel == gtk::INVALID_LIST_POSITION || len == 0 {
+            return;
+        }
+        let to = (sel as i32 + delta).clamp(0, len as i32 - 1) as u32;
+        if to != sel {
+            self.on_queue_reorder(sel as usize, to as usize);
+            panel.selection.set_selected(to);
+        }
+    }
+
+    /// Clear the queue (DB + engine) and stop playback.
+    fn queue_clear(&self) {
+        let imp = self.imp();
+        if let (Some(rt), Some(worker), Some(player)) =
+            (imp.runtime.get(), imp.worker.get(), imp.player.get())
+        {
+            let _ = rt.block_on(worker.clear_queue());
+            player.clear_queue();
+            if let Some(cur) = imp.queue_current.get() {
+                cur.set(None);
+            }
+        }
+        self.reload_queue_panel();
+    }
+
+    /// Wire the queue keyboard shortcuts: `Ctrl+U` toggles the drawer (global);
+    /// `Alt+↑/↓` reorder, `Delete` removes, `Ctrl+Shift+C` clears (on the list).
+    fn install_queue_keys(&self, list: &gtk::ListView) {
+        let global = gtk::ShortcutController::new();
+        global.set_scope(gtk::ShortcutScope::Global);
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>u"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade() {
+                    win.toggle_queue();
+                }
+                glib::Propagation::Stop
+            })),
+        ));
+        self.add_controller(global);
+
+        let local = gtk::ShortcutController::new();
+        for (trigger, action) in [
+            ("<Alt>Up", QueueKey::MoveUp),
+            ("<Alt>Down", QueueKey::MoveDown),
+            ("Delete", QueueKey::Remove),
+            ("<Control><Shift>c", QueueKey::Clear),
+        ] {
+            let weak = self.downgrade();
+            local.add_shortcut(gtk::Shortcut::new(
+                gtk::ShortcutTrigger::parse_string(trigger),
+                Some(gtk::CallbackAction::new(move |_, _| {
+                    if let Some(win) = weak.upgrade() {
+                        match action {
+                            QueueKey::MoveUp => win.queue_move_selected(-1),
+                            QueueKey::MoveDown => win.queue_move_selected(1),
+                            QueueKey::Remove => win.queue_remove_selected(),
+                            QueueKey::Clear => win.queue_clear(),
+                        }
+                    }
+                    glib::Propagation::Stop
+                })),
+            ));
+        }
+        list.add_controller(local);
     }
 
     /// Refresh the Now-bar from the player snapshot (the 250 ms poll). Title and

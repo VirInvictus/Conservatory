@@ -8,7 +8,7 @@ use gtk::glib;
 use gtk::subclass::prelude::*;
 use gtk4 as gtk;
 
-use conservatory_core::db::TrackBrief;
+use conservatory_core::db::{MediaKind, QueueDisplayRow, TrackBrief};
 
 // --- Facet row (a pane entry: a value + its track count) ---
 
@@ -145,5 +145,57 @@ impl TrackRow {
         }
         let total = secs.round() as i64;
         format!("{}:{:02}", total / 60, total % 60)
+    }
+}
+
+// --- Queue row (queue drawer entry, Phase 4b-ii-b) ---
+
+mod queue_imp {
+    use super::*;
+
+    #[derive(Default)]
+    pub struct QueueRow {
+        pub row: RefCell<Option<QueueDisplayRow>>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for QueueRow {
+        const NAME: &'static str = "ConservatoryQueueRow";
+        type Type = super::QueueRow;
+    }
+
+    impl ObjectImpl for QueueRow {}
+}
+
+glib::wrapper! {
+    pub struct QueueRow(ObjectSubclass<queue_imp::QueueRow>);
+}
+
+impl QueueRow {
+    pub fn new(row: &QueueDisplayRow) -> Self {
+        let obj: Self = glib::Object::new();
+        obj.imp().row.replace(Some(row.clone()));
+        obj
+    }
+
+    fn with<R>(&self, f: impl FnOnce(&QueueDisplayRow) -> R) -> R {
+        f(self.imp().row.borrow().as_ref().expect("row set"))
+    }
+
+    /// The 0-based queue position (also the engine index, kept in sync).
+    pub fn position(&self) -> i64 {
+        self.with(|r| r.position)
+    }
+
+    pub fn kind(&self) -> MediaKind {
+        self.with(|r| r.kind)
+    }
+
+    pub fn title(&self) -> String {
+        self.with(|r| r.title.clone())
+    }
+
+    pub fn artist(&self) -> String {
+        self.with(|r| r.artist.clone().unwrap_or_default())
     }
 }

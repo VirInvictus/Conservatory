@@ -87,6 +87,14 @@ impl MpvHost {
         Ok(())
     }
 
+    /// Stop playback and unload the current file (mpv `stop`). Used when the
+    /// queue is cleared; the host stays alive for the next load.
+    pub fn stop(&mut self) -> Result<()> {
+        self.mpv
+            .command("stop", &[])
+            .map_err(|e| Error::Player(format!("stop: {e}")))
+    }
+
     /// Pause or resume.
     pub fn set_paused(&mut self, paused: bool) -> Result<()> {
         self.mpv

@@ -193,14 +193,23 @@ The GTK half is itself sizable, so it splits again: **4b-ii-a** makes the window
 
 *Usable artifact:* `conservatory <db> <root>` — double-click a track to play the visible list from there, with a working Now-bar transport (play/pause, prev/next, seek, volume) that reflects state.
 
-#### Phase 4b-ii-b — Queue view + drag-and-drop reorder (GTK)
+#### Phase 4b-ii-b — Queue view + drag-and-drop reorder (GTK) ✅
 
-- [ ] Queue view as a single **drag-and-drop** reorderable list (the Atrium DragSource/DropTarget idiom: the row carries its id, the DropTarget computes Above/Below from cursor Y), with keyboard `Alt+↑/↓`, `Delete`, `Ctrl+Shift+C`, each row badged with its kind, and the current item highlighted.
-- [ ] `Ctrl+Enter` appends the selection; GUI resume-from-saved-cursor on launch; a cover thumbnail in the Now-bar.
+- [x] A right-side slide-in queue drawer (`queue_panel.rs`, a `gtk::Revealer`, header toggle + `Ctrl+U`): a `ListView` of `QueueRow` (kind icon + title/artist), the playing row accent-highlighted, **drag-and-drop reorderable** (the Atrium idiom: the row carries its position, the `DropTarget` computes Above/Below from cursor Y, controllers torn down in `unbind`), plus keyboard `Alt+↑/↓` reorder, `Delete`, `Ctrl+Shift+C`.
+- [x] The engine gained **in-place mutation** (`MoveItem`/`RemoveItem`/`ClearQueue`) so editing the live queue never restarts the current track; the `current_index` math is pure + unit-tested (`move_current_index`/`remove_current_index`). The GUI applies the identical `(from, to)` to `worker.reorder_queue` and `player.move_item`, so DB position == engine index stays invariant; double-click now **writes the DB queue through** (`replace_queue_with_tracks`) so the drawer reflects the spec §4.3 source of truth.
+- [x] Core read `load_queue_display` (queue ⋈ tracks ⋈ artists) backs the drawer; the highlight follows playback via the 250 ms snapshot poll.
+- [x] Tests: the index helpers (8), `drop_target_position` (Above/Below, up/down, clamp), an engine null-host integration test (move/remove track `current_index` without restarting), and a `load_queue_display` worker test. Widgets verified by build + manual launch.
+
+*Usable artifact:* build and play a queue in the GUI; open the drawer and reorder it by drag (or keyboard); the playing row is highlighted and the Now-bar reflects state.
+
+#### Phase 4b-ii-c — Queue polish (GTK)
+
+- [ ] Launch-resume: load the saved DB queue into the engine, paused at the cursor, on GUI startup.
+- [ ] `Ctrl+Enter` appends the current selection to the queue; a cover thumbnail in the Now-bar.
 - [ ] The audible within-album gapless prototype (mpv internal playlist append, spec §16.9); the `playback_state` explicit queue-entry reference; the library root sourced from config (Phase 10) rather than a CLI arg.
-- [ ] Tests: queue-view reorder model; current-item highlight logic.
+- [ ] Tests: resume-on-launch state; append semantics.
 
-*Usable artifact:* build and play a queue in the GUI; reorder it by drag; the Now-bar reflects state.
+*Usable artifact:* reopen the app and pick up where you left off; append to a playing queue.
 
 ### Phase 4c — System integration
 

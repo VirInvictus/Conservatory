@@ -105,6 +105,32 @@ async fn get_tracks_batches_across_chunks() {
     assert!(get_tracks(&conn, &[]).unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn load_queue_display_returns_ordered_rows_with_titles() {
+    use conservatory_core::db::{MediaKind, load_queue_display};
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("t.db");
+    let worker = spawn_worker(path.clone()).unwrap();
+    fixtures::generate(&worker, FixtureScale::Small)
+        .await
+        .unwrap();
+    let pool = ReadPool::new(path, 3).unwrap();
+
+    worker.enqueue_tracks(vec![3, 1]).await.unwrap();
+    let conn = pool.open().unwrap();
+    let rows = load_queue_display(&conn).unwrap();
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].position, 0);
+    assert_eq!(rows[0].kind, MediaKind::Track);
+    assert_eq!(rows[0].track_id, Some(3));
+    assert_eq!(rows[1].track_id, Some(1));
+    // Titles and artists are joined in from the track.
+    assert!(!rows[0].title.is_empty());
+    assert!(rows[0].artist.is_some());
+}
+
 // --- Player engine: build a queue of real fixtures and play it to the end.
 
 #[test]
@@ -194,6 +220,93 @@ fn engine_plays_queue_to_end() {
     let cursor = read_playback_state(&conn).unwrap().unwrap();
     assert_eq!(cursor.track_id, ids.last().copied());
 
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
+/// Live move/remove keep `current_index` aligned without auto-advancing: start
+/// paused so the 0.3 s fixtures don't end under us, then exercise the in-place
+/// mutations the queue drawer drives.
+#[test]
+fn engine_move_and_remove_track_the_current_index() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let libdir = tempdir().unwrap();
+    let srcdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let root = libdir.path().to_path_buf();
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    for name in ["sample.flac", "sample.mp3", "sample.opus", "sample.m4a"] {
+        std::fs::copy(fixtures_dir.join(name), srcdir.path().join(name)).unwrap();
+    }
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+    let pool = ReadPool::new(db.clone(), 3).unwrap();
+    runtime.block_on(async {
+        let opts = ImportOptions {
+            library_root: root.clone(),
+            mode: MoveMode::Copy,
+        };
+        import_folder(&worker, &pool, srcdir.path(), &opts)
+            .await
+            .unwrap();
+    });
+    let cfg = PlaybackConfig::default();
+    let items: Vec<PlayableItem> = {
+        let conn = pool.open().unwrap();
+        search_rows(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|row| {
+                let track = get_track(&conn, row.track_id).unwrap().unwrap();
+                PlayableItem {
+                    track_id: track.id,
+                    source: root.join(&track.file_path),
+                    profile: resolve_music_profile(&track, &cfg),
+                    album_id: track.album_id,
+                    kind: conservatory_core::db::MediaKind::Track,
+                }
+            })
+            .collect()
+    };
+    assert_eq!(items.len(), 4);
+
+    let wait_for = |player: &conservatory_core::PlayerHandle,
+                    pred: fn(&conservatory_core::PlayerSnapshot) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if pred(&player.snapshot()) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "snapshot condition not met in time"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    // Start at index 1, paused (SetQueue then Pause drain together, before the
+    // 0.3 s track can end).
+    player.play_queue(items, 1);
+    player.pause();
+    wait_for(&player, |s| s.current_index == Some(1) && s.paused);
+
+    // Move the playing item to index 3: it follows; the queue length is unchanged.
+    player.move_item(1, 3);
+    wait_for(&player, |s| s.current_index == Some(3) && s.queue_len == 4);
+
+    // Remove an item before the current one: current shifts down, queue shrinks.
+    player.remove_item(0);
+    wait_for(&player, |s| s.current_index == Some(2) && s.queue_len == 3);
+
+    player.shutdown();
     runtime.block_on(worker.shutdown_ack()).ok();
 }
 

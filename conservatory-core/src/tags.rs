@@ -10,10 +10,11 @@
 
 use std::path::{Path, PathBuf};
 
+use lofty::config::WriteOptions;
 use lofty::file::FileType;
 use lofty::picture::Picture;
 use lofty::prelude::{Accessor, AudioFile, ItemKey, TaggedFileExt};
-use lofty::tag::Tag;
+use lofty::tag::{ItemValue, Tag, TagItem, TagType};
 
 use crate::errors::Result;
 
@@ -132,6 +133,99 @@ fn picture_to_cover(pic: &Picture) -> EmbeddedCover {
     EmbeddedCover {
         data: pic.data().to_vec(),
         mime: pic.mime_type().map(|m| m.as_str().to_string()),
+    }
+}
+
+/// The curated descriptive fields written back into a file's tags (Phase 5b,
+/// spec §5.5). The rebuildable layer only: rating, shelf genre, play counts, and
+/// starred stay DB-only (§5.6) and are never embedded.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TagWrite {
+    pub title: String,
+    pub track_artist: Option<String>,
+    pub track_artist_sort: Option<String>,
+    pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub album_artist_sort: Option<String>,
+    pub year: Option<i32>,
+    pub track_no: Option<u32>,
+    pub disc_no: Option<u32>,
+    pub genres: Vec<String>,
+}
+
+/// Write the curated DB metadata into a file's embedded tags (spec §5.5).
+///
+/// Writes the format's canonical (primary) tag authoritatively, creating it if
+/// the file had none. The legacy ID3v1 is dropped so the primary tag is the
+/// single source. Idempotent; re-derivable from the DB, so there is no undo
+/// journal (re-running fixes any mistake).
+///
+/// Caveat: a stray APEv2 block on an MPEG file is *not* removed here, because
+/// lofty does not write APE on MPEG. Reliable APE stripping needs byte-level
+/// surgery (the Lattice `apestrip` technique) and is deferred to a later phase.
+pub fn write_track_tags(path: &Path, w: &TagWrite) -> Result<()> {
+    let mut tagged = lofty::read_from_path(path)?;
+    let primary = tagged.file_type().primary_tag_type();
+
+    // Drop the legacy ID3v1 (lofty does manage it on save) so the canonical
+    // primary tag is the single source for the fields we are writing.
+    if primary != TagType::Id3v1 {
+        tagged.remove(TagType::Id3v1);
+    }
+    if tagged.primary_tag().is_none() {
+        tagged.insert_tag(Tag::new(primary));
+    }
+    let tag = tagged
+        .primary_tag_mut()
+        .expect("primary tag inserted above");
+
+    set_text(tag, ItemKey::TrackTitle, Some(w.title.as_str()));
+    set_text(tag, ItemKey::TrackArtist, w.track_artist.as_deref());
+    set_text(
+        tag,
+        ItemKey::TrackArtistSortOrder,
+        w.track_artist_sort.as_deref(),
+    );
+    set_text(tag, ItemKey::AlbumTitle, w.album.as_deref());
+    set_text(tag, ItemKey::AlbumArtist, w.album_artist.as_deref());
+    set_text(
+        tag,
+        ItemKey::AlbumArtistSortOrder,
+        w.album_artist_sort.as_deref(),
+    );
+
+    match w.year {
+        Some(y) if y > 0 => tag.set_year(y as u32),
+        _ => tag.remove_year(),
+    }
+    match w.track_no {
+        Some(n) => tag.set_track(n),
+        None => tag.remove_track(),
+    }
+    match w.disc_no {
+        Some(n) => tag.set_disk(n),
+        None => tag.remove_disk(),
+    }
+
+    // Genres are multi-value: clear the key, then push each (the §5.2 raw side).
+    let _ = tag.take(&ItemKey::Genre);
+    for g in &w.genres {
+        tag.push(TagItem::new(ItemKey::Genre, ItemValue::Text(g.clone())));
+    }
+
+    tagged.save_to_path(path, WriteOptions::default())?;
+    Ok(())
+}
+
+/// Set a text item, or clear the key when the value is `None`.
+fn set_text(tag: &mut Tag, key: ItemKey, value: Option<&str>) {
+    match value {
+        Some(v) => {
+            tag.insert_text(key, v.to_string());
+        }
+        None => {
+            let _ = tag.take(&key);
+        }
     }
 }
 

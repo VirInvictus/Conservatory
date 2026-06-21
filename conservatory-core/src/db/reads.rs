@@ -148,6 +148,80 @@ pub fn track_render_rows(conn: &Connection) -> Result<Vec<TrackRenderRow>> {
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// A track with the full descriptive metadata to write back into its file
+/// (Phase 5b, spec §5.5). Unlike `TrackRenderRow` this carries both the display
+/// name and the sort name for the track and album artists, plus the raw genres,
+/// since the embedded tags want all of them. Totals are not persisted, so they
+/// are not written (§5.6 does not need them).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WritebackRow {
+    pub track_id: i64,
+    pub file_path: String,
+    pub format: Option<String>,
+    pub title: String,
+    pub track_artist: Option<String>,
+    pub track_artist_sort: Option<String>,
+    pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub album_artist_sort: Option<String>,
+    pub year: Option<i32>,
+    pub track_no: Option<u32>,
+    pub disc_no: Option<u32>,
+    pub genres: Vec<String>,
+}
+
+/// Fetch the write-back metadata for many tracks by id (Phase 5b). Chunked under
+/// SQLite's bound-variable limit, like [`get_tracks`]; order is unspecified, so
+/// the caller pairs rows back to its own list by `track_id`.
+pub fn writeback_rows(conn: &Connection, ids: &[i64]) -> Result<Vec<WritebackRow>> {
+    const CHUNK: usize = 900;
+    let mut out = Vec::with_capacity(ids.len());
+    for chunk in ids.chunks(CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
+            "SELECT t.id, t.file_path, t.format, t.title, t.track_no, t.disc_no,
+                    ta.name AS track_artist, ta.sort_name AS track_artist_sort,
+                    al.title AS album, al.year,
+                    aa.name AS album_artist, aa.sort_name AS album_artist_sort,
+                    (SELECT group_concat(g.name, '{GENRE_SEP}')
+                       FROM track_genres tg JOIN genres g ON g.id = tg.genre_id
+                      WHERE tg.track_id = t.id) AS genres
+             FROM tracks t
+             LEFT JOIN albums al ON t.album_id = al.id
+             LEFT JOIN artists aa ON al.album_artist_id = aa.id
+             LEFT JOIN artists ta ON t.artist_id = ta.id
+             WHERE t.id IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(chunk), |row| {
+            let genres: Option<String> = row.get("genres")?;
+            let track_no: Option<i64> = row.get("track_no")?;
+            let disc_no: Option<i64> = row.get("disc_no")?;
+            Ok(WritebackRow {
+                track_id: row.get("id")?,
+                file_path: row.get("file_path")?,
+                format: row.get("format")?,
+                title: row.get("title")?,
+                track_artist: row.get("track_artist")?,
+                track_artist_sort: row.get("track_artist_sort")?,
+                album: row.get("album")?,
+                album_artist: row.get("album_artist")?,
+                album_artist_sort: row.get("album_artist_sort")?,
+                year: row.get("year")?,
+                track_no: track_no.map(|n| n as u32),
+                disc_no: disc_no.map(|n| n as u32),
+                genres: genres
+                    .map(|g| g.split(GENRE_SEP).map(str::to_string).collect())
+                    .unwrap_or_default(),
+            })
+        })?;
+        for row in rows {
+            out.push(row?);
+        }
+    }
+    Ok(out)
+}
+
 /// The singleton playback cursor (spec §6.4, Phase 4a): what was playing and
 /// where, read on startup to resume. Absent (`None`) on a library that has
 /// never played anything.

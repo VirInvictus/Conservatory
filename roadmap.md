@@ -260,13 +260,21 @@ Split headless-first (the CLI-testable rule): **5a-i** is the editing logic + wo
 
 ### Phase 5b — Embedded-tag write-back (§5.5)
 
-- [ ] Write curated DB metadata back into the files' embedded tags, batched as a job, respecting format capabilities (Vorbis comments, ID3, MP4 atoms). Requires the write side of the 1c tag library.
-- [ ] Write authoritatively: clear conflicting or shadowing tags so the DB-authored values win. On MP3, strip stray APEv2 blocks and custom `TXXX:GENRE` (some players prefer APEv2 over ID3, so a bad APE tag silently defeats the write); never leave a second tag block behind. The Lattice `scripts/apestrip.py` + `retag.py` lesson (ATTRIBUTIONS.md).
-- [ ] A standalone APE-strip hygiene verb, separable from a full write-back (the `apestrip.py` behaviour): remove APEv2 from MP3s, optionally migrating APE-only fields (never genre/rating) into ID3 first, with a repair path for malformed APE headers. Useful on torrent rips before any editing.
-- [ ] CLI: `embed-tags <selector> [--dry-run]`; `strip-ape <selector> [--migrate] [--repair-malformed] [--dry-run]`.
-- [ ] Tests: write-back round-trips through a re-read for each format; the spec §5.6 re-import contract holds (rebuildable subset reconstructs after a wipe-and-reimport).
+Headless-first: **5b-i** is the core write + `embed-tags` CLI + tests; **5b-ii** is the GTK action. Only the rebuildable descriptive layer is written; the curated layer (rating, shelf genre, play counts, starred) stays DB-only (§5.6).
 
-*Usable artifact:* the library is never a roach motel: you can walk away with self-describing, portable files.
+#### Phase 5b-i — Core write-back + `embed-tags` ✅
+
+- [x] `tags::write_track_tags(path, &TagWrite)` (lofty write, signed off at 1c): write the format's canonical primary tag authoritatively (title, track artist + sort, album, album artist + sort, year, track/disc, raw multi-value genres), creating it if absent, dropping the legacy ID3v1. `db::writeback_rows` is the one join that supplies all of it (display + sort names + group-concat genres).
+- [x] CLI `embed-tags <db> <selector> --root <root> [--apply]`: dry-run shows the per-file field diffs (current tags vs DB); `--apply` writes. Re-derivable from the DB (the source of truth), so dry-run is the safety and there is no undo journal.
+- [x] Tests (`tests/writeback.rs`): per-format round-trip (edit DB → embed → re-read the file), and the **§5.6 re-import contract** (embed → fresh DB → re-import → the edited descriptive field survives). Hand-verified against the `testdata/` albums.
+
+*Usable artifact:* `conservatory-cli embed-tags <db> '<expr>' --root <root> --apply` writes the curated metadata into the files; a wipe-and-reimport reconstructs the descriptive layer (§5.6 holds).
+
+#### Phase 5b-ii — GUI action
+
+- [ ] An "Embed metadata into files" action over the leaf selection (explicit, not auto-on-edit, the Calibre model), behind a "Write tags to N files?" preview; writes through `write_track_tags`.
+
+> **APE-strip deferred.** The Lattice `apestrip` hygiene (strip a stray APEv2 that shadows ID3 on MP3, with optional APE→ID3 migration) is **not** in 5b: lofty reads APE on MPEG but neither writes nor removes it, so a reliable strip needs byte-level surgery (exactly why `apestrip.py` is hand-rolled). Deferred to a byte-level pass, paired with the Phase 8c "detect stray APE" audit. (`embed-tags` writes the canonical ID3v2 correctly; it just cannot remove a pre-existing APE shadow on MPEG.)
 
 ### Phase 5c — ReplayGain scan (resolves spec §16.7)
 
@@ -399,7 +407,7 @@ Modeled on Lattice's `--auditTags` / `--auditBitrate` / `--auditReplayGain` / `-
 
 - [ ] Audits: missing critical tags (title / artist / track number / genre), bitrate below a floor (default 192 kbps), ReplayGain coverage per album (missing / partial / album-missing / ok, recognizing the Opus `R128_*` convention), missing cover art, and low-resolution cover art (a pixel floor, default 500x500, measured from the cover file or embedded art). Most are expressible over the existing DB and `conservatory-search`, but the cover-resolution and ReplayGain-coverage checks need this dedicated pass.
 - [ ] Library statistics: per-format counts with average bitrate, rating distribution, genre / artist / album / track totals, and total size + duration.
-- [ ] Detect MP3s carrying stray APEv2 tags (they shadow ID3 in foobar2000 / DeaDBeeF and silently defeat tag edits); report-only here, the fix is the Phase 5b `strip-ape` verb. The detect-here / fix-there split mirrors duplicates (8b) reporting and the Phase 2c mover doing the cleanup.
+- [ ] Detect MP3s carrying stray APEv2 tags (they shadow ID3 in foobar2000 / DeaDBeeF and silently defeat tag edits); report-only. The **fix** (a byte-level APE strip, the `apestrip.py` technique, with optional APE→ID3 migration) lands here too, since lofty cannot strip APE on MPEG (the Phase 5b deferral); it is a small byte-surgery module, not a lofty call. The detect-and-fix split mirrors duplicates (8b) reporting then the Phase 2c mover doing the cleanup.
 - [ ] (Minor) Rating normalization across player conventions on read (POPM scale differences between WMP, foobar2000, and DeaDBeeF), the Lattice `tags.py` / `rerate.py` lesson, so imported ratings land consistently on the 0 to 5 scale.
 - [ ] CLI: `audit <db> [tags|bitrate|replaygain|art|artres|ape|all]`; `stats <db>`.
 - [ ] Tests: each audit flags its planted-deficiency fixture and passes a clean one; stats totals match a known fixture.

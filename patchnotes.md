@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.20
+
+Phase 5b-i shipped: embedded-tag write-back. The curated DB metadata can now be written back into the files, so the managed library is never a roach motel: walk away with the tree and the files describe themselves.
+
+- **Write-back core (`tags::write_track_tags`, lofty):** writes the format's canonical primary tag authoritatively (title, track artist + sort, album, album artist + sort, year, track/disc, raw multi-value genres), creating it if the file had none and dropping the legacy ID3v1. Only the rebuildable descriptive layer is written; the curated layer (rating, shelf genre, play counts, starred) stays DB-only per §5.6. A new `db::writeback_rows` join supplies the per-track data (display + sort names + group-concat genres).
+- **CLI `embed-tags <db> <selector> --root <root> [--apply]`:** dry-run by default (shows the per-file field diffs, current tags vs DB); `--apply` writes. No undo journal: write-back is re-derivable from the DB (the source of truth), so re-running fixes any mistake.
+- **Tests (`tests/writeback.rs`):** per-format round-trip (edit DB → embed → re-read the file) and the **§5.6 re-import contract** (embed → wipe DB → re-import → the edited album survives). Verified manually against the `testdata/` albums.
+
+**Scope note — APE-strip deferred.** The Lattice `apestrip` hygiene (stripping a stray APEv2 that shadows ID3 on MP3) is not in 5b: lofty reads APE on MPEG but neither writes nor removes it, so a reliable strip needs byte-level surgery (which is why `apestrip.py` is hand-rolled). It is deferred to a byte-level pass paired with the Phase 8c "detect stray APE" audit. `embed-tags` writes the canonical ID3v2 correctly; it just cannot remove a pre-existing APE shadow on MPEG.
+
+Next: Phase 5b-ii (a GUI "Embed metadata into files" action), then 5c (ReplayGain scan).
+
 ## v0.0.19
 
 Phase 5a-ii shipped: the GTK bulk-edit dialog. Phase 5a (bulk metadata editing) is complete.

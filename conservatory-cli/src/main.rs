@@ -11,16 +11,17 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    MediaKind, ReadPool, SearchRow, SqlParam, fts_rank, get_track, library_counts, load_queue,
-    probe_read, read_playback_state, search_rows, search_track_ids, spawn_worker,
-    track_render_rows,
+    MediaKind, ReadPool, SearchRow, SqlParam, WritebackRow, fts_rank, get_track, library_counts,
+    load_queue, probe_read, read_playback_state, search_rows, search_track_ids, spawn_worker,
+    track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
     AlbumEdit, Assignment, Field, GenreVocab, ImportOptions, ImportReport, PathTemplate,
-    PlayableItem, PlaybackConfig, TrackEdit, TrackFields, any_path_affecting, build_album_edit,
-    build_track_edit, compute_accent, find_collisions, find_cover_bytes, genres_assignment,
-    import_folder, parse_assignment, read_track, replace_in, resolve_album, resolve_music_profile,
+    PlayableItem, PlaybackConfig, TagWrite, TrackDraft, TrackEdit, TrackFields, any_path_affecting,
+    build_album_edit, build_track_edit, compute_accent, find_collisions, find_cover_bytes,
+    genres_assignment, import_folder, parse_assignment, read_track, replace_in, resolve_album,
+    resolve_music_profile, write_track_tags,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -162,6 +163,22 @@ enum Command {
         action: TagAction,
     },
 
+    /// Write the curated DB metadata back into the matched files' embedded tags
+    /// (spec §5.5). Dry-run by default (shows the per-file field diffs); `--apply`
+    /// writes. Re-derivable from the DB, so there is no undo.
+    EmbedTags {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Search expression selecting the tracks to write.
+        query: String,
+        /// Library root the relative track paths hang off.
+        #[arg(long)]
+        root: PathBuf,
+        /// Write the tags (default is a dry-run diff).
+        #[arg(long)]
+        apply: bool,
+    },
+
     /// Filter the library with the search grammar (spec §3.4). Uses the SQL fast
     /// path when the whole expression translates, else the in-memory evaluator.
     Search {
@@ -297,6 +314,12 @@ fn main() -> Result<()> {
         Some(Command::Play { db, root, track_id }) => play(db, root, track_id),
         Some(Command::Queue { action }) => queue(action),
         Some(Command::Tag { action }) => tag(action),
+        Some(Command::EmbedTags {
+            db,
+            query,
+            root,
+            apply,
+        }) => embed_tags(db, query, root, apply),
         Some(Command::Search { db, query, format }) => search(db, query, format),
         Some(Command::DebugFacets { db }) => debug_facets(db),
         None => {
@@ -1016,6 +1039,132 @@ async fn scoped_organize(
         for op in &preview.ops {
             println!("  {}  ->  {}", op.src.display(), op.dst.display());
         }
+    }
+    Ok(())
+}
+
+fn to_tag_write(r: &WritebackRow) -> TagWrite {
+    TagWrite {
+        title: r.title.clone(),
+        track_artist: r.track_artist.clone(),
+        track_artist_sort: r.track_artist_sort.clone(),
+        album: r.album.clone(),
+        album_artist: r.album_artist.clone(),
+        album_artist_sort: r.album_artist_sort.clone(),
+        year: r.year,
+        track_no: r.track_no,
+        disc_no: r.disc_no,
+        genres: r.genres.clone(),
+    }
+}
+
+/// Human-readable "field: old -> new" lines for the fields a write-back would
+/// change (the dry-run preview), comparing the file's current tags to the DB.
+fn diff_fields(cur: &TrackDraft, target: &TagWrite) -> Vec<String> {
+    let mut diffs = Vec::new();
+    let opt = |o: &Option<String>| o.clone().unwrap_or_default();
+    if cur.title.as_deref() != Some(target.title.as_str()) {
+        diffs.push(format!(
+            "title: {:?} -> {:?}",
+            opt(&cur.title),
+            target.title
+        ));
+    }
+    if cur.artist != target.track_artist {
+        diffs.push(format!(
+            "artist: {:?} -> {:?}",
+            opt(&cur.artist),
+            opt(&target.track_artist)
+        ));
+    }
+    if cur.album_artist != target.album_artist {
+        diffs.push(format!(
+            "albumartist: {:?} -> {:?}",
+            opt(&cur.album_artist),
+            opt(&target.album_artist)
+        ));
+    }
+    if cur.album != target.album {
+        diffs.push(format!(
+            "album: {:?} -> {:?}",
+            opt(&cur.album),
+            opt(&target.album)
+        ));
+    }
+    if cur.year != target.year {
+        diffs.push(format!("year: {:?} -> {:?}", cur.year, target.year));
+    }
+    if cur.track_no != target.track_no {
+        diffs.push(format!(
+            "track: {:?} -> {:?}",
+            cur.track_no, target.track_no
+        ));
+    }
+    if cur.disc_no != target.disc_no {
+        diffs.push(format!("disc: {:?} -> {:?}", cur.disc_no, target.disc_no));
+    }
+    if cur.genres != target.genres {
+        diffs.push(format!("genres: {:?} -> {:?}", cur.genres, target.genres));
+    }
+    diffs
+}
+
+fn embed_tags(db: PathBuf, query: String, root: PathBuf, apply: bool) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let ids = resolve_selector(&pool, &query)?;
+    if ids.is_empty() {
+        println!("no tracks match {query:?}");
+        return Ok(());
+    }
+    let ids: Vec<i64> = ids.into_iter().collect();
+    let rows = {
+        let conn = pool.open().context("opening pool connection")?;
+        writeback_rows(&conn, &ids).context("reading write-back rows")?
+    };
+
+    let (mut changed, mut written, mut errors) = (0usize, 0usize, 0usize);
+    for r in &rows {
+        let path = root.join(&r.file_path);
+        let target = to_tag_write(r);
+        if apply {
+            match write_track_tags(&path, &target) {
+                Ok(()) => written += 1,
+                Err(e) => {
+                    eprintln!("  ! {}: {e}", path.display());
+                    errors += 1;
+                }
+            }
+        } else {
+            match read_track(&path) {
+                Ok(cur) => {
+                    let diffs = diff_fields(&cur, &target);
+                    if !diffs.is_empty() {
+                        changed += 1;
+                        println!("{}", path.display());
+                        for d in &diffs {
+                            println!("    {d}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  ! {}: {e}", path.display());
+                    errors += 1;
+                }
+            }
+        }
+    }
+    let err_note = if errors > 0 {
+        format!(", {errors} error(s)")
+    } else {
+        String::new()
+    };
+    if apply {
+        println!("wrote tags to {written} file(s){err_note}");
+    } else {
+        println!(
+            "{changed} of {} file(s) would change (dry-run; pass --apply to write){err_note}",
+            rows.len()
+        );
     }
     Ok(())
 }

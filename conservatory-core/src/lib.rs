@@ -37,7 +37,7 @@ pub use player::{
     resolve_music_profile,
 };
 pub use shelf_genre::{AlbumGenreInput, GenreVocab, normalize, resolve_album, resolve_shelf_genre};
-pub use tags::{EmbeddedCover, TrackDraft, read_track};
+pub use tags::{EmbeddedCover, TagWrite, TrackDraft, read_track, write_track_tags};
 
 /// Workspace version, surfaced for the CLI and GUI binaries.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

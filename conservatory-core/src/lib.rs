@@ -13,6 +13,7 @@
 
 pub mod accent;
 pub mod db;
+pub mod edit;
 pub mod errors;
 pub mod import;
 pub mod mover;
@@ -23,6 +24,10 @@ pub mod shelf_genre;
 pub mod tags;
 
 pub use accent::{compute_accent, find_cover_bytes};
+pub use edit::{
+    AlbumEdit, Assignment, Field, TrackEdit, any_path_affecting, build_album_edit,
+    build_track_edit, genres_assignment, parse_assignment, replace_in, split_genres,
+};
 pub use import::{ImportOptions, ImportReport, import_folder};
 pub use mover::{Conflict, MoveKind, MoveMode, MoveOp, MovePlan, plan};
 pub use path_template::{DEFAULT_MUSIC_TEMPLATE, PathTemplate, TrackFields, find_collisions};

@@ -19,6 +19,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::db::command::Command;
 use crate::db::models::{Album, Artist, Track};
 use crate::db::{connection, migrations, probe, writes};
+use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::{Error, Result};
 use crate::mover::journal::{self, JobState};
 use crate::mover::{MoveKind, MoveMode, MoveOp};
@@ -70,6 +71,37 @@ impl WorkerHandle {
     pub async fn insert_album(&self, album: Album) -> Result<i64> {
         self.dispatch(|reply| Command::InsertAlbum { album, reply })
             .await
+    }
+
+    /// Apply a track-level field edit (Phase 5a, spec §3.5).
+    pub async fn update_track(&self, track_id: i64, edit: TrackEdit) -> Result<()> {
+        self.dispatch(|reply| Command::UpdateTrack {
+            track_id,
+            edit,
+            reply,
+        })
+        .await
+    }
+
+    /// Apply an album-level field edit (Phase 5a). Album-level fields are
+    /// path-affecting; re-render and move after.
+    pub async fn update_album(&self, album_id: i64, edit: AlbumEdit) -> Result<()> {
+        self.dispatch(|reply| Command::UpdateAlbum {
+            album_id,
+            edit,
+            reply,
+        })
+        .await
+    }
+
+    /// Replace a track's raw genre set (Phase 5a, §5.2 multi-value side).
+    pub async fn set_track_genres(&self, track_id: i64, genres: Vec<String>) -> Result<()> {
+        self.dispatch(|reply| Command::SetTrackGenres {
+            track_id,
+            genres,
+            reply,
+        })
+        .await
     }
 
     /// Resolve an artist by sort_name, creating it on first sight (import).
@@ -361,6 +393,27 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::InsertAlbum { album, reply } => {
             let _ = reply.send(writes::insert_album(conn, &album));
+        }
+        Command::UpdateTrack {
+            track_id,
+            edit,
+            reply,
+        } => {
+            let _ = reply.send(writes::update_track(conn, track_id, &edit));
+        }
+        Command::UpdateAlbum {
+            album_id,
+            edit,
+            reply,
+        } => {
+            let _ = reply.send(writes::update_album(conn, album_id, &edit));
+        }
+        Command::SetTrackGenres {
+            track_id,
+            genres,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_track_genres(conn, track_id, &genres));
         }
         Command::GetOrCreateArtist {
             name,

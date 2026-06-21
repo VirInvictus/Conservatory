@@ -1,5 +1,19 @@
 # Patch Notes
 
+## v0.0.18
+
+Phase 5a-i shipped: headless metadata editing. The library is no longer read-only after import; you can edit fields across a selection from the CLI, and path-affecting edits re-shelve files safely.
+
+- **Edit commands (`conservatory-core`):** new single-writer commands `update_track` (title / rating / track artist), `update_album` (title / year / shelf genre / album artist), and `set_track_genres` (the raw multi-value side, §5.2). `COALESCE`-guarded so only changed fields move; setting an artist resolves it through get-or-create by derived sort name. The FTS index re-syncs automatically on every edit (the existing triggers), verified by test.
+- **Pure resolver (`src/edit.rs`):** parses `field=value`, classifies track-level vs album-level and which edits are path-affecting (album / albumartist / year / shelfgenre), builds the typed edits, splits raw genres, and does literal search-and-replace. Unit-tested; shared by the CLI now and the GTK dialog at 5a-ii.
+- **Path-affecting edits reuse the Phase 2c mover:** an album / albumartist / year / shelf-genre change re-renders the touched albums and moves the files, with the same dry-run preview + undo journal as `organize`.
+- **CLI:** `tag set <db> <selector> <field=value>...` and `tag replace <db> <selector> <field> <find> <replace>` (selector is a full search expression; `--root` + `--apply` drive the move).
+- **Tests:** `tests/edit.rs` covers field updates, FTS-follows-rename, genre relink (replace not append), and a year edit that re-renders, moves, and undoes. CI uses the committed fixtures; the real `testdata/` albums are the manual corpus.
+
+Also settled (recorded in the roadmap, deps added when those phases land): Phase 5c ReplayGain scanning will use the in-process `ebur128` crate + lofty (no external binary); Phase 8a integrity verification will use `flac -t` + the `ffmpeg` CLI.
+
+Next: Phase 5a-ii (the GTK bulk-edit dialog), then 5b (embedded write-back).
+
 ## v0.0.17
 
 Phase 4c-ii shipped: the output-device picker. **Phase 4 is complete — a daily-driver music player.**

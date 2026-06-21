@@ -7,7 +7,9 @@
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{Album, Artist, Track};
+use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
+use crate::import::resolve::derive_sort_name;
 
 pub(crate) fn insert_artist(conn: &Connection, artist: &Artist) -> Result<i64> {
     conn.execute(
@@ -69,6 +71,102 @@ pub(crate) fn set_album_shelf_genre(
         "UPDATE albums SET shelf_genre = ?2 WHERE id = ?1",
         params![album_id, shelf_genre],
     )?;
+    Ok(())
+}
+
+/// Apply a track-level field edit (Phase 5a, spec §3.5). Only the `Some` fields
+/// change (`COALESCE(new, old)` leaves the rest untouched); setting `artist`
+/// resolves it through `get_or_create_artist` (by derived sort name) and points
+/// the track at that artist. The FTS triggers re-sync on the UPDATE.
+pub(crate) fn update_track(conn: &Connection, track_id: i64, edit: &TrackEdit) -> Result<()> {
+    let artist_id = match &edit.artist {
+        Some(name) => Some(get_or_create_artist(
+            conn,
+            name,
+            &derive_sort_name(name),
+            None,
+        )?),
+        None => None,
+    };
+    conn.execute(
+        "UPDATE tracks SET
+            title = COALESCE(?2, title),
+            rating = COALESCE(?3, rating),
+            artist_id = COALESCE(?4, artist_id)
+         WHERE id = ?1",
+        params![
+            track_id,
+            edit.title,
+            edit.rating.map(|r| r as i64),
+            artist_id
+        ],
+    )?;
+    Ok(())
+}
+
+/// Apply an album-level field edit (Phase 5a). Album-level edits change the whole
+/// album (every track under it). `shelf_genre`, `album`, `album_artist`, and
+/// `year` are path-affecting: the caller re-renders and moves (spec §5.4).
+pub(crate) fn update_album(conn: &Connection, album_id: i64, edit: &AlbumEdit) -> Result<()> {
+    let album_artist_id = match &edit.album_artist {
+        Some(name) => Some(get_or_create_artist(
+            conn,
+            name,
+            &derive_sort_name(name),
+            None,
+        )?),
+        None => None,
+    };
+    conn.execute(
+        "UPDATE albums SET
+            title = COALESCE(?2, title),
+            year = COALESCE(?3, year),
+            shelf_genre = COALESCE(?4, shelf_genre),
+            album_artist_id = COALESCE(?5, album_artist_id)
+         WHERE id = ?1",
+        params![
+            album_id,
+            edit.title,
+            edit.year,
+            edit.shelf_genre,
+            album_artist_id
+        ],
+    )?;
+    Ok(())
+}
+
+/// Replace a track's raw genre set (Phase 5a, the §5.2 multi-value side): clear
+/// its `track_genres` links and re-link the given names (get-or-create each).
+/// Never touches `shelf_genre`. One transaction so a reader never sees a partial
+/// set. Genres are not in the FTS columns, so no FTS resync is needed; the genre
+/// facet reads `track_genres` directly.
+pub(crate) fn set_track_genres(
+    conn: &mut Connection,
+    track_id: i64,
+    genres: &[String],
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM track_genres WHERE track_id = ?1",
+        params![track_id],
+    )?;
+    for name in genres {
+        tx.execute(
+            "INSERT INTO genres (name) VALUES (?1) ON CONFLICT(name) DO NOTHING",
+            params![name],
+        )?;
+        let genre_id: i64 = tx.query_row(
+            "SELECT id FROM genres WHERE name = ?1",
+            params![name],
+            |r| r.get(0),
+        )?;
+        tx.execute(
+            "INSERT INTO track_genres (track_id, genre_id) VALUES (?1, ?2)
+             ON CONFLICT(track_id, genre_id) DO NOTHING",
+            params![track_id, genre_id],
+        )?;
+    }
+    tx.commit()?;
     Ok(())
 }
 

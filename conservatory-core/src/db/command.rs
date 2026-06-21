@@ -11,6 +11,7 @@
 use tokio::sync::oneshot;
 
 use crate::db::models::{Album, Artist, Track};
+use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
 use crate::mover::journal::JobState;
 use crate::mover::{MoveKind, MoveMode, MoveOp};
@@ -54,6 +55,28 @@ pub(crate) enum Command {
     InsertAlbum {
         album: Album,
         reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Apply a track-level field edit (Phase 5a, spec §3.5).
+    UpdateTrack {
+        track_id: i64,
+        edit: TrackEdit,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Apply an album-level field edit (Phase 5a). Album-level fields are
+    /// path-affecting; the caller re-renders and moves.
+    UpdateAlbum {
+        album_id: i64,
+        edit: AlbumEdit,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Replace a track's raw genre set (Phase 5a, the §5.2 multi-value side).
+    SetTrackGenres {
+        track_id: i64,
+        genres: Vec<String>,
+        reply: oneshot::Sender<Result<()>>,
     },
 
     /// Insert a track, returning its new id.
@@ -195,6 +218,9 @@ impl Command {
             Self::GetOrCreateAlbum { .. } => "get_or_create_album",
             Self::SetAlbumShelfGenre { .. } => "set_album_shelf_genre",
             Self::InsertAlbum { .. } => "insert_album",
+            Self::UpdateTrack { .. } => "update_track",
+            Self::UpdateAlbum { .. } => "update_album",
+            Self::SetTrackGenres { .. } => "set_track_genres",
             Self::InsertTrack { .. } => "insert_track",
             Self::GetOrCreateGenre { .. } => "get_or_create_genre",
             Self::LinkTrackGenre { .. } => "link_track_genre",

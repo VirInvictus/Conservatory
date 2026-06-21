@@ -17,9 +17,10 @@ use conservatory_core::db::{
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
-    GenreVocab, ImportOptions, ImportReport, PathTemplate, PlayableItem, PlaybackConfig,
-    TrackFields, compute_accent, find_collisions, find_cover_bytes, import_folder, read_track,
-    resolve_album, resolve_music_profile,
+    AlbumEdit, Assignment, Field, GenreVocab, ImportOptions, ImportReport, PathTemplate,
+    PlayableItem, PlaybackConfig, TrackEdit, TrackFields, any_path_affecting, build_album_edit,
+    build_track_edit, compute_accent, find_collisions, find_cover_bytes, genres_assignment,
+    import_folder, parse_assignment, read_track, replace_in, resolve_album, resolve_music_profile,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -153,6 +154,14 @@ enum Command {
         value: String,
     },
 
+    /// Edit metadata across the tracks matching a search expression (spec §3.5).
+    /// Path-affecting edits (album / albumartist / year / shelfgenre) move files
+    /// through the Phase 2c mover (dry-run by default; `--apply` to execute).
+    Tag {
+        #[command(subcommand)]
+        action: TagAction,
+    },
+
     /// Filter the library with the search grammar (spec §3.4). Uses the SQL fast
     /// path when the whole expression translates, else the in-memory evaluator.
     Search {
@@ -169,6 +178,48 @@ enum Command {
     DebugFacets {
         /// Path to the SQLite database.
         db: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum TagAction {
+    /// Set one or more `field=value` across the matched tracks. Fields:
+    /// title, artist, rating (track); album, albumartist, year, shelfgenre
+    /// (album); genre (raw multi-value, `;`-separated).
+    Set {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Search expression selecting the tracks to edit.
+        query: String,
+        /// One or more assignments, e.g. `year=1992` `genre=Electronic; Ambient`.
+        #[arg(required = true)]
+        assignments: Vec<String>,
+        /// Library root (required only when a path-affecting field changes).
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Execute path-affecting moves (default previews them).
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Search-and-replace a substring within a single text field across the
+    /// matched tracks. Fields: title, artist (track); album, shelfgenre (album).
+    Replace {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Search expression selecting the tracks to edit.
+        query: String,
+        /// Field to edit: title | artist | album | shelfgenre.
+        field: String,
+        /// Substring to find.
+        find: String,
+        /// Replacement text.
+        replace: String,
+        /// Library root (required only when a path-affecting field changes).
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Execute path-affecting moves (default previews them).
+        #[arg(long)]
+        apply: bool,
     },
 }
 
@@ -245,6 +296,7 @@ fn main() -> Result<()> {
         }) => shelf_genre_set(db, album_id, value),
         Some(Command::Play { db, root, track_id }) => play(db, root, track_id),
         Some(Command::Queue { action }) => queue(action),
+        Some(Command::Tag { action }) => tag(action),
         Some(Command::Search { db, query, format }) => search(db, query, format),
         Some(Command::DebugFacets { db }) => debug_facets(db),
         None => {
@@ -618,6 +670,353 @@ async fn run_shelf_genre_set(db: PathBuf, album_id: i64, value: String) -> Resul
         .with_context(|| format!("setting shelf genre for album {album_id}"))?;
     worker.shutdown_ack().await.context("shutdown ack")?;
     println!("album {album_id} shelf genre set to {value:?}; run `organize` to move it");
+    Ok(())
+}
+
+fn tag(action: TagAction) -> Result<()> {
+    match action {
+        TagAction::Set {
+            db,
+            query,
+            assignments,
+            root,
+            apply,
+        } => block_on(run_tag_set(db, query, assignments, root, apply)),
+        TagAction::Replace {
+            db,
+            query,
+            field,
+            find,
+            replace,
+            root,
+            apply,
+        } => block_on(run_tag_replace(
+            db, query, field, find, replace, root, apply,
+        )),
+    }
+}
+
+/// Resolve a search expression to the set of matching track ids (the dual SQL /
+/// eval path the `search` verb uses, membership only).
+fn resolve_selector(pool: &ReadPool, query: &str) -> Result<std::collections::HashSet<i64>> {
+    let conn = pool.open().context("opening pool connection")?;
+    let today = Utc::now().date_naive();
+    let parsed = parse(query);
+    for w in &parsed.warnings {
+        eprintln!("warning: {w}");
+    }
+    let ids = match try_translate(&parsed.expr, today) {
+        Some(clause) => {
+            let params: Vec<SqlParam> = clause.params.iter().map(to_param).collect();
+            search_track_ids(&conn, &clause.sql, &params)
+                .context("running selector SQL")?
+                .into_iter()
+                .collect()
+        }
+        None => search_rows(&conn)
+            .context("loading rows")?
+            .into_iter()
+            .filter(|r| conservatory_search::evaluate(&parsed.expr, &to_item(r), today))
+            .map(|r| r.track_id)
+            .collect(),
+    };
+    Ok(ids)
+}
+
+/// The matched track ids and their distinct album ids, in a stable order.
+fn matched_tracks_and_albums(
+    pool: &ReadPool,
+    ids: &std::collections::HashSet<i64>,
+) -> Result<(Vec<i64>, Vec<i64>)> {
+    let conn = pool.open().context("opening pool connection")?;
+    let rows = track_render_rows(&conn).context("reading render rows")?;
+    let mut tracks = Vec::new();
+    let mut albums = Vec::new();
+    for r in &rows {
+        if ids.contains(&r.track_id) {
+            tracks.push(r.track_id);
+            if let Some(a) = r.album_id
+                && !albums.contains(&a)
+            {
+                albums.push(a);
+            }
+        }
+    }
+    Ok((tracks, albums))
+}
+
+async fn run_tag_set(
+    db: PathBuf,
+    query: String,
+    assignment_strs: Vec<String>,
+    root: Option<PathBuf>,
+    apply: bool,
+) -> Result<()> {
+    let assignments: Vec<Assignment> = assignment_strs
+        .iter()
+        .map(|s| parse_assignment(s).map_err(|e| anyhow::anyhow!(e.to_string())))
+        .collect::<Result<_>>()?;
+
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    mover::recover(&worker, &pool).await.context("recovery")?;
+
+    let ids = resolve_selector(&pool, &query)?;
+    if ids.is_empty() {
+        println!("no tracks match {query:?}");
+        worker.shutdown_ack().await.context("shutdown ack")?;
+        return Ok(());
+    }
+    let (track_ids, albums) = matched_tracks_and_albums(&pool, &ids)?;
+
+    let track_edit = build_track_edit(&assignments);
+    let album_edit = build_album_edit(&assignments);
+    let genres = genres_assignment(&assignments);
+
+    if !track_edit.is_empty() {
+        for &tid in &track_ids {
+            worker
+                .update_track(tid, track_edit.clone())
+                .await
+                .context("updating track")?;
+        }
+    }
+    if let Some(g) = &genres {
+        for &tid in &track_ids {
+            worker
+                .set_track_genres(tid, g.clone())
+                .await
+                .context("setting genres")?;
+        }
+    }
+    if !album_edit.is_empty() {
+        for &aid in &albums {
+            worker
+                .update_album(aid, album_edit.clone())
+                .await
+                .context("updating album")?;
+        }
+    }
+    println!(
+        "edited {} track(s) across {} album(s)",
+        track_ids.len(),
+        albums.len()
+    );
+
+    if any_path_affecting(&assignments) {
+        let root = root.ok_or_else(|| {
+            anyhow::anyhow!("a path-affecting field changed; pass --root <root> to move files")
+        })?;
+        scoped_organize(&worker, &pool, &root, &albums, apply).await?;
+    }
+
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    Ok(())
+}
+
+async fn run_tag_replace(
+    db: PathBuf,
+    query: String,
+    field_str: String,
+    find: String,
+    replace: String,
+    root: Option<PathBuf>,
+    apply: bool,
+) -> Result<()> {
+    let field =
+        Field::parse(&field_str).ok_or_else(|| anyhow::anyhow!("unknown field {field_str:?}"))?;
+
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    mover::recover(&worker, &pool).await.context("recovery")?;
+
+    let ids = resolve_selector(&pool, &query)?;
+    if ids.is_empty() {
+        println!("no tracks match {query:?}");
+        worker.shutdown_ack().await.context("shutdown ack")?;
+        return Ok(());
+    }
+    let rows = {
+        let conn = pool.open().context("opening pool connection")?;
+        track_render_rows(&conn).context("reading render rows")?
+    };
+    let matched: Vec<_> = rows.iter().filter(|r| ids.contains(&r.track_id)).collect();
+
+    let mut edited = 0usize;
+    let mut albums: Vec<i64> = Vec::new();
+    match field {
+        Field::Title => {
+            for r in &matched {
+                let nv = replace_in(&r.title, &find, &replace);
+                if nv != r.title {
+                    worker
+                        .update_track(
+                            r.track_id,
+                            TrackEdit {
+                                title: Some(nv),
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                        .context("updating track")?;
+                    edited += 1;
+                }
+            }
+        }
+        Field::Artist => {
+            for r in &matched {
+                if let Some(cur) = &r.track_artist {
+                    let nv = replace_in(cur, &find, &replace);
+                    if &nv != cur {
+                        worker
+                            .update_track(
+                                r.track_id,
+                                TrackEdit {
+                                    artist: Some(nv),
+                                    ..Default::default()
+                                },
+                            )
+                            .await
+                            .context("updating track")?;
+                        edited += 1;
+                    }
+                }
+            }
+        }
+        Field::Album => {
+            let mut seen = std::collections::HashSet::new();
+            for r in &matched {
+                let Some(aid) = r.album_id else { continue };
+                if !seen.insert(aid) {
+                    continue;
+                }
+                if let Some(cur) = &r.album {
+                    let nv = replace_in(cur, &find, &replace);
+                    if &nv != cur {
+                        worker
+                            .update_album(
+                                aid,
+                                AlbumEdit {
+                                    title: Some(nv),
+                                    ..Default::default()
+                                },
+                            )
+                            .await
+                            .context("updating album")?;
+                        edited += 1;
+                        albums.push(aid);
+                    }
+                }
+            }
+        }
+        Field::ShelfGenre => {
+            let mut seen = std::collections::HashSet::new();
+            for r in &matched {
+                let Some(aid) = r.album_id else { continue };
+                if !seen.insert(aid) {
+                    continue;
+                }
+                if let Some(cur) = &r.shelf_genre {
+                    let nv = replace_in(cur, &find, &replace);
+                    if &nv != cur {
+                        worker
+                            .update_album(
+                                aid,
+                                AlbumEdit {
+                                    shelf_genre: Some(nv),
+                                    ..Default::default()
+                                },
+                            )
+                            .await
+                            .context("updating album")?;
+                        edited += 1;
+                        albums.push(aid);
+                    }
+                }
+            }
+        }
+        _ => anyhow::bail!("search-and-replace supports title | artist | album | shelfgenre"),
+    }
+    println!("replaced in {edited} item(s)");
+
+    if field.is_path_affecting() && !albums.is_empty() {
+        let root = root.ok_or_else(|| {
+            anyhow::anyhow!("a path-affecting field changed; pass --root <root> to move files")
+        })?;
+        scoped_organize(&worker, &pool, &root, &albums, apply).await?;
+    }
+
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    Ok(())
+}
+
+/// Re-render the given albums' tracks and move files to match (the `organize`
+/// flow scoped to the albums a tag edit touched). Dry-run unless `apply`.
+async fn scoped_organize(
+    worker: &conservatory_core::db::WorkerHandle,
+    pool: &ReadPool,
+    root: &Path,
+    albums: &[i64],
+    apply: bool,
+) -> Result<()> {
+    let rows = {
+        let conn = pool.open().context("opening pool connection")?;
+        track_render_rows(&conn).context("reading render rows")?
+    };
+    let template = PathTemplate::default_music();
+    let mut ops = Vec::new();
+    for row in &rows {
+        if !row.album_id.map(|a| albums.contains(&a)).unwrap_or(false) {
+            continue;
+        }
+        let fields = TrackFields {
+            shelf_genre: row.shelf_genre.as_deref(),
+            albumartist: row.album_artist_sort.as_deref(),
+            album: row.album.as_deref(),
+            year: row.year,
+            track_no: row.track_no,
+            disc_no: row.disc_no,
+            title: Some(row.title.as_str()),
+            artist: row.track_artist.as_deref(),
+            ext: row.format.as_deref(),
+        };
+        let rel = template.render(&fields);
+        ops.push(MoveOp {
+            track_id: Some(row.track_id),
+            album_id: row.album_id,
+            src: root.join(&row.file_path),
+            dst: root.join(&rel),
+            db_old: Some(row.file_path.clone()),
+            db_new: Some(rel.to_string_lossy().into_owned()),
+        });
+    }
+
+    if apply {
+        let count = ops.len();
+        let job_id = mover::apply(
+            worker,
+            pool,
+            MoveKind::Organize,
+            MoveMode::Move,
+            root,
+            now_secs(),
+            ops,
+        )
+        .await
+        .context("applying move job")?;
+        println!("applied move job {job_id}: {count} file(s) re-shelved");
+    } else {
+        let preview = mover::plan(ops);
+        println!(
+            "{} to move, {} already in place, {} conflict(s) (dry-run; pass --apply to move)",
+            preview.ops.len(),
+            preview.skipped,
+            preview.conflicts.len()
+        );
+        for op in &preview.ops {
+            println!("  {}  ->  {}", op.src.display(), op.dst.display());
+        }
+    }
     Ok(())
 }
 

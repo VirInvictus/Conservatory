@@ -237,12 +237,24 @@ Split: **4c-i** is the D-Bus half (MPRIS2 + the suspend inhibitor, on `zbus`); *
 
 ### Phase 5a — Bulk metadata editing
 
-- [ ] Multi-select in any list, edit fields across the selection: artist, album artist, album, year, genre (raw tags and shelf genre), rating, cover (spec §3.5).
-- [ ] Search-and-replace across a field.
-- [ ] An edit that alters shelf genre or the album/artist path triggers a file-move job, reusing the Phase 2c mover (dry-run preview + undo).
-- [ ] Tests: bulk edit applies across a selection; a shelf-genre edit enqueues a move; undo reverts both DB and tree.
+Split headless-first (the CLI-testable rule): **5a-i** is the editing logic + worker commands + `tag` CLI verb; **5a-ii** is the GTK bulk-edit dialog. Cover editing is Phase 5d (`cover_path` is unpopulated until then); embedded write-back is Phase 5b.
 
-*Usable artifact:* bulk-edit a selection and have path-affecting edits move files safely.
+#### Phase 5a-i — Field editing + path-affecting move (headless, CLI) ✅
+
+- [x] Core write commands (`db::writes` + worker): `update_track` (title / rating / track artist, get-or-create by derived sort name), `update_album` (title / year / shelf genre / album artist), `set_track_genres` (clear + re-link the raw §5.2 multi-value side). `COALESCE`-guarded so only the changed fields move; the FTS triggers re-sync on every UPDATE (verified by test).
+- [x] Pure resolver (`conservatory-core/src/edit.rs`, unit-tested): parse `field=value`, classify track-level vs album-level and **path-affecting** (album / albumartist / year / shelfgenre, the default-template fields), build the typed `TrackEdit`/`AlbumEdit`, split raw genres, and literal search-and-replace. Shared by the CLI and (5a-ii) the GTK dialog.
+- [x] Path-affecting edits reuse the Phase 2c mover (dry-run preview + undo), re-rendering only the touched albums (the generalized `shelf-genre-set` → `organize` flow).
+- [x] CLI: `tag set <db> <selector> <field=value>... [--root] [--apply]` and `tag replace <db> <selector> <field> <find> <replace> [--root] [--apply]`, selector via `conservatory-search`.
+- [x] Tests (`tests/edit.rs`, committed + synthetic fixtures): field updates re-read; FTS follows a title/artist/album/albumartist rename; `set_track_genres` replaces (not appends); a year edit re-renders, moves, and `undo` reverts DB + tree. Hand-verified against the `testdata/` albums.
+
+*Usable artifact:* `conservatory-cli tag set <db> '<expr>' year=1992 --root <root> --apply` edits the matched library and re-shelves any moved files, fully headless and undoable.
+
+#### Phase 5a-ii — GTK bulk-edit dialog
+
+- [ ] A bulk-edit dialog over the leaf multi-selection (the `adw::AlertDialog` + `is_selected` patterns already in the window), fields blank-means-unchanged, plus a search-and-replace mode; applies through the worker, shows the mover dry-run preview for path-affecting edits, and refreshes via `set_leaf` + `recompute_from`.
+- [ ] Tests: the pure mapping is covered in 5a-i; the dialog is build + manual launch.
+
+*Usable artifact:* select tracks in the browser, bulk-edit their fields, and have path-affecting edits move files safely with a preview.
 
 ### Phase 5b — Embedded-tag write-back (§5.5)
 
@@ -259,7 +271,7 @@ Split: **4c-i** is the D-Bus half (MPRIS2 + the suspend inhibitor, on `zbus`); *
 Modeled on Lattice's `scripts/replaygain.py` (rsgain over libebur128, ReplayGain 2.0). Phase 4a reads ReplayGain but never scans (the §16.7 open decision); this settles it on the "scan in-app" side so the player can normalize untagged albums.
 
 - [ ] An in-app ReplayGain 2.0 scanner: compute album + track gain/peak for untagged or partially-tagged albums and write the tags format-aware (ID3 `TXXX`, Vorbis comments, Opus `R128_*`, MP4, WMA), batched as a job with a dry-run preview. Refresh the DB `replaygain_track`/`replaygain_album` columns from the scan so the Phase 4a profile resolution (album → track → off) sees the new values.
-- [ ] Mechanism + dependency sign-off (spec §11): either shell out to `rsgain easy` (libebur128, the Lattice technique, a new external-tool requirement) or drive ffmpeg's `ebur128` filter directly (libmpv already links ffmpeg, so no new runtime dependency). Decide and record in ATTRIBUTIONS.md. The read-side per-album coverage audit lands in Phase 8c.
+- [ ] Mechanism (**settled**): the `ebur128` Rust crate (the libebur128 binding rsgain itself uses) measures integrated loudness + true peak in-process, and the chosen gain/peak tags are written via lofty (reusing the 5b write-back), so there is **no external binary** (fits the local-first ethos and Flatpak packaging). The RG2.0 math is small (gain = -18 LUFS - integrated; album gain from album-wide loudness). `ebur128` gets its dependency sign-off + ATTRIBUTIONS row when this phase lands. (`rsgain` was the considered alternative; rejected to avoid an external runtime tool.) The read-side per-album coverage audit lands in Phase 8c.
 - [ ] CLI: `replaygain scan <selector> [--dry-run] [--target-lufs N]`.
 - [ ] Tests: scanning an album fixture writes round-trippable gain tags per format and updates the DB columns; an idempotent re-scan is a no-op; coverage classification (missing / partial / album-missing / ok).
 
@@ -362,7 +374,7 @@ Deliberately **not** adopted from Lattice: the AI-readable library exports (`--a
 
 Modeled on Lattice's `--testFLAC` / `--testMP3` / `--testOpus` / `--testWAV` / `--testWMA` and its four-tier classification.
 
-- [ ] Decode-verify every file (or a selection) with parallel workers: `flac -t` for FLAC (authoritative), ffmpeg decode for the rest. Classify each as CORRUPT (tool error, or a FLAC that decodes fewer samples than declared, i.e. truncation), SUSPECT (decoded to the end but the tool complained, or trailing data), METADATA (only a container/tag warning, audio intact), or OK, the Lattice tiers.
+- [ ] Decode-verify every file (or a selection) with parallel workers. Tooling (**settled**): `flac -t` for FLAC (authoritative, MD5-verifies the decoded audio, which catches bit-rot a plain decode misses) and the `ffmpeg` CLI for the rest (strict decode with forced demuxers). Both shell out (external-tool sign-off when this lands); the libmpv-reuse alternative was rejected because a player decoder is lenient by design and would weaken the verdicts. Classify each as CORRUPT (tool error, or a FLAC that decodes fewer samples than declared, i.e. truncation), SUSPECT (decoded to the end but the tool complained, or trailing data), METADATA (only a container/tag warning, audio intact), or OK, the Lattice tiers.
 - [ ] Persist results (a last-checked timestamp + verdict, keyed by path + size/mtime) so a re-verify skips unchanged files; surface CORRUPT / SUSPECT in a report and, later, a GUI list.
 - [ ] CLI: `verify <selector> [--verbose]`, with a non-zero exit only when CORRUPT files exist (the Lattice contract), so it is scriptable in a cron/backup hook.
 - [ ] Tests: a deliberately truncated/corrupt fixture classifies CORRUPT, a clean fixture OK; the skip-unchanged cache works.

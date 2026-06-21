@@ -35,6 +35,9 @@ pub enum Error {
     #[error("player: {0}")]
     Player(String),
 
+    #[error("edit: {0}")]
+    Edit(String),
+
     #[error("dbus: {0}")]
     Dbus(#[from] zbus::Error),
 }

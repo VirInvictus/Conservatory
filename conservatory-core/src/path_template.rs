@@ -123,11 +123,11 @@ impl PathTemplate {
         let mut path = PathBuf::new();
         for (i, component) in self.components.iter().enumerate() {
             let mut name = render_component(component, fields);
-            if i == last {
-                if let Some(ext) = fields.ext.filter(|e| !e.is_empty()) {
-                    name.push('.');
-                    name.push_str(&sanitize_component(ext).to_lowercase());
-                }
+            if i == last
+                && let Some(ext) = fields.ext.filter(|e| !e.is_empty())
+            {
+                name.push('.');
+                name.push_str(&sanitize_component(ext).to_lowercase());
             }
             path.push(name);
         }

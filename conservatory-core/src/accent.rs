@@ -62,10 +62,10 @@ pub fn find_cover_bytes(source: &Path, draft: &TrackDraft) -> Option<Vec<u8>> {
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy().to_lowercase();
-        if CANDIDATES.contains(&name.as_str()) {
-            if let Ok(bytes) = std::fs::read(entry.path()) {
-                return Some(bytes);
-            }
+        if CANDIDATES.contains(&name.as_str())
+            && let Ok(bytes) = std::fs::read(entry.path())
+        {
+            return Some(bytes);
         }
     }
     None

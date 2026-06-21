@@ -25,6 +25,9 @@ image = { workspace = true }
 libmpv2 = { workspace = true }
 # Phase 4c-i: MPRIS2 + the suspend inhibitor (spec §6.5). D-Bus, on tokio.
 zbus = { workspace = true }
+# Phase 4c fix: setlocale(LC_NUMERIC, "C") so libmpv's mpv_create() succeeds
+# under a GTK-set locale.
+libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

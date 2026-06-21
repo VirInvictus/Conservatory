@@ -11,6 +11,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use crate::player::host::AudioDevice;
 use crate::player::item::PlayableItem;
 
 /// A command sent from a consumer to the engine thread.
@@ -47,6 +48,8 @@ pub enum PlayerCommand {
     },
     /// Empty the queue and stop playback (keeps the thread alive).
     ClearQueue,
+    /// Switch the audio output device (mpv `audio-device`).
+    SetAudioDevice(String),
     /// Halt playback and persist, but keep the engine thread alive.
     Stop,
     /// Stop and exit the engine thread (joined by [`PlayerHandle::shutdown`]).
@@ -67,6 +70,10 @@ pub struct PlayerSnapshot {
     pub queue_len: usize,
     /// The queue has been played to its end (or is empty): a poller can stop.
     pub ended: bool,
+    /// The audio output devices (queried once at engine init, spec §6.5).
+    pub audio_devices: Arc<[AudioDevice]>,
+    /// The selected output device id; `None` is mpv's default (`auto`).
+    pub audio_device: Option<String>,
 }
 
 impl Default for PlayerSnapshot {
@@ -80,6 +87,8 @@ impl Default for PlayerSnapshot {
             volume: 100,
             queue_len: 0,
             ended: false,
+            audio_devices: Arc::from([]),
+            audio_device: None,
         }
     }
 }
@@ -178,6 +187,11 @@ impl PlayerHandle {
         let _ = self.tx.send(PlayerCommand::ClearQueue);
     }
 
+    /// Switch the audio output device (spec §6.5).
+    pub fn set_audio_device(&self, name: impl Into<String>) {
+        let _ = self.tx.send(PlayerCommand::SetAudioDevice(name.into()));
+    }
+
     pub fn stop(&self) {
         let _ = self.tx.send(PlayerCommand::Stop);
     }
@@ -191,10 +205,10 @@ impl PlayerHandle {
     /// and joins the handle; later calls (from other clones) are no-ops.
     pub fn shutdown(&self) {
         let _ = self.tx.send(PlayerCommand::Shutdown);
-        if let Ok(mut guard) = self.join.lock() {
-            if let Some(handle) = guard.take() {
-                let _ = handle.join();
-            }
+        if let Ok(mut guard) = self.join.lock()
+            && let Some(handle) = guard.take()
+        {
+            let _ = handle.join();
         }
     }
 }

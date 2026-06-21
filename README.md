@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GNOME-50%2B-4a86cf" alt="GNOME 50+">
-  <img src="https://img.shields.io/badge/status-v0.0.16%20%C2%B7%20Phase%204c--i-orange" alt="Status: v0.0.16, Phase 4c-i">
+  <img src="https://img.shields.io/badge/status-v0.0.17%20%C2%B7%20Phase%204%20complete-orange" alt="Status: v0.0.17, Phase 4 complete">
 </p>
 
 ---
@@ -36,7 +36,7 @@ Conservatory absorbs Brandon's podcast client, Belfry. Belfry's Phase 1 work is 
 
 ## Status
 
-v0.0.16, Phase 4c-i shipped. Phases 1 (data layer), 2 (import/organize), and 3 (browse) are complete, and the player works in the GUI with a reorderable queue, restart-resume, and system media integration:
+v0.0.17, Phase 4 complete. Phases 1 (data layer), 2 (import/organize), 3 (browse), and 4 (playback) are done — a daily-driver music player:
 
 - **Phase 1** — single-writer SQLite worker, read-only pool, numbered migrations, the music schema with FTS5, the embedded-tag reader (`lofty`), and median-cut cover accents.
 - **Phase 2 — the manager is usable headless.** Point the CLI at a folder and get an organized, database-owned library: tag read → resolve → shelf-genre derivation → path-template render → crash-safe move (dry-run preview, undo journal, roll-forward recovery). Verbs: `import`, `organize`, `shelf-genre-set`.
@@ -49,8 +49,9 @@ v0.0.16, Phase 4c-i shipped. Phases 1 (data layer), 2 (import/organize), and 3 (
 - **Phase 4b-ii-b — the drag-and-drop queue drawer.** A right-side slide-in drawer (`Ctrl+U`) lists the playing queue with the current track highlighted; drag rows to reorder (or `Alt+↑/↓`), `Delete` to remove, `Ctrl+Shift+C` to clear. Editing the queue never restarts the current track, and the DB queue stays the source of truth.
 - **Phase 4b-ii-c — queue polish.** The saved queue resumes paused at the cursor on launch (reopen and pick up where you left off), and `Ctrl+Enter` appends the browse selection to the queue.
 - **Phase 4c-i — MPRIS2 + suspend inhibitor.** Serves `org.mpris.MediaPlayer2` so the keyboard media keys, the GNOME media overlay, and the lock screen drive playback and show the track; a logind inhibitor keeps the machine awake while playing.
+- **Phase 4c-ii — output-device picker.** A header menu lists the audio sinks (PipeWire/Pulse/ALSA, plus `auto`) and switches mpv's output live. **Phase 4 — the daily-driver player — is complete.**
 
-Next: Phase 4c-ii (output-sink picker), which completes Phase 4 — the daily-driver player.
+Next: Phase 5 (bulk metadata editing + embedded-tag write-back).
 
 - [`spec.md`](spec.md) — the design contract.
 - [`roadmap.md`](roadmap.md) — the phased plan, broken into independently shippable sub-phases.

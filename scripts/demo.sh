@@ -66,7 +66,12 @@ if [ "${CONSERVATORY_DEMO_NO_GUI:-0}" = "1" ]; then
 fi
 
 echo "demo: launching the browse window (close it to clean up) ..."
-echo "  try it: click a facet row to narrow; click a column header to sort;"
+echo "  browse: click a facet row to narrow; click a column header to sort;"
 echo "          press Ctrl+F and type a filter, e.g. genre:ambient or rating:>=1;"
 echo "          save it as a Perspective in the left sidebar, then reload it."
-"$GUI" "$DB"
+echo "  play:   double-click a track to play the visible list from there; the"
+echo "          Now-bar at the bottom drives transport; Ctrl+U opens the queue"
+echo "          (drag to reorder); the header speaker icon picks the output device."
+# The library root (second arg) is what lets the player resolve the managed
+# relative track paths; without it the GUI browses but can't play (Phase 4).
+"$GUI" "$DB" "$LIB"

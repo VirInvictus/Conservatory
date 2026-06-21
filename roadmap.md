@@ -223,10 +223,11 @@ Split: **4c-i** is the D-Bus half (MPRIS2 + the suspend inhibitor, on `zbus`); *
 
 *Usable artifact:* `playerctl` and the keyboard media keys drive playback; the GNOME media overlay/lock screen show the track; the machine won't suspend mid-track.
 
-#### Phase 4c-ii — Output-sink picker (GTK)
+#### Phase 4c-ii — Output-sink picker (GTK) ✅
 
-- [ ] mpv `audio-device` / `audio-device-list` exposed on `MpvHost` + a `SetAudioDevice` engine command; a header menu lists the PipeWire sinks and switches output (spec §6.5).
-- [ ] Tests: device-list parse / selection model.
+- [x] `MpvHost::audio_devices()` parses mpv's `audio-device-list` (node → `AudioDevice { name, description }`) and `set_audio_device()` sets the `audio-device` property; the engine queries the list once at init and exposes it (plus the current selection) on the snapshot; a `SetAudioDevice` command applies a switch.
+- [x] A header `MenuButton` (`set_create_popup_func`, built fresh on open from the snapshot) lists the sinks (the current one checked) and switches output on click (spec §6.5).
+- [x] Tests: a host integration test (`audio_devices()` includes `auto`; `set_audio_device("auto")` succeeds); the menu is verified by build + manual launch.
 
 *Usable artifact:* **a daily-driver music player.** It replaces deadbeef for the managed library, with full system media integration and output-device selection.
 

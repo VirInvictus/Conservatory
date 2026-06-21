@@ -261,6 +261,7 @@ impl ConservatoryWindow {
             }
         });
         header.pack_end(&queue_btn);
+        header.pack_end(&self.build_output_menu_button());
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
@@ -342,10 +343,10 @@ impl ConservatoryWindow {
 
         let weak = self.downgrade();
         filter.connect_search_changed(move |_| {
-            if let Some(win) = weak.upgrade() {
-                if let Some(c) = win.imp().filter_coalescer.get() {
-                    c.add(());
-                }
+            if let Some(win) = weak.upgrade()
+                && let Some(c) = win.imp().filter_coalescer.get()
+            {
+                c.add(());
             }
         });
 
@@ -398,6 +399,15 @@ impl ConservatoryWindow {
     /// so its index range is the queue order and `pos` is the start.
     fn on_track_activated(&self, pos: u32) {
         let imp = self.imp();
+        // Playback needs the library root to resolve the managed relative track
+        // paths; a bare `conservatory <db>` launch can browse but not play. Log a
+        // hint rather than failing silently (the config-sourced root is Phase 10).
+        if imp.player.get().is_some() && imp.library_root.get().is_none() {
+            eprintln!(
+                "conservatory: can't play without a library root \u{2014} launch as \
+                 `conservatory <db> <root>`"
+            );
+        }
         let (Some(pool), Some(leaf), Some(player), Some(root)) = (
             imp.pool.get(),
             imp.leaf.get(),
@@ -475,6 +485,75 @@ impl ConservatoryWindow {
         }
     }
 
+    /// The output-device picker (Phase 4c-ii, spec §6.5): a header menu built
+    /// fresh on each open from the engine snapshot's device list; selecting a row
+    /// switches the mpv output and closes.
+    fn build_output_menu_button(&self) -> gtk::MenuButton {
+        let button = gtk::MenuButton::new();
+        button.set_icon_name("audio-speakers-symbolic");
+        button.set_tooltip_text(Some("Output device"));
+
+        let weak = self.downgrade();
+        button.set_create_popup_func(move |button| {
+            let popover = gtk::Popover::new();
+            let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            list.set_margin_top(4);
+            list.set_margin_bottom(4);
+
+            if let Some(win) = weak.upgrade()
+                && let Some(player) = win.imp().player.get()
+            {
+                let snap = player.snapshot();
+                let current = snap.audio_device.as_deref();
+                for dev in snap.audio_devices.iter() {
+                    let selected = current == Some(dev.name.as_str())
+                        || (current.is_none() && dev.name == "auto");
+                    let row = gtk::Button::new();
+                    row.add_css_class("flat");
+                    let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                    let check = gtk::Image::from_icon_name("object-select-symbolic");
+                    check.set_visible(selected);
+                    let label = gtk::Label::new(Some(if dev.description.is_empty() {
+                        &dev.name
+                    } else {
+                        &dev.description
+                    }));
+                    label.set_xalign(0.0);
+                    label.set_hexpand(true);
+                    row_box.append(&check);
+                    row_box.append(&label);
+                    row.set_child(Some(&row_box));
+
+                    let name = dev.name.clone();
+                    let win_weak = win.downgrade();
+                    let pop_weak = popover.downgrade();
+                    row.connect_clicked(move |_| {
+                        if let Some(win) = win_weak.upgrade()
+                            && let Some(player) = win.imp().player.get()
+                        {
+                            player.set_audio_device(name.clone());
+                        }
+                        if let Some(pop) = pop_weak.upgrade() {
+                            pop.popdown();
+                        }
+                    });
+                    list.append(&row);
+                }
+            }
+
+            let scroller = gtk::ScrolledWindow::builder()
+                .propagate_natural_height(true)
+                .max_content_height(360)
+                .hscrollbar_policy(gtk::PolicyType::Never)
+                .child(&list)
+                .build();
+            popover.set_child(Some(&scroller));
+            button.set_popover(Some(&popover));
+        });
+
+        button
+    }
+
     /// On startup, load the saved DB queue into the engine paused at the cursor
     /// (Phase 4b-ii-c): reopening the app resumes where playback left off, silent
     /// until the user presses play.
@@ -546,12 +625,12 @@ impl ConservatoryWindow {
         let mut ordered_ids = Vec::new();
         let mut labels = Vec::new();
         for i in 0..n {
-            if model.is_selected(i) {
-                if let Some(row) = model.item(i).and_then(|o| o.downcast::<TrackRow>().ok()) {
-                    let brief = row.brief();
-                    ordered_ids.push(brief.id);
-                    labels.push((brief.id, (brief.title, brief.artist.unwrap_or_default())));
-                }
+            if model.is_selected(i)
+                && let Some(row) = model.item(i).and_then(|o| o.downcast::<TrackRow>().ok())
+            {
+                let brief = row.brief();
+                ordered_ids.push(brief.id);
+                labels.push((brief.id, (brief.title, brief.artist.unwrap_or_default())));
             }
         }
         if ordered_ids.is_empty() {
@@ -595,10 +674,10 @@ impl ConservatoryWindow {
         };
         if cur.get() != want {
             cur.set(want);
-            if let Some(panel) = imp.queue_panel.get() {
-                if panel.revealer.reveals_child() {
-                    self.reload_queue_panel();
-                }
+            if let Some(panel) = imp.queue_panel.get()
+                && panel.revealer.reveals_child()
+            {
+                self.reload_queue_panel();
             }
         }
     }

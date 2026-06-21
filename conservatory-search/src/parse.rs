@@ -303,18 +303,18 @@ impl Parser<'_> {
 
     fn relational(&mut self, field: Field) -> PResult {
         // Presence test first.
-        if let Some(Token::Word(w)) = self.peek() {
-            if let Some(present) = bool_word(w) {
-                self.pos += 1;
-                return Ok(Expr::Field {
-                    field,
-                    kind: if present {
-                        MatchKind::HasAny
-                    } else {
-                        MatchKind::HasNone
-                    },
-                });
-            }
+        if let Some(Token::Word(w)) = self.peek()
+            && let Some(present) = bool_word(w)
+        {
+            self.pos += 1;
+            return Ok(Expr::Field {
+                field,
+                kind: if present {
+                    MatchKind::HasAny
+                } else {
+                    MatchKind::HasNone
+                },
+            });
         }
 
         let comp = self.eat_comparator();

@@ -132,10 +132,10 @@ pub fn resolve_shelf_genre(input: &AlbumGenreInput, vocab: &GenreVocab) -> Strin
     }
 
     // 2. A single album-level genre tag.
-    if let Some(tag) = input.album_tag {
-        if let Some(first) = normalize(tag, vocab).into_iter().next() {
-            return first;
-        }
+    if let Some(tag) = input.album_tag
+        && let Some(first) = normalize(tag, vocab).into_iter().next()
+    {
+        return first;
     }
 
     // 3. Most common normalized genre across the tracks. Each track contributes

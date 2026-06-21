@@ -96,6 +96,8 @@ struct Engine {
     ended: bool,
     debounce: StateDebounce,
     started: Instant,
+    audio_devices: std::sync::Arc<[crate::player::host::AudioDevice]>,
+    audio_device: Option<String>,
 }
 
 impl Engine {
@@ -105,6 +107,9 @@ impl Engine {
         rt: Handle,
         snapshot: Arc<Mutex<PlayerSnapshot>>,
     ) -> Self {
+        // The output-device list is static-at-startup (spec §6.5); a failed query
+        // (e.g. a null AO) just yields an empty list.
+        let audio_devices = host.audio_devices().unwrap_or_default().into();
         Self {
             host,
             worker,
@@ -117,6 +122,8 @@ impl Engine {
             ended: false,
             debounce: StateDebounce::default(),
             started: Instant::now(),
+            audio_devices,
+            audio_device: None,
         }
     }
 
@@ -250,6 +257,11 @@ impl Engine {
                 self.ended = true;
                 self.paused = false;
                 let _ = self.host.stop();
+            }
+            PlayerCommand::SetAudioDevice(name) => {
+                if self.host.set_audio_device(&name).is_ok() {
+                    self.audio_device = Some(name);
+                }
             }
             PlayerCommand::Stop => {
                 self.set_paused(true);
@@ -403,6 +415,8 @@ impl Engine {
             volume: self.volume,
             queue_len: self.queue.len(),
             ended: self.ended,
+            audio_devices: self.audio_devices.clone(),
+            audio_device: self.audio_device.clone(),
         };
         if let Ok(mut guard) = self.snapshot.lock() {
             *guard = snap;

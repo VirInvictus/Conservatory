@@ -365,12 +365,10 @@ mod tests {
         PlayerSnapshot {
             current_index: current,
             track_id: current.map(|i| i as i64 + 1),
-            position: 0.0,
-            duration: None,
             paused,
-            volume: 100,
             queue_len,
             ended,
+            ..Default::default()
         }
     }
 

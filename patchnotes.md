@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.17
+
+Phase 4c-ii shipped: the output-device picker. **Phase 4 is complete — a daily-driver music player.**
+
+- **Output devices (`player/host.rs`):** `MpvHost::audio_devices()` parses mpv's `audio-device-list` (a node array of maps) into `AudioDevice { name, description }`, and `set_audio_device()` sets the `audio-device` property. The engine queries the list once at init and carries it (plus the current selection) on the snapshot; a `SetAudioDevice` command applies a switch through the engine thread.
+- **Header picker (`ui/window.rs`):** a `MenuButton` whose popover is built fresh on each open from the snapshot — the sinks (plus `auto`), the current one checked; clicking one switches output. No D-Bus; mpv handles the device move live.
+- **MSRV:** `rust-version` bumped to 1.88 to match the let-chains already in use (introduced with the MPRIS module at 4c-i); CI builds on stable, so this is a documentation correction, not a behaviour change.
+- **Tests:** a host integration test (`audio_devices()` includes `auto`, `set_audio_device("auto")` ok); the menu is verified by build + manual launch.
+- **Fix — GUI playback:** the GUI never actually played, because libmpv's `mpv_create()` returns NULL unless `LC_NUMERIC = "C"`, and GTK sets the locale from the environment at startup (the CLI never does, so it was unaffected). `MpvHost::build` now calls `setlocale(LC_NUMERIC, "C")` (via `libc`, signed off) before creating mpv. Also: `scripts/demo.sh` now passes the library root (`conservatory <db> <root>`), without which the GUI can browse but not play, and a missing-root launch logs a hint instead of failing silently.
+
+With this, Phase 4 (libmpv playback, the unified queue, the GUI player + Now-bar + queue drawer, MPRIS2/media keys/inhibitor, and output selection) is done. Deferred polish carried forward: MPRIS `Quit`/`Raise` wired to the app, `mpris:artUrl` + a Now-bar cover (need covers on disk, §7.4), the audible within-album gapless prototype (§16.9), and in-window keyboard playback bindings. Next is **Phase 5 — bulk editing + embedded-tag write-back.**
+
 ## v0.0.16
 
 Phase 4c-i shipped: MPRIS2 and a suspend inhibitor. The player is now a desktop citizen — media keys, the GNOME media overlay and lock screen, and don't-suspend-while-playing.

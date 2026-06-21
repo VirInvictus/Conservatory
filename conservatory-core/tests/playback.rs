@@ -133,3 +133,18 @@ fn host_plays_fixture_to_eof() {
         "the fixture should play through to a natural end-of-file"
     );
 }
+
+/// The output-device list (Phase 4c-ii) is queryable and always carries mpv's
+/// `auto` pseudo-device; switching to it succeeds.
+#[test]
+fn host_lists_and_sets_audio_devices() {
+    let Ok(mut host) = MpvHost::new_null() else {
+        return;
+    };
+    let devices = host.audio_devices().expect("audio-device-list");
+    assert!(
+        devices.iter().any(|d| d.name == "auto"),
+        "mpv always lists the `auto` pseudo-device, got {devices:?}"
+    );
+    host.set_audio_device("auto").expect("set audio-device");
+}

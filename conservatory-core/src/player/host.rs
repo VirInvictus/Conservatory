@@ -13,11 +13,21 @@
 //! plumbing now, with no second consumer, would be speculative.
 
 use libmpv2::events::Event;
+use libmpv2::mpv_node::MpvNode;
 use libmpv2::{EndFileReason, Mpv, mpv_end_file_reason};
 
 use crate::errors::{Error, Result};
 use crate::player::profile::MusicProfile;
 use crate::player::state::EndReason;
+
+/// An audio output device mpv can play to (spec §6.5, the output-sink picker).
+/// `name` is mpv's device id (e.g. `pipewire/…`, or `auto`); `description` is the
+/// human label.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AudioDevice {
+    pub name: String,
+    pub description: String,
+}
 
 /// What a single [`MpvHost::pump`] observed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +62,13 @@ impl MpvHost {
     }
 
     fn build(silent: bool) -> Result<Self> {
+        // libmpv's `mpv_create()` returns NULL unless `LC_NUMERIC` is "C", and a
+        // GTK app sets the locale from the environment at startup (the CLI never
+        // does, which is why it played but the GUI didn't). Force it here, at the
+        // libmpv boundary, so every consumer is covered. Idempotent and harmless.
+        unsafe {
+            libc::setlocale(libc::LC_NUMERIC, c"C".as_ptr());
+        }
         let mpv = Mpv::with_initializer(|init| {
             // Audio-only: no video output window even for files with embedded
             // cover art (mpv would otherwise treat the picture as a video).
@@ -107,6 +124,43 @@ impl MpvHost {
         self.mpv
             .set_property("volume", volume as f64)
             .map_err(|e| Error::Player(format!("setting volume: {e}")))
+    }
+
+    /// The audio output devices mpv can play to (spec §6.5). mpv always lists an
+    /// `auto` pseudo-device; real PipeWire/Pulse/ALSA sinks follow.
+    pub fn audio_devices(&self) -> Result<Vec<AudioDevice>> {
+        let node: MpvNode = self
+            .mpv
+            .get_property("audio-device-list")
+            .map_err(|e| Error::Player(format!("audio-device-list: {e}")))?;
+        let mut out = Vec::new();
+        if let Some(array) = node.array() {
+            for entry in array {
+                let (mut name, mut description) = (String::new(), String::new());
+                if let Some(map) = entry.map() {
+                    for (key, value) in map {
+                        match key.as_str() {
+                            "name" => name = value.str().unwrap_or_default().to_string(),
+                            "description" => {
+                                description = value.str().unwrap_or_default().to_string()
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if !name.is_empty() {
+                    out.push(AudioDevice { name, description });
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Switch the output device (mpv `audio-device`; `auto` is the default).
+    pub fn set_audio_device(&mut self, name: &str) -> Result<()> {
+        self.mpv
+            .set_property("audio-device", name)
+            .map_err(|e| Error::Player(format!("setting audio-device: {e}")))
     }
 
     /// Seek to an absolute offset in seconds (the resume path, spec §6.4).

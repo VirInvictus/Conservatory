@@ -282,10 +282,10 @@ pub async fn import_folder(
 /// sibling cover file), median-cut per spec §7.4.
 fn album_accent(group: &AlbumGroup) -> Option<u32> {
     for draft in &group.drafts {
-        if let Some(bytes) = find_cover_bytes(&draft.source_path, draft) {
-            if let Ok(accent) = compute_accent(&bytes) {
-                return Some(accent);
-            }
+        if let Some(bytes) = find_cover_bytes(&draft.source_path, draft)
+            && let Ok(accent) = compute_accent(&bytes)
+        {
+            return Some(accent);
         }
     }
     None

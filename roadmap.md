@@ -247,10 +247,33 @@ Split: **4c-i** is the D-Bus half (MPRIS2 + the suspend inhibitor, on `zbus`); *
 ### Phase 5b — Embedded-tag write-back (§5.5)
 
 - [ ] Write curated DB metadata back into the files' embedded tags, batched as a job, respecting format capabilities (Vorbis comments, ID3, MP4 atoms). Requires the write side of the 1c tag library.
+- [ ] Write authoritatively: clear conflicting or shadowing tags so the DB-authored values win. On MP3, strip stray APEv2 blocks and custom `TXXX:GENRE` (some players prefer APEv2 over ID3, so a bad APE tag silently defeats the write); never leave a second tag block behind. The Lattice `scripts/apestrip.py` + `retag.py` lesson (ATTRIBUTIONS.md).
 - [ ] CLI: `embed-tags <selector> [--dry-run]`.
 - [ ] Tests: write-back round-trips through a re-read for each format; the spec §5.6 re-import contract holds (rebuildable subset reconstructs after a wipe-and-reimport).
 
 *Usable artifact:* the library is never a roach motel: you can walk away with self-describing, portable files.
+
+### Phase 5c — ReplayGain scan (resolves spec §16.7)
+
+Modeled on Lattice's `scripts/replaygain.py` (rsgain over libebur128, ReplayGain 2.0). Phase 4a reads ReplayGain but never scans (the §16.7 open decision); this settles it on the "scan in-app" side so the player can normalize untagged albums.
+
+- [ ] An in-app ReplayGain 2.0 scanner: compute album + track gain/peak for untagged or partially-tagged albums and write the tags format-aware (ID3 `TXXX`, Vorbis comments, Opus `R128_*`, MP4, WMA), batched as a job with a dry-run preview. Refresh the DB `replaygain_track`/`replaygain_album` columns from the scan so the Phase 4a profile resolution (album → track → off) sees the new values.
+- [ ] Mechanism + dependency sign-off (spec §11): either shell out to `rsgain easy` (libebur128, the Lattice technique, a new external-tool requirement) or drive ffmpeg's `ebur128` filter directly (libmpv already links ffmpeg, so no new runtime dependency). Decide and record in ATTRIBUTIONS.md. The read-side per-album coverage audit lands in Phase 8c.
+- [ ] CLI: `replaygain scan <selector> [--dry-run] [--target-lufs N]`.
+- [ ] Tests: scanning an album fixture writes round-trippable gain tags per format and updates the DB columns; an idempotent re-scan is a no-op; coverage classification (missing / partial / album-missing / ok).
+
+*Usable artifact:* untagged albums get correct ReplayGain in-app, so playback normalization works without an external script.
+
+### Phase 5d — Cover art to disk + cover management (spec §7.4)
+
+Modeled on Lattice's `--extractArt` (format-priority embedded-cover extraction). Implements the §7.4 covers-on-disk story that the Now-bar thumbnail and MPRIS art were deferred behind (Phases 4b-ii-c, 4c-i).
+
+- [ ] Extract the embedded front cover (or a chosen image) to a managed `cover.jpg` beside the album (format priority FLAC > Opus/OGG > M4A > MP3, preferring the type-3 Front Cover), populate `albums.cover_path`, and treat that file as part of the managed layout so the Phase 2c mover relocates and undoes it with the album.
+- [ ] Set / replace an album (or book) cover from a file or from embedded art: the Phase 5a bulk-edit "cover" field becomes real here, and the chosen cover embeds back into the files at write-back (Phase 5b).
+- [ ] Wire the unblocked consumers once `cover_path` is populated: the Now-bar cover thumbnail (4b-ii-c deferral) and MPRIS `mpris:artUrl` (4c-i deferral).
+- [ ] Tests: per-format embedded cover extracts to `cover.jpg`; `cover_path` is populated and moves with the album; the Now-bar / MPRIS art read resolves it.
+
+*Usable artifact:* albums show their cover on disk, in the Now-bar, and in the GNOME media controls.
 
 ---
 
@@ -325,3 +348,54 @@ Audiobooks are the third media type (spec §3.8), landing as the **`conservatory
 - [ ] Tests: chapter advance across a multi-file book and within an M4B (no gap, correct offsets); resume-to-the-second across a restart; per-book override resolution; finished-state transition.
 
 *Usable artifact:* **audiobook parity.** Play a book from the shelf with chapters, variable speed, sleep timer, and exact resume, in the one unified queue alongside music and podcasts.
+
+---
+
+## Phase 8 — Library maintenance and audits
+
+A read-only health-and-hygiene suite modeled on **Lattice** (Brandon's CLI/TUI music auditor; ATTRIBUTIONS.md). Lattice scans the filesystem and reports, never mutating; Conservatory already owns the database, so these audits run against the DB plus the managed files. Each surfaces as a CLI verb first (the every-surface-CLI-testable rule), with GUI reports layered on later. The phase is **media-type-agnostic and depends only on Phases 1 to 3**, so it can be pulled forward of Phases 6/7 if a library-integrity need arises; it is placed here so it can cover all three media types at once. Integrity and decode checks shell out to `flac` / `ffmpeg` (external-tool sign-off, spec §11).
+
+Deliberately **not** adopted from Lattice: the AI-readable library exports (`--ai-library` / `--ai-wings`, an LLM-prompt text dump) and the per-genre "wings" text trees, both superseded by Conservatory's live faceted browse; and Lattice's path-pattern tag fallback (Conservatory's tags come from the database, not the path).
+
+### Phase 8a — Integrity verification
+
+Modeled on Lattice's `--testFLAC` / `--testMP3` / `--testOpus` / `--testWAV` / `--testWMA` and its four-tier classification.
+
+- [ ] Decode-verify every file (or a selection) with parallel workers: `flac -t` for FLAC (authoritative), ffmpeg decode for the rest. Classify each as CORRUPT (tool error, or a FLAC that decodes fewer samples than declared, i.e. truncation), SUSPECT (decoded to the end but the tool complained, or trailing data), METADATA (only a container/tag warning, audio intact), or OK, the Lattice tiers.
+- [ ] Persist results (a last-checked timestamp + verdict, keyed by path + size/mtime) so a re-verify skips unchanged files; surface CORRUPT / SUSPECT in a report and, later, a GUI list.
+- [ ] CLI: `verify <selector> [--verbose]`, with a non-zero exit only when CORRUPT files exist (the Lattice contract), so it is scriptable in a cron/backup hook.
+- [ ] Tests: a deliberately truncated/corrupt fixture classifies CORRUPT, a clean fixture OK; the skip-unchanged cache works.
+
+*Usable artifact:* `conservatory-cli verify <db>` reports library corruption with the same conservative tiers as Lattice.
+
+### Phase 8b — Duplicate detection
+
+Modeled on Lattice's `--duplicates` (four-section report).
+
+- [ ] A four-tier dupe report: exact albums (normalized artist + album matched across directories), within-album multi-format (same track number/title in several formats), fuzzy similar-name candidates (a SequenceMatcher-style ratio over normalized names, threshold ~0.85), and track-level cross-library (by size/identity). Normalization mirrors Lattice: NFKC, quote/dash folding, whitespace collapse, lowercase, with a loose key that strips parentheticals and "feat." clauses.
+- [ ] CLI: `duplicates <db> [--tier ...]`. Report only: no deletion, any cleanup goes through the Phase 2c mover (dry-run + undo).
+- [ ] Tests: each tier against a fixture with planted duplicates; normalization equivalence; multi-format grouping.
+
+*Usable artifact:* find duplicate albums and tracks across the managed library.
+
+### Phase 8c — Library health audits + statistics
+
+Modeled on Lattice's `--auditTags` / `--auditBitrate` / `--auditReplayGain` / `--missingArt` / `--auditArtQuality` / `--stats`.
+
+- [ ] Audits: missing critical tags (title / artist / track number / genre), bitrate below a floor (default 192 kbps), ReplayGain coverage per album (missing / partial / album-missing / ok, recognizing the Opus `R128_*` convention), missing cover art, and low-resolution cover art (a pixel floor, default 500x500, measured from the cover file or embedded art). Most are expressible over the existing DB and `conservatory-search`, but the cover-resolution and ReplayGain-coverage checks need this dedicated pass.
+- [ ] Library statistics: per-format counts with average bitrate, rating distribution, genre / artist / album / track totals, and total size + duration.
+- [ ] (Minor) Rating normalization across player conventions on read (POPM scale differences between WMP, foobar2000, and DeaDBeeF), the Lattice `tags.py` / `rerate.py` lesson, so imported ratings land consistently on the 0 to 5 scale.
+- [ ] CLI: `audit <db> [tags|bitrate|replaygain|art|artres|all]`; `stats <db>`.
+- [ ] Tests: each audit flags its planted-deficiency fixture and passes a clean one; stats totals match a known fixture.
+
+*Usable artifact:* a one-command health report for the library, plus a statistics summary.
+
+### Phase 8d — Playlist export / import (.m3u)
+
+Modeled on Lattice's `--playlist` (rule-based smart `.m3u`), bridged to Conservatory's Perspectives (saved searches).
+
+- [ ] Export a Perspective or an ad-hoc search expression to a `.m3u` / `.m3u8` (relative or absolute paths, configurable), and import an existing `.m3u` into a Perspective or straight into the queue, resolving paths back to managed tracks where possible.
+- [ ] CLI: `playlist export <db> '<expr|vl:NAME>' <out.m3u>`; `playlist import <db> <in.m3u>`.
+- [ ] Tests: exporting a search to m3u then re-importing round-trips to the same track set; missing-path entries are reported, not fatal.
+
+*Usable artifact:* move playlists in and out of Conservatory as portable `.m3u` files.

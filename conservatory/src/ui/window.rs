@@ -20,9 +20,13 @@ use gtk::glib;
 
 use conservatory_core::db::{
     FacetFilter, Perspective, ReadPool, WorkerHandle, facet_rows, get_tracks, list_perspectives,
-    load_queue_display, read_playback_state, spawn_worker,
+    load_queue_display, read_playback_state, spawn_worker, track_render_rows,
 };
-use conservatory_core::{PlaybackConfig, PlayerHandle};
+use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
+use conservatory_core::{
+    Assignment, PathTemplate, PlaybackConfig, PlayerHandle, TrackFields, any_path_affecting,
+    build_album_edit, build_track_edit, genres_assignment, parse_assignment,
+};
 
 use crate::playqueue::{build_play_queue, fmt_position};
 use crate::query::query_leaf;
@@ -263,6 +267,16 @@ impl ConservatoryWindow {
         header.pack_end(&queue_btn);
         header.pack_end(&self.build_output_menu_button());
 
+        let edit_btn = gtk::Button::from_icon_name("document-edit-symbolic");
+        edit_btn.set_tooltip_text(Some("Edit selected tracks (Ctrl+E)"));
+        let weak = self.downgrade();
+        edit_btn.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.prompt_bulk_edit();
+            }
+        });
+        header.pack_start(&edit_btn);
+
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
         toolbar.add_top_bar(&filter_bar);
@@ -297,6 +311,17 @@ impl ConservatoryWindow {
                 Some(gtk::CallbackAction::new(move |_, _| {
                     if let Some(win) = weak.upgrade() {
                         win.queue_append_selection();
+                    }
+                    glib::Propagation::Stop
+                })),
+            ));
+            // Ctrl+E opens the bulk-edit dialog over the selection (spec §3.5).
+            let weak = self.downgrade();
+            append.add_shortcut(gtk::Shortcut::new(
+                gtk::ShortcutTrigger::parse_string("<Control>e"),
+                Some(gtk::CallbackAction::new(move |_, _| {
+                    if let Some(win) = weak.upgrade() {
+                        win.prompt_bulk_edit();
                     }
                     glib::Propagation::Stop
                 })),
@@ -656,6 +681,271 @@ impl ConservatoryWindow {
         }
         player.append(items);
         self.reload_queue_panel();
+    }
+
+    /// The track ids currently selected in the leaf list (display order).
+    fn selected_track_ids(&self) -> Vec<i64> {
+        let imp = self.imp();
+        let Some(leaf) = imp.leaf.get() else {
+            return Vec::new();
+        };
+        let model = &leaf.selection;
+        let n = model.n_items();
+        let mut ids = Vec::new();
+        for i in 0..n {
+            if model.is_selected(i)
+                && let Some(row) = model.item(i).and_then(|o| o.downcast::<TrackRow>().ok())
+            {
+                ids.push(row.brief().id);
+            }
+        }
+        ids
+    }
+
+    /// The bulk-edit dialog (Phase 5a-ii, spec §3.5): one entry per field, blank
+    /// means unchanged. Built on the `adw::AlertDialog` precedent. Path-affecting
+    /// edits are confirmed with a move preview after the values are written.
+    fn prompt_bulk_edit(&self) {
+        let ids = self.selected_track_ids();
+        if ids.is_empty() {
+            return;
+        }
+
+        // (field key as `edit::Field::parse` accepts it, display label).
+        let fields: [(&str, &str); 8] = [
+            ("albumartist", "Album artist"),
+            ("album", "Album"),
+            ("year", "Year"),
+            ("shelfgenre", "Shelf genre"),
+            ("artist", "Artist (track)"),
+            ("title", "Title"),
+            ("genre", "Genres (; separated)"),
+            ("rating", "Rating (0-5)"),
+        ];
+        let grid = gtk::Grid::builder()
+            .row_spacing(6)
+            .column_spacing(12)
+            .build();
+        let mut entries: Vec<(String, gtk::Entry)> = Vec::new();
+        for (r, (key, label)) in fields.iter().enumerate() {
+            let lbl = gtk::Label::builder().label(*label).xalign(1.0).build();
+            let entry = gtk::Entry::builder()
+                .placeholder_text("unchanged")
+                .hexpand(true)
+                .build();
+            grid.attach(&lbl, 0, r as i32, 1, 1);
+            grid.attach(&entry, 1, r as i32, 1, 1);
+            entries.push(((*key).to_string(), entry));
+        }
+
+        let dialog = adw::AlertDialog::new(
+            Some("Edit metadata"),
+            Some(&format!(
+                "Apply to {} selected track(s). Blank fields are left unchanged.",
+                ids.len()
+            )),
+        );
+        dialog.set_extra_child(Some(&grid));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("apply", "Apply");
+        dialog.set_response_appearance("apply", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("apply"));
+        dialog.set_close_response("cancel");
+
+        let weak = self.downgrade();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "apply" {
+                return;
+            }
+            let Some(win) = weak.upgrade() else { return };
+            let mut assignments = Vec::new();
+            let mut errors = Vec::new();
+            for (key, entry) in &entries {
+                let val = entry.text().to_string();
+                if val.trim().is_empty() {
+                    continue;
+                }
+                match parse_assignment(&format!("{key}={val}")) {
+                    Ok(a) => assignments.push(a),
+                    Err(e) => errors.push(e.to_string()),
+                }
+            }
+            if !errors.is_empty() {
+                // Reject the whole set rather than apply a partly-valid edit.
+                eprintln!("conservatory: edit not applied: {}", errors.join("; "));
+                return;
+            }
+            if !assignments.is_empty() {
+                win.apply_bulk_edit(&ids, assignments);
+            }
+        });
+        dialog.present(Some(self));
+    }
+
+    /// Apply parsed assignments across the selected tracks through the worker,
+    /// then handle a path-affecting move and refresh the browse.
+    fn apply_bulk_edit(&self, track_ids: &[i64], assignments: Vec<Assignment>) {
+        let imp = self.imp();
+        let (Some(rt), Some(worker), Some(pool)) =
+            (imp.runtime.get(), imp.worker.get(), imp.pool.get())
+        else {
+            return;
+        };
+
+        // Map the selected tracks to their distinct albums (for album-level edits
+        // and the scoped move) via the render rows.
+        let albums: Vec<i64> = {
+            let Ok(conn) = pool.open() else { return };
+            let rows = track_render_rows(&conn).unwrap_or_default();
+            let idset: std::collections::HashSet<i64> = track_ids.iter().copied().collect();
+            let mut albums = Vec::new();
+            for r in &rows {
+                if idset.contains(&r.track_id)
+                    && let Some(a) = r.album_id
+                    && !albums.contains(&a)
+                {
+                    albums.push(a);
+                }
+            }
+            albums
+        };
+
+        let track_edit = build_track_edit(&assignments);
+        let album_edit = build_album_edit(&assignments);
+        let genres = genres_assignment(&assignments);
+
+        if !track_edit.is_empty() {
+            for &tid in track_ids {
+                let _ = rt.block_on(worker.update_track(tid, track_edit.clone()));
+            }
+        }
+        if let Some(g) = &genres {
+            for &tid in track_ids {
+                let _ = rt.block_on(worker.set_track_genres(tid, g.clone()));
+            }
+        }
+        if !album_edit.is_empty() {
+            for &aid in &albums {
+                let _ = rt.block_on(worker.update_album(aid, album_edit.clone()));
+            }
+        }
+
+        if any_path_affecting(&assignments) {
+            match imp.library_root.get() {
+                Some(root) => {
+                    self.confirm_and_move(&albums, root.clone());
+                    return; // the confirm dialog refreshes when it closes
+                }
+                None => eprintln!(
+                    "conservatory: the edit changed the tree layout, but no library root \
+                     is set (launch as `conservatory <db> <root>`); files not moved"
+                ),
+            }
+        }
+        self.populate_initial();
+    }
+
+    /// Preview the move a path-affecting edit implies and, on confirm, run it.
+    fn confirm_and_move(&self, albums: &[i64], root: std::path::PathBuf) {
+        let imp = self.imp();
+        let (Some(pool), Some(rt), Some(worker)) =
+            (imp.pool.get(), imp.runtime.get(), imp.worker.get())
+        else {
+            return;
+        };
+        let _ = rt.block_on(mover::recover(worker, pool));
+
+        let preview = mover::plan(self.build_scoped_ops(albums, &root));
+        if preview.ops.is_empty() {
+            self.populate_initial();
+            return;
+        }
+        let body = if preview.conflicts.is_empty() {
+            format!("{} file(s) will move to match the edit.", preview.ops.len())
+        } else {
+            format!(
+                "{} file(s) will move; {} conflict(s) will be skipped.",
+                preview.ops.len(),
+                preview.conflicts.len()
+            )
+        };
+        let dialog = adw::AlertDialog::new(Some("Move files?"), Some(&body));
+        dialog.add_response("cancel", "Keep in place");
+        dialog.add_response("move", "Move");
+        dialog.set_response_appearance("move", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("move"));
+        dialog.set_close_response("cancel");
+
+        let weak = self.downgrade();
+        let albums = albums.to_vec();
+        dialog.connect_response(None, move |_, resp| {
+            let Some(win) = weak.upgrade() else { return };
+            if resp == "move" {
+                win.run_scoped_move(&albums, &root);
+            }
+            win.populate_initial();
+        });
+        dialog.present(Some(self));
+    }
+
+    /// Build the `organize` move ops for the given albums (re-render from the DB).
+    fn build_scoped_ops(&self, albums: &[i64], root: &std::path::Path) -> Vec<MoveOp> {
+        let imp = self.imp();
+        let Some(pool) = imp.pool.get() else {
+            return Vec::new();
+        };
+        let Ok(conn) = pool.open() else {
+            return Vec::new();
+        };
+        let rows = track_render_rows(&conn).unwrap_or_default();
+        let template = PathTemplate::default_music();
+        let mut ops = Vec::new();
+        for row in &rows {
+            if !row.album_id.map(|a| albums.contains(&a)).unwrap_or(false) {
+                continue;
+            }
+            let fields = TrackFields {
+                shelf_genre: row.shelf_genre.as_deref(),
+                albumartist: row.album_artist_sort.as_deref(),
+                album: row.album.as_deref(),
+                year: row.year,
+                track_no: row.track_no,
+                disc_no: row.disc_no,
+                title: Some(row.title.as_str()),
+                artist: row.track_artist.as_deref(),
+                ext: row.format.as_deref(),
+            };
+            let rel = template.render(&fields);
+            ops.push(MoveOp {
+                track_id: Some(row.track_id),
+                album_id: row.album_id,
+                src: root.join(&row.file_path),
+                dst: root.join(&rel),
+                db_old: Some(row.file_path.clone()),
+                db_new: Some(rel.to_string_lossy().into_owned()),
+            });
+        }
+        ops
+    }
+
+    fn run_scoped_move(&self, albums: &[i64], root: &std::path::Path) {
+        let imp = self.imp();
+        let (Some(rt), Some(worker), Some(pool)) =
+            (imp.runtime.get(), imp.worker.get(), imp.pool.get())
+        else {
+            return;
+        };
+        let ops = self.build_scoped_ops(albums, root);
+        let created_at = chrono::Utc::now().timestamp();
+        let _ = rt.block_on(mover::apply(
+            worker,
+            pool,
+            MoveKind::Organize,
+            MoveMode::Move,
+            root,
+            created_at,
+            ops,
+        ));
     }
 
     /// Keep the drawer's playing-row highlight in step with the engine: when the

@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.19
+
+Phase 5a-ii shipped: the GTK bulk-edit dialog. Phase 5a (bulk metadata editing) is complete.
+
+- **Bulk-edit dialog (`ui/window.rs`):** select tracks in the browser and press the header pencil button or `Ctrl+E` to open an edit dialog: one entry per field (album artist, album, year, shelf genre, track artist, title, raw genres, rating), blank means unchanged. Filled fields are parsed through the shared `core::edit` resolver (a bad year/rating rejects the whole set), then applied across the selection through the single-writer worker.
+- **Path-affecting edits are confirmed:** changing album / album artist / year / shelf genre writes the values, then shows a "Move N files?" preview (the `mover::plan` dry-run) before relocating the touched albums with the Phase 2c mover (undoable). The browse refreshes after the edit.
+- Search-and-replace remains a headless verb (`tag replace`, v0.0.18); the in-dialog replace mode is deferred. Live incremental refresh (the deferred `LibraryChanges` delta) is still a full reload.
+
+The dialog is GUI (build + manual verification); the edit and move logic it drives is covered by the v0.0.18 `tests/edit.rs`.
+
+Next: Phase 5b (embedded-tag write-back) — write the curated DB metadata back into the files.
+
 ## v0.0.18
 
 Phase 5a-i shipped: headless metadata editing. The library is no longer read-only after import; you can edit fields across a selection from the CLI, and path-affecting edits re-shelve files safely.

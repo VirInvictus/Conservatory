@@ -249,12 +249,14 @@ Split headless-first (the CLI-testable rule): **5a-i** is the editing logic + wo
 
 *Usable artifact:* `conservatory-cli tag set <db> '<expr>' year=1992 --root <root> --apply` edits the matched library and re-shelves any moved files, fully headless and undoable.
 
-#### Phase 5a-ii — GTK bulk-edit dialog
+#### Phase 5a-ii — GTK bulk-edit dialog ✅
 
-- [ ] A bulk-edit dialog over the leaf multi-selection (the `adw::AlertDialog` + `is_selected` patterns already in the window), fields blank-means-unchanged, plus a search-and-replace mode; applies through the worker, shows the mover dry-run preview for path-affecting edits, and refreshes via `set_leaf` + `recompute_from`.
-- [ ] Tests: the pure mapping is covered in 5a-i; the dialog is build + manual launch.
+- [x] A bulk-edit dialog (`adw::AlertDialog` with a labelled-entry grid, the Perspective-save precedent) over the leaf multi-selection, opened by a header pencil button or `Ctrl+E`; one entry per field (album artist, album, year, shelf genre, track artist, title, raw genres, rating), blank means unchanged. Reads the selection with the existing `is_selected` + `downcast::<TrackRow>` loop, parses each filled field through `core::edit::parse_assignment` (rejecting the whole set if a value is invalid), and applies via the new worker commands.
+- [x] Path-affecting edits show a move **preview-and-confirm** (`mover::plan` → a "Move N files?" `AlertDialog` → `mover::apply`, `MoveKind::Organize`, scoped to the touched albums); the browse refreshes via `populate_initial` after the edit.
+- [x] Search-and-replace is available headless (`tag replace`, 5a-i); the in-dialog replace mode is deferred (the per-field set covers the common case). Live incremental `LibraryChanges`/`BatchUpdate` delta delivery stays deferred (a full reload is used).
+- [x] The dialog is verified by build + manual launch (the 3b/3c precedent); the underlying edit/move logic is covered by the 5a-i tests.
 
-*Usable artifact:* select tracks in the browser, bulk-edit their fields, and have path-affecting edits move files safely with a preview.
+*Usable artifact:* select tracks in the browser, bulk-edit their fields (`Ctrl+E`), and have path-affecting edits move files safely behind a preview.
 
 ### Phase 5b — Embedded-tag write-back (§5.5)
 

@@ -10,6 +10,7 @@ use libadwaita as adw;
 use adw::prelude::*;
 use gtk::glib;
 
+mod playqueue;
 mod query;
 mod ui;
 
@@ -25,6 +26,7 @@ columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height
 .numeric { font-feature-settings: \"tnum\"; }
 .rating-stars { color: @accent_color; }
 .filter-warn text { background-color: alpha(@warning_color, 0.20); }
+.now-bar { padding: 4px 10px; border-top: 1px solid alpha(currentColor, 0.12); }
 ";
 
 fn load_css() {
@@ -49,7 +51,10 @@ fn main() -> glib::ExitCode {
             .nth(1)
             .map(PathBuf::from)
             .or_else(default_db_path);
-        let window = ui::window::ConservatoryWindow::new(app, db);
+        // Optional library root (Phase 4b-ii-a): resolves relative track paths for
+        // playback. Phase 10 config will source this instead of an argument.
+        let root = std::env::args().nth(2).map(PathBuf::from);
+        let window = ui::window::ConservatoryWindow::new(app, db, root);
         window.present();
     });
 

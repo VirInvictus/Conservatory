@@ -16,10 +16,12 @@ use crate::ui::objects::TrackRow;
 const MAX_STARS: i32 = 5;
 
 /// The leaf table: its backing store (for repopulation), the selection (for
-/// future bulk actions), and the widget to place.
+/// multi-select + reading the visible order), the `ColumnView` (for row
+/// activation), and the scroller to place.
 pub struct Leaf {
     pub store: gio::ListStore,
     pub selection: gtk::MultiSelection,
+    pub column_view: gtk::ColumnView,
     pub view: gtk::ScrolledWindow,
 }
 
@@ -167,6 +169,7 @@ pub fn build_leaf() -> Leaf {
     Leaf {
         store,
         selection,
+        column_view: view,
         view: scroller,
     }
 }

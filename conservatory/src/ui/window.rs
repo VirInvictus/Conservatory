@@ -17,12 +17,17 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 
 use conservatory_core::db::{
-    FacetFilter, Perspective, ReadPool, WorkerHandle, facet_rows, list_perspectives, spawn_worker,
+    FacetFilter, Perspective, ReadPool, WorkerHandle, facet_rows, get_tracks, list_perspectives,
+    spawn_worker,
 };
+use conservatory_core::{PlaybackConfig, PlayerHandle};
 
+use crate::playqueue::{build_play_queue, fmt_position};
 use crate::query::query_leaf;
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
+use crate::ui::now_bar::{NowBar, build_now_bar};
+use crate::ui::objects::TrackRow;
 use crate::ui::track_list::{Leaf, build_leaf};
 
 type Coalescer = CoalescingQueue<usize, Box<dyn FnMut(Vec<usize>)>>;
@@ -31,6 +36,7 @@ type FilterCoalescer = CoalescingQueue<(), Box<dyn FnMut(Vec<()>)>>;
 mod imp {
     use super::*;
     use std::cell::{Cell, OnceCell, RefCell};
+    use std::collections::HashMap;
 
     #[derive(Default)]
     pub struct ConservatoryWindow {
@@ -47,6 +53,17 @@ mod imp {
         // loop exits cleanly) before the runtime it runs on is torn down.
         pub worker: OnceCell<WorkerHandle>,
         pub runtime: OnceCell<tokio::runtime::Runtime>,
+        // Playback (Phase 4b-ii-a). `library_root` resolves the relative track
+        // paths; `now_labels` maps the playing queue's track ids to title/artist
+        // for the Now-bar; `last_shown` is the id the bar currently displays so
+        // labels re-render only on change; `poll_source` is the 250 ms snapshot
+        // timer, removed on close before the player shuts down.
+        pub player: OnceCell<PlayerHandle>,
+        pub library_root: OnceCell<PathBuf>,
+        pub now_bar: OnceCell<NowBar>,
+        pub poll_source: RefCell<Option<glib::SourceId>>,
+        pub now_labels: RefCell<HashMap<i64, (String, String)>>,
+        pub last_shown: Cell<Option<i64>>,
     }
 
     #[glib::object_subclass]
@@ -88,10 +105,17 @@ fn perspective_row(name: &str) -> gtk::ListBoxRow {
 }
 
 impl ConservatoryWindow {
-    pub fn new(app: &adw::Application, db_path: Option<PathBuf>) -> Self {
+    pub fn new(
+        app: &adw::Application,
+        db_path: Option<PathBuf>,
+        library_root: Option<PathBuf>,
+    ) -> Self {
         let win: Self = glib::Object::builder().property("application", app).build();
         win.set_title(Some("Conservatory"));
         win.set_default_size(1100, 700);
+        if let Some(root) = library_root {
+            let _ = win.imp().library_root.set(root);
+        }
         win.build_contents(db_path);
         win
     }
@@ -116,6 +140,20 @@ impl ConservatoryWindow {
                 if let Ok(worker) = spawned {
                     let _ = imp.worker.set(worker);
                     let _ = imp.runtime.set(rt);
+                    // Stand up the player engine on the same runtime (Phase
+                    // 4b-ii-a). A libmpv init failure leaves the player unset and
+                    // the transport inert; browse still works.
+                    if let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) {
+                        match conservatory_core::player::spawn(worker.clone(), rt.handle().clone())
+                        {
+                            Ok(player) => {
+                                let _ = imp.player.set(player);
+                            }
+                            Err(e) => {
+                                eprintln!("player engine unavailable; transport disabled: {e}")
+                            }
+                        }
+                    }
                 }
             }
             if let Ok(pool) = ReadPool::new(path, 3) {
@@ -168,16 +206,32 @@ impl ConservatoryWindow {
         filter_bar.add_css_class("toolbar");
         filter_bar.append(&filter);
 
+        // The persistent Now-bar transport (Phase 4b-ii-a), wired to the engine.
+        let now_bar = build_now_bar(imp.player.get().cloned());
+
         let header = adw::HeaderBar::new();
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
         toolbar.add_top_bar(&filter_bar);
         toolbar.set_content(Some(&body));
+        toolbar.add_bottom_bar(&now_bar.root);
         self.set_content(Some(&toolbar));
 
         *imp.panes.borrow_mut() = panes;
         let _ = imp.leaf.set(leaf);
         let _ = imp.filter_entry.set(filter.clone());
+        let _ = imp.now_bar.set(now_bar);
+
+        // Double-click / Enter on a track plays the visible list from that row
+        // (spec §3.6, the deadbeef idiom).
+        if let Some(leaf) = imp.leaf.get() {
+            let weak = self.downgrade();
+            leaf.column_view.connect_activate(move |_, pos| {
+                if let Some(win) = weak.upgrade() {
+                    win.on_track_activated(pos);
+                }
+            });
+        }
 
         // The debounced cascade: a burst of selection changes flushes once,
         // recomputing from the earliest changed pane.
@@ -227,9 +281,135 @@ impl ConservatoryWindow {
 
         self.install_filter_shortcut(&filter);
 
+        // Poll the player snapshot to refresh the Now-bar (a sampled transport
+        // display; ~4×/s is plenty). The SourceId is removed on close.
+        if imp.player.get().is_some() {
+            let weak = self.downgrade();
+            let id =
+                glib::timeout_add_local(Duration::from_millis(250), move || match weak.upgrade() {
+                    Some(win) => {
+                        win.refresh_now_bar();
+                        glib::ControlFlow::Continue
+                    }
+                    None => glib::ControlFlow::Break,
+                });
+            *imp.poll_source.borrow_mut() = Some(id);
+        }
+
+        // Teardown order on close: stop the poll (so no tick hits a dead handle),
+        // then shut down + join the player (its terminal flush block_on's the
+        // worker, still alive), then the worker/runtime drop as the window is
+        // finalized.
+        let weak = self.downgrade();
+        self.connect_close_request(move |_| {
+            if let Some(win) = weak.upgrade() {
+                let imp = win.imp();
+                if let Some(id) = imp.poll_source.borrow_mut().take() {
+                    id.remove();
+                }
+                if let Some(player) = imp.player.get() {
+                    player.shutdown();
+                }
+            }
+            glib::Propagation::Proceed
+        });
+
         if imp.pool.get().is_some() {
             self.populate_initial();
             self.refresh_perspectives();
+        }
+    }
+
+    /// Double-click / Enter on a track: play the visible leaf list from that row
+    /// (spec §3.6). The selection model presents rows in display (sorted) order,
+    /// so its index range is the queue order and `pos` is the start.
+    fn on_track_activated(&self, pos: u32) {
+        let imp = self.imp();
+        let (Some(pool), Some(leaf), Some(player), Some(root)) = (
+            imp.pool.get(),
+            imp.leaf.get(),
+            imp.player.get(),
+            imp.library_root.get(),
+        ) else {
+            return;
+        };
+
+        let model = &leaf.selection;
+        let n = model.n_items();
+        let mut ordered_ids = Vec::with_capacity(n as usize);
+        let mut labels = std::collections::HashMap::new();
+        for i in 0..n {
+            if let Some(row) = model.item(i).and_then(|o| o.downcast::<TrackRow>().ok()) {
+                let brief = row.brief();
+                let id = brief.id;
+                ordered_ids.push(id);
+                labels.insert(id, (brief.title, brief.artist.unwrap_or_default()));
+            }
+        }
+
+        let Ok(conn) = pool.open() else { return };
+        let tracks = get_tracks(&conn, &ordered_ids).unwrap_or_default();
+        drop(conn);
+
+        let (items, start) = build_play_queue(
+            &ordered_ids,
+            pos as usize,
+            &tracks,
+            root,
+            &PlaybackConfig::default(),
+        );
+        if items.is_empty() {
+            return;
+        }
+        *imp.now_labels.borrow_mut() = labels;
+        imp.last_shown.set(None); // force a label refresh on the next poll
+        player.play_queue(items, start);
+    }
+
+    /// Refresh the Now-bar from the player snapshot (the 250 ms poll). Title and
+    /// artist re-render only when the track changes; position/seek/icon every tick.
+    fn refresh_now_bar(&self) {
+        let imp = self.imp();
+        let (Some(player), Some(now)) = (imp.player.get(), imp.now_bar.get()) else {
+            return;
+        };
+        let snap = player.snapshot();
+
+        if snap.ended || snap.track_id.is_none() {
+            if imp.last_shown.get().is_some() {
+                imp.last_shown.set(None);
+                now.clear();
+            }
+            return;
+        }
+
+        if imp.last_shown.get() != snap.track_id {
+            imp.last_shown.set(snap.track_id);
+            if let Some(id) = snap.track_id {
+                let labels = imp.now_labels.borrow();
+                let (title, artist) = labels
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| ("\u{2014}".to_string(), String::new()));
+                now.title.set_text(&title);
+                now.artist.set_text(&artist);
+            }
+        }
+
+        now.play_btn.set_icon_name(if snap.paused {
+            "media-playback-start-symbolic"
+        } else {
+            "media-playback-pause-symbolic"
+        });
+        now.position
+            .set_text(&fmt_position(snap.position, snap.duration));
+        match snap.duration {
+            Some(d) if d > 0.0 => {
+                now.seek.set_sensitive(true);
+                now.seek.set_range(0.0, d);
+                now.seek.set_value(snap.position.min(d));
+            }
+            _ => now.seek.set_sensitive(false),
         }
     }
 

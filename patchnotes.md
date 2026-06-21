@@ -1,5 +1,18 @@
 # Patch Notes
 
+## v0.0.13
+
+Phase 4b-ii-a shipped: the browse window plays music. The threaded engine stands up in the GUI, a persistent Now-bar transport sits at the bottom, and double-clicking a track plays the list you're looking at. (The visible queue panel and drag-and-drop reorder are 4b-ii-b.)
+
+- **Engine in the GUI (`conservatory/src/ui/window.rs`):** the `Player` is spawned on the window's existing tokio runtime right after the worker; a libmpv init failure leaves it unset and the transport inert (browse is unaffected). The window now also holds the snapshot poll source, the playing queue's track-id → title/artist map, and the library root.
+- **Now-bar (`conservatory/src/ui/now_bar.rs`):** a persistent bottom bar (attached with `ToolbarView::add_bottom_bar`) showing title/artist, prev / play-pause / next (symbolic icons, no font assumption), a position label + seek slider, and a volume button. The transport buttons are non-blocking `PlayerHandle` sends; the seek slider drives playback through `change-value` (user drag only), so the 250 ms refresh's programmatic `set_value` never loops back into a seek.
+- **Double-click / Enter plays the visible list (spec §3.6, the deadbeef idiom):** the leaf's display order becomes the queue and the activated row is the start. A pure `playqueue::build_play_queue` (headless-tested) turns the ordered ids + a batch `Track` read into resolved `PlayableItem`s, preserving order, joining the library root onto the relative paths, resolving each profile, and re-indexing the start past any track that vanished between the read and the build.
+- **Snapshot polling + teardown:** a 250 ms `glib::timeout_add_local` refreshes the Now-bar (position/seek/icon every tick; labels only on track change). On window close the timer is removed first, then the player is shut down and joined (its terminal flush still has a live worker), then the worker/runtime drop — the order that keeps the final position write safe.
+- **Core:** one new reusable read, `get_tracks` (a chunked `WHERE id IN (...)` that survives a full-library activation). The GUI takes an optional library root as a second arg (`conservatory <db> [root]`) until Phase 10 config sources it.
+- **Tests:** `build_play_queue` (order, root-join, start re-index, missing tracks) and time formatting as pure unit tests; a `get_tracks` cross-chunk worker test. The widgets themselves are verified by build + manual launch (the Phase 3b/3c precedent).
+
+Deferred to 4b-ii-b: the visible queue panel with drag-and-drop reorder (and `Alt+↑/↓` / `Delete` / `Ctrl+Shift+C`), `Ctrl+Enter` append, GUI resume-from-cursor, a Now-bar cover thumbnail, the audible within-album gapless prototype (§16.9), and the library root from config. MPRIS2 + media keys + inhibitor remain Phase 4c.
+
 ## v0.0.12
 
 Phase 4b-i shipped: the unified queue and the threaded player engine, headless. The libmpv host moves off the CLI loop onto its own thread behind a cross-thread handle, and a real queue drives it. (The GTK Now-bar and the drag-and-drop queue view are 4b-ii.)

@@ -1,6 +1,6 @@
 # Keymap (draft proposal)
 
-> **Status: provisional.** The browse window exists (Phase 3b) but key bindings are not wired yet; they begin landing with the filter bar (`Ctrl+F`) at Phase 3c and the playback transport at Phase 4. This is a proposed keymap to be finalized as those surfaces land, not a description of current behaviour. It encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** GNOME/libadwaita conventions are followed where one exists.
+> **Status: provisional, partly wired.** `Ctrl+F` (filter bar) landed at 3c. Phase 4b-ii-a wired **double-click / Enter on a track** (play the visible list from there) and the **Now-bar transport buttons** (play/pause, prev/next, seek, volume) via the mouse; the keyboard playback bindings below (`Space`, `Ctrl+→/←`, etc.) are not wired yet. This stays a proposed keymap, finalized as those surfaces land, not a full description of current behaviour. It encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** GNOME/libadwaita conventions are followed where one exists.
 
 ## Global
 

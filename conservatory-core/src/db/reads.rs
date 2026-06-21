@@ -64,6 +64,26 @@ pub fn get_track(conn: &Connection, id: i64) -> Result<Option<Track>> {
     .map_err(Into::into)
 }
 
+/// Fetch many tracks by id in one read (Phase 4b-ii: building a play queue from a
+/// browse list). Chunked under SQLite's bound-variable limit so a full-library
+/// activation still works; the result order is unspecified, so the caller pairs
+/// rows back to its own order by `Track::id`.
+pub fn get_tracks(conn: &Connection, ids: &[i64]) -> Result<Vec<Track>> {
+    // Comfortably under SQLite's default SQLITE_MAX_VARIABLE_NUMBER (~999/32766).
+    const CHUNK: usize = 900;
+    let mut out = Vec::with_capacity(ids.len());
+    for chunk in ids.chunks(CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!("SELECT * FROM tracks WHERE id IN ({placeholders})");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(chunk), row_to_track)?;
+        for row in rows {
+            out.push(row?);
+        }
+    }
+    Ok(out)
+}
+
 pub fn list_albums(conn: &Connection) -> Result<Vec<Album>> {
     let mut stmt = conn.prepare("SELECT * FROM albums ORDER BY title")?;
     let rows = stmt.query_map([], row_to_album)?;

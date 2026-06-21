@@ -180,12 +180,25 @@ Split into two shippable sub-phases: **4b-i** lands the queue + the threaded eng
 
 *Usable artifact:* `conservatory-cli queue add` / `play <db> <root>` builds and plays a queue headlessly; the engine advances item to item applying each profile, persists position + play counts, and resumes from the saved cursor.
 
-#### Phase 4b-ii — Now-bar + queue view (GTK)
+The GTK half is itself sizable, so it splits again: **4b-ii-a** makes the window play (engine + Now-bar + transport); **4b-ii-b** adds the visible queue panel and drag-and-drop reorder.
 
-- [ ] Persistent Now-bar transport across views, fed by polling the `PlayerHandle` snapshot on a `glib` timeout; track-row activation enqueues/plays.
-- [ ] Queue view as a single **drag-and-drop** reorderable list (keyboard `Alt+↑/↓`, `Delete`, `Ctrl+Shift+C` too), each row badged with its kind.
+#### Phase 4b-ii-a — Player engine in the GUI + Now-bar transport ✅
+
+- [x] The threaded `Player` stood up in the browse window (`player::spawn(worker.clone(), rt.handle())` on the existing in-GUI runtime); a libmpv init failure leaves it unset and the transport inert (browse still works). The window holds the `PlayerHandle`, the snapshot poll source, the playing queue's id→label map, and the library root.
+- [x] Persistent bottom **Now-bar** (`now_bar.rs`, attached via `ToolbarView::add_bottom_bar`): title/artist, prev / play-pause / next (symbolic glyphs), position label + seek `Scale` (driven by `change-value`, so the refresh's programmatic `set_value` never loops), and a volume `ScaleButton`. Buttons are non-blocking `PlayerHandle` sends.
+- [x] **Double-click / Enter plays the visible leaf list from that row** (the deadbeef idiom, spec §3.6): the selection model's display order is the queue, the activated index is the start. The id list + a `Track` batch-read (`get_tracks`) feed a pure `playqueue::build_play_queue` (order preserved, `source` = root-joined, profile resolved, start re-indexed past any vanished track).
+- [x] A 250 ms `glib::timeout_add_local` polls the snapshot → `refresh_now_bar` (position/seek/icon every tick; title/artist only on track change). Clean teardown on `close-request`: remove the timer, then `player.shutdown()` (joins the engine thread; its terminal flush still has the worker), then worker/runtime drop.
+- [x] The library root arrives as an optional second CLI arg (`conservatory <db> [root]`); Phase 10 config replaces it.
+- [x] Tests: `build_play_queue` (order, root-join, start re-index, missing tracks) + time formatting unit tests; `get_tracks` cross-chunk worker test. The widgets are verified by build + manual launch (the 3b/3c precedent).
+
+*Usable artifact:* `conservatory <db> <root>` — double-click a track to play the visible list from there, with a working Now-bar transport (play/pause, prev/next, seek, volume) that reflects state.
+
+#### Phase 4b-ii-b — Queue view + drag-and-drop reorder (GTK)
+
+- [ ] Queue view as a single **drag-and-drop** reorderable list (the Atrium DragSource/DropTarget idiom: the row carries its id, the DropTarget computes Above/Below from cursor Y), with keyboard `Alt+↑/↓`, `Delete`, `Ctrl+Shift+C`, each row badged with its kind, and the current item highlighted.
+- [ ] `Ctrl+Enter` appends the selection; GUI resume-from-saved-cursor on launch; a cover thumbnail in the Now-bar.
 - [ ] The audible within-album gapless prototype (mpv internal playlist append, spec §16.9); the `playback_state` explicit queue-entry reference; the library root sourced from config (Phase 10) rather than a CLI arg.
-- [ ] Tests: snapshot-driven Now-bar model logic; queue-view reorder model.
+- [ ] Tests: queue-view reorder model; current-item highlight logic.
 
 *Usable artifact:* build and play a queue in the GUI; reorder it by drag; the Now-bar reflects state.
 

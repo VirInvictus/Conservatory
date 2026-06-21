@@ -77,6 +77,34 @@ async fn is_queued_reflects_membership() {
     }
 }
 
+#[tokio::test]
+async fn get_tracks_batches_across_chunks() {
+    use conservatory_core::db::get_tracks;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("t.db");
+    let worker = spawn_worker(path.clone()).unwrap();
+    // Medium = 2000 tracks, so a 1..=1000 request crosses the 900-id chunk size.
+    fixtures::generate(&worker, FixtureScale::Medium)
+        .await
+        .unwrap();
+    let pool = ReadPool::new(path, 3).unwrap();
+    let conn = pool.open().unwrap();
+
+    let ids: Vec<i64> = (1..=1000).collect();
+    let tracks = get_tracks(&conn, &ids).unwrap();
+    assert_eq!(
+        tracks.len(),
+        1000,
+        "every requested id should come back once"
+    );
+    let got: std::collections::HashSet<i64> = tracks.iter().map(|t| t.id).collect();
+    assert_eq!(got, ids.iter().copied().collect());
+
+    // Empty request is a clean empty result (no zero-placeholder SQL).
+    assert!(get_tracks(&conn, &[]).unwrap().is_empty());
+}
+
 // --- Player engine: build a queue of real fixtures and play it to the end.
 
 #[test]

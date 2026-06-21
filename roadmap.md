@@ -270,9 +270,9 @@ Headless-first: **5b-i** is the core write + `embed-tags` CLI + tests; **5b-ii**
 
 *Usable artifact:* `conservatory-cli embed-tags <db> '<expr>' --root <root> --apply` writes the curated metadata into the files; a wipe-and-reimport reconstructs the descriptive layer (§5.6 holds).
 
-#### Phase 5b-ii — GUI action
+#### Phase 5b-ii — GUI action ✅
 
-- [ ] An "Embed metadata into files" action over the leaf selection (explicit, not auto-on-edit, the Calibre model), behind a "Write tags to N files?" preview; writes through `write_track_tags`.
+- [x] An "Embed metadata into files" header action (the save icon) over the leaf selection (explicit, not auto-on-edit, the Calibre model), behind a "Write tags to N file(s)?" confirm and a result dialog; writes through `write_track_tags`. Verified by build + manual launch.
 
 > **APE-strip deferred.** The Lattice `apestrip` hygiene (strip a stray APEv2 that shadows ID3 on MP3, with optional APE→ID3 migration) is **not** in 5b: lofty reads APE on MPEG but neither writes nor removes it, so a reliable strip needs byte-level surgery (exactly why `apestrip.py` is hand-rolled). Deferred to a byte-level pass, paired with the Phase 8c "detect stray APE" audit. (`embed-tags` writes the canonical ID3v2 correctly; it just cannot remove a pre-existing APE shadow on MPEG.)
 

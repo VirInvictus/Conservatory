@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.0.21
+
+Phase 5b-ii shipped: the GUI write-back action. Phase 5b (embedded-tag write-back) is complete.
+
+- **"Embed metadata into files" header button** (the save icon): writes the database metadata into the selected files, behind a "Write tags to N file(s)?" confirm and a result dialog. Explicit, not automatic on every edit (the Calibre model); shares the v0.0.20 `write_track_tags` core. Needs the library root (launch as `conservatory <db> <root>`).
+
+Next: Phase 5c (ReplayGain scan, in-process via the `ebur128` crate + lofty), then 5d (cover to disk + cover field).
+
 ## v0.0.20
 
 Phase 5b-i shipped: embedded-tag write-back. The curated DB metadata can now be written back into the files, so the managed library is never a roach motel: walk away with the tree and the files describe themselves.

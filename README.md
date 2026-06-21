@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GNOME-50%2B-4a86cf" alt="GNOME 50+">
-  <img src="https://img.shields.io/badge/status-v0.0.20%20%C2%B7%20Phase%205b--i-orange" alt="Status: v0.0.20, Phase 5b-i">
+  <img src="https://img.shields.io/badge/status-v0.0.21%20%C2%B7%20Phase%205b%20complete-orange" alt="Status: v0.0.21, Phase 5b complete">
 </p>
 
 ---
@@ -36,7 +36,7 @@ Conservatory absorbs Brandon's podcast client, Belfry. Belfry's Phase 1 work is 
 
 ## Status
 
-v0.0.20, Phase 5b-i. Phases 1 (data layer), 2 (import/organize), 3 (browse), and 4 (playback) are done — a daily-driver music player — metadata is editable (CLI + GUI), and edits can be written back into the files:
+v0.0.21, Phase 5b complete. Phases 1 (data layer), 2 (import/organize), 3 (browse), and 4 (playback) are done — a daily-driver music player — metadata is editable (CLI + GUI), and edits can be written back into the files (CLI + GUI):
 
 - **Phase 1** — single-writer SQLite worker, read-only pool, numbered migrations, the music schema with FTS5, the embedded-tag reader (`lofty`), and median-cut cover accents.
 - **Phase 2 — the manager is usable headless.** Point the CLI at a folder and get an organized, database-owned library: tag read → resolve → shelf-genre derivation → path-template render → crash-safe move (dry-run preview, undo journal, roll-forward recovery). Verbs: `import`, `organize`, `shelf-genre-set`.
@@ -52,9 +52,9 @@ v0.0.20, Phase 5b-i. Phases 1 (data layer), 2 (import/organize), 3 (browse), and
 - **Phase 4c-ii — output-device picker.** A header menu lists the audio sinks (PipeWire/Pulse/ALSA, plus `auto`) and switches mpv's output live. **Phase 4 — the daily-driver player — is complete.**
 - **Phase 5a-i — headless metadata editing.** Edit fields across a search selection from the CLI: `tag set <db> '<expr>' field=value...` and `tag replace <db> '<expr>' field find replace`. Track, album, and raw-genre fields; path-affecting edits (album / album artist / year / shelf genre) re-shelve files through the Phase 2c mover (dry-run + undo).
 - **Phase 5a-ii — the bulk-edit dialog.** Select tracks and press `Ctrl+E` (or the header pencil) to edit fields across the selection; path-affecting edits move files behind a confirm-with-preview. **Phase 5a — metadata editing — is complete.**
-- **Phase 5b-i — embedded-tag write-back.** `embed-tags <db> '<expr>' --root <root> [--apply]` writes the curated DB metadata back into the files (dry-run shows the per-file diffs first), so the managed tree stays self-describing and a wipe-and-reimport reconstructs it (§5.6).
+- **Phase 5b — embedded-tag write-back.** `embed-tags <db> '<expr>' --root <root> [--apply]` writes the curated DB metadata back into the files (dry-run shows the per-file diffs first), so the managed tree stays self-describing and a wipe-and-reimport reconstructs it (§5.6); in the GUI, the header save button embeds the selection behind a confirm. **Phase 5b is complete.**
 
-Next: Phase 5b-ii (a GUI "Embed metadata into files" action), then 5c (ReplayGain scan).
+Next: Phase 5c (ReplayGain scan), then 5d (cover to disk).
 
 - [`spec.md`](spec.md) — the design contract.
 - [`roadmap.md`](roadmap.md) — the phased plan, broken into independently shippable sub-phases.

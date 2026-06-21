@@ -19,13 +19,15 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 
 use conservatory_core::db::{
-    FacetFilter, Perspective, ReadPool, WorkerHandle, facet_rows, get_tracks, list_perspectives,
-    load_queue_display, read_playback_state, spawn_worker, track_render_rows,
+    FacetFilter, Perspective, ReadPool, WorkerHandle, WritebackRow, facet_rows, get_tracks,
+    list_perspectives, load_queue_display, read_playback_state, spawn_worker, track_render_rows,
+    writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
-    Assignment, PathTemplate, PlaybackConfig, PlayerHandle, TrackFields, any_path_affecting,
-    build_album_edit, build_track_edit, genres_assignment, parse_assignment,
+    Assignment, PathTemplate, PlaybackConfig, PlayerHandle, TagWrite, TrackFields,
+    any_path_affecting, build_album_edit, build_track_edit, genres_assignment, parse_assignment,
+    write_track_tags,
 };
 
 use crate::playqueue::{build_play_queue, fmt_position};
@@ -107,6 +109,22 @@ glib::wrapper! {
         @implements gtk::gio::ActionGroup, gtk::gio::ActionMap, gtk::Accessible,
                     gtk::Buildable, gtk::ConstraintTarget, gtk::Native, gtk::Root,
                     gtk::ShortcutManager;
+}
+
+/// Build the write-back field bundle from a DB row (Phase 5b-ii).
+fn tag_write_from(r: &WritebackRow) -> TagWrite {
+    TagWrite {
+        title: r.title.clone(),
+        track_artist: r.track_artist.clone(),
+        track_artist_sort: r.track_artist_sort.clone(),
+        album: r.album.clone(),
+        album_artist: r.album_artist.clone(),
+        album_artist_sort: r.album_artist_sort.clone(),
+        year: r.year,
+        track_no: r.track_no,
+        disc_no: r.disc_no,
+        genres: r.genres.clone(),
+    }
 }
 
 /// One sidebar row: a left-aligned, ellipsized name label.
@@ -276,6 +294,16 @@ impl ConservatoryWindow {
             }
         });
         header.pack_start(&edit_btn);
+
+        let embed_btn = gtk::Button::from_icon_name("document-save-symbolic");
+        embed_btn.set_tooltip_text(Some("Embed metadata into selected files"));
+        let weak = self.downgrade();
+        embed_btn.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.prompt_embed_tags();
+            }
+        });
+        header.pack_start(&embed_btn);
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
@@ -946,6 +974,77 @@ impl ConservatoryWindow {
             created_at,
             ops,
         ));
+    }
+
+    /// Embed the curated DB metadata into the selected files (Phase 5b-ii, spec
+    /// §5.5): an explicit action (not auto-on-edit), behind a confirm.
+    fn prompt_embed_tags(&self) {
+        let ids = self.selected_track_ids();
+        if ids.is_empty() {
+            return;
+        }
+        if self.imp().library_root.get().is_none() {
+            let dialog = adw::AlertDialog::new(
+                Some("No library root"),
+                Some("Launch as `conservatory <db> <root>` to write tags into the files."),
+            );
+            dialog.add_response("ok", "OK");
+            dialog.present(Some(self));
+            return;
+        }
+        let dialog = adw::AlertDialog::new(
+            Some("Embed metadata into files?"),
+            Some(&format!(
+                "Write the database metadata into {} file(s) on disk. The files become \
+                 self-describing; the database stays the source of truth.",
+                ids.len()
+            )),
+        );
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("write", "Write");
+        dialog.set_response_appearance("write", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("write"));
+        dialog.set_close_response("cancel");
+
+        let weak = self.downgrade();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "write" {
+                return;
+            }
+            if let Some(win) = weak.upgrade() {
+                win.run_embed_tags(&ids);
+            }
+        });
+        dialog.present(Some(self));
+    }
+
+    fn run_embed_tags(&self, ids: &[i64]) {
+        let imp = self.imp();
+        let (Some(pool), Some(root)) = (imp.pool.get(), imp.library_root.get()) else {
+            return;
+        };
+        let rows = {
+            let Ok(conn) = pool.open() else { return };
+            writeback_rows(&conn, ids).unwrap_or_default()
+        };
+        let (mut written, mut errors) = (0usize, 0usize);
+        for r in &rows {
+            match write_track_tags(&root.join(&r.file_path), &tag_write_from(r)) {
+                Ok(()) => written += 1,
+                Err(e) => {
+                    eprintln!("embed-tags: {}: {e}", r.file_path);
+                    errors += 1;
+                }
+            }
+        }
+        let body = if errors == 0 {
+            format!("Wrote metadata into {written} file(s).")
+        } else {
+            format!("Wrote {written} file(s); {errors} failed (see terminal).")
+        };
+        let dialog = adw::AlertDialog::new(Some("Done"), Some(&body));
+        dialog.add_response("ok", "OK");
+        dialog.present(Some(self));
     }
 
     /// Keep the drawer's playing-row highlight in step with the engine: when the

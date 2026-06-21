@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.11
+
+Phase 4a shipped: the libmpv playback host and the music profile. The engine can play a track from the managed library (the first sound Conservatory makes), headless via the CLI, with the position persisted so a restart resumes.
+
+- **libmpv host (`conservatory-core/src/player/host.rs`):** a single `libmpv2` instance kept alive across items (`MpvHost`), with `load` / `set_paused` / `seek_absolute` / `time_pos` and a `pump` that maps libmpv events to a small `HostEvent`. The host is thin glue, kept in core (spec §16.13), so the whole engine stays CLI-driveable. `libmpv2 4.1` was signed off over the alternatives and pulled into core; the system `libmpv` joins GTK/libadwaita in CI. The threaded `Player` handle and command channel are deferred to 4b, where the GTK Now-bar is the second consumer; building that plumbing now, with only the CLI loop to drive it, would be speculative.
+- **Music profile (`player/profile.rs`, pure + tested):** `resolve_music_profile` turns a track + the `[playback]` config (spec §10 defaults) into the gapless flag, the ReplayGain mode, and the crossfade duration. ReplayGain uses mpv's native `replaygain` property (mpv reads the same file tags `lofty` stored at import); the DB `replaygain_*` columns drive mode resolution, downgrading album→track→off by what the track actually carries. **Settled for 4a:** read-only ReplayGain (no in-app scan, §16.7) and no EQ/DSP (§16.6); both stay open. Crossfade is carried through but rendered at 4b with the queue.
+- **State persistence (`player/state.rs`, pure + tested; migration `0004`):** a new singleton `playback_state` table is the transport cursor (what was playing and where). `StateDebounce` coalesces the steady position stream to one write per 30 s insurance interval while flushing immediately on pause/seek/item-end/quit; `EndReason::counts_as_play` gates the `play_count` + `last_played` bump to a natural end-of-file. Saves go through the single-writer worker (`save_playback_state` / `increment_play_count`).
+- **CLI:** `play <db> [track_id]` plays a track (gapless + ReplayGain), persisting position on the interval and on end; with no id it resumes the saved cursor. Read the track through the pool, write state through the worker, all on one current-thread runtime.
+- **Tests:** profile resolution + ReplayGain downgrade and the debounce/Eof logic as pure unit tests; `playback_state` round-trip and play-count increment through the worker; an `ao=null` libmpv smoke test that decodes a committed fixture to EOF (`tests/playback.rs`).
+
+Deferred: the threaded `Player` handle + unified queue + Now-bar transport (4b); MPRIS2 + media keys + suspend inhibitor (4c); crossfade rendering (4b); EQ/DSP and ReplayGain scanning (§16.6/§16.7, still open).
+
 ## v0.0.10
 
 Phase 3c shipped: the browse window becomes a working library browser. A sortable, multi-select track list; the always-on filter bar wired to the grammar; and Perspectives (named saved searches) in a sidebar, persisted through the single-writer worker (its first appearance in the GUI).

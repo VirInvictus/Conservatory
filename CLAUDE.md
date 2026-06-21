@@ -21,6 +21,11 @@ Reference apps: **Calibre** (library-as-database, file ownership, save-to-disk t
 - **Schema is core-owned; plugin crates never own migrations.** All tables, podcast and audiobook included, live in `conservatory-core`'s single append-only ledger and apply in every build (spec §2.2, §4). The plugin boundary is code and dependencies, not the database.
 - **Phase hard.** Each phase (spec §17) must leave a usable artifact. The manager (Phases 1 to 3) is usable before the player; the player before podcasts. No phase leaves the app non-functional. This is what keeps the concurrency with Atrium recoverable.
 
+## Working discipline
+
+- **Plan each step thoroughly before coding.** Every task starts with research: read the relevant `spec.md` sections, the `roadmap.md` sub-phase, the affected `docs/` reference, and the neighbouring code before writing anything. Non-trivial work gets a written plan and sign-off (use plan mode where it fits). This is a hard process rule for Conservatory, not a default to relax under time pressure.
+- **Maintain an active todo list for each task.** Break the work into tracked steps and keep the list current as you go (start a step when you begin it, close it when it lands). The list is the shared view of where the task stands; it is not optional bookkeeping.
+
 ## Belfry absorption status
 
 Conservatory absorbs Belfry. `belfry-core`'s single-writer worker migrates at Phase 1; the full podcast subsystem (fetch, Smart Speed, Voice Boost, triage, OPML) is absorbed at Phase 6. **Belfry is not retired, and the Belfry repo is not deleted, until Conservatory reaches podcast parity** (spec §16.8). The build deferral behind Atrium was lifted at v0.0.1; the retirement-at-parity rule was kept.

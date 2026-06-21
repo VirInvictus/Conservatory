@@ -181,3 +181,38 @@ pub(crate) fn delete_perspective(conn: &Connection, id: i64) -> Result<()> {
     conn.execute("DELETE FROM perspectives WHERE id = ?1", params![id])?;
     Ok(())
 }
+
+/// Upsert the singleton playback cursor (Phase 4a, spec §6.4). One row, id = 1;
+/// later saves overwrite it. A `None` track clears the cursor.
+pub(crate) fn save_playback_state(
+    conn: &Connection,
+    track_id: Option<i64>,
+    position: f64,
+    paused: bool,
+    volume: i64,
+    updated_at: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO playback_state (id, track_id, position, paused, volume, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(id) DO UPDATE SET
+            track_id = excluded.track_id,
+            position = excluded.position,
+            paused = excluded.paused,
+            volume = excluded.volume,
+            updated_at = excluded.updated_at",
+        params![track_id, position, paused, volume, updated_at],
+    )?;
+    Ok(())
+}
+
+/// Record a completed play (spec §6.4): bump `play_count` and stamp
+/// `last_played`. Only natural end-of-file reaches here (`EndReason::Eof`); the
+/// caller gates on that.
+pub(crate) fn increment_play_count(conn: &Connection, track_id: i64, played_at: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE tracks SET play_count = play_count + 1, last_played = ?2 WHERE id = ?1",
+        params![track_id, played_at],
+    )?;
+    Ok(())
+}

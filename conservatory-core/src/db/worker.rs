@@ -218,6 +218,36 @@ impl WorkerHandle {
             .await
     }
 
+    /// Save the singleton playback cursor (spec §6.4, Phase 4a).
+    pub async fn save_playback_state(
+        &self,
+        track_id: Option<i64>,
+        position: f64,
+        paused: bool,
+        volume: i64,
+        updated_at: i64,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::SavePlaybackState {
+            track_id,
+            position,
+            paused,
+            volume,
+            updated_at,
+            reply,
+        })
+        .await
+    }
+
+    /// Record a completed play: bump `play_count` and stamp `last_played`.
+    pub async fn increment_play_count(&self, track_id: i64, played_at: i64) -> Result<()> {
+        self.dispatch(|reply| Command::IncrementPlayCount {
+            track_id,
+            played_at,
+            reply,
+        })
+        .await
+    }
+
     /// Send a shutdown ack. The loop exits once every `WorkerHandle` clone has
     /// dropped and the channel closes; this just confirms the worker is alive.
     pub async fn shutdown_ack(&self) -> Result<()> {
@@ -410,6 +440,25 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::DeletePerspective { id, reply } => {
             let _ = reply.send(writes::delete_perspective(conn, id));
+        }
+        Command::SavePlaybackState {
+            track_id,
+            position,
+            paused,
+            volume,
+            updated_at,
+            reply,
+        } => {
+            let _ = reply.send(writes::save_playback_state(
+                conn, track_id, position, paused, volume, updated_at,
+            ));
+        }
+        Command::IncrementPlayCount {
+            track_id,
+            played_at,
+            reply,
+        } => {
+            let _ = reply.send(writes::increment_play_count(conn, track_id, played_at));
         }
         Command::Shutdown { reply } => {
             let _ = reply.send(());

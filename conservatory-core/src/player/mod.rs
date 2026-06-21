@@ -1,0 +1,20 @@
+//! Playback engine (spec §6, docs/libmpv-profiles.md).
+//!
+//! A single libmpv instance plays a queue of items, each resolved to a playback
+//! profile applied before it plays. Phase 4a lands the music half: the libmpv
+//! host ([`host`]), the music profile resolution ([`profile`]), and the
+//! position/play-count persistence logic ([`state`]). The unified queue, the
+//! Now-bar, MPRIS, and the podcast/audiobook spoken-word profile follow at
+//! Phases 4b, 4c, and 6c.
+//!
+//! The split is deliberate (the CLAUDE.md rule, spec §16.13): `profile` and
+//! `state` are pure and unit-tested headless; `host` is the thin libmpv glue,
+//! kept in core (not the GTK binary) so the whole engine stays CLI-driveable.
+
+pub mod host;
+pub mod profile;
+pub mod state;
+
+pub use host::{HostEvent, MpvHost};
+pub use profile::{MusicProfile, PlaybackConfig, ReplayGain, resolve_music_profile};
+pub use state::{EndReason, INSURANCE_INTERVAL_MS, StateDebounce, StateEvent};

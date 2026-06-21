@@ -20,6 +20,9 @@ chrono = { workspace = true }
 # Phase 1c: tag read (lofty) and cover decode + accent extraction (image).
 lofty = { workspace = true }
 image = { workspace = true }
+# Phase 4a: the libmpv playback host (spec §6). Links the system libmpv at
+# runtime; the player lives in core (spec §16.13), not the GTK binary.
+libmpv2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

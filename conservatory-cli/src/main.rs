@@ -11,13 +11,14 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    ReadPool, SearchRow, SqlParam, fts_rank, library_counts, probe_read, search_rows,
-    search_track_ids, spawn_worker, track_render_rows,
+    ReadPool, SearchRow, SqlParam, fts_rank, get_track, library_counts, probe_read,
+    read_playback_state, search_rows, search_track_ids, spawn_worker, track_render_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
-    GenreVocab, ImportOptions, ImportReport, PathTemplate, TrackFields, compute_accent,
-    find_collisions, find_cover_bytes, import_folder, read_track, resolve_album,
+    GenreVocab, HostEvent, ImportOptions, ImportReport, MpvHost, PathTemplate, PlaybackConfig,
+    StateDebounce, StateEvent, TrackFields, compute_accent, find_collisions, find_cover_bytes,
+    import_folder, read_track, resolve_album, resolve_music_profile,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -121,6 +122,16 @@ enum Command {
         format: Format,
     },
 
+    /// Play a track through the libmpv engine (spec §6, Phase 4a): gapless +
+    /// ReplayGain, with the position persisted so a restart resumes. With a
+    /// track id, plays that track; with none, resumes the saved cursor.
+    Play {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Track id to play. Omit to resume the last saved position.
+        track_id: Option<i64>,
+    },
+
     /// Set an album's shelf genre (a path-affecting edit; run `organize` after to
     /// move the album).
     ShelfGenreSet {
@@ -194,6 +205,7 @@ fn main() -> Result<()> {
             album_id,
             value,
         }) => shelf_genre_set(db, album_id, value),
+        Some(Command::Play { db, track_id }) => play(db, track_id),
         Some(Command::Search { db, query, format }) => search(db, query, format),
         Some(Command::DebugFacets { db }) => debug_facets(db),
         None => {
@@ -567,6 +579,96 @@ async fn run_shelf_genre_set(db: PathBuf, album_id: i64, value: String) -> Resul
         .with_context(|| format!("setting shelf genre for album {album_id}"))?;
     worker.shutdown_ack().await.context("shutdown ack")?;
     println!("album {album_id} shelf genre set to {value:?}; run `organize` to move it");
+    Ok(())
+}
+
+fn play(db: PathBuf, track_id: Option<i64>) -> Result<()> {
+    block_on(run_play(db, track_id))
+}
+
+async fn run_play(db: PathBuf, track_id: Option<i64>) -> Result<()> {
+    // The worker persists position + play count; the read pool resolves the
+    // track and the saved cursor. Spawned inside the current-thread runtime
+    // (`block_on`), so a bare `spawn_worker` has its runtime context.
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+
+    // Pick the item: an explicit id, else the saved cursor (resume).
+    let conn = pool.open().context("opening pool connection")?;
+    let saved = read_playback_state(&conn).context("reading playback state")?;
+    let (target_id, resume_pos) = match track_id {
+        Some(id) => (id, 0.0),
+        None => {
+            let s = saved.context("no track id given and no saved position to resume")?;
+            let id = s
+                .track_id
+                .context("saved position has no track to resume")?;
+            (id, s.position)
+        }
+    };
+    let track = get_track(&conn, target_id)
+        .context("looking up track")?
+        .with_context(|| format!("track {target_id} not found"))?;
+    drop(conn);
+
+    // Resolve the music profile (spec §6.2) and start playback.
+    let profile = resolve_music_profile(&track, &PlaybackConfig::default());
+    let mut host = MpvHost::new().context("starting libmpv host")?;
+    host.load(&track.file_path, &profile)
+        .context("loading track into libmpv")?;
+    if resume_pos > 0.0 {
+        host.seek_absolute(resume_pos)
+            .context("seeking to resume")?;
+        println!("Resuming at {resume_pos:.1}s");
+    }
+    println!(
+        "Playing: {} [rg={}, gapless={}]  ({})",
+        track.title,
+        profile.replaygain.as_mpv(),
+        profile.gapless,
+        track.file_path,
+    );
+
+    // The pump loop: drive libmpv, persist on the insurance interval, and on a
+    // natural end-of-file count a completed play (spec §6.4).
+    let start = std::time::Instant::now();
+    let mut debounce = StateDebounce::default();
+    loop {
+        match host.pump(0.2) {
+            HostEvent::Ended(reason) => {
+                let pos = host.time_pos().unwrap_or(0.0);
+                let now = now_secs();
+                worker
+                    .save_playback_state(Some(target_id), pos, false, 100, now)
+                    .await
+                    .context("saving final position")?;
+                if reason.counts_as_play() {
+                    worker
+                        .increment_play_count(target_id, now)
+                        .await
+                        .context("incrementing play count")?;
+                    println!("Finished: play count bumped.");
+                } else {
+                    println!("Stopped ({reason:?}).");
+                }
+                break;
+            }
+            HostEvent::Shutdown => break,
+            HostEvent::Idle => {
+                let elapsed_ms = start.elapsed().as_millis() as u64;
+                if debounce.should_flush(elapsed_ms, StateEvent::Tick) {
+                    if let Some(pos) = host.time_pos() {
+                        worker
+                            .save_playback_state(Some(target_id), pos, false, 100, now_secs())
+                            .await
+                            .context("saving position")?;
+                    }
+                }
+            }
+        }
+    }
+
+    worker.shutdown_ack().await.context("shutdown ack")?;
     Ok(())
 }
 

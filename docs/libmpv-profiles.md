@@ -1,6 +1,6 @@
 # libmpv Profile Reference
 
-> **Status: design reference, not yet implemented.** The playback engine lands at roadmap Phase 4 (music) and Phase 6c (podcasts). This expands spec §6 and is the contract that engine builds against. The podcast filter chains are ported verbatim from Belfry §5.
+> **Status: partly implemented (Phase 4a).** The music profile and the libmpv host landed at Phase 4a (`conservatory-core/src/player/`): a single libmpv instance, gapless + ReplayGain, the `playback_state` cursor, play-count-on-completion. The unified queue + profile switching (4b), MPRIS/inhibitor (4c), and the podcast/audiobook spoken-word chains (6c/7c) are still ahead. 4a settled two open questions by deferral: ReplayGain is read-only (no in-app scan, §16.7) and there is no EQ/DSP (§16.6). This expands spec §6 and is the contract the engine builds against. The podcast filter chains are ported verbatim from Belfry §5.
 
 ## One engine, one queue, two profiles
 

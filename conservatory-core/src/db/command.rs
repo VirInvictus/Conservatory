@@ -127,6 +127,25 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Upsert the singleton playback cursor (what is playing and where), so a
+    /// restart resumes (spec §6.4, Phase 4a).
+    SavePlaybackState {
+        track_id: Option<i64>,
+        position: f64,
+        paused: bool,
+        volume: i64,
+        updated_at: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Bump a track's `play_count` and stamp `last_played` on a completed play
+    /// (spec §6.4).
+    IncrementPlayCount {
+        track_id: i64,
+        played_at: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Ack a shutdown request. The loop exits naturally once every
     /// `WorkerHandle` clone has dropped and the channel closes.
     Shutdown { reply: oneshot::Sender<()> },
@@ -157,6 +176,8 @@ impl Command {
             Self::SetJobState { .. } => "set_job_state",
             Self::SavePerspective { .. } => "save_perspective",
             Self::DeletePerspective { .. } => "delete_perspective",
+            Self::SavePlaybackState { .. } => "save_playback_state",
+            Self::IncrementPlayCount { .. } => "increment_play_count",
             Self::Shutdown { .. } => "shutdown",
             #[cfg(test)]
             Self::Panic => "panic",

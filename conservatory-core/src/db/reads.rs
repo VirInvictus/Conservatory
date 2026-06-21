@@ -128,6 +128,38 @@ pub fn track_render_rows(conn: &Connection) -> Result<Vec<TrackRenderRow>> {
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// The singleton playback cursor (spec §6.4, Phase 4a): what was playing and
+/// where, read on startup to resume. Absent (`None`) on a library that has
+/// never played anything.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlaybackStateRow {
+    pub track_id: Option<i64>,
+    pub position: f64,
+    pub paused: bool,
+    pub volume: i64,
+    pub updated_at: Option<i64>,
+}
+
+/// Read the saved playback cursor, if any (the row with id = 1).
+pub fn read_playback_state(conn: &Connection) -> Result<Option<PlaybackStateRow>> {
+    conn.query_row(
+        "SELECT track_id, position, paused, volume, updated_at
+         FROM playback_state WHERE id = 1",
+        [],
+        |row| {
+            Ok(PlaybackStateRow {
+                track_id: row.get("track_id")?,
+                position: row.get("position")?,
+                paused: row.get::<_, i64>("paused")? != 0,
+                volume: row.get("volume")?,
+                updated_at: row.get("updated_at")?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
 /// A track projected for search (Phase 3a). The CLI/GUI maps this to
 /// `conservatory_search::SearchItem` for the in-memory fallback path; `track_id`
 /// pairs a match back to its row.

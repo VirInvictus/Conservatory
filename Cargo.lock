@@ -245,7 +245,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "conservatory"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "chrono",
  "conservatory-audiobooks",
@@ -260,11 +260,11 @@ dependencies = [
 
 [[package]]
 name = "conservatory-audiobooks"
-version = "0.0.10"
+version = "0.0.11"
 
 [[package]]
 name = "conservatory-cli"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "anyhow",
  "chrono",
@@ -278,11 +278,12 @@ dependencies = [
 
 [[package]]
 name = "conservatory-core"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "chrono",
  "conservatory-search",
  "image",
+ "libmpv2",
  "lofty",
  "rusqlite",
  "serde",
@@ -295,11 +296,11 @@ dependencies = [
 
 [[package]]
 name = "conservatory-podcasts"
-version = "0.0.10"
+version = "0.0.11"
 
 [[package]]
 name = "conservatory-search"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "chrono",
  "regex",
@@ -886,6 +887,21 @@ name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+
+[[package]]
+name = "libmpv2"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e0c3802b4bb1a18adbf5659b078ce24cb8e16c79ff695557f4e10af2a44722a"
+dependencies = [
+ "libmpv2-sys",
+]
+
+[[package]]
+name = "libmpv2-sys"
+version = "4.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edb32cabe7176b7d270b0dca6ff418b75187ae8d3854423e3d06fbff376841e4"
 
 [[package]]
 name = "libsqlite3-sys"

@@ -155,15 +155,15 @@ The first GTK4/libadwaita code (programmatic UI; facet logic in `conservatory-co
 
 A daily-driver music player. Profile switching at album/kind boundaries (spec §16.9) is the prototyping risk; tackle it in 4b where the unified queue makes it concrete.
 
-### Phase 4a — libmpv host + music profile
+### Phase 4a — libmpv host + music profile ✅
 
-- [ ] Dependency sign-off: `libmpv2` (spec §11) and the system `libmpv` (0.36+) requirement.
-- [ ] A single libmpv instance kept alive across items (property API + filter graph, spec §6).
-- [ ] Music profile: gapless within an album (`--gapless-audio`), ReplayGain track/album modes read from `tracks.replaygain_*`, crossfade (off by default). Decide §16.7 (scan vs read-only ReplayGain) and §16.6 (EQ/DSP depth) or defer explicitly.
-- [ ] State persistence: position on pause/seek (debounced)/item-end/quit and every 30 s (the Belfry insurance interval); play counts and `last_played` on completion (spec §6.4).
-- [ ] Tests (headless where possible): profile resolution; state-write debounce; play-count increment on completion.
+- [x] Dependency sign-off: `libmpv2` (spec §11; ATTRIBUTIONS.md) and the system `libmpv` (0.36+) requirement. `libmpv2 4.1` pulled into `conservatory-core` (the player lives in core, spec §16.13); `libmpv-dev` added to both CI jobs.
+- [x] A single libmpv instance kept alive across items (`player::host::MpvHost`, property API + the input-command layer, spec §6). The threaded `Player` handle + command channel are deferred to 4b, where the GTK Now-bar is the second consumer; 4a drives the host directly from the CLI loop (no speculative plumbing).
+- [x] Music profile (`player::profile`, pure + tested): gapless within an album (`gapless-audio`), ReplayGain via mpv's native `replaygain` property (mpv reads the file tags `lofty` stored), with the DB `replaygain_*` columns driving mode resolution (album→track→off downgrade by available tags). Crossfade is carried through (config field) but rendered at 4b with the queue (a between-tracks behaviour). **§16.7 deferred:** read-only ReplayGain, no in-app scan. **§16.6 deferred:** no EQ/DSP in 4a.
+- [x] State persistence (`player::state`, pure + tested): position written on the insurance interval (30 s) and on the forced points (pause/seek/item-end/quit), through the single-writer worker into the new singleton `playback_state` table (migration `0004`); `play_count` + `last_played` bumped on a natural end-of-file only (`EndReason::Eof`).
+- [x] Tests: profile resolution + ReplayGain downgrade (8 unit tests); state-write debounce + only-Eof-counts (4 unit tests); `playback_state` round-trip + play-count increment through the worker, and an `ao=null` libmpv smoke test that decodes a committed fixture to EOF (`tests/playback.rs`).
 
-*Usable artifact:* play a track from the library with gapless + ReplayGain; resume position survives a restart.
+*Usable artifact:* `conservatory-cli play <db> [track_id]` plays a track from the managed library with gapless + ReplayGain through libmpv; the position is persisted on the insurance interval and `play <db>` (no id) resumes the saved cursor across a restart. The threaded engine, the unified queue, and the Now-bar land at 4b.
 
 ### Phase 4b — Unified queue + Now-bar
 

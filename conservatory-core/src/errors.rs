@@ -31,6 +31,9 @@ pub enum Error {
 
     #[error("move: {0}")]
     Move(String),
+
+    #[error("player: {0}")]
+    Player(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

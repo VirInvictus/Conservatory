@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b) and `0002` (move journal, Phase 2c). The podcast, audiobook, and unified-queue tables below are still draft (they land at their phases). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
+> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), and `0004` (playback state, Phase 4a). The podcast, audiobook, and unified-queue tables below are still draft (they land at their phases). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
 
 ## Connection discipline
 
@@ -94,7 +94,24 @@ CREATE TABLE queue (
 CREATE INDEX idx_queue_position ON queue(position);
 ```
 
-The engine reads `queue` into an in-memory `Vec<PlayableItem>` (spec §6.1); position writes are debounced. A whole audiobook is a single queue entry (chapters are navigated within it, not enqueued separately). Resume position for long items lives in the per-kind state tables (`tracks.last_played` / the podcast `playback` table / the `book_playback` table).
+The engine reads `queue` into an in-memory `Vec<PlayableItem>` (spec §6.1); position writes are debounced. A whole audiobook is a single queue entry (chapters are navigated within it, not enqueued separately). Resume position for long items lives in the per-kind state tables (`tracks.last_played` / the podcast `playback` table / the `book_playback` table); the *current* item and its offset live in `playback_state` (below).
+
+## Playback state (Phase 4a, migration `0004`, spec §6.4)
+
+The transport cursor: a single row recording what is playing and where, so a restart resumes. The unified `queue` above holds the ordered list; this is the cursor *into* it. A singleton (the `id = 1` check), because there is exactly one "now playing" position. `track_id` is `ON DELETE SET NULL` so removing the playing track never dangles the cursor (`foreign_keys = ON`); `position` is absolute seconds into the current item.
+
+```sql
+CREATE TABLE playback_state (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    track_id   INTEGER REFERENCES tracks(id) ON DELETE SET NULL,
+    position   REAL    NOT NULL DEFAULT 0,
+    paused     INTEGER NOT NULL DEFAULT 0,
+    volume     INTEGER NOT NULL DEFAULT 100,
+    updated_at INTEGER
+);
+```
+
+Writes are debounced (the 30 s insurance interval, plus the forced pause/seek/end/quit points, spec §6.4) and go through the single writer. At Phase 4b the row gains a reference to the current `queue` entry; for now `track_id` is enough for music-only resume. `play_count` / `last_played` on `tracks` are bumped separately, only on a natural end-of-file.
 
 ## Move journal (Phase 2c, spec §5.4)
 

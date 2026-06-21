@@ -52,7 +52,12 @@ pub fn sync_album_cover(
     let dir = root.join(album_folder_rel);
     std::fs::create_dir_all(&dir)?;
     let name = write_cover(&dir, bytes)?;
-    let new_rel = format!("{album_folder_rel}/{name}");
+    // Build the root-relative path with `Path::join` (handles a trailing slash
+    // and never produces a leading-slash "absolute" string from an odd folder).
+    let new_rel = Path::new(album_folder_rel)
+        .join(name)
+        .to_string_lossy()
+        .into_owned();
     if let Some(old) = old_cover_path
         && old != new_rel
     {

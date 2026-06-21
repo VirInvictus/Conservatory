@@ -170,6 +170,23 @@ pub struct WritebackRow {
     pub genres: Vec<String>,
 }
 
+impl From<&WritebackRow> for crate::tags::TagWrite {
+    fn from(r: &WritebackRow) -> Self {
+        crate::tags::TagWrite {
+            title: r.title.clone(),
+            track_artist: r.track_artist.clone(),
+            track_artist_sort: r.track_artist_sort.clone(),
+            album: r.album.clone(),
+            album_artist: r.album_artist.clone(),
+            album_artist_sort: r.album_artist_sort.clone(),
+            year: r.year,
+            track_no: r.track_no,
+            disc_no: r.disc_no,
+            genres: r.genres.clone(),
+        }
+    }
+}
+
 /// Fetch the write-back metadata for many tracks by id (Phase 5b). Chunked under
 /// SQLite's bound-variable limit, like [`get_tracks`]; order is unspecified, so
 /// the caller pairs rows back to its own list by `track_id`.
@@ -183,9 +200,9 @@ pub fn writeback_rows(conn: &Connection, ids: &[i64]) -> Result<Vec<WritebackRow
                     ta.name AS track_artist, ta.sort_name AS track_artist_sort,
                     al.title AS album, al.year,
                     aa.name AS album_artist, aa.sort_name AS album_artist_sort,
-                    (SELECT group_concat(g.name, '{GENRE_SEP}')
-                       FROM track_genres tg JOIN genres g ON g.id = tg.genre_id
-                      WHERE tg.track_id = t.id) AS genres
+                    (SELECT group_concat(name, '{GENRE_SEP}') FROM
+                       (SELECT g.name FROM track_genres tg JOIN genres g ON g.id = tg.genre_id
+                         WHERE tg.track_id = t.id ORDER BY g.name)) AS genres
              FROM tracks t
              LEFT JOIN albums al ON t.album_id = al.id
              LEFT JOIN artists aa ON al.album_artist_id = aa.id

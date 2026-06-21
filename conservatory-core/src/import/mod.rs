@@ -278,10 +278,14 @@ pub async fn import_folder(
     for (idx, pa) in planned_albums.iter().enumerate() {
         if let (Some(bytes), Some(folder_rel)) = (&pa.cover, &pa.folder_rel) {
             let folder = folder_rel.to_string_lossy();
-            if let Ok(cover_path) = crate::covers::sync_album_cover(root, &folder, bytes, None) {
-                let _ = worker
+            if let Ok(cover_path) = crate::covers::sync_album_cover(root, &folder, bytes, None)
+                && let Err(e) = worker
                     .set_album_cover_path(album_ids[idx], Some(cover_path), None)
-                    .await;
+                    .await
+            {
+                // A cover failure never fails the import (covers re-derive), but a
+                // DB-write failure means the worker is wedged, so surface it.
+                tracing::warn!(album_id = album_ids[idx], error = %e, "cover path not recorded");
             }
         }
     }

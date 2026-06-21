@@ -11,11 +11,11 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    MediaKind, ReadPool, SearchRow, SqlParam, WritebackRow, fts_rank, get_album, get_track,
-    library_counts, load_queue, probe_read, read_playback_state, search_rows, search_track_ids,
-    spawn_worker, track_render_rows, writeback_rows,
+    MediaKind, ReadPool, SearchRow, SqlParam, fts_rank, get_album, get_track, library_counts,
+    load_queue, probe_read, read_playback_state, search_rows, search_track_ids, spawn_worker,
+    track_render_rows, writeback_rows,
 };
-use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
+use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
     AlbumEdit, Assignment, DEFAULT_TARGET_LUFS, Field, GenreVocab, ImportOptions, ImportReport,
     PathTemplate, PlayableItem, PlaybackConfig, TagWrite, TrackDraft, TrackEdit, TrackFields,
@@ -648,35 +648,16 @@ async fn run_organize(
         return Ok(());
     }
 
-    // Build the operations: src = current managed path, dst = re-rendered target.
-    let rows = {
+    // Build the operations: src = current managed path, dst = re-rendered target
+    // (the shared core builder, so the render mapping lives in one place).
+    let ops = {
         let conn = pool.open().context("opening pool connection")?;
-        track_render_rows(&conn).context("reading track render rows")?
+        organize_ops(
+            &track_render_rows(&conn).context("reading track render rows")?,
+            &root,
+            None,
+        )
     };
-    let template = PathTemplate::default_music();
-    let mut ops = Vec::with_capacity(rows.len());
-    for row in &rows {
-        let fields = TrackFields {
-            shelf_genre: row.shelf_genre.as_deref(),
-            albumartist: row.album_artist_sort.as_deref(),
-            album: row.album.as_deref(),
-            year: row.year,
-            track_no: row.track_no,
-            disc_no: row.disc_no,
-            title: Some(row.title.as_str()),
-            artist: row.track_artist.as_deref(),
-            ext: row.format.as_deref(),
-        };
-        let rel = template.render(&fields);
-        ops.push(MoveOp {
-            track_id: Some(row.track_id),
-            album_id: row.album_id,
-            src: root.join(&row.file_path),
-            dst: root.join(&rel),
-            db_old: Some(row.file_path.clone()),
-            db_new: Some(rel.to_string_lossy().into_owned()),
-        });
-    }
 
     if apply {
         let recovered = mover::recover(&worker, &pool).await.context("recovery")?;
@@ -849,6 +830,12 @@ async fn run_tag_set(
         .map(|s| parse_assignment(s).map_err(|e| anyhow::anyhow!(e.to_string())))
         .collect::<Result<_>>()?;
 
+    // Validate up front: a path-affecting edit needs the root to move files. Fail
+    // before any DB write so the DB and the tree never diverge (spec §3.5).
+    if any_path_affecting(&assignments) && root.is_none() {
+        anyhow::bail!("a path-affecting field changed; pass --root <root> to move the files");
+    }
+
     let worker = spawn_worker(db.clone()).context("spawning worker")?;
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
     mover::recover(&worker, &pool).await.context("recovery")?;
@@ -917,6 +904,11 @@ async fn run_tag_replace(
 ) -> Result<()> {
     let field =
         Field::parse(&field_str).ok_or_else(|| anyhow::anyhow!("unknown field {field_str:?}"))?;
+
+    // Validate up front (as `tag set` does): a path-affecting field needs --root.
+    if field.is_path_affecting() && root.is_none() {
+        anyhow::bail!("a path-affecting field changed; pass --root <root> to move the files");
+    }
 
     let worker = spawn_worker(db.clone()).context("spawning worker")?;
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
@@ -1051,37 +1043,14 @@ async fn scoped_organize(
     albums: &[i64],
     apply: bool,
 ) -> Result<()> {
-    let rows = {
+    let ops = {
         let conn = pool.open().context("opening pool connection")?;
-        track_render_rows(&conn).context("reading render rows")?
+        organize_ops(
+            &track_render_rows(&conn).context("reading render rows")?,
+            root,
+            Some(albums),
+        )
     };
-    let template = PathTemplate::default_music();
-    let mut ops = Vec::new();
-    for row in &rows {
-        if !row.album_id.map(|a| albums.contains(&a)).unwrap_or(false) {
-            continue;
-        }
-        let fields = TrackFields {
-            shelf_genre: row.shelf_genre.as_deref(),
-            albumartist: row.album_artist_sort.as_deref(),
-            album: row.album.as_deref(),
-            year: row.year,
-            track_no: row.track_no,
-            disc_no: row.disc_no,
-            title: Some(row.title.as_str()),
-            artist: row.track_artist.as_deref(),
-            ext: row.format.as_deref(),
-        };
-        let rel = template.render(&fields);
-        ops.push(MoveOp {
-            track_id: Some(row.track_id),
-            album_id: row.album_id,
-            src: root.join(&row.file_path),
-            dst: root.join(&rel),
-            db_old: Some(row.file_path.clone()),
-            db_new: Some(rel.to_string_lossy().into_owned()),
-        });
-    }
 
     if apply {
         let count = ops.len();
@@ -1121,21 +1090,6 @@ async fn scoped_organize(
         }
     }
     Ok(())
-}
-
-fn to_tag_write(r: &WritebackRow) -> TagWrite {
-    TagWrite {
-        title: r.title.clone(),
-        track_artist: r.track_artist.clone(),
-        track_artist_sort: r.track_artist_sort.clone(),
-        album: r.album.clone(),
-        album_artist: r.album_artist.clone(),
-        album_artist_sort: r.album_artist_sort.clone(),
-        year: r.year,
-        track_no: r.track_no,
-        disc_no: r.disc_no,
-        genres: r.genres.clone(),
-    }
 }
 
 /// Human-readable "field: old -> new" lines for the fields a write-back would
@@ -1183,7 +1137,12 @@ fn diff_fields(cur: &TrackDraft, target: &TagWrite) -> Vec<String> {
     if cur.disc_no != target.disc_no {
         diffs.push(format!("disc: {:?} -> {:?}", cur.disc_no, target.disc_no));
     }
-    if cur.genres != target.genres {
+    // Genres are a set: compare order-insensitively so a mere reorder is not a
+    // change (the embedded write is deterministically ordered anyway).
+    let (mut cur_g, mut tgt_g) = (cur.genres.clone(), target.genres.clone());
+    cur_g.sort();
+    tgt_g.sort();
+    if cur_g != tgt_g {
         diffs.push(format!("genres: {:?} -> {:?}", cur.genres, target.genres));
     }
     diffs
@@ -1205,7 +1164,21 @@ fn embed_tags(db: PathBuf, query: String, root: PathBuf, apply: bool) -> Result<
     let (mut changed, mut written, mut errors) = (0usize, 0usize, 0usize);
     for r in &rows {
         let path = root.join(&r.file_path);
-        let target = to_tag_write(r);
+        let target = TagWrite::from(r);
+        // Read the current tags and diff: a file already in sync is skipped, so
+        // re-running embed-tags is idempotent and never churns unchanged files.
+        let cur = match read_track(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("  ! {}: {e}", path.display());
+                errors += 1;
+                continue;
+            }
+        };
+        let diffs = diff_fields(&cur, &target);
+        if diffs.is_empty() {
+            continue;
+        }
         if apply {
             match write_track_tags(&path, &target) {
                 Ok(()) => written += 1,
@@ -1215,21 +1188,10 @@ fn embed_tags(db: PathBuf, query: String, root: PathBuf, apply: bool) -> Result<
                 }
             }
         } else {
-            match read_track(&path) {
-                Ok(cur) => {
-                    let diffs = diff_fields(&cur, &target);
-                    if !diffs.is_empty() {
-                        changed += 1;
-                        println!("{}", path.display());
-                        for d in &diffs {
-                            println!("    {d}");
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("  ! {}: {e}", path.display());
-                    errors += 1;
-                }
+            changed += 1;
+            println!("{}", path.display());
+            for d in &diffs {
+                println!("    {d}");
             }
         }
     }
@@ -1239,7 +1201,10 @@ fn embed_tags(db: PathBuf, query: String, root: PathBuf, apply: bool) -> Result<
         String::new()
     };
     if apply {
-        println!("wrote tags to {written} file(s){err_note}");
+        println!(
+            "wrote tags to {written} file(s) ({} already in sync){err_note}",
+            rows.len() - written - errors
+        );
     } else {
         println!(
             "{changed} of {} file(s) would change (dry-run; pass --apply to write){err_note}",
@@ -1285,12 +1250,7 @@ async fn run_replaygain_scan(
         for group in by_album.values() {
             let folder = group
                 .first()
-                .map(|(_, fp)| {
-                    std::path::Path::new(fp)
-                        .parent()
-                        .map(|p| p.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                })
+                .and_then(|(_, fp)| root.join(fp).parent().map(|p| p.display().to_string()))
                 .unwrap_or_default();
             println!("{}\t{} track(s)", folder, group.len());
         }

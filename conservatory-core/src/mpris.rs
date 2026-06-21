@@ -98,14 +98,34 @@ fn build_metadata(
         {
             m.insert("mpris:length".to_string(), v);
         }
-        if let Some(cover) = &np.album_cover_path {
+        if let Some(cover) = &np.album_cover_path
+            && !root.as_os_str().is_empty()
+        {
             let abs = root.join(cover);
-            if let Ok(v) = Value::from(format!("file://{}", abs.display())).try_to_owned() {
+            // Percent-encode the path: spaces and non-ASCII are ubiquitous in
+            // music paths and an unencoded file URL is rejected by many readers.
+            let url = format!("file://{}", encode_uri_path(&abs.to_string_lossy()));
+            if let Ok(v) = Value::from(url).try_to_owned() {
                 m.insert("mpris:artUrl".to_string(), v);
             }
         }
     }
     m
+}
+
+/// Percent-encode a filesystem path for a `file://` URL: keep the RFC 3986
+/// unreserved set and `/`, encode everything else (spaces, non-ASCII) byte-wise.
+fn encode_uri_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 type Metadata = HashMap<String, OwnedValue>;
@@ -441,6 +461,30 @@ mod tests {
         assert!(m.contains_key("xesam:artist"));
         assert!(m.contains_key("mpris:length"));
         assert!(m.contains_key("mpris:artUrl"), "cover path yields artUrl");
+    }
+
+    #[test]
+    fn uri_path_encodes_spaces_and_keeps_slashes() {
+        assert_eq!(
+            encode_uri_path("/lib/Boards of Canada/cover.jpg"),
+            "/lib/Boards%20of%20Canada/cover.jpg"
+        );
+        assert_eq!(encode_uri_path("/a/b_c-d.e"), "/a/b_c-d.e");
+        // A non-ASCII byte is percent-encoded (UTF-8 "é" = C3 A9).
+        assert_eq!(encode_uri_path("/x/\u{e9}"), "/x/%C3%A9");
+    }
+
+    #[test]
+    fn empty_root_yields_no_arturl() {
+        let np = crate::db::NowPlaying {
+            title: "X".into(),
+            artist: None,
+            album: None,
+            length: None,
+            album_cover_path: Some("A/cover.jpg".into()),
+        };
+        let m = build_metadata(Some(1), Some(&np), std::path::Path::new(""));
+        assert!(!m.contains_key("mpris:artUrl"), "no root, no artUrl");
     }
 
     #[test]

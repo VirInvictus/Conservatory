@@ -16,10 +16,10 @@ pub mod journal;
 
 use std::path::{Path, PathBuf};
 
-use crate::db::{ReadPool, WorkerHandle};
+use crate::db::{ReadPool, TrackRenderRow, WorkerHandle};
 use crate::errors::{Error, Result};
 use crate::mover::journal::{JobState, MoveJobRow, OpState};
-use crate::path_template::find_collisions;
+use crate::path_template::{PathTemplate, TrackFields, find_collisions};
 
 /// Whether a job consumes its sources (`Move`) or leaves them in place (`Copy`).
 /// Copy-vs-move is a per-import user choice (spec §5.4).
@@ -58,6 +58,44 @@ pub struct MoveOp {
     pub dst: PathBuf,
     pub db_old: Option<String>,
     pub db_new: Option<String>,
+}
+
+/// Build the organize move ops by re-rendering each track's target path from the
+/// DB (the `organize` flow, spec §5.1). `albums = None` covers the whole library;
+/// `Some(set)` scopes to the given album ids (a path-affecting tag edit). This is
+/// the single source of the render-to-`MoveOp` mapping shared by the CLI
+/// (`organize`, `tag set`) and the GUI; a new `TrackFields` field is then added
+/// in exactly one place.
+pub fn organize_ops(rows: &[TrackRenderRow], root: &Path, albums: Option<&[i64]>) -> Vec<MoveOp> {
+    let template = PathTemplate::default_music();
+    rows.iter()
+        .filter(|row| match albums {
+            Some(set) => row.album_id.map(|a| set.contains(&a)).unwrap_or(false),
+            None => true,
+        })
+        .map(|row| {
+            let fields = TrackFields {
+                shelf_genre: row.shelf_genre.as_deref(),
+                albumartist: row.album_artist_sort.as_deref(),
+                album: row.album.as_deref(),
+                year: row.year,
+                track_no: row.track_no,
+                disc_no: row.disc_no,
+                title: Some(row.title.as_str()),
+                artist: row.track_artist.as_deref(),
+                ext: row.format.as_deref(),
+            };
+            let rel = template.render(&fields);
+            MoveOp {
+                track_id: Some(row.track_id),
+                album_id: row.album_id,
+                src: root.join(&row.file_path),
+                dst: root.join(&rel),
+                db_old: Some(row.file_path.clone()),
+                db_new: Some(rel.to_string_lossy().into_owned()),
+            }
+        })
+        .collect()
 }
 
 /// Why a job is running: a fresh import, or a re-render of the managed tree.

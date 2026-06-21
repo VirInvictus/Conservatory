@@ -32,7 +32,7 @@ pub use edit::{
     build_track_edit, genres_assignment, parse_assignment, replace_in, split_genres,
 };
 pub use import::{ImportOptions, ImportReport, import_folder};
-pub use mover::{Conflict, MoveKind, MoveMode, MoveOp, MovePlan, plan};
+pub use mover::{Conflict, MoveKind, MoveMode, MoveOp, MovePlan, organize_ops, plan};
 pub use path_template::{DEFAULT_MUSIC_TEMPLATE, PathTemplate, TrackFields, find_collisions};
 pub use player::{
     AudioDevice, EndReason, HostEvent, MpvHost, MusicProfile, PlayableItem, PlaybackConfig,

@@ -19,15 +19,13 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 
 use conservatory_core::db::{
-    FacetFilter, Perspective, ReadPool, WorkerHandle, WritebackRow, facet_rows, get_tracks,
-    list_perspectives, load_queue_display, read_playback_state, spawn_worker, track_render_rows,
-    writeback_rows,
+    FacetFilter, Perspective, ReadPool, WorkerHandle, facet_rows, get_tracks, list_perspectives,
+    load_queue_display, read_playback_state, spawn_worker, track_render_rows, writeback_rows,
 };
-use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
+use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
-    Assignment, PathTemplate, PlaybackConfig, PlayerHandle, TagWrite, TrackFields,
-    any_path_affecting, build_album_edit, build_track_edit, genres_assignment, parse_assignment,
-    write_track_tags,
+    Assignment, PlaybackConfig, PlayerHandle, TagWrite, any_path_affecting, build_album_edit,
+    build_track_edit, genres_assignment, parse_assignment, write_track_tags,
 };
 
 use crate::playqueue::{build_play_queue, fmt_position};
@@ -109,22 +107,6 @@ glib::wrapper! {
         @implements gtk::gio::ActionGroup, gtk::gio::ActionMap, gtk::Accessible,
                     gtk::Buildable, gtk::ConstraintTarget, gtk::Native, gtk::Root,
                     gtk::ShortcutManager;
-}
-
-/// Build the write-back field bundle from a DB row (Phase 5b-ii).
-fn tag_write_from(r: &WritebackRow) -> TagWrite {
-    TagWrite {
-        title: r.title.clone(),
-        track_artist: r.track_artist.clone(),
-        track_artist_sort: r.track_artist_sort.clone(),
-        album: r.album.clone(),
-        album_artist: r.album_artist.clone(),
-        album_artist_sort: r.album_artist_sort.clone(),
-        year: r.year,
-        track_no: r.track_no,
-        disc_no: r.disc_no,
-        genres: r.genres.clone(),
-    }
 }
 
 /// One sidebar row: a left-aligned, ellipsized name label.
@@ -932,34 +914,7 @@ impl ConservatoryWindow {
             return Vec::new();
         };
         let rows = track_render_rows(&conn).unwrap_or_default();
-        let template = PathTemplate::default_music();
-        let mut ops = Vec::new();
-        for row in &rows {
-            if !row.album_id.map(|a| albums.contains(&a)).unwrap_or(false) {
-                continue;
-            }
-            let fields = TrackFields {
-                shelf_genre: row.shelf_genre.as_deref(),
-                albumartist: row.album_artist_sort.as_deref(),
-                album: row.album.as_deref(),
-                year: row.year,
-                track_no: row.track_no,
-                disc_no: row.disc_no,
-                title: Some(row.title.as_str()),
-                artist: row.track_artist.as_deref(),
-                ext: row.format.as_deref(),
-            };
-            let rel = template.render(&fields);
-            ops.push(MoveOp {
-                track_id: Some(row.track_id),
-                album_id: row.album_id,
-                src: root.join(&row.file_path),
-                dst: root.join(&rel),
-                db_old: Some(row.file_path.clone()),
-                db_new: Some(rel.to_string_lossy().into_owned()),
-            });
-        }
-        ops
+        organize_ops(&rows, root, Some(albums))
     }
 
     fn run_scoped_move(&self, albums: &[i64], root: &std::path::Path) {
@@ -971,7 +926,10 @@ impl ConservatoryWindow {
         };
         let ops = self.build_scoped_ops(albums, root);
         let created_at = chrono::Utc::now().timestamp();
-        let _ = rt.block_on(mover::apply(
+        // Moving files is the headline risk (CLAUDE.md): never fail silently. The
+        // move is journaled + roll-forward-recoverable, so surface the error and
+        // let the user retry rather than swallow it.
+        if let Err(e) = rt.block_on(mover::apply(
             worker,
             pool,
             MoveKind::Organize,
@@ -979,11 +937,21 @@ impl ConservatoryWindow {
             root,
             created_at,
             ops,
-        ));
+        )) {
+            self.error_dialog("Move failed", &e.to_string());
+            return;
+        }
         // Covers follow their albums after the move (Phase 5d).
         let _ = rt.block_on(conservatory_core::covers::resync_album_covers(
             worker, pool, root,
         ));
+    }
+
+    /// Present a simple error dialog (used for the file-move failure path).
+    fn error_dialog(&self, title: &str, body: &str) {
+        let dialog = adw::AlertDialog::new(Some(title), Some(body));
+        dialog.add_response("ok", "OK");
+        dialog.present(Some(self));
     }
 
     /// Embed the curated DB metadata into the selected files (Phase 5b-ii, spec
@@ -1039,7 +1007,7 @@ impl ConservatoryWindow {
         };
         let (mut written, mut errors) = (0usize, 0usize);
         for r in &rows {
-            match write_track_tags(&root.join(&r.file_path), &tag_write_from(r)) {
+            match write_track_tags(&root.join(&r.file_path), &TagWrite::from(r)) {
                 Ok(()) => written += 1,
                 Err(e) => {
                     eprintln!("embed-tags: {}: {e}", r.file_path);

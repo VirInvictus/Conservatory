@@ -248,7 +248,8 @@ Split: **4c-i** is the D-Bus half (MPRIS2 + the suspend inhibitor, on `zbus`); *
 
 - [ ] Write curated DB metadata back into the files' embedded tags, batched as a job, respecting format capabilities (Vorbis comments, ID3, MP4 atoms). Requires the write side of the 1c tag library.
 - [ ] Write authoritatively: clear conflicting or shadowing tags so the DB-authored values win. On MP3, strip stray APEv2 blocks and custom `TXXX:GENRE` (some players prefer APEv2 over ID3, so a bad APE tag silently defeats the write); never leave a second tag block behind. The Lattice `scripts/apestrip.py` + `retag.py` lesson (ATTRIBUTIONS.md).
-- [ ] CLI: `embed-tags <selector> [--dry-run]`.
+- [ ] A standalone APE-strip hygiene verb, separable from a full write-back (the `apestrip.py` behaviour): remove APEv2 from MP3s, optionally migrating APE-only fields (never genre/rating) into ID3 first, with a repair path for malformed APE headers. Useful on torrent rips before any editing.
+- [ ] CLI: `embed-tags <selector> [--dry-run]`; `strip-ape <selector> [--migrate] [--repair-malformed] [--dry-run]`.
 - [ ] Tests: write-back round-trips through a re-read for each format; the spec §5.6 re-import contract holds (rebuildable subset reconstructs after a wipe-and-reimport).
 
 *Usable artifact:* the library is never a roach motel: you can walk away with self-describing, portable files.
@@ -384,8 +385,9 @@ Modeled on Lattice's `--auditTags` / `--auditBitrate` / `--auditReplayGain` / `-
 
 - [ ] Audits: missing critical tags (title / artist / track number / genre), bitrate below a floor (default 192 kbps), ReplayGain coverage per album (missing / partial / album-missing / ok, recognizing the Opus `R128_*` convention), missing cover art, and low-resolution cover art (a pixel floor, default 500x500, measured from the cover file or embedded art). Most are expressible over the existing DB and `conservatory-search`, but the cover-resolution and ReplayGain-coverage checks need this dedicated pass.
 - [ ] Library statistics: per-format counts with average bitrate, rating distribution, genre / artist / album / track totals, and total size + duration.
+- [ ] Detect MP3s carrying stray APEv2 tags (they shadow ID3 in foobar2000 / DeaDBeeF and silently defeat tag edits); report-only here, the fix is the Phase 5b `strip-ape` verb. The detect-here / fix-there split mirrors duplicates (8b) reporting and the Phase 2c mover doing the cleanup.
 - [ ] (Minor) Rating normalization across player conventions on read (POPM scale differences between WMP, foobar2000, and DeaDBeeF), the Lattice `tags.py` / `rerate.py` lesson, so imported ratings land consistently on the 0 to 5 scale.
-- [ ] CLI: `audit <db> [tags|bitrate|replaygain|art|artres|all]`; `stats <db>`.
+- [ ] CLI: `audit <db> [tags|bitrate|replaygain|art|artres|ape|all]`; `stats <db>`.
 - [ ] Tests: each audit flags its planted-deficiency fixture and passes a clean one; stats totals match a known fixture.
 
 *Usable artifact:* a one-command health report for the library, plus a statistics summary.

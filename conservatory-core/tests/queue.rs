@@ -11,7 +11,8 @@ use conservatory_core::db::{
 };
 use conservatory_core::player;
 use conservatory_core::{
-    ImportOptions, MoveMode, PlayableItem, PlaybackConfig, import_folder, resolve_music_profile,
+    ImportOptions, MoveMode, PlayableItem, PlaybackConfig, PlayerHandle, PlayerSnapshot,
+    import_folder, resolve_music_profile,
 };
 use tempfile::tempdir;
 
@@ -307,6 +308,94 @@ fn engine_move_and_remove_track_the_current_index() {
     wait_for(&player, |s| s.current_index == Some(2) && s.queue_len == 3);
 
     player.shutdown();
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
+/// Append-to-idle starts playing; appending again extends the tail; a fresh
+/// engine resumes the whole queue paused at the cursor (Phase 4b-ii-c). Pauses
+/// keep the 0.3 s fixtures from advancing under the assertions.
+#[test]
+fn engine_append_and_resume() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let libdir = tempdir().unwrap();
+    let srcdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let root = libdir.path().to_path_buf();
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    for name in ["sample.flac", "sample.mp3", "sample.opus", "sample.m4a"] {
+        std::fs::copy(fixtures_dir.join(name), srcdir.path().join(name)).unwrap();
+    }
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+    let pool = ReadPool::new(db.clone(), 3).unwrap();
+    runtime.block_on(async {
+        let opts = ImportOptions {
+            library_root: root.clone(),
+            mode: MoveMode::Copy,
+        };
+        import_folder(&worker, &pool, srcdir.path(), &opts)
+            .await
+            .unwrap();
+    });
+    let cfg = PlaybackConfig::default();
+    let items: Vec<PlayableItem> = {
+        let conn = pool.open().unwrap();
+        search_rows(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|row| {
+                let track = get_track(&conn, row.track_id).unwrap().unwrap();
+                PlayableItem {
+                    track_id: track.id,
+                    source: root.join(&track.file_path),
+                    profile: resolve_music_profile(&track, &cfg),
+                    album_id: track.album_id,
+                    kind: conservatory_core::db::MediaKind::Track,
+                }
+            })
+            .collect()
+    };
+    assert_eq!(items.len(), 4);
+
+    let wait = |player: &PlayerHandle, pred: fn(&PlayerSnapshot) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if pred(&player.snapshot()) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "snapshot condition not met in time"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+
+    // Append to an idle engine: the first item starts playing (pause to freeze).
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.append(items[..2].to_vec());
+    player.pause();
+    wait(&player, |s| {
+        s.current_index == Some(0) && s.paused && s.queue_len == 2
+    });
+    // Append more: the tail grows, the current item is unchanged.
+    player.append(items[2..].to_vec());
+    wait(&player, |s| s.queue_len == 4 && s.current_index == Some(0));
+    player.shutdown();
+
+    // A fresh engine resumes the whole queue paused at the cursor (index 2).
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.resume(items.clone(), 2, 0.0);
+    wait(&player, |s| s.current_index == Some(2) && s.paused);
+    player.shutdown();
+
     runtime.block_on(worker.shutdown_ack()).ok();
 }
 

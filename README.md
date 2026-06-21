@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GNOME-50%2B-4a86cf" alt="GNOME 50+">
-  <img src="https://img.shields.io/badge/status-v0.0.14%20%C2%B7%20Phase%204b--ii--b-orange" alt="Status: v0.0.14, Phase 4b-ii-b">
+  <img src="https://img.shields.io/badge/status-v0.0.15%20%C2%B7%20Phase%204b--ii--c-orange" alt="Status: v0.0.15, Phase 4b-ii-c">
 </p>
 
 ---
@@ -36,7 +36,7 @@ Conservatory absorbs Brandon's podcast client, Belfry. Belfry's Phase 1 work is 
 
 ## Status
 
-v0.0.14, Phase 4b-ii-b shipped. Phases 1 (data layer), 2 (import/organize), and 3 (browse) are complete, and the player now works in the GUI with a reorderable queue:
+v0.0.15, Phase 4b-ii-c shipped. Phases 1 (data layer), 2 (import/organize), and 3 (browse) are complete, and the player works in the GUI with a reorderable queue that survives a restart:
 
 - **Phase 1** — single-writer SQLite worker, read-only pool, numbered migrations, the music schema with FTS5, the embedded-tag reader (`lofty`), and median-cut cover accents.
 - **Phase 2 — the manager is usable headless.** Point the CLI at a folder and get an organized, database-owned library: tag read → resolve → shelf-genre derivation → path-template render → crash-safe move (dry-run preview, undo journal, roll-forward recovery). Verbs: `import`, `organize`, `shelf-genre-set`.
@@ -47,8 +47,9 @@ v0.0.14, Phase 4b-ii-b shipped. Phases 1 (data layer), 2 (import/organize), and 
 - **Phase 4b-i — the unified queue + threaded engine (headless).** A `queue` table and a threaded `Player` (the libmpv host moved onto its own thread behind a `Send` handle) that advances item to item, applying each track's profile, persisting position and play counts, and resuming from the cursor. `conservatory-cli queue add|list|remove|clear` and `play <db> <root>` drive it; `is:queued` search is now live.
 - **Phase 4b-ii-a — the player in the GUI + Now-bar.** Double-click (or press Enter on) a track to play the visible list from there; a persistent bottom Now-bar shows what's playing with a working transport (play/pause, prev/next, seek, volume), polled from the engine. Launch with `conservatory <db> <root>`.
 - **Phase 4b-ii-b — the drag-and-drop queue drawer.** A right-side slide-in drawer (`Ctrl+U`) lists the playing queue with the current track highlighted; drag rows to reorder (or `Alt+↑/↓`), `Delete` to remove, `Ctrl+Shift+C` to clear. Editing the queue never restarts the current track, and the DB queue stays the source of truth.
+- **Phase 4b-ii-c — queue polish.** The saved queue resumes paused at the cursor on launch (reopen and pick up where you left off), and `Ctrl+Enter` appends the browse selection to the queue.
 
-Next: Phase 4b-ii-c (queue polish: launch-resume, append), then 4c (MPRIS + media keys).
+Next: Phase 4c (system integration: MPRIS2, media keys, output-sink picker, suspend inhibitor).
 
 - [`spec.md`](spec.md) — the design contract.
 - [`roadmap.md`](roadmap.md) — the phased plan, broken into independently shippable sub-phases.

@@ -20,7 +20,7 @@ use gtk::glib;
 
 use conservatory_core::db::{
     FacetFilter, Perspective, ReadPool, WorkerHandle, facet_rows, get_tracks, list_perspectives,
-    load_queue_display, spawn_worker,
+    load_queue_display, read_playback_state, spawn_worker,
 };
 use conservatory_core::{PlaybackConfig, PlayerHandle};
 
@@ -277,6 +277,21 @@ impl ConservatoryWindow {
                     win.on_track_activated(pos);
                 }
             });
+
+            // Ctrl+Enter appends the selection (plain Enter / double-click
+            // replaces, via `connect_activate` above).
+            let append = gtk::ShortcutController::new();
+            let weak = self.downgrade();
+            append.add_shortcut(gtk::Shortcut::new(
+                gtk::ShortcutTrigger::parse_string("<Control>Return"),
+                Some(gtk::CallbackAction::new(move |_, _| {
+                    if let Some(win) = weak.upgrade() {
+                        win.queue_append_selection();
+                    }
+                    glib::Propagation::Stop
+                })),
+            ));
+            leaf.column_view.add_controller(append);
         }
 
         // The debounced cascade: a burst of selection changes flushes once,
@@ -365,6 +380,8 @@ impl ConservatoryWindow {
             self.populate_initial();
             self.refresh_perspectives();
         }
+        // Load the saved queue paused at the cursor (Phase 4b-ii-c).
+        self.resume_saved_queue();
     }
 
     /// Double-click / Enter on a track: play the visible leaf list from that row
@@ -447,6 +464,110 @@ impl ConservatoryWindow {
                 self.reload_queue_panel();
             }
         }
+    }
+
+    /// On startup, load the saved DB queue into the engine paused at the cursor
+    /// (Phase 4b-ii-c): reopening the app resumes where playback left off, silent
+    /// until the user presses play.
+    fn resume_saved_queue(&self) {
+        let imp = self.imp();
+        let (Some(pool), Some(player), Some(root)) =
+            (imp.pool.get(), imp.player.get(), imp.library_root.get())
+        else {
+            return;
+        };
+        let Ok(conn) = pool.open() else { return };
+        let rows = load_queue_display(&conn).unwrap_or_default();
+        if rows.is_empty() {
+            return;
+        }
+        let saved = read_playback_state(&conn).ok().flatten();
+        let ordered_ids: Vec<i64> = rows.iter().filter_map(|r| r.track_id).collect();
+        let mut labels = std::collections::HashMap::new();
+        for r in &rows {
+            if let Some(id) = r.track_id {
+                labels.insert(id, (r.title.clone(), r.artist.clone().unwrap_or_default()));
+            }
+        }
+        let tracks = get_tracks(&conn, &ordered_ids).unwrap_or_default();
+        drop(conn);
+
+        let activated = saved
+            .as_ref()
+            .and_then(|s| s.track_id)
+            .and_then(|tid| ordered_ids.iter().position(|&id| id == tid))
+            .unwrap_or(0);
+        let (items, start) = build_play_queue(
+            &ordered_ids,
+            activated,
+            &tracks,
+            root,
+            &PlaybackConfig::default(),
+        );
+        if items.is_empty() {
+            return;
+        }
+        let position = saved.map(|s| s.position).unwrap_or(0.0);
+        *imp.now_labels.borrow_mut() = labels;
+        imp.last_shown.set(None);
+        if let Some(cur) = imp.queue_current.get() {
+            cur.set(Some(start as i64));
+        }
+        player.resume(items, start, position);
+        self.reload_queue_panel();
+    }
+
+    /// `Ctrl+Enter`: append the selected browse rows to the queue (DB tail +
+    /// live engine tail), without disrupting playback.
+    fn queue_append_selection(&self) {
+        let imp = self.imp();
+        let (Some(pool), Some(leaf), Some(player), Some(root), Some(rt), Some(worker)) = (
+            imp.pool.get(),
+            imp.leaf.get(),
+            imp.player.get(),
+            imp.library_root.get(),
+            imp.runtime.get(),
+            imp.worker.get(),
+        ) else {
+            return;
+        };
+
+        let model = &leaf.selection;
+        let n = model.n_items();
+        let mut ordered_ids = Vec::new();
+        let mut labels = Vec::new();
+        for i in 0..n {
+            if model.is_selected(i) {
+                if let Some(row) = model.item(i).and_then(|o| o.downcast::<TrackRow>().ok()) {
+                    let brief = row.brief();
+                    ordered_ids.push(brief.id);
+                    labels.push((brief.id, (brief.title, brief.artist.unwrap_or_default())));
+                }
+            }
+        }
+        if ordered_ids.is_empty() {
+            return;
+        }
+
+        let Ok(conn) = pool.open() else { return };
+        let tracks = get_tracks(&conn, &ordered_ids).unwrap_or_default();
+        drop(conn);
+        let (items, _start) =
+            build_play_queue(&ordered_ids, 0, &tracks, root, &PlaybackConfig::default());
+        if items.is_empty() {
+            return;
+        }
+
+        let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
+        let _ = rt.block_on(worker.enqueue_tracks(queue_ids));
+        {
+            let mut map = imp.now_labels.borrow_mut();
+            for (id, lbl) in labels {
+                map.insert(id, lbl);
+            }
+        }
+        player.append(items);
+        self.reload_queue_panel();
     }
 
     /// Keep the drawer's playing-row highlight in step with the engine: when the

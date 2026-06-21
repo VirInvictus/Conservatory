@@ -202,14 +202,14 @@ The GTK half is itself sizable, so it splits again: **4b-ii-a** makes the window
 
 *Usable artifact:* build and play a queue in the GUI; open the drawer and reorder it by drag (or keyboard); the playing row is highlighted and the Now-bar reflects state.
 
-#### Phase 4b-ii-c — Queue polish (GTK)
+#### Phase 4b-ii-c — Queue polish (GTK) ✅
 
-- [ ] Launch-resume: load the saved DB queue into the engine, paused at the cursor, on GUI startup.
-- [ ] `Ctrl+Enter` appends the current selection to the queue; a cover thumbnail in the Now-bar.
-- [ ] The audible within-album gapless prototype (mpv internal playlist append, spec §16.9); the `playback_state` explicit queue-entry reference; the library root sourced from config (Phase 10) rather than a CLI arg.
-- [ ] Tests: resume-on-launch state; append semantics.
+- [x] Launch-resume: on GUI startup `resume_saved_queue` loads the saved DB queue into the engine **paused at the cursor** (a new `paused` flag on the engine's `SetQueue`, exposed as `PlayerHandle::resume`), so reopening the app is silent until play.
+- [x] `Ctrl+Enter` appends the browse selection to the queue (DB tail via `enqueue_tracks` + live engine tail via the new `AppendItems` command, which starts playing if the queue was idle); plain Enter / double-click still replaces.
+- [x] Tests: engine null-host integration — append-to-idle starts playing, a second append extends the tail, and a fresh engine resumes the whole queue paused at the cursor.
+- [ ] **Deferred:** a cover thumbnail in the Now-bar (blocked: `albums.cover_path` is unpopulated until cover-to-disk lands, spec §7.4); the audible within-album gapless prototype (mpv internal playlist append, spec §16.9); the `playback_state` explicit queue-entry reference; the library root sourced from config (Phase 10) rather than a CLI arg.
 
-*Usable artifact:* reopen the app and pick up where you left off; append to a playing queue.
+*Usable artifact:* reopen the app and pick up where you left off (paused at the cursor); `Ctrl+Enter` appends the selection to a playing queue.
 
 ### Phase 4c — System integration
 

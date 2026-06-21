@@ -15,11 +15,16 @@ use crate::player::item::PlayableItem;
 
 /// A command sent from a consumer to the engine thread.
 pub enum PlayerCommand {
-    /// Replace the queue and cue `start`, then begin playing.
+    /// Replace the queue and cue `start`. Plays immediately unless `paused`
+    /// (the launch-resume path loads paused so the app makes no sound on open).
     SetQueue {
         items: Vec<PlayableItem>,
         start: usize,
+        paused: bool,
     },
+    /// Append items to the queue tail (live; starts playing if the queue was
+    /// idle). Mirrors `worker.enqueue_tracks`.
+    AppendItems(Vec<PlayableItem>),
     Play,
     Pause,
     TogglePause,
@@ -104,7 +109,30 @@ impl PlayerHandle {
 
     /// Replace the queue with `items` and start playing from `start`.
     pub fn play_queue(&self, items: Vec<PlayableItem>, start: usize) {
-        let _ = self.tx.send(PlayerCommand::SetQueue { items, start });
+        let _ = self.tx.send(PlayerCommand::SetQueue {
+            items,
+            start,
+            paused: false,
+        });
+    }
+
+    /// Replace the queue with `items` cued at `start`, **paused**, and seek to
+    /// `position` (the launch-resume path: load where the user left off without
+    /// auto-playing).
+    pub fn resume(&self, items: Vec<PlayableItem>, start: usize, position: f64) {
+        let _ = self.tx.send(PlayerCommand::SetQueue {
+            items,
+            start,
+            paused: true,
+        });
+        if position > 0.0 {
+            let _ = self.tx.send(PlayerCommand::Seek(position));
+        }
+    }
+
+    /// Append items to the queue tail (starts playing if the queue was idle).
+    pub fn append(&self, items: Vec<PlayableItem>) {
+        let _ = self.tx.send(PlayerCommand::AppendItems(items));
     }
 
     pub fn play(&self) {

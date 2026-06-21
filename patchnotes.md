@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.15
+
+Phase 4b-ii-c shipped: queue polish. The queue now survives a restart, and you can add to it from the browse list.
+
+- **Launch-resume:** on startup `resume_saved_queue` loads the saved DB queue into the engine **paused at the cursor** (a new `paused` flag on the engine's `SetQueue`, exposed as `PlayerHandle::resume` + a seek to the saved offset), so reopening the app shows the last track in the Now-bar, paused, with the saved queue in the drawer; press play to continue. Opening makes no sound.
+- **`Ctrl+Enter` append:** appends the browse selection to the queue, both the DB tail (`enqueue_tracks`) and the live engine tail (the new `AppendItems` command, which starts playing if the queue was idle). Plain Enter / double-click still *replaces* the queue.
+- **Tests:** an engine null-host integration test covering append-to-idle (starts playing), a second append (extends the tail, current unchanged), and resume (a fresh engine loads the whole queue paused at the cursor). The GUI wiring is verified by build + manual launch.
+
+Deferred: the Now-bar cover thumbnail (blocked until covers are written to disk, spec §7.4); the audible within-album gapless prototype (§16.9); the `playback_state` explicit queue-entry reference. Phase 4c is the system-integration finish (MPRIS2 + media keys + PipeWire sink picker + suspend inhibitor); the library root moves to config at Phase 10.
+
 ## v0.0.14
 
 Phase 4b-ii-b shipped: a drag-and-drop queue drawer. The queue you're playing is now visible, reorderable, and editable, with the playing track highlighted. (Launch-resume, append, and a cover thumbnail are 4b-ii-c.)

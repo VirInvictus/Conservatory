@@ -160,7 +160,11 @@ impl Engine {
     /// Returns `true` if the command was `Shutdown`.
     fn handle_command(&mut self, cmd: PlayerCommand) -> bool {
         match cmd {
-            PlayerCommand::SetQueue { items, start } => {
+            PlayerCommand::SetQueue {
+                items,
+                start,
+                paused,
+            } => {
                 self.queue = items;
                 if self.queue.is_empty() {
                     self.current = None;
@@ -168,6 +172,23 @@ impl Engine {
                     self.paused = false;
                 } else {
                     self.current = Some(start.min(self.queue.len() - 1));
+                    self.ended = false;
+                    self.load_current();
+                    // Launch-resume loads paused so opening the app is silent.
+                    if paused {
+                        self.set_paused(true);
+                    }
+                    self.flush(StateEvent::Seek, false);
+                }
+            }
+            PlayerCommand::AppendItems(mut items) => {
+                let was_idle = self.current.is_none();
+                let first_new = self.queue.len();
+                self.queue.append(&mut items);
+                // Appending to an idle/empty queue starts playing the first new
+                // item; appending while playing just extends the tail.
+                if was_idle && first_new < self.queue.len() {
+                    self.current = Some(first_new);
                     self.ended = false;
                     self.load_current();
                     self.flush(StateEvent::Seek, false);

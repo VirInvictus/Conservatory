@@ -34,14 +34,66 @@ pub struct FacetRow {
     pub count: i64,
 }
 
-/// A track as shown in the leaf list (Phase 3c enriches this further).
+/// A track as shown in the leaf list (the deadbeef-cui columns: artist, album,
+/// genre, title, duration, rating).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackBrief {
     pub id: i64,
     pub title: String,
     pub artist: Option<String>,
     pub album: Option<String>,
+    /// Raw track genres, comma-joined and sorted, for the Genre column (display
+    /// only; the multi-valued facet still drives narrowing). Empty when untagged.
+    pub genres: String,
     pub duration: Option<f64>,
+    pub rating: u8,
+}
+
+/// A sortable leaf column (Phase 3c). The GTK `ColumnView` header drives this;
+/// the comparator lives here so it is testable headless (the CLAUDE.md rule).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackSort {
+    Artist,
+    Album,
+    Genre,
+    Title,
+    Duration,
+    Rating,
+}
+
+fn nocase(s: &Option<String>) -> String {
+    s.as_deref().unwrap_or("").to_lowercase()
+}
+
+/// Pairwise comparison of two leaf rows by `key`, case-insensitive for text. The
+/// GTK `CustomSorter` and [`sort_tracks`] share this so the two paths never
+/// diverge (the SQL-vs-eval discipline, applied to sorting).
+pub fn cmp_tracks(
+    a: &TrackBrief,
+    b: &TrackBrief,
+    key: TrackSort,
+    descending: bool,
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering::Equal;
+    let ord = match key {
+        TrackSort::Artist => nocase(&a.artist).cmp(&nocase(&b.artist)),
+        TrackSort::Album => nocase(&a.album).cmp(&nocase(&b.album)),
+        TrackSort::Genre => a.genres.to_lowercase().cmp(&b.genres.to_lowercase()),
+        TrackSort::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+        TrackSort::Duration => a
+            .duration
+            .unwrap_or(0.0)
+            .partial_cmp(&b.duration.unwrap_or(0.0))
+            .unwrap_or(Equal),
+        TrackSort::Rating => a.rating.cmp(&b.rating),
+    };
+    if descending { ord.reverse() } else { ord }
+}
+
+/// Stable, case-insensitive sort of the leaf set by `key`. `sort_by` is stable,
+/// so ties keep the browse order `facet_tracks` already produced.
+pub fn sort_tracks(tracks: &mut [TrackBrief], key: TrackSort, descending: bool) {
+    tracks.sort_by(|a, b| cmp_tracks(a, b, key, descending));
 }
 
 const VARIOUS: &str = "Various Artists";
@@ -123,8 +175,14 @@ pub fn facet_rows(
 pub fn facet_tracks(conn: &Connection, filters: &[FacetFilter]) -> Result<Vec<TrackBrief>> {
     let mut params = Vec::new();
     let where_sql = filter_sql(filters, &mut params);
+    // The genre column is a comma-joined, name-ordered roll-up of the track's raw
+    // genres (the inner ORDER BY feeds group_concat in order, so it is stable).
     let sql = format!(
-        "SELECT t.id, t.title, t.duration, ta.name AS artist, al.title AS album
+        "SELECT t.id, t.title, t.duration, t.rating, ta.name AS artist, al.title AS album,
+                (SELECT group_concat(name, ', ') FROM (
+                    SELECT g.name FROM track_genres tg JOIN genres g ON g.id = tg.genre_id
+                    WHERE tg.track_id = t.id ORDER BY g.name COLLATE NOCASE
+                )) AS genres
          FROM tracks t
          LEFT JOIN artists ta ON ta.id = t.artist_id
          LEFT JOIN albums al ON t.album_id = al.id
@@ -139,8 +197,95 @@ pub fn facet_tracks(conn: &Connection, filters: &[FacetFilter]) -> Result<Vec<Tr
             title: r.get("title")?,
             artist: r.get("artist")?,
             album: r.get("album")?,
+            genres: r.get::<_, Option<String>>("genres")?.unwrap_or_default(),
             duration: r.get("duration")?,
+            rating: r.get::<_, i64>("rating")?.clamp(0, 5) as u8,
         })
     })?;
     rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn brief(
+        id: i64,
+        artist: &str,
+        album: &str,
+        genres: &str,
+        title: &str,
+        rating: u8,
+    ) -> TrackBrief {
+        TrackBrief {
+            id,
+            title: title.into(),
+            artist: (!artist.is_empty()).then(|| artist.into()),
+            album: (!album.is_empty()).then(|| album.into()),
+            genres: genres.into(),
+            duration: Some(id as f64), // distinct, so duration sort order is checkable
+            rating,
+        }
+    }
+
+    fn ids(tracks: &[TrackBrief]) -> Vec<i64> {
+        tracks.iter().map(|t| t.id).collect()
+    }
+
+    #[test]
+    fn sorts_case_insensitively_by_text_key() {
+        let mut tracks = vec![
+            brief(1, "boards of canada", "", "", "", 0),
+            brief(2, "Aphex Twin", "", "", "", 0),
+            brief(3, "amon tobin", "", "", "", 0),
+        ];
+        sort_tracks(&mut tracks, TrackSort::Artist, false);
+        assert_eq!(ids(&tracks), vec![3, 2, 1]);
+        sort_tracks(&mut tracks, TrackSort::Artist, true);
+        assert_eq!(ids(&tracks), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn ties_keep_prior_browse_order() {
+        // Same artist → the comparator is Equal, and the stable sort must preserve
+        // the incoming order (the browse order facet_tracks produced).
+        let mut tracks = vec![
+            brief(10, "X", "", "", "", 0),
+            brief(11, "X", "", "", "", 0),
+            brief(12, "X", "", "", "", 0),
+        ];
+        sort_tracks(&mut tracks, TrackSort::Artist, false);
+        assert_eq!(ids(&tracks), vec![10, 11, 12]);
+        sort_tracks(&mut tracks, TrackSort::Artist, true);
+        assert_eq!(ids(&tracks), vec![10, 11, 12], "reverse must not flip ties");
+    }
+
+    #[test]
+    fn numeric_keys_order_by_value() {
+        let mut tracks = vec![
+            brief(1, "", "", "", "", 5),
+            brief(2, "", "", "", "", 1),
+            brief(3, "", "", "", "", 3),
+        ];
+        sort_tracks(&mut tracks, TrackSort::Rating, false);
+        assert_eq!(ids(&tracks), vec![2, 3, 1]);
+
+        // Duration was seeded to the id, so ascending duration is ascending id.
+        sort_tracks(&mut tracks, TrackSort::Duration, false);
+        assert_eq!(ids(&tracks), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn cmp_and_sort_agree() {
+        let a = brief(1, "Aphex Twin", "", "", "", 0);
+        let b = brief(2, "Boards of Canada", "", "", "", 0);
+        assert_eq!(
+            cmp_tracks(&a, &b, TrackSort::Artist, false),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            cmp_tracks(&a, &b, TrackSort::Artist, true),
+            std::cmp::Ordering::Greater
+        );
+    }
 }

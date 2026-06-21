@@ -10,6 +10,7 @@ use libadwaita as adw;
 use adw::prelude::*;
 use gtk::glib;
 
+mod query;
 mod ui;
 
 const APP_ID: &str = "org.virinvictus.Conservatory";
@@ -19,8 +20,11 @@ const APP_ID: &str = "org.virinvictus.Conservatory";
 /// later pass.
 const CSS: &str = "\
 columnview.data-table > listview > row > cell { padding-top: 1px; padding-bottom: 1px; }
+columnview.data-table > listview > row:hover { background: alpha(currentColor, 0.04); }
 columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height: 0; }
 .numeric { font-feature-settings: \"tnum\"; }
+.rating-stars { color: @accent_color; }
+.filter-warn text { background-color: alpha(@warning_color, 0.20); }
 ";
 
 fn load_css() {

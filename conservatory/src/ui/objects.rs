@@ -8,6 +8,8 @@ use gtk::glib;
 use gtk::subclass::prelude::*;
 use gtk4 as gtk;
 
+use conservatory_core::db::TrackBrief;
+
 // --- Facet row (a pane entry: a value + its track count) ---
 
 mod facet_imp {
@@ -81,10 +83,9 @@ mod track_imp {
 
     #[derive(Default)]
     pub struct TrackRow {
-        pub title: RefCell<String>,
-        pub artist: RefCell<String>,
-        pub album: RefCell<String>,
-        pub duration: Cell<f64>,
+        // The whole brief is carried so the column factories render it and the
+        // sorter compares it through core's `cmp_tracks` (one source of truth).
+        pub brief: RefCell<Option<TrackBrief>>,
     }
 
     #[glib::object_subclass]
@@ -101,35 +102,44 @@ glib::wrapper! {
 }
 
 impl TrackRow {
-    pub fn new(
-        title: &str,
-        artist: Option<&str>,
-        album: Option<&str>,
-        duration: Option<f64>,
-    ) -> Self {
+    pub fn new(brief: &TrackBrief) -> Self {
         let obj: Self = glib::Object::new();
-        obj.imp().title.replace(title.to_string());
-        obj.imp().artist.replace(artist.unwrap_or("").to_string());
-        obj.imp().album.replace(album.unwrap_or("").to_string());
-        obj.imp().duration.set(duration.unwrap_or(0.0));
+        obj.imp().brief.replace(Some(brief.clone()));
         obj
     }
 
+    fn with<R>(&self, f: impl FnOnce(&TrackBrief) -> R) -> R {
+        f(self.imp().brief.borrow().as_ref().expect("brief set"))
+    }
+
+    /// A clone of the underlying brief, for the `CustomSorter` comparison.
+    pub fn brief(&self) -> TrackBrief {
+        self.with(|b| b.clone())
+    }
+
     pub fn title(&self) -> String {
-        self.imp().title.borrow().clone()
+        self.with(|b| b.title.clone())
     }
 
     pub fn artist(&self) -> String {
-        self.imp().artist.borrow().clone()
+        self.with(|b| b.artist.clone().unwrap_or_default())
     }
 
     pub fn album(&self) -> String {
-        self.imp().album.borrow().clone()
+        self.with(|b| b.album.clone().unwrap_or_default())
+    }
+
+    pub fn genres(&self) -> String {
+        self.with(|b| b.genres.clone())
+    }
+
+    pub fn rating(&self) -> u8 {
+        self.with(|b| b.rating)
     }
 
     /// `m:ss`, or empty when unknown.
     pub fn duration_text(&self) -> String {
-        let secs = self.imp().duration.get();
+        let secs = self.with(|b| b.duration.unwrap_or(0.0));
         if secs <= 0.0 {
             return String::new();
         }

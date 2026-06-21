@@ -15,14 +15,17 @@ mod writes;
 #[cfg(test)]
 mod fts_tests;
 
-pub use facets::{FacetField, FacetFilter, FacetRow, TrackBrief, facet_rows, facet_tracks};
+pub use facets::{
+    FacetField, FacetFilter, FacetRow, TrackBrief, TrackSort, cmp_tracks, facet_rows, facet_tracks,
+    sort_tracks,
+};
 pub use migrations::CURRENT_VERSION;
-pub use models::{Album, Artist, Genre, Track};
+pub use models::{Album, Artist, Genre, Perspective, Track};
 pub use pool::ReadPool;
 pub use probe::probe_read;
 pub use reads::{
     LibraryCounts, SearchRow, SqlParam, TrackRenderRow, album_track_genres, fts_rank, get_album,
-    get_artist, get_track, library_counts, list_albums, search_rows, search_track_ids,
-    track_render_rows,
+    get_artist, get_track, library_counts, list_albums, list_perspectives, perspective_expression,
+    search_rows, search_track_ids, track_render_rows,
 };
 pub use worker::{WorkerHandle, spawn_worker};

@@ -2,14 +2,15 @@
 # Conservatory browse demo.
 #
 # Imports the local testdata albums into a throwaway library under $TMPDIR and
-# launches the GTK browse window. Nothing is written to the repo or your real
-# music library (testdata is copied, not moved); the throwaway library is removed
-# when you close the window. Run it from anywhere:
+# launches the GTK browse window: faceted panes, a sortable track list, and the
+# Ctrl+F filter bar (Phase 3c). Nothing is written to the repo or your real music
+# library (testdata is copied, not moved); the throwaway library is removed when
+# you close the window. Run it from anywhere:
 #
 #   scripts/demo.sh
 #
-# Set CONSERVATORY_DEMO_NO_GUI=1 to import-and-exit without launching the window
-# (used for a headless smoke check).
+# Set CONSERVATORY_DEMO_NO_GUI=1 to import-and-exit without launching the window:
+# a headless smoke check that previews the facets and the filter-bar grammar.
 
 set -euo pipefail
 
@@ -50,10 +51,22 @@ if [ "$found" -eq 0 ]; then
 fi
 
 if [ "${CONSERVATORY_DEMO_NO_GUI:-0}" = "1" ]; then
-  echo "demo: CONSERVATORY_DEMO_NO_GUI set; facets preview, skipping the window:"
+  echo "demo: CONSERVATORY_DEMO_NO_GUI set; previewing headless, skipping the window."
+  echo
+  echo "=== facets (the browse panes) ==="
   "$CLI" debug-facets "$DB"
+  echo
+  echo "=== filter-bar grammar (spec §3.4; the engine behind the GUI filter bar) ==="
+  for q in 'genre:ambient' 'format:mp3' 'duration:>240 sort:-duration'; do
+    echo "--- search '$q' ---"
+    "$CLI" search "$DB" "$q" --format human
+    echo
+  done
   exit 0
 fi
 
 echo "demo: launching the browse window (close it to clean up) ..."
+echo "  try it: click a facet row to narrow; click a column header to sort;"
+echo "          press Ctrl+F and type a filter, e.g. genre:ambient or rating:>=1;"
+echo "          save it as a Perspective in the left sidebar, then reload it."
 "$GUI" "$DB"

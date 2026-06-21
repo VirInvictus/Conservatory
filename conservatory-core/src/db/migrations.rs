@@ -32,10 +32,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 2,
         sql: include_str!("migrations/0002_move_journal.sql"),
     },
+    Migration {
+        version: 3,
+        sql: include_str!("migrations/0003_perspectives.sql"),
+    },
 ];
 
 /// The `user_version` a fully-migrated database reaches.
-pub const CURRENT_VERSION: i32 = 2;
+pub const CURRENT_VERSION: i32 = 3;
 
 /// Apply any unapplied migrations. Idempotent: running this on a
 /// fully-migrated database is a no-op.
@@ -157,6 +161,7 @@ mod tests {
             "track_genres",
             "move_jobs",
             "move_operations",
+            "perspectives",
         ] {
             assert!(table_exists(&conn, t), "missing table: {t}");
         }

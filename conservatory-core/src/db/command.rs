@@ -112,6 +112,21 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Save (insert or overwrite by name) a Perspective, returning its id.
+    SavePerspective {
+        name: String,
+        expression: String,
+        scope: String,
+        created_at: i64,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Delete a Perspective by id.
+    DeletePerspective {
+        id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Ack a shutdown request. The loop exits naturally once every
     /// `WorkerHandle` clone has dropped and the channel closes.
     Shutdown { reply: oneshot::Sender<()> },
@@ -140,6 +155,8 @@ impl Command {
             Self::CompleteOperation { .. } => "complete_operation",
             Self::RevertOperation { .. } => "revert_operation",
             Self::SetJobState { .. } => "set_job_state",
+            Self::SavePerspective { .. } => "save_perspective",
+            Self::DeletePerspective { .. } => "delete_perspective",
             Self::Shutdown { .. } => "shutdown",
             #[cfg(test)]
             Self::Panic => "panic",

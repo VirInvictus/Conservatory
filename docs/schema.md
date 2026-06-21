@@ -118,6 +118,21 @@ CREATE TABLE move_operations (
 CREATE INDEX idx_move_ops_job ON move_operations(job_id, seq);
 ```
 
+## Perspectives (Phase 3c, spec §3.4)
+
+Named saved searches (Calibre saved searches). The `expression` is the raw filter text, stored verbatim and re-parsed on load so a Perspective inherits later grammar additions for free. `vl:NAME` references in any expression resolve against this table at parse time. `scope` names the target list: `tracks` today, with albums/episodes/books reusing the same table when those surfaces land.
+
+```sql
+CREATE TABLE perspectives (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    expression TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'tracks',
+    created_at INTEGER,
+    UNIQUE (name)
+);
+```
+
 ## Podcast tables (Phase 6, spec §4.2)
 
 Ported from Belfry §4.1 at Phase 6a: `shows`, `episodes`, `playback`, `show_settings`, `listening_sessions`, `chapters`, `tags`, `show_tags`. One change from Belfry: triage Queue state is represented through the unified `queue` table above rather than a per-episode `in_queue` flag. The append-only `listening_sessions` discipline is preserved. Column-level detail migrates into this file as the absorption is implemented.

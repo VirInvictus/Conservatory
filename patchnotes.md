@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.0.10
+
+Phase 3c shipped: the browse window becomes a working library browser. A sortable, multi-select track list; the always-on filter bar wired to the grammar; and Perspectives (named saved searches) in a sidebar, persisted through the single-writer worker (its first appearance in the GUI).
+
+- **Track list (`conservatory/src/ui/track_list.rs`):** the full deadbeef columns (Artist | Album | Genre | Title | Duration | Rating). Click a header to sort; the comparison delegates to `core::cmp_tracks`, so the GTK sort and the headless `sort_tracks` can't drift. Multi-select (Ctrl/Shift) comes from `MultiSelection`; rating renders as accent-tinted symbolic stars (icon-theme glyphs, no font assumption); rows lift on hover. `TrackBrief` gained a name-ordered `genres` roll-up and `rating`.
+- **Filter bar (spec §3.4):** an always-on `SearchEntry` under the header; `Ctrl+F` focuses it; no separate search mode. Typing narrows the leaf through the full grammar, debounced, intersected with the facet selection ("the panes filter, the grammar searches, same surface"). Malformed input degrades to substring and tints the bar, never errors. The composition lives in a non-GTK `query.rs` (headless-tested), keeping core runtime-search-free.
+- **Perspectives (spec §3.4):** migration `0003` adds the core-owned `perspectives` table (saved searches as text, re-parsed on load). The sidebar lists Default + saved searches; Save names the current filter, clicking a row reloads it, Delete removes it. `vl:NAME` now resolves from storage, so a Perspective can reference another. Saves/deletes go through the single-writer worker (`save_perspective` / `delete_perspective`), which the browse window now stands up on a tokio runtime (the in-GUI writer, pulled forward from Phase 5a to back persistence).
+- **Demo:** `scripts/demo.sh`'s headless path now previews the filter-bar grammar (live `search` runs) alongside the facets; the GUI hint mentions sorting, `Ctrl+F`, and Perspectives.
+
+Deferred: live `BatchUpdate` / library deltas (still Phase 5a); user-reconfigurable + persisted pane order (Phase 10); the per-row playing/status glyph (waits for playback state, Phase 4).
+
 ## v0.0.9
 
 Phase 3b shipped: the first GTK4/libadwaita code. `conservatory` is now a launching app with the deadbeef-cui "Columns UI" faceted browse (spec §3.3).

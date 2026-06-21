@@ -140,12 +140,12 @@ The first GTK4/libadwaita code (programmatic UI; facet logic in `conservatory-co
 
 *Usable artifact:* `conservatory <db>` launches the browse window; facet selection narrows downstream panes and the leaf list. (`conservatory-cli debug-facets <db>` exercises the same logic headless.)
 
-### Phase 3c — Track list + Perspectives UI
+### Phase 3c — Track list + Perspectives UI ✅
 
-- [ ] The leaf track list: sortable columns, multi-select (Ctrl/Shift), row affordances (status glyph, rating, hover lift) shared with the future episode list.
-- [ ] Filter bar wired to `conservatory-search`; `Ctrl+F` focuses it; no separate search mode (spec §3.4).
-- [ ] Perspectives surfaced in the UI: save, name, reload (re-parsed from text).
-- [ ] Tests: sort/multi-select model logic; Perspective save/reload round-trip.
+- [x] The leaf track list: sortable columns, multi-select (Ctrl/Shift), row affordances (rating stars, hover lift) shared with the future episode list. Sorting delegates to a pure `core::cmp_tracks`/`sort_tracks` (the GTK `CustomSorter` and the headless comparator share it); rating renders as accent-tinted symbolic stars; `TrackBrief` gained a name-ordered `genres` roll-up + `rating`. (The per-row playing/status glyph waits for playback state, Phase 4.)
+- [x] Filter bar wired to `conservatory-search`; `Ctrl+F` focuses it; no separate search mode (spec §3.4). Always-on `SearchEntry`; the facet set and the grammar intersect on the leaf; malformed input degrades to substring + a yellow tint. The composition lives in a non-GTK `query.rs` (headless-tested), keeping core runtime-search-free (the `conservatory-search` dep stays consumer-side by design).
+- [x] Perspectives surfaced in the UI: save, name, reload (re-parsed from text). Migration `0003` adds the core-owned `perspectives` table; the sidebar lists Default + saved searches; `vl:NAME` resolves from storage. Saves/deletes go through the **single-writer worker, now stood up in the GUI** on a tokio runtime (the in-GUI writer, pulled forward from Phase 5a to back persistence).
+- [x] Tests: sort comparator (case-fold, stable tie-breaks, numeric keys); filter-bar facet∩grammar composition + `vl:` round-trip (binary, headless); Perspective CRUD + `vl:` resolution (core).
 
 *Usable artifact:* **a working library browser.** Browse, filter, sort, and save Perspectives over the managed library.
 

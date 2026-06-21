@@ -152,3 +152,32 @@ pub(crate) fn link_track_genre(conn: &Connection, track_id: i64, genre_id: i64) 
     )?;
     Ok(())
 }
+
+/// Save a Perspective (Phase 3c, spec §3.4), returning its id. Names are unique:
+/// saving an existing name overwrites its expression (the obvious "update my
+/// saved search" behavior), leaving the original `created_at` in place.
+pub(crate) fn save_perspective(
+    conn: &Connection,
+    name: &str,
+    expression: &str,
+    scope: &str,
+    created_at: i64,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO perspectives (name, expression, scope, created_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(name) DO UPDATE SET expression = excluded.expression, scope = excluded.scope",
+        params![name, expression, scope, created_at],
+    )?;
+    let id = conn.query_row(
+        "SELECT id FROM perspectives WHERE name = ?1",
+        params![name],
+        |r| r.get(0),
+    )?;
+    Ok(id)
+}
+
+/// Delete a Perspective by id (idempotent: deleting a gone row is fine).
+pub(crate) fn delete_perspective(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM perspectives WHERE id = ?1", params![id])?;
+    Ok(())
+}

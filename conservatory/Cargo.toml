@@ -28,3 +28,13 @@ conservatory-podcasts = { path = "../conservatory-podcasts", optional = true }
 conservatory-audiobooks = { path = "../conservatory-audiobooks", optional = true }
 gtk4 = { workspace = true }
 libadwaita = { workspace = true }
+# Phase 3c: the filter bar resolves relative date keywords (`added:thisweek`)
+# against today, so the grammar glue needs a NaiveDate.
+chrono = { workspace = true }
+# Phase 3c: the browse window now stands up the single-writer worker (for saving
+# Perspectives), so the binary drives a tokio runtime.
+tokio = { workspace = true }
+
+[dev-dependencies]
+# Headless tests for the filter-bar glue build a fixture DB through the worker.
+tempfile = { workspace = true }

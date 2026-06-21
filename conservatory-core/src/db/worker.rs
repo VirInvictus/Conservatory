@@ -194,6 +194,30 @@ impl WorkerHandle {
         .await
     }
 
+    /// Save a Perspective (insert, or overwrite by name), returning its id.
+    pub async fn save_perspective(
+        &self,
+        name: String,
+        expression: String,
+        scope: String,
+        created_at: i64,
+    ) -> Result<i64> {
+        self.dispatch(|reply| Command::SavePerspective {
+            name,
+            expression,
+            scope,
+            created_at,
+            reply,
+        })
+        .await
+    }
+
+    /// Delete a Perspective by id.
+    pub async fn delete_perspective(&self, id: i64) -> Result<()> {
+        self.dispatch(|reply| Command::DeletePerspective { id, reply })
+            .await
+    }
+
     /// Send a shutdown ack. The loop exits once every `WorkerHandle` clone has
     /// dropped and the channel closes; this just confirms the worker is alive.
     pub async fn shutdown_ack(&self) -> Result<()> {
@@ -368,6 +392,24 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(journal::set_job_state(conn, job_id, state));
+        }
+        Command::SavePerspective {
+            name,
+            expression,
+            scope,
+            created_at,
+            reply,
+        } => {
+            let _ = reply.send(writes::save_perspective(
+                conn,
+                &name,
+                &expression,
+                &scope,
+                created_at,
+            ));
+        }
+        Command::DeletePerspective { id, reply } => {
+            let _ = reply.send(writes::delete_perspective(conn, id));
         }
         Command::Shutdown { reply } => {
             let _ = reply.send(());

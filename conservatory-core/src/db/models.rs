@@ -60,6 +60,16 @@ pub struct Genre {
     pub name: String,
 }
 
+/// A named saved search (spec §3.4). `expression` is the raw filter text, stored
+/// verbatim and re-parsed on load so it inherits later grammar additions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Perspective {
+    pub id: i64,
+    pub name: String,
+    pub expression: String,
+    pub scope: String, // "tracks" today; albums/episodes/books reuse the table later
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

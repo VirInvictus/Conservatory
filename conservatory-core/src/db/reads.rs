@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::db::models::{Album, Artist, Track};
+use crate::db::models::{Album, Artist, Perspective, Track};
 use crate::errors::Result;
 
 /// Library-wide row counts, the Phase 1b "does it load" sanity surface.
@@ -338,4 +338,32 @@ pub(crate) fn row_to_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
         musicbrainz_recording_id: row.get("musicbrainz_recording_id")?,
         added_at: epoch_to_dt(added_at),
     })
+}
+
+/// All saved Perspectives, ordered by name (Phase 3c, spec §3.4).
+pub fn list_perspectives(conn: &Connection) -> Result<Vec<Perspective>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, expression, scope FROM perspectives ORDER BY name COLLATE NOCASE",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(Perspective {
+            id: r.get("id")?,
+            name: r.get("name")?,
+            expression: r.get("expression")?,
+            scope: r.get("scope")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// The raw expression text of a Perspective by name, for `vl:NAME` expansion
+/// (the storage-backed `PerspectiveResolver`). `None` if no such name.
+pub fn perspective_expression(conn: &Connection, name: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT expression FROM perspectives WHERE name = ?1",
+            params![name],
+            |r| r.get(0),
+        )
+        .optional()?)
 }

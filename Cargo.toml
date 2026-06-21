@@ -84,9 +84,12 @@ bytes = "1.7"
 tempfile = "3.14"
 wiremock = "0.6"
 
-# GTK (Phase 3+)
-gtk4 = { version = "0.9", features = ["v4_16"] }
-libadwaita = { version = "0.7", features = ["v1_7"] }
+# GTK (Phase 3+). The version features set the *minimum* GTK/libadwaita we
+# build against: pinned to 4.14 / 1.5 (Ubuntu 24.04 / the CI runner). The GUI
+# only needs APIs at that level (e.g. `adw::AlertDialog`, libadwaita 1.5); raise
+# these only when a newer binding is actually used (and CI's GTK is bumped too).
+gtk4 = { version = "0.9", features = ["v4_14"] }
+libadwaita = { version = "0.7", features = ["v1_5"] }
 
 [profile.release]
 lto = "thin"

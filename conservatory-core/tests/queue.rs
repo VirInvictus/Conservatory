@@ -132,6 +132,28 @@ async fn load_queue_display_returns_ordered_rows_with_titles() {
     assert!(rows[0].artist.is_some());
 }
 
+#[tokio::test]
+async fn track_metadata_joins_title_artist_album() {
+    use conservatory_core::db::track_metadata;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("t.db");
+    let worker = spawn_worker(path.clone()).unwrap();
+    fixtures::generate(&worker, FixtureScale::Small)
+        .await
+        .unwrap();
+    let pool = ReadPool::new(path, 3).unwrap();
+    let conn = pool.open().unwrap();
+
+    let np = track_metadata(&conn, 1).unwrap().unwrap();
+    assert!(!np.title.is_empty());
+    assert!(np.artist.is_some());
+    assert!(np.album.is_some());
+    assert!(np.length.is_some());
+
+    assert!(track_metadata(&conn, 999_999).unwrap().is_none());
+}
+
 // --- Player engine: build a queue of real fixtures and play it to the end.
 
 #[test]

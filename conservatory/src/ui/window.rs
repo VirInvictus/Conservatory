@@ -176,6 +176,15 @@ impl ConservatoryWindow {
             if let Ok(pool) = ReadPool::new(path, 3) {
                 let _ = imp.pool.set(pool);
             }
+
+            // Serve MPRIS2 + the suspend inhibitor on the runtime (Phase 4c-i):
+            // media keys, the GNOME overlay/lock screen, and don't-suspend-while-
+            // playing. Torn down with the runtime at app exit.
+            if let (Some(rt), Some(player), Some(pool)) =
+                (imp.runtime.get(), imp.player.get(), imp.pool.get())
+            {
+                rt.spawn(conservatory_core::mpris::run(player.clone(), pool.clone()));
+            }
         }
 
         let panes = vec![

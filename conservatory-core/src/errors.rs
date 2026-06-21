@@ -34,6 +34,9 @@ pub enum Error {
 
     #[error("player: {0}")]
     Player(String),
+
+    #[error("dbus: {0}")]
+    Dbus(#[from] zbus::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

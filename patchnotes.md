@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.16
+
+Phase 4c-i shipped: MPRIS2 and a suspend inhibitor. The player is now a desktop citizen — media keys, the GNOME media overlay and lock screen, and don't-suspend-while-playing.
+
+- **MPRIS2 (`conservatory-core/src/mpris.rs`, on `zbus 5`, signed off):** serves `org.mpris.MediaPlayer2` and `…Player` on the session bus. Properties (PlaybackStatus, Metadata, Position, Volume, CanGoNext/Previous, …) and methods (Play/Pause/PlayPause/Next/Previous/Stop/Seek/SetPosition) drive the `PlayerHandle`. `run(player, pool)` polls the engine snapshot (~300 ms), emits `PropertiesChanged` on change, and resolves the current track's metadata via a new `track_metadata` read (the snapshot carries only a track id). The GUI spawns it on its runtime; **media keys and the GNOME overlay/lock screen come for free** (GNOME routes them to MPRIS).
+- **Suspend inhibitor:** a logind `Inhibit("sleep", …, "block")` proxy on the system bus, the FD held while playing and released on pause/stop. Best-effort: a missing system bus or logind disables the inhibitor without affecting MPRIS.
+- **In core, not the GTK binary** (spec §16.13): the whole surface is `conservatory-core`, spawned by the GUI; no new widgets. The state→D-Bus mapping is pure, unit-tested helpers (PlaybackStatus, CanGoNext/Previous, wants_inhibit, volume/position conversions, metadata); a `track_metadata` worker test covers the join. Live D-Bus is verified manually (`playerctl`, `systemd-inhibit --list`).
+
+Deferred to 4c-ii: the PipeWire output-sink picker (mpv `audio-device` + a header menu). Also deferred: MPRIS `Quit`/`Raise` wired to the app, `mpris:artUrl` (needs covers on disk, §7.4), and the in-window keyboard playback bindings. After 4c-ii, Phase 4 — the daily-driver player — is complete.
+
 ## v0.0.15
 
 Phase 4b-ii-c shipped: queue polish. The queue now survives a restart, and you can add to it from the browse list.

@@ -16,6 +16,7 @@ pub mod db;
 pub mod errors;
 pub mod import;
 pub mod mover;
+pub mod mpris;
 pub mod path_template;
 pub mod player;
 pub mod shelf_genre;

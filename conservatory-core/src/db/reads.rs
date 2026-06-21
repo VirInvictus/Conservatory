@@ -207,6 +207,40 @@ pub fn load_queue(conn: &Connection) -> Result<Vec<QueueItem>> {
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// The display metadata for the currently-playing track (Phase 4c-i, MPRIS):
+/// what the engine snapshot's `track_id` resolves to. `length` is the track
+/// duration in seconds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NowPlaying {
+    pub title: String,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub length: Option<f64>,
+}
+
+/// Resolve a track id to its title / artist / album / length (the MPRIS
+/// `Metadata` source). Joins the track artist and album.
+pub fn track_metadata(conn: &Connection, track_id: i64) -> Result<Option<NowPlaying>> {
+    conn.query_row(
+        "SELECT t.title, t.duration, ar.name AS artist, al.title AS album
+         FROM tracks t
+         LEFT JOIN artists ar ON ar.id = t.artist_id
+         LEFT JOIN albums al ON al.id = t.album_id
+         WHERE t.id = ?1",
+        params![track_id],
+        |row| {
+            Ok(NowPlaying {
+                title: row.get("title")?,
+                artist: row.get("artist")?,
+                album: row.get("album")?,
+                length: row.get("duration")?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
 /// A unified-queue entry with the display fields the queue panel renders
 /// (Phase 4b-ii-b). `title`/`artist` come from the joined track (empty/None for
 /// a missing or non-track row; episode/book titles arrive at Phases 6/7).

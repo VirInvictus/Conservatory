@@ -46,5 +46,6 @@ Recorded here as dependencies are signed off (spec §11) and added to the worksp
 | `gtk4` | MIT (bindings); GTK4 lib LGPL-2.1-or-later | The GUI toolkit for the browse window and all later GTK surfaces | 3b |
 | `libadwaita` | MIT (bindings); libadwaita lib LGPL-2.1-or-later | GNOME/Adwaita application window, header bar, and widgets | 3b |
 | `libmpv2` | MIT (bindings); libmpv lib GPL-2.0-or-later / LGPL-2.1-or-later | The playback host (`player::host::MpvHost`): one libmpv instance, property API + input commands. Signed off over the unmaintained `libmpv-rs`; `symphonia` was not a candidate (decode-only, no filter graph for the Phase 6c spoken-word chain) | 4a |
+| `zbus` | MIT | D-Bus for MPRIS2 (`org.mpris.MediaPlayer2` + `.Player`, in `core::mpris`) and the logind suspend inhibitor (spec §6.5). Pure-Rust, on the `tokio` feature | 4c-i |
 
 System libraries: `libmpv` (Phase 4a; built with the ffmpeg filter library `silenceremove`, `rubberband`, `acompressor`, `equalizer`, `loudnorm` for the Phase 6c spoken-word profile; on Fedora that means RPM Fusion's `ffmpeg-libs`, not `ffmpeg-free-libs`), `gtk4`, `libadwaita`, and `libsecret` (via `oo7`, Phase 6). libmpv links ffmpeg/librubberband, the GPL-forcing chain documented above; the `libmpv2` Rust bindings are MIT but the linked library carries the GPL obligation. Per-dependency notes fill in as each lands.

@@ -213,11 +213,22 @@ The GTK half is itself sizable, so it splits again: **4b-ii-a** makes the window
 
 ### Phase 4c — System integration
 
-- [ ] MPRIS2 (`org.mpris.MediaPlayer2`) via `zbus`: full metadata for the current item, play/pause/next/previous/seek, exposed to GNOME's media overlay and lock screen.
-- [ ] Media keys / headset buttons; PipeWire output-sink picker; suspend inhibitor during active playback (spec §6.5).
-- [ ] Tests: MPRIS metadata mapping; inhibitor lifecycle (acquire on play, release on stop).
+Split: **4c-i** is the D-Bus half (MPRIS2 + the suspend inhibitor, on `zbus`); **4c-ii** is the audio-output-device picker (an mpv-property + GUI-menu mechanism, no D-Bus).
 
-*Usable artifact:* **a daily-driver music player.** It replaces deadbeef for the managed library, with system media integration.
+#### Phase 4c-i — MPRIS2 + suspend inhibitor ✅
+
+- [x] `conservatory-core/src/mpris.rs` serves `org.mpris.MediaPlayer2` + `…Player` on the session bus via `zbus 5` (signed off, ATTRIBUTIONS.md): metadata, `PlaybackStatus`, `Position`, `Volume`, `CanGoNext/Previous`, and `Play`/`Pause`/`PlayPause`/`Next`/`Previous`/`Stop`/`Seek`/`SetPosition` driving the `PlayerHandle`. `run(player, pool)` polls the snapshot (~300 ms), emits `PropertiesChanged` on change, and resolves the current track's metadata via a new `track_metadata` read. The GUI spawns it on its runtime; **media keys, the GNOME overlay, and the lock screen come for free.**
+- [x] Suspend inhibitor: a logind `org.freedesktop.login1.Manager.Inhibit("sleep", …, "block")` proxy on the system bus, the FD held while playing and dropped on pause/stop (best-effort: a missing system bus doesn't break MPRIS).
+- [x] Tests: pure mapping helpers (`playback_status`, `can_go_next/previous`, `wants_inhibit`, volume/position conversions, `metadata_fields`) + a `track_metadata` worker test. Live D-Bus serving + the logind inhibit are verified manually (`playerctl`, `systemd-inhibit --list`), the build-plus-manual precedent.
+
+*Usable artifact:* `playerctl` and the keyboard media keys drive playback; the GNOME media overlay/lock screen show the track; the machine won't suspend mid-track.
+
+#### Phase 4c-ii — Output-sink picker (GTK)
+
+- [ ] mpv `audio-device` / `audio-device-list` exposed on `MpvHost` + a `SetAudioDevice` engine command; a header menu lists the PipeWire sinks and switches output (spec §6.5).
+- [ ] Tests: device-list parse / selection model.
+
+*Usable artifact:* **a daily-driver music player.** It replaces deadbeef for the managed library, with full system media integration and output-device selection.
 
 ---
 

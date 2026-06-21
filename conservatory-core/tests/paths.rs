@@ -47,10 +47,11 @@ async fn fixture_library_renders_unique_paths() {
         "fixture rendered colliding paths"
     );
 
-    // Spot-check the rendered shape: genre / artist / album (year) / NN - title.ext.
+    // Spot-check the rendered shape: Music / genre / artist / album (year) / NN - title.ext.
     let sample = paths[0].to_string_lossy();
     assert!(sample.ends_with(".flac"), "{sample}");
-    assert_eq!(sample.matches('/').count(), 3, "{sample}");
+    assert!(sample.starts_with("Music/"), "{sample}");
+    assert_eq!(sample.matches('/').count(), 4, "{sample}");
 
     worker.shutdown_ack().await.unwrap();
 }

@@ -90,7 +90,7 @@ async fn imports_an_album_into_the_managed_tree() {
         );
         assert!(
             row.file_path
-                .starts_with("Ambient/Test Album Artist/Test Album (2021)/")
+                .starts_with("Music/Ambient/Test Album Artist/Test Album (2021)/")
         );
     }
     assert_eq!(fs::read_dir(src.path()).unwrap().count(), 4, "sources kept");
@@ -192,16 +192,20 @@ async fn shelf_genre_set_then_organize_moves_the_album() {
     // Every file now lives under Jazz/, and no files remain under Ambient/
     // (organize leaves empty directories behind; only files matter).
     for row in track_render_rows(&pool.open().unwrap()).unwrap() {
-        assert!(row.file_path.starts_with("Jazz/"), "{}", row.file_path);
+        assert!(
+            row.file_path.starts_with("Music/Jazz/"),
+            "{}",
+            row.file_path
+        );
         assert!(lib.root.join(&row.file_path).exists());
     }
     assert_eq!(
-        count_files(&lib.root.join("Ambient")),
+        count_files(&lib.root.join("Music/Ambient")),
         0,
         "no files left in Ambient/ (the cover follows the album, Phase 5d)"
     );
     assert_eq!(
-        count_files(&lib.root.join("Jazz")),
+        count_files(&lib.root.join("Music/Jazz")),
         5,
         "four audio files + the cover under Jazz/ (Phase 5d)"
     );

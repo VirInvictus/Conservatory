@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.23
+
+The default music layout gains a top-level **`Music/`** folder, so a library root holds `Music/`, `Audiobooks/`, and `Podcasts/` side by side (spec §5.1).
+
+- `DEFAULT_MUSIC_TEMPLATE` is now `Music/{shelf_genre}/{albumartist}/{album} ({year})/{track:02} - {title}` (was no prefix). New imports land under `Music/`.
+- **Existing managed libraries:** running `organize` re-shelves the music tree into `Music/`. The move is journaled and undoable like any other, but it relocates every album, so expect one big move the first time.
+- Docs: spec §5.1 + §5.7 + `docs/path-template.md` record the canonical per-media layout (audiobooks put standalone books under a literal `Standalone/` folder; podcasts already used `Podcasts/<show>/<episode>`).
+
+This is a docs-and-default change; no engine behaviour changed beyond the rendered path.
+
 ## v0.0.22
 
 Phases 5c (ReplayGain scan) and 5d (cover art to disk) shipped together. **Phase 5 — bulk editing, write-back, ReplayGain, and covers — is complete.**

@@ -403,7 +403,7 @@ The database is truth; the on-disk tree is a *render* of a configurable path tem
 
 Default template string: `Music/{shelf_genre}/{albumartist}/{album} ({year})/{track:02} - {title}`. Because the layout is a render of the database, re-shelving an album is a *template-or-field change*, not a lock-in. The template is user-editable; `{shelf_genre}` is the only piece that depends on the genre decision in §5.2.
 
-> **Implementation status (through v0.0.22):** the shipped `DEFAULT_MUSIC_TEMPLATE` still omits the `Music/` prefix (`{shelf_genre}/…`). Adding the prefix is a pending, deliberate change: it re-shelves an existing managed library into `Music/` on the next `organize`, so it ships with updated tests and a release note.
+> **Implemented in v0.0.23:** `DEFAULT_MUSIC_TEMPLATE` carries the `Music/` prefix. A library managed by an earlier build re-shelves into `Music/` on its next `organize` (the move is journaled + undoable like any other).
 
 An **album is the unit that moves.** A single album resolves to exactly one path: one shelf genre and one album artist drive the directory, even when track-level genres or artists disagree. Compilations resolve their album-artist component to a **Various Artists** bucket.
 
@@ -569,7 +569,7 @@ Read commands open the DB read-only at the process level. Write commands spin up
 ```toml
 [library]
 root = "~/Music"
-path_template = "{shelf_genre}/{albumartist}/{album} ({year})/{track:02} - {title}"
+path_template = "Music/{shelf_genre}/{albumartist}/{album} ({year})/{track:02} - {title}"
 import_mode = "copy"          # "copy" | "move"
 embed_tags_on_edit = true
 

@@ -43,12 +43,10 @@ rendered under the library root as:
                 └── cover.jpg
 ```
 
-> **Implementation status (through v0.0.22):** `DEFAULT_MUSIC_TEMPLATE` in
-> `conservatory-core/src/path_template.rs` still omits the `Music/` prefix.
-> Adding it re-shelves an existing managed library into `Music/` on the next
-> `organize`, so it is a deliberate change shipped with updated tests + a note,
-> not silently. The audiobook layout puts standalone books under a literal
-> `Standalone/` folder (spec §5.7).
+> **Implemented in v0.0.23:** `DEFAULT_MUSIC_TEMPLATE` carries the `Music/`
+> prefix. A library managed by an earlier build re-shelves into `Music/` on its
+> next `organize` (journaled + undoable). The audiobook layout puts standalone
+> books under a literal `Standalone/` folder (spec §5.7).
 
 ## Tokens
 

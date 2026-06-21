@@ -16,9 +16,10 @@ use std::path::PathBuf;
 
 use crate::errors::{Error, Result};
 
-/// The default music template (spec §5.1).
+/// The default music template (spec §5.1). Music lives under a top-level
+/// `Music/` folder beside `Audiobooks/` and `Podcasts/` in the library root.
 pub const DEFAULT_MUSIC_TEMPLATE: &str =
-    "{shelf_genre}/{albumartist}/{album} ({year})/{track:02} - {title}";
+    "Music/{shelf_genre}/{albumartist}/{album} ({year})/{track:02} - {title}";
 
 /// Fallbacks for the structural folder levels, so a component is never empty.
 const UNKNOWN_GENRE: &str = "Unknown";
@@ -378,7 +379,7 @@ mod tests {
     fn default_template_full_render() {
         assert_eq!(
             render(&fields()),
-            "Electronic/Boards of Canada/Geogaddi (2002)/03 - Music Is Math.flac"
+            "Music/Electronic/Boards of Canada/Geogaddi (2002)/03 - Music Is Math.flac"
         );
     }
 
@@ -394,7 +395,7 @@ mod tests {
             render(&f),
             // The trailing dot in "I.A.O." is stripped as a filesystem-safety
             // rule before the extension is appended; the tag keeps the true value.
-            "Electronic/Various Artists/Artificial Intelligence (1992)/01 - I.A.O.flac"
+            "Music/Electronic/Various Artists/Artificial Intelligence (1992)/01 - I.A.O.flac"
         );
     }
 
@@ -404,7 +405,7 @@ mod tests {
         f.year = None;
         assert_eq!(
             render(&f),
-            "Electronic/Boards of Canada/Geogaddi/03 - Music Is Math.flac"
+            "Music/Electronic/Boards of Canada/Geogaddi/03 - Music Is Math.flac"
         );
     }
 
@@ -414,7 +415,7 @@ mod tests {
         f.track_no = None;
         assert_eq!(
             render(&f),
-            "Electronic/Boards of Canada/Geogaddi (2002)/Music Is Math.flac"
+            "Music/Electronic/Boards of Canada/Geogaddi (2002)/Music Is Math.flac"
         );
     }
 
@@ -426,7 +427,7 @@ mod tests {
         };
         assert_eq!(
             render(&f),
-            "Unknown/Various Artists/Unknown Album/Untitled.mp3"
+            "Music/Unknown/Various Artists/Unknown Album/Untitled.mp3"
         );
     }
 

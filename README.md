@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GNOME-50%2B-4a86cf" alt="GNOME 50+">
-  <img src="https://img.shields.io/badge/status-v0.0.22%20%C2%B7%20Phase%205%20complete-orange" alt="Status: v0.0.22, Phase 5 complete">
+  <img src="https://img.shields.io/badge/status-v0.0.23%20%C2%B7%20Phase%205%20complete-orange" alt="Status: v0.0.23, Phase 5 complete">
 </p>
 
 ---
@@ -36,7 +36,7 @@ Conservatory absorbs Brandon's podcast client, Belfry. Belfry's Phase 1 work is 
 
 ## Status
 
-v0.0.22, Phase 5 complete. Phases 1 (data layer), 2 (import/organize), 3 (browse), and 4 (playback) are done — a daily-driver music player — and Phase 5 adds the full editing/maintenance surface: edit metadata (CLI + GUI), write it back into the files, scan ReplayGain, and manage cover art:
+v0.0.23, Phase 5 complete. Phases 1 (data layer), 2 (import/organize), 3 (browse), and 4 (playback) are done — a daily-driver music player — and Phase 5 adds the full editing/maintenance surface: edit metadata (CLI + GUI), write it back into the files, scan ReplayGain, and manage cover art. The managed tree is laid out as `Music/ | Audiobooks/ | Podcasts/` under the library root (spec §5.1):
 
 - **Phase 1** — single-writer SQLite worker, read-only pool, numbered migrations, the music schema with FTS5, the embedded-tag reader (`lofty`), and median-cut cover accents.
 - **Phase 2 — the manager is usable headless.** Point the CLI at a folder and get an organized, database-owned library: tag read → resolve → shelf-genre derivation → path-template render → crash-safe move (dry-run preview, undo journal, roll-forward recovery). Verbs: `import`, `organize`, `shelf-genre-set`.

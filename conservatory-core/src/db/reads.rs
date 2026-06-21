@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::db::models::{Album, Artist, Perspective, Track};
+use crate::db::models::{Album, Artist, MediaKind, Perspective, QueueItem, Track};
 use crate::errors::Result;
 
 /// Library-wide row counts, the Phase 1b "does it load" sanity surface.
@@ -160,6 +160,33 @@ pub fn read_playback_state(conn: &Connection) -> Result<Option<PlaybackStateRow>
     .map_err(Into::into)
 }
 
+/// The unified queue in order (spec §4.3, §6.1, Phase 4b). The engine resolves
+/// each `track` row into a `PlayableItem`; episode/book rows arrive at Phases
+/// 6/7. Ordered by the contiguous `position`.
+pub fn load_queue(conn: &Connection) -> Result<Vec<QueueItem>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, position, kind, track_id, episode_id, book_id
+         FROM queue ORDER BY position",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let kind: String = row.get("kind")?;
+        // The kind column is CHECK-constrained to the three known values, so a
+        // parse failure here means a corrupt DB; surface it as a row error.
+        let kind = kind.parse::<MediaKind>().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+        Ok(QueueItem {
+            id: row.get("id")?,
+            position: row.get("position")?,
+            kind,
+            track_id: row.get("track_id")?,
+            episode_id: row.get("episode_id")?,
+            book_id: row.get("book_id")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
 /// A track projected for search (Phase 3a). The CLI/GUI maps this to
 /// `conservatory_search::SearchItem` for the in-memory fallback path; `track_id`
 /// pairs a match back to its row.
@@ -188,13 +215,16 @@ const GENRE_SEP: char = '\u{1f}'; // unit separator: safe group_concat delimiter
 /// Every track with the full search projection (Phase 3a). Genres are aggregated
 /// via `group_concat`; `played`/`queued` are derived. Ordered by track id.
 pub fn search_rows(conn: &Connection) -> Result<Vec<SearchRow>> {
-    // The `queue` table arrives with playback (Phase 4b); until then nothing is
-    // queued, so `is:queued` matches nothing (here and in sql_translate).
+    // `queued` is membership in the unified queue (Phase 4b): a track is queued
+    // iff a `kind='track'` row references it. EXISTS keeps it one row per track
+    // regardless of how many times the track appears in the queue.
     let sql = format!(
         "SELECT t.id, t.title, t.added_at, t.rating, t.bitrate, t.duration, t.format,
                 t.play_count, t.starred,
                 ta.name AS track_artist, aa.name AS album_artist,
                 al.title AS album, al.shelf_genre, al.year,
+                EXISTS (SELECT 1 FROM queue q
+                         WHERE q.kind = 'track' AND q.track_id = t.id) AS queued,
                 (SELECT group_concat(g.name, '{GENRE_SEP}')
                    FROM track_genres tg JOIN genres g ON g.id = tg.genre_id
                   WHERE tg.track_id = t.id) AS genres
@@ -226,7 +256,7 @@ pub fn search_rows(conn: &Connection) -> Result<Vec<SearchRow>> {
             format: row.get("format")?,
             played: play_count > 0,
             starred: row.get("starred")?,
-            queued: false, // no queue table until Phase 4b
+            queued: row.get::<_, i64>("queued")? != 0,
         })
     })?;
     rows.map(|r| r.map_err(Into::into)).collect()

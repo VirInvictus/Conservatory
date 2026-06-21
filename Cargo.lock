@@ -245,7 +245,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "conservatory"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "chrono",
  "conservatory-audiobooks",
@@ -260,11 +260,11 @@ dependencies = [
 
 [[package]]
 name = "conservatory-audiobooks"
-version = "0.0.11"
+version = "0.0.12"
 
 [[package]]
 name = "conservatory-cli"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "anyhow",
  "chrono",
@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-core"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "chrono",
  "conservatory-search",
@@ -296,11 +296,11 @@ dependencies = [
 
 [[package]]
 name = "conservatory-podcasts"
-version = "0.0.11"
+version = "0.0.12"
 
 [[package]]
 name = "conservatory-search"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "chrono",
  "regex",

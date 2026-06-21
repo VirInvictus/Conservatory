@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GNOME-50%2B-4a86cf" alt="GNOME 50+">
-  <img src="https://img.shields.io/badge/status-v0.0.11%20%C2%B7%20Phase%204a-orange" alt="Status: v0.0.11, Phase 4a">
+  <img src="https://img.shields.io/badge/status-v0.0.12%20%C2%B7%20Phase%204b--i-orange" alt="Status: v0.0.12, Phase 4b-i">
 </p>
 
 ---
@@ -15,7 +15,7 @@
 
 **Calibre for audio.**
 
-A native GNOME library manager that owns and organizes your music and podcasts on disk, presented through a foobar2000 Columns UI browse surface and played through a libmpv daily-driver engine that runs both media types from a single queue. v0.0.11: the manager is usable headless (import, organize, shelf-genre resolution, and crash-safe file moves with dry-run + undo), the GTK Columns UI browse window is a working library browser (sortable track list, filter bar wired to the Calibre-style search grammar, saved Perspectives), and the libmpv playback engine now plays a track with gapless + ReplayGain and resumes where it left off. The workspace is structured around compile-time plugins with music as the native program.
+A native GNOME library manager that owns and organizes your music and podcasts on disk, presented through a foobar2000 Columns UI browse surface and played through a libmpv daily-driver engine that runs both media types from a single queue. v0.0.12: the manager is usable headless (import, organize, shelf-genre resolution, and crash-safe file moves with dry-run + undo), the GTK Columns UI browse window is a working library browser (sortable track list, filter bar wired to the Calibre-style search grammar, saved Perspectives), and the libmpv playback engine now runs on its own thread driving a real unified queue: build a queue, play through it with gapless + ReplayGain, and resume from where you left off. The workspace is structured around compile-time plugins with music as the native program.
 
 ## Why this exists
 
@@ -36,16 +36,17 @@ Conservatory absorbs Brandon's podcast client, Belfry. Belfry's Phase 1 work is 
 
 ## Status
 
-v0.0.11, Phase 4a shipped. Phases 1 (data layer), 2 (import/organize), and 3 (browse) are complete, and the playback engine has begun:
+v0.0.12, Phase 4b-i shipped. Phases 1 (data layer), 2 (import/organize), and 3 (browse) are complete, and the playback engine is taking shape:
 
 - **Phase 1** — single-writer SQLite worker, read-only pool, numbered migrations, the music schema with FTS5, the embedded-tag reader (`lofty`), and median-cut cover accents.
 - **Phase 2 — the manager is usable headless.** Point the CLI at a folder and get an organized, database-owned library: tag read → resolve → shelf-genre derivation → path-template render → crash-safe move (dry-run preview, undo journal, roll-forward recovery). Verbs: `import`, `organize`, `shelf-genre-set`.
 - **Phase 3a** — `conservatory-search`, the Calibre-style expression grammar (lex → parse → eval + all-or-nothing SQL translate, bm25 + recency ranking), exposed as `conservatory-cli search`.
 - **Phase 3b** — the first GTK4/libadwaita code: the deadbeef-cui faceted browse window (Genre → Album Artist → Album panes + a track table), with facet logic kept headless in core.
 - **Phase 3c — a working library browser.** A sortable, multi-select track list (Artist | Album | Genre | Title | Duration | Rating); the always-on filter bar (`Ctrl+F`) wired to the grammar, intersected with the facets; and Perspectives (named saved searches) in a sidebar, persisted through the single-writer worker now stood up in the GUI.
-- **Phase 4a — the libmpv playback host + music profile.** `conservatory-cli play <db> [track_id]` plays a track through libmpv with gapless and ReplayGain (mpv-native, read-only; no EQ/DSP yet), persists position on the 30 s insurance interval, and resumes the saved cursor across a restart. The engine, profile resolution, and state logic live in core; the threaded queue, Now-bar, and MPRIS are next.
+- **Phase 4a — the libmpv playback host + music profile.** Plays a track through libmpv with gapless and ReplayGain (mpv-native, read-only; no EQ/DSP yet), persists position on the 30 s insurance interval, and resumes the saved cursor across a restart. The engine, profile resolution, and state logic live in core.
+- **Phase 4b-i — the unified queue + threaded engine (headless).** A `queue` table and a threaded `Player` (the libmpv host moved onto its own thread behind a `Send` handle) that advances item to item, applying each track's profile, persisting position and play counts, and resuming from the cursor. `conservatory-cli queue add|list|remove|clear` and `play <db> <root>` drive it; `is:queued` search is now live.
 
-Next: Phase 4b (unified queue + Now-bar), then 4c (MPRIS + media keys).
+Next: Phase 4b-ii (Now-bar + drag-and-drop queue view in the GUI), then 4c (MPRIS + media keys).
 
 - [`spec.md`](spec.md) — the design contract.
 - [`roadmap.md`](roadmap.md) — the phased plan, broken into independently shippable sub-phases.

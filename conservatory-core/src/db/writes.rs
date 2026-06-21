@@ -216,3 +216,100 @@ pub(crate) fn increment_play_count(conn: &Connection, track_id: i64, played_at: 
     )?;
     Ok(())
 }
+
+// --- Unified queue (Phase 4b, spec §4.3). Positions stay contiguous 0..n-1;
+// every mutation is one transaction on the single writer, so there is no
+// concurrent writer to race the renumber. Phase 4b-i enqueues `track` rows only.
+
+/// Append tracks at the tail, preserving order. Each new row takes the next
+/// free position after the current maximum.
+pub(crate) fn enqueue_tracks(conn: &mut Connection, track_ids: &[i64]) -> Result<()> {
+    let tx = conn.transaction()?;
+    let base: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM queue",
+        [],
+        |r| r.get(0),
+    )?;
+    for (offset, &track_id) in track_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO queue (position, kind, track_id) VALUES (?1, 'track', ?2)",
+            params![base + offset as i64, track_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Remove the entry at `position` and close the gap (shift everything after it
+/// down by one), keeping positions contiguous.
+pub(crate) fn remove_queue_item(conn: &mut Connection, position: i64) -> Result<()> {
+    let tx = conn.transaction()?;
+    let removed = tx.execute("DELETE FROM queue WHERE position = ?1", params![position])?;
+    if removed > 0 {
+        tx.execute(
+            "UPDATE queue SET position = position - 1 WHERE position > ?1",
+            params![position],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Move the entry at `from` to `to`, shifting the items between them to keep
+/// positions contiguous. Both are clamped to the current range; a no-op `from`
+/// (nothing there) leaves the queue untouched.
+pub(crate) fn reorder_queue(conn: &mut Connection, from: i64, to: i64) -> Result<()> {
+    let tx = conn.transaction()?;
+    let count: i64 = tx.query_row("SELECT COUNT(*) FROM queue", [], |r| r.get(0))?;
+    if count > 0 {
+        let to = to.clamp(0, count - 1);
+        let id: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM queue WHERE position = ?1",
+                params![from],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(id) = id {
+            if from < to {
+                tx.execute(
+                    "UPDATE queue SET position = position - 1 WHERE position > ?1 AND position <= ?2",
+                    params![from, to],
+                )?;
+            } else if from > to {
+                tx.execute(
+                    "UPDATE queue SET position = position + 1 WHERE position >= ?1 AND position < ?2",
+                    params![to, from],
+                )?;
+            }
+            if from != to {
+                tx.execute(
+                    "UPDATE queue SET position = ?1 WHERE id = ?2",
+                    params![to, id],
+                )?;
+            }
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Empty the queue.
+pub(crate) fn clear_queue(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM queue", [])?;
+    Ok(())
+}
+
+/// Replace the whole queue with `track_ids` in order (the "play these now" path).
+pub(crate) fn replace_queue_with_tracks(conn: &mut Connection, track_ids: &[i64]) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM queue", [])?;
+    for (pos, &track_id) in track_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO queue (position, kind, track_id) VALUES (?1, 'track', ?2)",
+            params![pos as i64, track_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}

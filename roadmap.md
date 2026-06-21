@@ -167,12 +167,27 @@ A daily-driver music player. Profile switching at album/kind boundaries (spec §
 
 ### Phase 4b — Unified queue + Now-bar
 
-- [ ] `queue` table → in-memory `Vec<PlayableItem>`; position writes debounced (spec §4.3, §6.1). `PlayableItem { source, kind, profile }`.
-- [ ] On advance, apply the item's profile (filter chain, ReplayGain mode, gapless/crossfade) before playing. Prototype the music-track ↔ (future) episode profile swap mid-queue here (spec §16.9), even though episodes arrive at Phase 6.
-- [ ] Persistent Now-bar transport across views; queue view as a single drag-reorderable list, each row badged with its kind.
-- [ ] Tests: queue model (add/remove/reorder, position integrity); PlayableItem profile resolution.
+Split into two shippable sub-phases: **4b-i** lands the queue + the threaded engine headless (CLI-testable, the hard rule); **4b-ii** is the GTK Now-bar + queue view that consumes them.
 
-*Usable artifact:* build and play a queue; reorder it; the Now-bar reflects state.
+#### Phase 4b-i — Unified queue + threaded Player (headless) ✅
+
+- [x] `queue` table (migration `0005`, spec §4.3) → in-memory `Vec<PlayableItem>`; the full column set lands (the unified queue is a core commitment) but only `track_id` carries a foreign key — `foreign_keys = ON` refuses any DML on a child whose parent table is absent, so the `episode_id`/`book_id` FKs are added when `episodes`/`books` land (Phases 6/7) via a table rebuild. Positions stay contiguous `0..n-1`, renumbered transactionally on the single writer (`enqueue`/`remove`/`reorder`/`clear`/`replace`).
+- [x] The threaded `Player`: a dedicated `std::thread` owns the `!Send` `MpvHost` (built there via a `make_host` factory), behind a `Send + Clone` `PlayerHandle` (command channel out, `Arc<Mutex<PlayerSnapshot>>` polled back). The 4a CLI pump-loop is lifted into `player::engine`. `PlayableItem { track_id, source, profile, album_id, kind }`.
+- [x] On advance, apply the item's profile before playing (per-item `host.load`, the spec §16.9 boundary switch with the music profile). Advance only on natural `Eof`; an errored item skips; self-initiated `Stop`/`Redirect` (from our own load) do not advance. Persistence split (spec §6.4): debounced ticks fire-and-forget, terminal writes (pause/seek/stop/shutdown/final-EOF play-count) block on the worker so they land. *Audible within-album gaplessness (mpv playlist append) is deferred to 4b-ii, where it is verified by ear.*
+- [x] `is:queued` wired up (was inert since 3a): `sql_translate` emits a `queue` subquery on the SQL fast path; the eval path reads `SearchRow.queued` (an `EXISTS` against the queue), populated in `search_rows`.
+- [x] CLI: `queue add|list|remove|clear`; `play <db> <root> [track_id]` drives the engine through the queue (root resolves the relative `file_path`s), polling the snapshot until the queue ends.
+- [x] Tests: queue position integrity (enqueue/remove/reorder stay contiguous); `is:queued` membership; the engine plays a queue of imported fixtures to its end through a null audio output, incrementing each play count and landing the cursor on the last item (`tests/queue.rs`).
+
+*Usable artifact:* `conservatory-cli queue add` / `play <db> <root>` builds and plays a queue headlessly; the engine advances item to item applying each profile, persists position + play counts, and resumes from the saved cursor.
+
+#### Phase 4b-ii — Now-bar + queue view (GTK)
+
+- [ ] Persistent Now-bar transport across views, fed by polling the `PlayerHandle` snapshot on a `glib` timeout; track-row activation enqueues/plays.
+- [ ] Queue view as a single **drag-and-drop** reorderable list (keyboard `Alt+↑/↓`, `Delete`, `Ctrl+Shift+C` too), each row badged with its kind.
+- [ ] The audible within-album gapless prototype (mpv internal playlist append, spec §16.9); the `playback_state` explicit queue-entry reference; the library root sourced from config (Phase 10) rather than a CLI arg.
+- [ ] Tests: snapshot-driven Now-bar model logic; queue-view reorder model.
+
+*Usable artifact:* build and play a queue in the GUI; reorder it by drag; the Now-bar reflects state.
 
 ### Phase 4c — System integration
 

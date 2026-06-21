@@ -146,6 +146,34 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Append tracks to the unified queue tail (spec §4.3, Phase 4b).
+    EnqueueTracks {
+        track_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Replace the whole queue with these tracks in order ("play these now").
+    ReplaceQueueWithTracks {
+        track_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Remove the queue entry at `position`, closing the gap.
+    RemoveQueueItem {
+        position: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Move the queue entry at `from` to `to`, keeping positions contiguous.
+    ReorderQueue {
+        from: i64,
+        to: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Empty the queue.
+    ClearQueue { reply: oneshot::Sender<Result<()>> },
+
     /// Ack a shutdown request. The loop exits naturally once every
     /// `WorkerHandle` clone has dropped and the channel closes.
     Shutdown { reply: oneshot::Sender<()> },
@@ -178,6 +206,11 @@ impl Command {
             Self::DeletePerspective { .. } => "delete_perspective",
             Self::SavePlaybackState { .. } => "save_playback_state",
             Self::IncrementPlayCount { .. } => "increment_play_count",
+            Self::EnqueueTracks { .. } => "enqueue_tracks",
+            Self::ReplaceQueueWithTracks { .. } => "replace_queue_with_tracks",
+            Self::RemoveQueueItem { .. } => "remove_queue_item",
+            Self::ReorderQueue { .. } => "reorder_queue",
+            Self::ClearQueue { .. } => "clear_queue",
             Self::Shutdown { .. } => "shutdown",
             #[cfg(test)]
             Self::Panic => "panic",

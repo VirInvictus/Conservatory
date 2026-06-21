@@ -94,6 +94,13 @@ impl MpvHost {
             .map_err(|e| Error::Player(format!("setting pause: {e}")))
     }
 
+    /// Set the output volume (0–100, the schema's range; mpv itself allows more).
+    pub fn set_volume(&mut self, volume: i64) -> Result<()> {
+        self.mpv
+            .set_property("volume", volume as f64)
+            .map_err(|e| Error::Player(format!("setting volume: {e}")))
+    }
+
     /// Seek to an absolute offset in seconds (the resume path, spec §6.4).
     pub fn seek_absolute(&mut self, secs: f64) -> Result<()> {
         self.mpv

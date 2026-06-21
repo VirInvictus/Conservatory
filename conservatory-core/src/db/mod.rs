@@ -20,12 +20,13 @@ pub use facets::{
     sort_tracks,
 };
 pub use migrations::CURRENT_VERSION;
-pub use models::{Album, Artist, Genre, Perspective, Track};
+pub use models::{Album, Artist, Genre, MediaKind, Perspective, QueueItem, Track};
 pub use pool::ReadPool;
 pub use probe::probe_read;
 pub use reads::{
     LibraryCounts, PlaybackStateRow, SearchRow, SqlParam, TrackRenderRow, album_track_genres,
     fts_rank, get_album, get_artist, get_track, library_counts, list_albums, list_perspectives,
-    perspective_expression, read_playback_state, search_rows, search_track_ids, track_render_rows,
+    load_queue, perspective_expression, read_playback_state, search_rows, search_track_ids,
+    track_render_rows,
 };
 pub use worker::{WorkerHandle, spawn_worker};

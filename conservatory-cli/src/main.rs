@@ -4,21 +4,22 @@
 //! (import, organize, search, tag, queue, podcast, stats) land at Phase 2+
 //! (spec §9).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    ReadPool, SearchRow, SqlParam, fts_rank, get_track, library_counts, probe_read,
-    read_playback_state, search_rows, search_track_ids, spawn_worker, track_render_rows,
+    MediaKind, ReadPool, SearchRow, SqlParam, fts_rank, get_track, library_counts, load_queue,
+    probe_read, read_playback_state, search_rows, search_track_ids, spawn_worker,
+    track_render_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
-    GenreVocab, HostEvent, ImportOptions, ImportReport, MpvHost, PathTemplate, PlaybackConfig,
-    StateDebounce, StateEvent, TrackFields, compute_accent, find_collisions, find_cover_bytes,
-    import_folder, read_track, resolve_album, resolve_music_profile,
+    GenreVocab, ImportOptions, ImportReport, PathTemplate, PlayableItem, PlaybackConfig,
+    TrackFields, compute_accent, find_collisions, find_cover_bytes, import_folder, read_track,
+    resolve_album, resolve_music_profile,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -122,14 +123,23 @@ enum Command {
         format: Format,
     },
 
-    /// Play a track through the libmpv engine (spec §6, Phase 4a): gapless +
-    /// ReplayGain, with the position persisted so a restart resumes. With a
-    /// track id, plays that track; with none, resumes the saved cursor.
+    /// Play the unified queue through the libmpv engine (spec §6, Phase 4b):
+    /// gapless + ReplayGain, advancing item to item, position persisted so a
+    /// restart resumes. With a track id, replaces the queue with that one track
+    /// ("play this now"); with none, plays the existing queue from the cursor.
     Play {
         /// Path to the SQLite database.
         db: PathBuf,
-        /// Track id to play. Omit to resume the last saved position.
+        /// Library root the relative track paths hang off (as for `organize`).
+        root: PathBuf,
+        /// Track id to play now. Omit to play the existing queue from the cursor.
         track_id: Option<i64>,
+    },
+
+    /// Inspect and edit the unified queue (spec §4.3, Phase 4b).
+    Queue {
+        #[command(subcommand)]
+        action: QueueAction,
     },
 
     /// Set an album's shelf genre (a path-affecting edit; run `organize` after to
@@ -157,6 +167,34 @@ enum Command {
     /// Phase 3b smoke test: dump the faceted-browse panes (Genre → Album Artist
     /// → Album) with counts and the leaf track total. Read-only.
     DebugFacets {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum QueueAction {
+    /// Append tracks to the queue tail.
+    Add {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Track ids to enqueue, in order.
+        track_ids: Vec<i64>,
+    },
+    /// Print the queue in order.
+    List {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
+    /// Remove the entry at a 0-based position.
+    Remove {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// 0-based position to remove.
+        position: i64,
+    },
+    /// Empty the queue.
+    Clear {
         /// Path to the SQLite database.
         db: PathBuf,
     },
@@ -205,7 +243,8 @@ fn main() -> Result<()> {
             album_id,
             value,
         }) => shelf_genre_set(db, album_id, value),
-        Some(Command::Play { db, track_id }) => play(db, track_id),
+        Some(Command::Play { db, root, track_id }) => play(db, root, track_id),
+        Some(Command::Queue { action }) => queue(action),
         Some(Command::Search { db, query, format }) => search(db, query, format),
         Some(Command::DebugFacets { db }) => debug_facets(db),
         None => {
@@ -582,93 +621,178 @@ async fn run_shelf_genre_set(db: PathBuf, album_id: i64, value: String) -> Resul
     Ok(())
 }
 
-fn play(db: PathBuf, track_id: Option<i64>) -> Result<()> {
-    block_on(run_play(db, track_id))
+/// Resolve the queue rows into `PlayableItem`s the engine can play. Phase 4b-i
+/// is music-only, so non-track rows (none yet) are skipped. `tracks.file_path`
+/// is stored relative to the library root, so it is joined with `root` to get
+/// the absolute path libmpv loads.
+fn resolve_queue_items(
+    pool: &ReadPool,
+    root: &Path,
+    cfg: &PlaybackConfig,
+) -> Result<Vec<PlayableItem>> {
+    let conn = pool.open().context("opening pool connection")?;
+    let mut items = Vec::new();
+    for row in load_queue(&conn).context("loading queue")? {
+        let Some(track_id) = row.track_id else {
+            continue;
+        };
+        if let Some(track) = get_track(&conn, track_id).context("looking up track")? {
+            items.push(PlayableItem {
+                track_id,
+                source: root.join(&track.file_path),
+                profile: resolve_music_profile(&track, cfg),
+                album_id: track.album_id,
+                kind: MediaKind::Track,
+            });
+        }
+    }
+    Ok(items)
 }
 
-async fn run_play(db: PathBuf, track_id: Option<i64>) -> Result<()> {
-    // The worker persists position + play count; the read pool resolves the
-    // track and the saved cursor. Spawned inside the current-thread runtime
-    // (`block_on`), so a bare `spawn_worker` has its runtime context.
-    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>) -> Result<()> {
+    // Multi-thread runtime: the worker runs on a blocking thread and the player
+    // engine thread `block_on`s worker writes through this handle, so it must
+    // outlive the engine. Tear down in order: player -> worker -> runtime.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .context("building runtime")?;
+
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).context("spawning worker")?
+    };
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
 
-    // Pick the item: an explicit id, else the saved cursor (resume).
-    let conn = pool.open().context("opening pool connection")?;
-    let saved = read_playback_state(&conn).context("reading playback state")?;
-    let (target_id, resume_pos) = match track_id {
-        Some(id) => (id, 0.0),
-        None => {
-            let s = saved.context("no track id given and no saved position to resume")?;
-            let id = s
-                .track_id
-                .context("saved position has no track to resume")?;
-            (id, s.position)
-        }
+    // An explicit track id replaces the queue ("play this now").
+    if let Some(id) = track_id {
+        runtime
+            .block_on(worker.replace_queue_with_tracks(vec![id]))
+            .context("setting the queue")?;
+    }
+
+    // Resolve the queue and decide where to start (resume the saved cursor only
+    // when no explicit track was given).
+    let items = resolve_queue_items(&pool, &root, &PlaybackConfig::default())?;
+    let saved = {
+        let conn = pool.open().context("opening pool connection")?;
+        read_playback_state(&conn).context("reading playback state")?
     };
-    let track = get_track(&conn, target_id)
-        .context("looking up track")?
-        .with_context(|| format!("track {target_id} not found"))?;
-    drop(conn);
 
-    // Resolve the music profile (spec §6.2) and start playback.
-    let profile = resolve_music_profile(&track, &PlaybackConfig::default());
-    let mut host = MpvHost::new().context("starting libmpv host")?;
-    host.load(&track.file_path, &profile)
-        .context("loading track into libmpv")?;
-    if resume_pos > 0.0 {
-        host.seek_absolute(resume_pos)
-            .context("seeking to resume")?;
-        println!("Resuming at {resume_pos:.1}s");
+    if items.is_empty() {
+        println!("Queue is empty. Add tracks with `queue add <db> <id>...` or `play <db> <id>`.");
+        let _ = runtime.block_on(worker.shutdown_ack());
+        return Ok(());
     }
-    println!(
-        "Playing: {} [rg={}, gapless={}]  ({})",
-        track.title,
-        profile.replaygain.as_mpv(),
-        profile.gapless,
-        track.file_path,
-    );
 
-    // The pump loop: drive libmpv, persist on the insurance interval, and on a
-    // natural end-of-file count a completed play (spec §6.4).
-    let start = std::time::Instant::now();
-    let mut debounce = StateDebounce::default();
+    let (start, start_pos) = match track_id {
+        Some(_) => (0, 0.0),
+        None => saved
+            .and_then(|s| s.track_id.map(|t| (t, s.position)))
+            .and_then(|(tid, pos)| {
+                items
+                    .iter()
+                    .position(|i| i.track_id == tid)
+                    .map(|i| (i, pos))
+            })
+            .unwrap_or((0, 0.0)),
+    };
+
+    let player = conservatory_core::player::spawn(worker.clone(), runtime.handle().clone())
+        .context("starting the player engine")?;
+    println!("Playing {} item(s), starting at #{start}.", items.len());
+    player.play_queue(items, start);
+    if start_pos > 0.0 {
+        player.seek(start_pos);
+        println!("Resuming at {start_pos:.1}s.");
+    }
+
+    // Drive the engine by polling its snapshot; print each advance until the
+    // queue ends. The engine itself persists position + play counts.
+    let mut last: Option<usize> = None;
     loop {
-        match host.pump(0.2) {
-            HostEvent::Ended(reason) => {
-                let pos = host.time_pos().unwrap_or(0.0);
-                let now = now_secs();
-                worker
-                    .save_playback_state(Some(target_id), pos, false, 100, now)
-                    .await
-                    .context("saving final position")?;
-                if reason.counts_as_play() {
-                    worker
-                        .increment_play_count(target_id, now)
-                        .await
-                        .context("incrementing play count")?;
-                    println!("Finished: play count bumped.");
-                } else {
-                    println!("Stopped ({reason:?}).");
-                }
-                break;
+        let snap = player.snapshot();
+        if snap.current_index != last {
+            if let Some(idx) = snap.current_index {
+                println!(
+                    "  > #{idx}  track {}  ({:.0}s)",
+                    snap.track_id.unwrap_or(0),
+                    snap.duration.unwrap_or(0.0),
+                );
             }
-            HostEvent::Shutdown => break,
-            HostEvent::Idle => {
-                let elapsed_ms = start.elapsed().as_millis() as u64;
-                if debounce.should_flush(elapsed_ms, StateEvent::Tick) {
-                    if let Some(pos) = host.time_pos() {
-                        worker
-                            .save_playback_state(Some(target_id), pos, false, 100, now_secs())
-                            .await
-                            .context("saving position")?;
-                    }
-                }
-            }
+            last = snap.current_index;
         }
+        if snap.ended {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
     }
 
+    player.shutdown();
+    let _ = runtime.block_on(worker.shutdown_ack());
+    drop(worker);
+    drop(runtime);
+    println!("Done.");
+    Ok(())
+}
+
+fn queue(action: QueueAction) -> Result<()> {
+    match action {
+        QueueAction::Add { db, track_ids } => block_on(run_queue_add(db, track_ids)),
+        QueueAction::List { db } => queue_list(db),
+        QueueAction::Remove { db, position } => block_on(run_queue_remove(db, position)),
+        QueueAction::Clear { db } => block_on(run_queue_clear(db)),
+    }
+}
+
+async fn run_queue_add(db: PathBuf, track_ids: Vec<i64>) -> Result<()> {
+    let worker = spawn_worker(db).context("spawning worker")?;
+    let n = track_ids.len();
+    worker
+        .enqueue_tracks(track_ids)
+        .await
+        .context("enqueuing tracks")?;
     worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("enqueued {n} track(s)");
+    Ok(())
+}
+
+async fn run_queue_remove(db: PathBuf, position: i64) -> Result<()> {
+    let worker = spawn_worker(db).context("spawning worker")?;
+    worker
+        .remove_queue_item(position)
+        .await
+        .context("removing queue item")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("removed position {position}");
+    Ok(())
+}
+
+async fn run_queue_clear(db: PathBuf) -> Result<()> {
+    let worker = spawn_worker(db).context("spawning worker")?;
+    worker.clear_queue().await.context("clearing queue")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("queue cleared");
+    Ok(())
+}
+
+fn queue_list(db: PathBuf) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let rows = load_queue(&conn).context("loading queue")?;
+    if rows.is_empty() {
+        println!("(queue empty)");
+        return Ok(());
+    }
+    for row in &rows {
+        let title = row
+            .track_id
+            .and_then(|id| get_track(&conn, id).ok().flatten())
+            .map(|t| t.title)
+            .unwrap_or_else(|| "-".to_string());
+        println!("{}\t{}\t{}", row.position, row.kind, title);
+    }
     Ok(())
 }
 

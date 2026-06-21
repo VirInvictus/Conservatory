@@ -248,6 +248,35 @@ impl WorkerHandle {
         .await
     }
 
+    /// Append tracks to the unified queue tail (spec §4.3, Phase 4b).
+    pub async fn enqueue_tracks(&self, track_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::EnqueueTracks { track_ids, reply })
+            .await
+    }
+
+    /// Replace the whole queue with these tracks in order.
+    pub async fn replace_queue_with_tracks(&self, track_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::ReplaceQueueWithTracks { track_ids, reply })
+            .await
+    }
+
+    /// Remove the queue entry at `position`.
+    pub async fn remove_queue_item(&self, position: i64) -> Result<()> {
+        self.dispatch(|reply| Command::RemoveQueueItem { position, reply })
+            .await
+    }
+
+    /// Move the queue entry at `from` to `to`.
+    pub async fn reorder_queue(&self, from: i64, to: i64) -> Result<()> {
+        self.dispatch(|reply| Command::ReorderQueue { from, to, reply })
+            .await
+    }
+
+    /// Empty the queue.
+    pub async fn clear_queue(&self) -> Result<()> {
+        self.dispatch(|reply| Command::ClearQueue { reply }).await
+    }
+
     /// Send a shutdown ack. The loop exits once every `WorkerHandle` clone has
     /// dropped and the channel closes; this just confirms the worker is alive.
     pub async fn shutdown_ack(&self) -> Result<()> {
@@ -459,6 +488,21 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::increment_play_count(conn, track_id, played_at));
+        }
+        Command::EnqueueTracks { track_ids, reply } => {
+            let _ = reply.send(writes::enqueue_tracks(conn, &track_ids));
+        }
+        Command::ReplaceQueueWithTracks { track_ids, reply } => {
+            let _ = reply.send(writes::replace_queue_with_tracks(conn, &track_ids));
+        }
+        Command::RemoveQueueItem { position, reply } => {
+            let _ = reply.send(writes::remove_queue_item(conn, position));
+        }
+        Command::ReorderQueue { from, to, reply } => {
+            let _ = reply.send(writes::reorder_queue(conn, from, to));
+        }
+        Command::ClearQueue { reply } => {
+            let _ = reply.send(writes::clear_queue(conn));
         }
         Command::Shutdown { reply } => {
             let _ = reply.send(());

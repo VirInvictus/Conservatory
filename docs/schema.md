@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), and `0004` (playback state, Phase 4a). The podcast, audiobook, and unified-queue tables below are still draft (they land at their phases). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
+> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), and `0005` (unified queue, Phase 4b-i). The podcast and audiobook tables below are still draft (they land at their phases). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
 
 ## Connection discipline
 
@@ -75,18 +75,18 @@ CREATE TABLE genre_aliases  (raw TEXT PRIMARY KEY, canonical TEXT NOT NULL);
 CREATE TABLE genre_priority (genre TEXT PRIMARY KEY, rank INTEGER NOT NULL);
 ```
 
-## Unified queue (spec §4.3)
+## Unified queue (Phase 4b-i, migration `0005`, spec §4.3)
 
-One ordered queue across both media types; the bridge that makes the unified queue real.
+One ordered queue across all three media kinds; the bridge that makes the unified queue real. The full column set lands now (the unified queue is a core commitment), but **only `track_id` carries a foreign key**: with `foreign_keys = ON`, SQLite refuses any INSERT/UPDATE/DELETE on a child table whose parent does not exist yet, even when the referencing column is NULL. So `episode_id`/`book_id` are plain columns until `episodes` (Phase 6) and `books` (Phase 7) land, at which point a table rebuild re-adds their `REFERENCES ... ON DELETE CASCADE`; until then their integrity rests on the CHECK plus app logic.
 
 ```sql
 CREATE TABLE queue (
     id          INTEGER PRIMARY KEY,
-    position    INTEGER NOT NULL,       -- explicit, drag-reorderable
+    position    INTEGER NOT NULL,       -- explicit, contiguous 0..n-1, drag-reorderable
     kind        TEXT NOT NULL CHECK (kind IN ('track','episode','audiobook')),
-    track_id    INTEGER REFERENCES tracks(id)   ON DELETE CASCADE,
-    episode_id  INTEGER REFERENCES episodes(id) ON DELETE CASCADE,
-    book_id     INTEGER REFERENCES books(id)    ON DELETE CASCADE,  -- audiobook = one entry (spec §3.8)
+    track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+    episode_id  INTEGER,                -- FK added with `episodes` (Phase 6)
+    book_id     INTEGER,                -- FK added with `books` (Phase 7); audiobook = one entry (spec §3.8)
     CHECK ( (kind='track'     AND track_id   IS NOT NULL AND episode_id IS NULL AND book_id IS NULL)
          OR (kind='episode'   AND episode_id IS NOT NULL AND track_id   IS NULL AND book_id IS NULL)
          OR (kind='audiobook' AND book_id    IS NOT NULL AND track_id   IS NULL AND episode_id IS NULL) )
@@ -94,7 +94,7 @@ CREATE TABLE queue (
 CREATE INDEX idx_queue_position ON queue(position);
 ```
 
-The engine reads `queue` into an in-memory `Vec<PlayableItem>` (spec §6.1); position writes are debounced. A whole audiobook is a single queue entry (chapters are navigated within it, not enqueued separately). Resume position for long items lives in the per-kind state tables (`tracks.last_played` / the podcast `playback` table / the `book_playback` table); the *current* item and its offset live in `playback_state` (below).
+The engine reads `queue` into an in-memory `Vec<PlayableItem>` (spec §6.1); positions are kept contiguous and renumbered transactionally on the single writer (enqueue/remove/reorder/clear). A whole audiobook is a single queue entry (chapters are navigated within it, not enqueued separately). `is:queued` (search §3.4) tests membership: the SQL path emits `tracks.id IN (SELECT track_id FROM queue WHERE kind='track' ...)`, the eval path reads the same via `SearchRow.queued`. Resume position for long items lives in the per-kind state tables (`tracks.last_played` / the podcast `playback` table / the `book_playback` table); the *current* item and its offset live in `playback_state` (below).
 
 ## Playback state (Phase 4a, migration `0004`, spec §6.4)
 

@@ -229,9 +229,12 @@ fn state_sql(state: State) -> String {
     match state {
         State::Played => "tracks.play_count > 0".into(),
         State::Starred => "tracks.starred = 1".into(),
-        // The queue table lands with playback (Phase 4b); until then nothing is
-        // queued. `eval` mirrors this (SearchItem.queued is false).
-        State::Queued => "0=1".into(),
+        // Queue membership (Phase 4b): the track has a `kind='track'` entry in the
+        // unified queue. `eval` mirrors this via `SearchItem.queued`.
+        State::Queued => {
+            "tracks.id IN (SELECT track_id FROM queue WHERE kind = 'track' AND track_id IS NOT NULL)"
+                .into()
+        }
     }
 }
 

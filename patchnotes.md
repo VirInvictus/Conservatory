@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.12
+
+Phase 4b-i shipped: the unified queue and the threaded player engine, headless. The libmpv host moves off the CLI loop onto its own thread behind a cross-thread handle, and a real queue drives it. (The GTK Now-bar and the drag-and-drop queue view are 4b-ii.)
+
+- **Unified queue (migration `0005`, spec §4.3):** the `queue` table lands with its full column set, but only `track_id` carries a foreign key for now. With `foreign_keys = ON` SQLite refuses any DML on a child table whose parent does not exist yet, even for a NULL column, so the `episode_id`/`book_id` foreign keys are added when the `episodes` (Phase 6) and `books` (Phase 7) tables land. Positions stay contiguous (`0..n-1`), renumbered transactionally on the single writer. New worker commands: enqueue, replace, remove, reorder, clear; `load_queue` reads it back in order.
+- **Threaded `Player` engine (`conservatory-core/src/player/{engine,handle,item}.rs`):** a dedicated `std::thread` owns the `!Send` `MpvHost` (constructed there via a `make_host` factory, so it never crosses a boundary) behind a `Send + Clone` `PlayerHandle`. Commands (`play_queue` / `toggle_pause` / `next` / `previous` / `seek` / `set_volume` / `stop` / `shutdown`) flow out over a channel; state flows back through a `PlayerSnapshot` the consumer polls. On advance the engine applies the next item's profile before loading (the spec §16.9 boundary switch, music profile); it advances on a natural end-of-file, skips an errored item, and ignores the self-initiated stop its own load emits. Persistence is split (spec §6.4): debounced ticks are fired and forgotten through the runtime, while the terminal writes (pause, seek, stop, shutdown, and the play-count bump + final cursor on end-of-file) block on the worker so they are guaranteed to land.
+- **`is:queued` is live (was inert since 3a):** `conservatory-search`'s SQL path emits `tracks.id IN (SELECT track_id FROM queue WHERE kind='track' ...)`; the eval path reads `SearchRow.queued`, an `EXISTS` against the queue computed in `search_rows`.
+- **CLI:** `queue add | list | remove | clear`, and `play <db> <root> [track_id]` rewritten to drive the engine through the queue (the root resolves the relative `file_path`s; with a track id it replaces the queue, else it plays the existing queue from the saved cursor), polling the snapshot until the queue ends.
+- **Tests:** queue position integrity (enqueue/remove/reorder stay a dense ordered range); `is:queued` membership; and the headline engine test, which imports the committed fixtures into a managed tree, plays the whole queue through a null audio output, and asserts every play count incremented once and the cursor landing on the last item (`tests/queue.rs`).
+
+Deferred to 4b-ii: the persistent Now-bar transport; the drag-and-drop reorderable queue view (with keyboard fallbacks); the audible within-album gapless prototype (mpv playlist append, §16.9); the library root from config (Phase 10) rather than a CLI arg. MPRIS2 + media keys + inhibitor remain Phase 4c.
+
 ## v0.0.11
 
 Phase 4a shipped: the libmpv playback host and the music profile. The engine can play a track from the managed library (the first sound Conservatory makes), headless via the CLI, with the position persisted so a restart resumes.

@@ -5,8 +5,13 @@
 //! `u32`. `id == 0` on a value not yet inserted; the writer returns the real id.
 //! The shape mirrors `belfry-core`'s `domain.rs`.
 
+use std::fmt;
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+use crate::errors::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Artist {
@@ -70,9 +75,72 @@ pub struct Perspective {
     pub scope: String, // "tracks" today; albums/episodes/books reuse the table later
 }
 
+/// The media kind of a unified-queue entry (spec §4.3). Only `Track` is real in
+/// Phase 4b; `Episode` and `Audiobook` rows arrive with Phases 6 and 7, but the
+/// kind exists from the start because the queue is one core-owned table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MediaKind {
+    Track,
+    Episode,
+    Audiobook,
+}
+
+impl MediaKind {
+    /// The `kind` TEXT value stored in the `queue` table.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MediaKind::Track => "track",
+            MediaKind::Episode => "episode",
+            MediaKind::Audiobook => "audiobook",
+        }
+    }
+}
+
+impl fmt::Display for MediaKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for MediaKind {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "track" => Ok(MediaKind::Track),
+            "episode" => Ok(MediaKind::Episode),
+            "audiobook" => Ok(MediaKind::Audiobook),
+            other => Err(Error::InvalidEnum {
+                field: "queue.kind",
+                value: other.to_string(),
+            }),
+        }
+    }
+}
+
+/// One ordered entry in the unified queue (spec §4.3, §6.1). Exactly one of the
+/// id columns is populated, matched to `kind`; `position` is contiguous and
+/// drag-reorderable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueItem {
+    pub id: i64,
+    pub position: i64,
+    pub kind: MediaKind,
+    pub track_id: Option<i64>,
+    pub episode_id: Option<i64>,
+    pub book_id: Option<i64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_kind_round_trips_through_text() {
+        for kind in [MediaKind::Track, MediaKind::Episode, MediaKind::Audiobook] {
+            assert_eq!(kind.as_str().parse::<MediaKind>().unwrap(), kind);
+        }
+        assert!("bogus".parse::<MediaKind>().is_err());
+    }
 
     #[test]
     fn track_serde_round_trip() {

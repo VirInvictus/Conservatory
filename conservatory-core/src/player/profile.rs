@@ -106,6 +106,17 @@ pub fn resolve_music_profile(track: &Track, cfg: &PlaybackConfig) -> MusicProfil
     }
 }
 
+/// A basic spoken-word profile for episode playback (Phase 6b-ii-c): no
+/// ReplayGain (podcasts carry none) and no gapless (episodes are single items).
+/// The Smart Speed / Voice Boost `af` chain is Phase 6c.
+pub fn resolve_episode_profile() -> MusicProfile {
+    MusicProfile {
+        gapless: false,
+        replaygain: ReplayGain::Off,
+        crossfade_seconds: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

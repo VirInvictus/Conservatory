@@ -199,6 +199,18 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Append episodes to the queue tail (Phase 6b-ii-c).
+    EnqueueEpisodes {
+        episode_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Replace the whole queue with these episodes in order ("play these now").
+    ReplaceQueueWithEpisodes {
+        episode_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Remove the queue entry at `position`, closing the gap.
     RemoveQueueItem {
         position: i64,
@@ -336,6 +348,8 @@ impl Command {
             Self::IncrementPlayCount { .. } => "increment_play_count",
             Self::EnqueueTracks { .. } => "enqueue_tracks",
             Self::ReplaceQueueWithTracks { .. } => "replace_queue_with_tracks",
+            Self::EnqueueEpisodes { .. } => "enqueue_episodes",
+            Self::ReplaceQueueWithEpisodes { .. } => "replace_queue_with_episodes",
             Self::RemoveQueueItem { .. } => "remove_queue_item",
             Self::ReorderQueue { .. } => "reorder_queue",
             Self::ClearQueue { .. } => "clear_queue",

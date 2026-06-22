@@ -37,7 +37,7 @@ pub use path_template::{DEFAULT_MUSIC_TEMPLATE, PathTemplate, TrackFields, find_
 pub use player::{
     AudioDevice, EndReason, HostEvent, MpvHost, MusicProfile, PlayableItem, PlaybackConfig,
     PlayerCommand, PlayerHandle, PlayerSnapshot, ReplayGain, StateDebounce, StateEvent,
-    resolve_music_profile,
+    resolve_episode_profile, resolve_music_profile,
 };
 pub use replaygain::{
     DEFAULT_TARGET_LUFS, replaygain_from_file, rsgain_available, scan_album_files,

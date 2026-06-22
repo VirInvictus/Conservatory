@@ -49,6 +49,55 @@ pub fn build_play_queue(
     (items, start)
 }
 
+/// A queued episode's playable source (Phase 6b-ii-c). Either a downloaded file
+/// (relative to the library root) or a stream URL; `build_episode_queue` picks
+/// the local file when present, else the URL. Podcast-only.
+#[cfg(feature = "podcasts")]
+#[derive(Debug, Clone)]
+pub struct EpisodeSource {
+    pub id: i64,
+    pub audio_path: Option<String>,
+    pub audio_url: Option<String>,
+}
+
+/// Build a play queue from a list of episodes (the deadbeef idiom, episode
+/// flavour). Each episode's `source` is its downloaded file (`root` + the
+/// relative `audio_path`) when present, else the stream URL (libmpv's
+/// `loadfile` takes a URL as-is). Episodes with neither are skipped; `start`
+/// re-indexes past any skip, pointing at the activated episode (or 0).
+#[cfg(feature = "podcasts")]
+pub fn build_episode_queue(
+    ordered: &[EpisodeSource],
+    activated: usize,
+    root: &Path,
+) -> (Vec<PlayableItem>, usize) {
+    let activated_id = ordered.get(activated).map(|e| e.id);
+
+    let items: Vec<PlayableItem> = ordered
+        .iter()
+        .filter_map(|e| {
+            let source = match (&e.audio_path, &e.audio_url) {
+                (Some(path), _) => root.join(path),
+                (None, Some(url)) => std::path::PathBuf::from(url),
+                (None, None) => return None,
+            };
+            Some(PlayableItem {
+                track_id: e.id,
+                source,
+                profile: conservatory_core::resolve_episode_profile(),
+                album_id: None,
+                kind: MediaKind::Episode,
+            })
+        })
+        .collect();
+
+    let start = activated_id
+        .and_then(|id| items.iter().position(|i| i.track_id == id))
+        .unwrap_or(0);
+
+    (items, start)
+}
+
 /// Which side of the drop-target row the dragged row lands on (from the cursor
 /// Y vs the row's mid-height, the GNOME/macOS reorder idiom).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,5 +261,41 @@ mod tests {
         assert_eq!(fmt_secs(-5.0), "0:00");
         assert_eq!(fmt_position(72.0, Some(220.0)), "1:12 / 3:40");
         assert_eq!(fmt_position(5.0, None), "0:05");
+    }
+
+    #[cfg(feature = "podcasts")]
+    #[test]
+    fn build_episode_queue_prefers_local_streams_else_and_skips_sourceless() {
+        use std::path::PathBuf;
+        let root = Path::new("/lib");
+        let episodes = vec![
+            // Downloaded: the local file wins even with a URL present.
+            EpisodeSource {
+                id: 1,
+                audio_path: Some("Podcasts/s/2024-01-01--e/a.mp3".to_string()),
+                audio_url: Some("https://cdn/a.mp3".to_string()),
+            },
+            // Not downloaded: stream the URL.
+            EpisodeSource {
+                id: 2,
+                audio_path: None,
+                audio_url: Some("https://cdn/b.mp3".to_string()),
+            },
+            // Neither: skipped.
+            EpisodeSource {
+                id: 3,
+                audio_path: None,
+                audio_url: None,
+            },
+        ];
+        let (items, start) = build_episode_queue(&episodes, 1, root);
+        assert_eq!(items.len(), 2, "the source-less episode is skipped");
+        assert_eq!(
+            items[0].source,
+            PathBuf::from("/lib/Podcasts/s/2024-01-01--e/a.mp3")
+        );
+        assert_eq!(items[1].source, PathBuf::from("https://cdn/b.mp3"));
+        assert_eq!(items[0].kind, MediaKind::Episode);
+        assert_eq!(start, 1, "activated episode id 2 is item index 1");
     }
 }

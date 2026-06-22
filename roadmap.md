@@ -431,12 +431,26 @@ Split: **6b-ii-a** is the read-only three-pane browse (sidebar + episode list + 
 
 *Usable artifact:* the Podcasts inbox is actionable: mark episodes played / archived, star them, filter by tag, all reflected live.
 
-##### Phase 6b-ii-c — Episode playback + unified queue + per-show overrides
+Episode playback splits again, because the per-kind persistence + resume is the engine-risky part: **c-1** plays episodes forward (persistence guarded to track-only); **c-2** adds episode resume + per-kind persistence; **c-3** adds per-show overrides.
 
-- [ ] The structural change from Belfry: **Queue is the shared unified queue**, so an episode and a track sit next to each other. Engine work (exploration done): a generalised `PlayableItem` id (or an `episode_id`), `enqueue_episodes` / `replace_queue_with_episodes`, the `load_queue_display` episode join (else queued episodes render blank in the drawer), a `build_episode_queue` + a basic episode profile, and **per-kind engine persistence** (the engine writes the podcast `playback` table on tick/EOF, not the music `playback_state` singleton) + episode resume.
-- [ ] Streaming before/without download: if the local file is absent and a URL is present, libmpv streams with range requests (spec §5.3); `loadfile` takes the URL as-is (`PlayableItem.source` is a `PathBuf` that holds a URL string; the engine is kind-agnostic at load).
+###### Phase 6b-ii-c-1 — Episode playback (forward) ✅
+
+- [x] The structural change from Belfry: **Queue is the shared unified queue**, so an episode and a track sit next to each other. `enqueue_episodes` / `replace_queue_with_episodes`; the `load_queue_display` episode join (else queued episodes render blank); `build_episode_queue` (downloaded file `root`+`audio_path`, else the enclosure URL; libmpv `loadfile` streams a URL as-is) + a basic `resolve_episode_profile`; `EpisodeListRow`/`EpisodeRow` carry `audio_path`/`audio_url`.
+- [x] **Per-kind persistence guard:** the engine persists position + play counts only for `MediaKind::Track`, so an episode plays to EOF but never writes an episode id into the music `playback_state` / `tracks.play_count`. (Episode resume + per-kind persistence is c-2.)
+- [x] GUI: the Podcasts episode list plays on double-click / Enter (the visible list from that row) and appends on `Ctrl+Enter`, the music leaf idiom.
+- [x] Tests: episode queue write + display join (core); `build_episode_queue` local/stream/skip (unit); an engine null-sink test playing an episode to EOF that asserts the guard held; the existing track-playback test still passes (music-regression check).
+
+*Usable artifact:* double-click an episode in the Podcasts list and it plays (downloaded or streamed) in the unified queue, with the Now-bar + queue drawer.
+
+###### Phase 6b-ii-c-2 — Episode resume + per-kind persistence
+
+- [ ] The engine writes the podcast `playback` table on episode tick/EOF (position + `played`/`play_count`), not the music `playback_state` singleton; the resume cursor learns the current item's kind (or a per-kind cursor) so a restart resumes an episode to the second.
+- [ ] Tests: per-kind resume; an episode's position/played persist across a restart.
+
+###### Phase 6b-ii-c-3 — Per-show overrides
+
 - [ ] Per-show overrides: speed, Smart Speed, Voice Boost, skip, retention, inbox policy (`upsert_show_settings`); they are playback settings, so they ride with playback.
-- [ ] Tests: episode-into-unified-queue insertion; episode playback (null sink) over a local path and a stream URL; per-kind resume; per-show override resolution.
+- [ ] Tests: per-show override resolution.
 
 *Usable artifact:* podcasts play in the one queue (downloaded or streamed), resuming where you left off, with per-show speed/boost settings. (Smart Speed / Voice Boost filters are 6c.)
 

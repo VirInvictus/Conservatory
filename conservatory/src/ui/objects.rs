@@ -310,6 +310,16 @@ impl EpisodeRow {
     pub fn in_queue(&self) -> bool {
         self.with(|r| r.in_queue)
     }
+
+    /// The downloaded local file (relative to the library root), if any.
+    pub fn audio_path(&self) -> Option<String> {
+        self.with(|r| r.audio_path.clone())
+    }
+
+    /// The remote enclosure URL (streamed when not downloaded), if any.
+    pub fn audio_url(&self) -> Option<String> {
+        self.with(|r| r.audio_url.clone())
+    }
 }
 
 #[cfg(all(test, feature = "podcasts"))]
@@ -330,6 +340,8 @@ mod episode_tests {
             position: 0.0,
             starred: false,
             in_queue: false,
+            audio_path: None,
+            audio_url: None,
         }
     }
 

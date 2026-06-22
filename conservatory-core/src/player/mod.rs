@@ -22,5 +22,7 @@ pub use engine::{spawn, spawn_null, spawn_with};
 pub use handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 pub use host::{AudioDevice, HostEvent, MpvHost};
 pub use item::PlayableItem;
-pub use profile::{MusicProfile, PlaybackConfig, ReplayGain, resolve_music_profile};
+pub use profile::{
+    MusicProfile, PlaybackConfig, ReplayGain, resolve_episode_profile, resolve_music_profile,
+};
 pub use state::{EndReason, INSURANCE_INTERVAL_MS, StateDebounce, StateEvent};

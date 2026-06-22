@@ -1,5 +1,19 @@
 # Patch Notes
 
+## v0.0.32
+
+Phase 6b-ii-c-1 shipped: podcast episodes now play. Double-click an episode in the Podcasts list and it plays through the same libmpv engine, Now-bar, and queue drawer as music, streamed if it is not downloaded, from the local file if it is. The one unified queue now genuinely interleaves tracks and episodes.
+
+- **Episode queue writes (`conservatory-core`):** `enqueue_episodes` / `replace_queue_with_episodes` (mirroring the track variants; the queue schema already carries `episode_id`). `load_queue_display` now joins episodes, so a queued episode shows its title and its show in the drawer (`QueueDisplayRow` gains `episode_id`).
+- **Queue builder (`conservatory/src/playqueue.rs`):** `build_episode_queue` turns episodes into `PlayableItem`s, using the downloaded file (`root` + `audio_path`) when present, else the enclosure URL (libmpv's `loadfile` streams a URL as-is). Source-less episodes are skipped. A basic `resolve_episode_profile` (no ReplayGain, no gapless; Smart Speed / Voice Boost is 6c).
+- **Per-kind persistence guard (the load-bearing engine change, `player/engine.rs`):** the engine persists position + play counts only for `MediaKind::Track`. An episode plays to its end but does not yet write the music `playback_state` cursor or bump `tracks.play_count`, so an episode id can never leak into the music tables. Episode resume + per-kind persistence are 6b-ii-c-2. Music playback and resume are unchanged.
+- **GUI:** the Podcasts episode list gets double-click / Enter to play the visible list from that row, and `Ctrl+Enter` to append, exactly the music leaf idiom. `EpisodeListRow` (and the `EpisodeRow` GObject) carry `audio_path` / `audio_url` so the view builds sources without a second read.
+- **Tests:** the episode queue write + display join (core); `build_episode_queue` local-vs-stream-vs-skip (unit); and an engine **null-sink** test that plays an episode to EOF and asserts the guard held (no music cursor written). The existing track-playback test still passes, which is the music-regression check for the guard.
+
+Deferred to 6b-ii-c-2: episode resume and per-kind persistence (write the podcast `playback` table on episode tick/EOF); to 6b-ii-c-3: per-show overrides.
+
+Next: Phase 6b-ii-c-2 (episode resume + per-kind persistence).
+
 ## v0.0.31
 
 Phase 6b-ii-b shipped: the Podcasts inbox is now actionable. Select an episode and mark it played, unplayed, or archived, or star it; the list's state glyph and the triage buckets update live. A Tags section joins the sidebar.

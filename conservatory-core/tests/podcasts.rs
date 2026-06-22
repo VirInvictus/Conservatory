@@ -666,3 +666,32 @@ async fn triage_actions_are_partial_and_tag_filter_works() {
 
     worker.shutdown_ack().await.unwrap();
 }
+
+#[tokio::test]
+async fn episode_enqueue_shows_in_the_queue_display() {
+    use conservatory_core::db::{MediaKind, load_queue_display};
+
+    let (_dir, worker, pool) = fresh().await;
+    let show_id = worker
+        .get_or_create_show(sample_show("cast", "https://feeds.example/cast.xml"))
+        .await
+        .unwrap();
+    let ep = worker
+        .upsert_episode(sample_episode(show_id, "g1", "Ep One", 1000))
+        .await
+        .unwrap();
+
+    worker.replace_queue_with_episodes(vec![ep]).await.unwrap();
+
+    let conn = pool.open().unwrap();
+    let rows = load_queue_display(&conn).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].kind, MediaKind::Episode);
+    assert_eq!(rows[0].episode_id, Some(ep));
+    assert_eq!(rows[0].track_id, None);
+    // The drawer renders an episode's title + its show as the "artist".
+    assert_eq!(rows[0].title, "Ep One");
+    assert_eq!(rows[0].artist.as_deref(), Some("Reply All"));
+
+    worker.shutdown_ack().await.unwrap();
+}

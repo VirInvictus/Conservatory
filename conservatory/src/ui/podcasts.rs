@@ -13,18 +13,22 @@
 //! source so the list's state glyph and the bucket counts refresh.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use gtk4 as gtk;
 use libadwaita as adw;
 
 use adw::prelude::*;
+use gtk::glib;
 
+use conservatory_core::PlayerHandle;
 use conservatory_core::db::{
     EpisodeListRow, PlayedState, ReadPool, TriageBucket, WorkerHandle, episodes_for_show,
     episodes_for_tag, episodes_in_bucket, list_all_tags, list_shows,
 };
 
+use crate::playqueue::{EpisodeSource, build_episode_queue};
 use crate::ui::objects::EpisodeRow;
 
 /// What the episode list is currently showing.
@@ -48,6 +52,8 @@ struct Inner {
     pool: ReadPool,
     worker: WorkerHandle,
     rt: tokio::runtime::Handle,
+    player: Option<PlayerHandle>,
+    root: Option<PathBuf>,
     store: gtk::gio::ListStore,
     selection: gtk::SingleSelection,
     current: RefCell<Source>,
@@ -154,6 +160,64 @@ impl Inner {
             .block_on(self.worker.set_episode_played(episode_id, state, when));
         self.reload();
     }
+
+    /// The visible episode list, in display order, as playable sources + ids.
+    fn episode_sources(&self) -> (Vec<EpisodeSource>, Vec<i64>) {
+        let mut sources = Vec::new();
+        let mut ids = Vec::new();
+        for i in 0..self.store.n_items() {
+            if let Some(row) = self.store.item(i).and_downcast::<EpisodeRow>() {
+                ids.push(row.id());
+                sources.push(EpisodeSource {
+                    id: row.id(),
+                    audio_path: row.audio_path(),
+                    audio_url: row.audio_url(),
+                });
+            }
+        }
+        (sources, ids)
+    }
+
+    /// Play the visible list from `activated` (double-click / Enter, the
+    /// deadbeef idiom): write the DB queue through, then hand the engine the
+    /// resolved items.
+    fn play_from(&self, activated: u32) {
+        let (Some(player), Some(root)) = (self.player.as_ref(), self.root.as_ref()) else {
+            return;
+        };
+        let (sources, ids) = self.episode_sources();
+        if ids.is_empty() {
+            return;
+        }
+        let _ = self
+            .rt
+            .block_on(self.worker.replace_queue_with_episodes(ids));
+        let (items, start) = build_episode_queue(&sources, activated as usize, root);
+        if !items.is_empty() {
+            player.play_queue(items, start);
+        }
+    }
+
+    /// Append the selected episode to the queue tail (Ctrl+Enter).
+    fn append_selected(&self) {
+        let (Some(player), Some(root), Some(row)) =
+            (self.player.as_ref(), self.root.as_ref(), self.selected())
+        else {
+            return;
+        };
+        let _ = self
+            .rt
+            .block_on(self.worker.enqueue_episodes(vec![row.id()]));
+        let source = EpisodeSource {
+            id: row.id(),
+            audio_path: row.audio_path(),
+            audio_url: row.audio_url(),
+        };
+        let (items, _) = build_episode_queue(std::slice::from_ref(&source), 0, root);
+        if !items.is_empty() {
+            player.append(items);
+        }
+    }
 }
 
 fn detail_subtitle(r: &EpisodeRow) -> String {
@@ -179,6 +243,8 @@ pub fn build_podcasts_view(
     pool: ReadPool,
     worker: WorkerHandle,
     rt: tokio::runtime::Handle,
+    player: Option<PlayerHandle>,
+    root: Option<PathBuf>,
 ) -> gtk::Widget {
     let store = gtk::gio::ListStore::new::<EpisodeRow>();
     let selection = gtk::SingleSelection::builder()
@@ -250,6 +316,8 @@ pub fn build_podcasts_view(
         pool: pool.clone(),
         worker,
         rt,
+        player,
+        root,
         store,
         selection: selection.clone(),
         current: RefCell::new(Source::Bucket(TriageBucket::Inbox)),
@@ -261,6 +329,25 @@ pub fn build_podcasts_view(
         star_btn: star_btn.clone(),
     });
     inner.show_detail(None);
+
+    // Double-click / Enter plays the visible list from that row; Ctrl+Enter
+    // appends the selection (the music leaf idiom, spec §3.6).
+    {
+        let inner = inner.clone();
+        column_view.connect_activate(move |_, pos| inner.play_from(pos));
+    }
+    {
+        let inner = inner.clone();
+        let append = gtk::ShortcutController::new();
+        append.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>Return"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                inner.append_selected();
+                glib::Propagation::Stop
+            })),
+        ));
+        column_view.add_controller(append);
+    }
 
     // Episode selection drives the detail pane (and the action labels).
     {

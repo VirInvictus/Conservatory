@@ -348,17 +348,24 @@ pub struct QueueDisplayRow {
     pub position: i64,
     pub kind: MediaKind,
     pub track_id: Option<i64>,
+    pub episode_id: Option<i64>,
     pub title: String,
     pub artist: Option<String>,
 }
 
-/// The unified queue in order, with display fields joined in (Phase 4b-ii-b).
+/// The unified queue in order, with display fields joined in (Phase 4b-ii-b;
+/// episodes joined at 6b-ii-c). Title/artist coalesce across the kind: a track's
+/// artist, an episode's show.
 pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
     let mut stmt = conn.prepare(
-        "SELECT q.position, q.kind, q.track_id, t.title, ar.name AS artist
+        "SELECT q.position, q.kind, q.track_id, q.episode_id,
+                COALESCE(t.title, e.title) AS title,
+                COALESCE(ar.name, s.title) AS artist
          FROM queue q
          LEFT JOIN tracks t ON t.id = q.track_id
          LEFT JOIN artists ar ON ar.id = t.artist_id
+         LEFT JOIN episodes e ON e.id = q.episode_id
+         LEFT JOIN shows s ON s.id = e.show_id
          ORDER BY q.position",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -370,6 +377,7 @@ pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
             position: row.get("position")?,
             kind,
             track_id: row.get("track_id")?,
+            episode_id: row.get("episode_id")?,
             title: row.get::<_, Option<String>>("title")?.unwrap_or_default(),
             artist: row.get("artist")?,
         })
@@ -834,6 +842,10 @@ pub struct EpisodeListRow {
     pub position: f64, // resume cursor, seconds
     pub starred: bool,
     pub in_queue: bool,
+    /// Downloaded local file (relative to the library root), or `None`.
+    pub audio_path: Option<String>,
+    /// The remote enclosure URL (for streaming when not downloaded).
+    pub audio_url: Option<String>,
 }
 
 /// The triage buckets (spec §3.7, §4.2). Derived, not stored: Queue is unified-
@@ -872,7 +884,7 @@ impl TriageBucket {
 // no playback row reads as Unplayed at position 0), and the `in_queue` flag.
 const EPISODE_LIST_SELECT: &str = "
     SELECT e.id, e.show_id, s.title AS show_title, e.title, e.description,
-           e.pub_date, e.duration,
+           e.pub_date, e.duration, e.audio_path, e.audio_url,
            COALESCE(p.played, 0)    AS played,
            COALESCE(p.position, 0.0) AS position,
            COALESCE(p.starred, 0)   AS starred,
@@ -899,6 +911,8 @@ fn row_to_episode_list_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeL
         position: row.get("position")?,
         starred: row.get("starred")?,
         in_queue: row.get("in_queue")?,
+        audio_path: row.get("audio_path")?,
+        audio_url: row.get("audio_url")?,
     })
 }
 

@@ -246,6 +246,61 @@ fn engine_plays_queue_to_end() {
     runtime.block_on(worker.shutdown_ack()).ok();
 }
 
+/// An episode plays to EOF through the engine, but (Phase 6b-ii-c-1) the
+/// per-kind persistence guard keeps it out of the music `playback_state`
+/// cursor (and `tracks.play_count`). Episode resume + counts land at 6b-ii-c-2.
+#[test]
+fn engine_plays_an_episode_without_writing_the_music_cursor() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let dbdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+    let pool = ReadPool::new(db.clone(), 3).unwrap();
+
+    // An Episode-kind item over a real local file (the `track_id` field carries
+    // the episode id in real use; the engine never persists it for an episode).
+    let item = PlayableItem {
+        track_id: 1,
+        source: fixtures_dir.join("sample.mp3"),
+        profile: conservatory_core::resolve_episode_profile(),
+        album_id: None,
+        kind: conservatory_core::db::MediaKind::Episode,
+    };
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.play_queue(vec![item], 0);
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if player.snapshot().ended {
+            break;
+        }
+        assert!(Instant::now() < deadline, "engine did not finish in time");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    player.shutdown();
+
+    // The guard: playing an episode wrote no music cursor.
+    let conn = pool.open().unwrap();
+    let cursor = read_playback_state(&conn).unwrap();
+    assert!(
+        cursor.and_then(|s| s.track_id).is_none(),
+        "episode playback must not set the music playback_state cursor (6b-ii-c-1 guard)"
+    );
+
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
 /// Live move/remove keep `current_index` aligned without auto-advancing: start
 /// paused so the 0.3 s fixtures don't end under us, then exercise the in-place
 /// mutations the queue drawer drives.

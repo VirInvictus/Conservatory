@@ -354,6 +354,39 @@ pub(crate) fn increment_play_count(conn: &Connection, track_id: i64, played_at: 
 
 /// Append tracks at the tail, preserving order. Each new row takes the next
 /// free position after the current maximum.
+pub(crate) fn enqueue_episodes(conn: &mut Connection, episode_ids: &[i64]) -> Result<()> {
+    let tx = conn.transaction()?;
+    let base: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM queue",
+        [],
+        |r| r.get(0),
+    )?;
+    for (offset, &episode_id) in episode_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO queue (position, kind, episode_id) VALUES (?1, 'episode', ?2)",
+            params![base + offset as i64, episode_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+pub(crate) fn replace_queue_with_episodes(
+    conn: &mut Connection,
+    episode_ids: &[i64],
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM queue", [])?;
+    for (pos, &episode_id) in episode_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO queue (position, kind, episode_id) VALUES (?1, 'episode', ?2)",
+            params![pos as i64, episode_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 pub(crate) fn enqueue_tracks(conn: &mut Connection, track_ids: &[i64]) -> Result<()> {
     let tx = conn.transaction()?;
     let base: i64 = tx.query_row(

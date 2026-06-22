@@ -326,6 +326,18 @@ impl WorkerHandle {
             .await
     }
 
+    /// Append episodes to the unified queue tail (Phase 6b-ii-c).
+    pub async fn enqueue_episodes(&self, episode_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::EnqueueEpisodes { episode_ids, reply })
+            .await
+    }
+
+    /// Replace the whole queue with these episodes in order ("play these now").
+    pub async fn replace_queue_with_episodes(&self, episode_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::ReplaceQueueWithEpisodes { episode_ids, reply })
+            .await
+    }
+
     /// Remove the queue entry at `position`.
     pub async fn remove_queue_item(&self, position: i64) -> Result<()> {
         self.dispatch(|reply| Command::RemoveQueueItem { position, reply })
@@ -710,6 +722,12 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::ReplaceQueueWithTracks { track_ids, reply } => {
             let _ = reply.send(writes::replace_queue_with_tracks(conn, &track_ids));
+        }
+        Command::EnqueueEpisodes { episode_ids, reply } => {
+            let _ = reply.send(writes::enqueue_episodes(conn, &episode_ids));
+        }
+        Command::ReplaceQueueWithEpisodes { episode_ids, reply } => {
+            let _ = reply.send(writes::replace_queue_with_episodes(conn, &episode_ids));
         }
         Command::RemoveQueueItem { position, reply } => {
             let _ = reply.send(writes::remove_queue_item(conn, position));

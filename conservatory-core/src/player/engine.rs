@@ -19,7 +19,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::runtime::Handle;
 
-use crate::db::WorkerHandle;
+use crate::db::{MediaKind, WorkerHandle};
 use crate::errors::{Error, Result};
 use crate::player::handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 use crate::player::host::{HostEvent, MpvHost};
@@ -277,7 +277,12 @@ impl Engine {
         match reason {
             // Natural completion: count the play, then advance.
             EndReason::Eof => {
-                if let Some(item) = self.current_item() {
+                // Only tracks persist play counts / the cursor for now; per-kind
+                // episode persistence (the podcast `playback` table) is 6b-ii-c-2,
+                // so an episode plays but does not yet bump counts or resume.
+                if let Some(item) = self.current_item()
+                    && item.kind == MediaKind::Track
+                {
                     let track_id = item.track_id;
                     self.block_increment_play_count(track_id);
                 }
@@ -375,6 +380,11 @@ impl Engine {
         let Some(item) = self.current_item() else {
             return;
         };
+        // Episodes/audiobooks don't persist to the music `playback_state` yet
+        // (6b-ii-c-2); guarding here keeps an episode id out of that table.
+        if item.kind != MediaKind::Track {
+            return;
+        }
         let track_id = item.track_id;
         let position = self.host.time_pos().unwrap_or(0.0);
         self.save_cursor(track_id, position, blocking);

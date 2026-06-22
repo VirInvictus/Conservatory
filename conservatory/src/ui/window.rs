@@ -1229,6 +1229,8 @@ impl ConservatoryWindow {
                         pool,
                         worker.clone(),
                         rt.handle().clone(),
+                        imp.player.get().cloned(),
+                        imp.library_root.get().cloned(),
                     )));
                 }
             }

@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.29
+
+Phase 6b-i shipped: the multi-view window shell. The GUI is no longer a single music window; it now has a top-level view switcher, with Music as the first tab and a Podcasts tab alongside it. This is the structural groundwork for the Podcasts UI (the triage panes land in 6b-ii); the Podcasts tab is an empty placeholder for now.
+
+- **View stack (`conservatory/src/ui/window.rs`):** the music browse (facet panes, filter bar, track list, queue drawer) is now one page of an `AdwViewStack`. The header carries an `AdwViewSwitcher` (`policy = wide`, the libadwaita 1.4+ idiom; the deprecated `AdwViewSwitcherTitle` is not used). The always-on filter bar moved from a global top bar into the Music page, so a music filter no longer shows over the Podcasts tab; its behaviour (`Ctrl+F`, the grammar, the debounce) is unchanged.
+- **Adaptive collapse:** an `AdwBreakpoint` (max-width 550sp) hides the header switcher and reveals a bottom `AdwViewSwitcherBar` on narrow widths. The Now-bar stays the stable innermost bottom bar; the switcher bar reveals *beneath* it (the spec §2.3 stacking call, no GNOME precedent to copy).
+- **Lazy + feature-gated:** the Podcasts page builds its child on first `::map`, not at startup (it retains state once built). The whole multi-view chrome (switcher, breakpoint, bottom bar, Podcasts page) is behind `#[cfg(feature = "podcasts")]` (the binary's first feature gates); a `--no-default-features` music-only build keeps a single-page stack with **no switcher chrome**, visually identical to before.
+- **Keyboard:** `Alt+1` / `Alt+2` switch views (a global `ShortcutController`, the `AdwTabView` `Alt+N` convention; `Ctrl+1/2/3` stays free for the 6b-ii triage lists). `Alt+3` is wired but inert until the Audiobooks tab (7b). `docs/keymap.md` updated.
+- **Tests:** the `Alt+N` → page-name mapping is a pure unit test; the widgets are verified by build + a launch smoke (the window constructs and runs cleanly with the new tree), the 3b/3c/4b precedent. The music-only build stays green.
+
+No new dependencies; no schema, engine, or core changes (a pure GTK restructure). Next: Phase 6b-ii (the Podcasts triage panes: sidebar of triage lists / shows / tags, episode list, detail pane, with episodes flowing into the unified queue).
+
 ## v0.0.28
 
 Phase 6a-iii-b shipped: private-feed credentials and episode download. This completes Phase 6a, the headless podcast subsystem; what remains for podcasts is the GUI (the Podcasts tab and triage, Phase 6b).

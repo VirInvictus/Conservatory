@@ -399,15 +399,15 @@ Split: **6a-iii-a** is OPML round-trip (network-free, no new deps); **6a-iii-b**
 
 Split so the window-root restructure is isolated from the podcast feature work: **6b-i** turns the single-view music window into the multi-view shell of spec §2.3 (the adaptive `AdwViewSwitcher` over an `AdwViewStack`, Music as the first page, an empty Podcasts page); **6b-ii** fills that page with Belfry's triage. The shell is where the second tab first exists, so it lands here rather than implicitly inside the triage work.
 
-#### Phase 6b-i — Window shell (AdwViewStack + adaptive view switcher)
+#### Phase 6b-i — Window shell (AdwViewStack + adaptive view switcher) ✅
 
-- [ ] Restructure the window root (spec §2.3): the music browse moves out of `AdwToolbarView`'s content into an `AdwViewStack` page ("Music"); the header gains an `AdwViewSwitcher` (`policy = wide`) bound to the stack. `AdwViewSwitcherTitle` is deprecated since libadwaita 1.4 and is not used.
-- [ ] Adaptive collapse: an `AdwBreakpoint` hides the header switcher and reveals a bottom `AdwViewSwitcherBar` on narrow widths (HIG: the switcher moves to the bottom edge when it no longer fits the header).
-- [ ] Now-bar / switcher-bar stacking (spec §2.3, the open call): the persistent Now-bar stays the stable innermost bottom bar; the `AdwViewSwitcherBar` reveals *beneath* it only at the narrow breakpoint. No shipping GNOME app pairs a bottom transport bar with an adaptive bottom switcher, so prototype this visually at the breakpoint and lock the order.
-- [ ] Feature-gated collapse: the switcher, bottom bar, and breakpoint exist only when ≥2 media-type features are compiled in; `--no-default-features` (music-only) opens straight into the bare Music browse with no switcher chrome (spec §2.2, §2.3).
-- [ ] Lazy page construction: heavy pages (Podcasts now, Audiobooks at 7b) build on the child's `::map` signal, not eagerly at startup. `AdwViewStack` retains each page's widget state (scroll, selection) once built.
-- [ ] Keyboard: `Alt+1` / `Alt+2` / `Alt+3` switch top-level views via a `win.view` action (the AdwTabView convention; *not* `Ctrl+N`, which frees `Ctrl+1/2/3` for the podcast triage lists). `docs/keymap.md` updated.
-- [ ] Tests: the switcher binds to the stack and `win.view` targets the right page; the music-only build compiles and runs with no switcher widgets present.
+- [x] Restructure the window root (spec §2.3): the music browse moves out of `AdwToolbarView`'s content into an `AdwViewStack` page ("Music"); the header gains an `AdwViewSwitcher` (`policy = wide`) bound to the stack. `AdwViewSwitcherTitle` is deprecated since libadwaita 1.4 and is not used. (The always-on filter bar moved from a global top bar into the Music page so it does not show over the Podcasts tab; its behaviour is unchanged.)
+- [x] Adaptive collapse: an `AdwBreakpoint` (max-width 550sp) hides the header switcher and reveals a bottom `AdwViewSwitcherBar` on narrow widths.
+- [x] Now-bar / switcher-bar stacking (spec §2.3): the persistent Now-bar stays the stable innermost bottom bar; the `AdwViewSwitcherBar` is added after it (reveals *beneath* it) only at the narrow breakpoint.
+- [x] Feature-gated: the switcher, bottom bar, breakpoint, and Podcasts page exist only behind `#[cfg(feature = "podcasts")]` (the binary's first feature gates); `--no-default-features` (music-only) keeps a single-page stack with no switcher chrome, visually unchanged (spec §2.2, §2.3). (7b generalises the gate to include `audiobooks`.)
+- [x] Lazy page construction: the Podcasts page builds its child on the child's first `::map` (an empty placeholder until 6b-ii); `AdwViewStack` retains each page's widget state once built.
+- [x] Keyboard: `Alt+1` / `Alt+2` / `Alt+3` switch top-level views (a global `ShortcutController`, the AdwTabView convention; `Ctrl+1/2/3` left free for the podcast triage lists). `Alt+3` is inert until the Audiobooks tab (7b). `docs/keymap.md` updated.
+- [x] Tests: the `Alt+N` → page-name mapping is a pure unit test; a launch smoke confirms the new tree constructs and runs cleanly; the music-only build compiles + runs with no switcher widgets present.
 
 *Usable artifact:* the GUI is a multi-view window. Switch between Music and an empty Podcasts tab, the switcher collapsing to a bottom bar on narrow widths, the Now-bar persistent across both. The music-only build is visually unchanged (no switcher).
 

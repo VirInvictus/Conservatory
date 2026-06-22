@@ -5,6 +5,13 @@
 //! filter, the grammar searches, they intersect on the leaf) and Perspectives:
 //! named saved searches in the sidebar, saved through the worker and reloaded by
 //! re-parsing their text.
+//!
+//! Phase 6b-i turns the single-view window into the multi-view shell of spec
+//! §2.3: the music browse is one page of an `AdwViewStack`, with a header
+//! `AdwViewSwitcher` and a Podcasts plugin page (feature-gated, lazy on `::map`,
+//! empty until 6b-ii). An `AdwBreakpoint` collapses the switcher to a bottom
+//! `AdwViewSwitcherBar` beneath the persistent Now-bar on narrow widths. A
+//! music-only build keeps a single-page stack with no switcher chrome.
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -85,6 +92,10 @@ mod imp {
         // window updates it from the snapshot and rebuilds the drawer.
         pub queue_panel: OnceCell<QueuePanel>,
         pub queue_current: OnceCell<Rc<Cell<Option<i64>>>>,
+        // The top-level view stack (Phase 6b-i): Music first, plus the
+        // feature-gated Podcasts/Audiobooks plugin pages. `Alt+1/2/3` switch
+        // its visible child by name.
+        pub view_stack: OnceCell<adw::ViewStack>,
     }
 
     #[glib::object_subclass]
@@ -258,8 +269,22 @@ impl ConservatoryWindow {
 
         // Body + the queue drawer, side by side.
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        content.set_vexpand(true);
         content.append(&body);
         content.append(&queue_panel.revealer);
+
+        // The Music view: the always-on filter bar over the body. The filter bar
+        // lives *inside* the page (not as a global top bar) so it does not show
+        // over the Podcasts tab (spec §2.3). This is the only layout change to
+        // the music browse; its behaviour is unchanged.
+        let music_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        music_page.append(&filter_bar);
+        music_page.append(&content);
+
+        // The top-level view stack (spec §2.2, §2.3): Music first; the Podcasts
+        // (and later Audiobooks) plugin pages are added, feature-gated, below.
+        let stack = adw::ViewStack::new();
+        stack.add_titled_with_icon(&music_page, Some("music"), "Music", "folder-music-symbolic");
 
         let header = adw::HeaderBar::new();
         let queue_btn = gtk::Button::from_icon_name("view-list-symbolic");
@@ -295,10 +320,21 @@ impl ConservatoryWindow {
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
-        toolbar.add_top_bar(&filter_bar);
-        toolbar.set_content(Some(&content));
+        toolbar.set_content(Some(&stack));
+        // The Now-bar is the stable innermost bottom bar (spec §2.3); the
+        // adaptive view-switcher bar reveals *beneath* it at the narrow
+        // breakpoint (added in `attach_podcasts_view`).
         toolbar.add_bottom_bar(&now_bar.root);
+
+        // The multi-view chrome (switcher in the header, the adaptive bottom
+        // switcher bar, the breakpoint, the Podcasts page) exists only when a
+        // second view is compiled in. A music-only build (`--no-default-features`)
+        // keeps a single-page stack with no switcher: visually unchanged.
+        #[cfg(feature = "podcasts")]
+        self.attach_podcasts_view(&stack, &header, &toolbar);
+
         self.set_content(Some(&toolbar));
+        let _ = imp.view_stack.set(stack);
 
         *imp.panes.borrow_mut() = panes;
         let _ = imp.leaf.set(leaf);
@@ -306,6 +342,7 @@ impl ConservatoryWindow {
         let _ = imp.now_bar.set(now_bar);
         let _ = imp.queue_current.set(queue_current);
         self.install_queue_keys(&queue_panel.list);
+        self.install_view_keys();
         let _ = imp.queue_panel.set(queue_panel);
 
         // Double-click / Enter on a track plays the visible list from that row
@@ -1161,6 +1198,98 @@ impl ConservatoryWindow {
         list.add_controller(local);
     }
 
+    /// Build the Podcasts plugin view and the multi-view chrome (Phase 6b-i):
+    /// the header view switcher, the adaptive bottom switcher bar, the narrow
+    /// breakpoint, and the (lazily-built) Podcasts page. Compiled only with the
+    /// `podcasts` feature; 6b-ii fills the page with the triage UI.
+    #[cfg(feature = "podcasts")]
+    fn attach_podcasts_view(
+        &self,
+        stack: &adw::ViewStack,
+        header: &adw::HeaderBar,
+        toolbar: &adw::ToolbarView,
+    ) {
+        // Lazy construction (spec §2.3): the page's child is built on its first
+        // `::map`, not eagerly at startup, so switching to it is what pays for
+        // it. The placeholder is cheap; the heavy triage tree lands at 6b-ii.
+        let podcasts_bin = adw::Bin::new();
+        let built = Cell::new(false);
+        podcasts_bin.connect_map(move |bin| {
+            if built.replace(true) {
+                return;
+            }
+            let status = adw::StatusPage::builder()
+                .icon_name("microphone-symbolic")
+                .title("Podcasts")
+                .description(
+                    "Subscribe with `conservatory-cli podcast add`, then refresh. \
+                     The Inbox → Queue → Played triage arrives in Phase 6b-ii.",
+                )
+                .build();
+            bin.set_child(Some(&status));
+        });
+        stack.add_titled_with_icon(
+            &podcasts_bin,
+            Some("podcasts"),
+            "Podcasts",
+            "microphone-symbolic",
+        );
+
+        // The header switcher (libadwaita 1.4+ idiom; AdwViewSwitcherTitle is
+        // deprecated and not used). `Wide` keeps the labels until the breakpoint.
+        let switcher = adw::ViewSwitcher::builder()
+            .stack(stack)
+            .policy(adw::ViewSwitcherPolicy::Wide)
+            .build();
+        header.set_title_widget(Some(&switcher));
+
+        // The adaptive bottom bar: hidden when wide, revealed beneath the Now-bar
+        // at the narrow breakpoint (the spec §2.3 stacking call).
+        let switcher_bar = adw::ViewSwitcherBar::builder().stack(stack).build();
+        toolbar.add_bottom_bar(&switcher_bar);
+
+        let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            550.0,
+            adw::LengthUnit::Sp,
+        ));
+        breakpoint.add_setter(header, "visible", Some(&false.to_value()));
+        breakpoint.add_setter(&switcher_bar, "reveal", Some(&true.to_value()));
+        self.add_breakpoint(breakpoint);
+    }
+
+    /// `Alt+1/2/3` switch the top-level view (spec §2.3; the AdwTabView `Alt+N`
+    /// convention, leaving `Ctrl+N` free for the 6b-ii triage lists).
+    fn install_view_keys(&self) {
+        let controller = gtk::ShortcutController::new();
+        controller.set_scope(gtk::ShortcutScope::Global);
+        for n in 1u8..=3 {
+            let weak = self.downgrade();
+            controller.add_shortcut(gtk::Shortcut::new(
+                gtk::ShortcutTrigger::parse_string(&format!("<Alt>{n}")),
+                Some(gtk::CallbackAction::new(move |_, _| {
+                    if let Some(win) = weak.upgrade()
+                        && let Some(name) = view_page_name(n)
+                    {
+                        win.switch_view(name);
+                    }
+                    glib::Propagation::Stop
+                })),
+            ));
+        }
+        self.add_controller(controller);
+    }
+
+    /// Switch to a named view if it exists (a no-op for a page not compiled in,
+    /// e.g. `Alt+2` in a music-only build).
+    fn switch_view(&self, name: &str) {
+        if let Some(stack) = self.imp().view_stack.get()
+            && stack.child_by_name(name).is_some()
+        {
+            stack.set_visible_child_name(name);
+        }
+    }
+
     /// Refresh the Now-bar from the player snapshot (the 250 ms poll). Title and
     /// artist re-render only when the track changes; position/seek/icon every tick.
     fn refresh_now_bar(&self) {
@@ -1540,5 +1669,31 @@ impl ConservatoryWindow {
         // Leaf goes through the filter-bar path so the active grammar still
         // applies after a facet change.
         self.set_leaf();
+    }
+}
+
+/// Map an `Alt+N` view-switch key to the stack page name (spec §2.3). `None`
+/// for an out-of-range key. Switching to a page that is not compiled in is a
+/// no-op (handled in `switch_view`), so this stays a pure key→name mapping.
+fn view_page_name(n: u8) -> Option<&'static str> {
+    match n {
+        1 => Some("music"),
+        2 => Some("podcasts"),
+        3 => Some("audiobooks"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::view_page_name;
+
+    #[test]
+    fn view_keys_map_to_page_names() {
+        assert_eq!(view_page_name(1), Some("music"));
+        assert_eq!(view_page_name(2), Some("podcasts"));
+        assert_eq!(view_page_name(3), Some("audiobooks"));
+        assert_eq!(view_page_name(0), None);
+        assert_eq!(view_page_name(4), None);
     }
 }

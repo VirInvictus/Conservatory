@@ -1,6 +1,6 @@
 # Keymap (draft proposal)
 
-> **Status: provisional, partly wired.** Live so far: `Ctrl+F` (filter bar, 3c); **double-click / Enter** on a track plays the visible list, **`Ctrl+Enter`** appends the selection, and the **Now-bar transport buttons** work (4b-ii-a / c); the **queue drawer** (`Ctrl+U` to toggle) with `Alt+↑/↓` reorder, `Delete`, `Ctrl+Shift+C`, and drag-and-drop (4b-ii-b); the saved queue resumes paused on launch (4b-ii-c); **media keys / headset buttons** work via MPRIS2 (4c-i); **`Ctrl+E`** opens the bulk-edit dialog over the selection (5a-ii). Not yet wired: the in-window keyboard *playback* bindings below (`Space`, `Ctrl+→/←`, etc.). This stays a proposed keymap, finalized as those surfaces land, not a full description of current behaviour. It encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** GNOME/libadwaita conventions are followed where one exists.
+> **Status: provisional, partly wired.** Live so far: `Ctrl+F` (filter bar, 3c); **double-click / Enter** on a track plays the visible list, **`Ctrl+Enter`** appends the selection, and the **Now-bar transport buttons** work (4b-ii-a / c); the **queue drawer** (`Ctrl+U` to toggle) with `Alt+↑/↓` reorder, `Delete`, `Ctrl+Shift+C`, and drag-and-drop (4b-ii-b); the saved queue resumes paused on launch (4b-ii-c); **media keys / headset buttons** work via MPRIS2 (4c-i); **`Ctrl+E`** opens the bulk-edit dialog over the selection (5a-ii); **`Alt+1` / `Alt+2`** switch between the Music and Podcasts views (6b-i; Podcasts is an empty placeholder until 6b-ii). Not yet wired: the in-window keyboard *playback* bindings below (`Space`, `Ctrl+→/←`, etc.). This stays a proposed keymap, finalized as those surfaces land, not a full description of current behaviour. It encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** GNOME/libadwaita conventions are followed where one exists.
 
 ## Global
 
@@ -11,7 +11,7 @@
 | `Ctrl+,` | Preferences (`AdwPreferencesDialog`) |
 | `Ctrl+Q` | Quit |
 | `F1` | Keyboard shortcuts window |
-| `Alt+1` / `Alt+2` / `Alt+3` | Switch top-level view: Music / Podcasts / Audiobooks (the `AdwTabView` `Alt+N` convention; `win.view` action, Phase 6b-i) |
+| `Alt+1` / `Alt+2` / `Alt+3` | Switch top-level view: Music / Podcasts / Audiobooks (the `AdwTabView` `Alt+N` convention; a global shortcut switching the `AdwViewStack`, Phase 6b-i. `Alt+3` is inert until the Audiobooks tab, 7b) |
 | `Ctrl+J` | Open the jobs / activity surface (imports, moves, fetches) |
 
 ## Browse (Music)

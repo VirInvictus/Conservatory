@@ -1,5 +1,19 @@
 # Patch Notes
 
+## v0.0.30
+
+Phase 6b-ii-a shipped: the Podcasts tab can now browse your subscriptions. The empty placeholder from 6b-i is replaced with a three-pane triage browse (read-only); the triage actions and episode playback are the next step (6b-ii-b).
+
+- **Triage reads (`conservatory-core`):** a new `EpisodeListRow` (episode display fields + show title + the triage state joined from `playback`, defaulting to Unplayed, plus an `in_queue` flag) and two reads: `episodes_for_show` (a show's episodes, newest first) and `episodes_in_bucket` for the Inbox / Queue / Played buckets across every subscription. The buckets are derived, not stored (spec §4.2): Queue is unified-queue membership, Played is `played >= PlayedFully`, Inbox is the rest.
+- **CLI:** `podcast episodes <db> [--show <id> | --bucket inbox|queue|played]` (read-only; `--tsv/--json/--human`), the headless surface for the same data. Behind the `podcasts` feature.
+- **Podcasts view (`conservatory/src/ui/podcasts.rs`, GTK):** a sidebar of the triage buckets and subscribed shows; an episode list (`ColumnView`) with a played-state glyph, title, date, and length; and a detail pane with the show notes. Built lazily on the page's first `::map` (the 6b-i slot) over the read pool. Notes are rendered as raw feed text for now (the `ammonia` sanitize is deferred). The three panes are nested `gtk::Paned` (matching the music browse); an adaptive `AdwNavigationSplitView` is a later refinement.
+- **Feature-gated:** the new `EpisodeRow` GObject and the whole `podcasts` UI module compile only with the `podcasts` feature; the `--no-default-features` music-only build is unchanged and stays green.
+- **Tests:** the bucket derivation is covered by a core integration test (an episode in the queue is Queue, a played one is Played, an untouched one is Inbox); `EpisodeRow`'s formatting is unit-tested; and the GTK view's construction is exercised by a display-guarded build test (runs under a session, skips on a headless CI).
+
+Deferred to 6b-ii-b: the triage actions (mark played / unplayed / archived / starred), per-show overrides, episode-into-the-unified-queue insertion, and streaming-or-local episode playback. A Tags sidebar section also lands then (it needs a tag-filtered episode read).
+
+Next: Phase 6b-ii-b (triage actions + episode playback).
+
 ## v0.0.29
 
 Phase 6b-i shipped: the multi-view window shell. The GUI is no longer a single music window; it now has a top-level view switcher, with Music as the first tab and a Podcasts tab alongside it. This is the structural groundwork for the Podcasts UI (the triage panes land in 6b-ii); the Podcasts tab is an empty placeholder for now.

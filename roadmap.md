@@ -413,13 +413,25 @@ Split so the window-root restructure is isolated from the podcast feature work: 
 
 #### Phase 6b-ii — Triage panes
 
-- [ ] The Podcasts view: Belfry's three-pane Inbox → Queue → Played triage (sidebar of triage lists / shows / tags; episode list; detail pane), intact (spec §3.7), filling the 6b-i page.
-- [ ] Per-show overrides: speed, Smart Speed, Voice Boost, skip, retention, inbox policy.
-- [ ] The structural change from Belfry: **Queue is the shared unified queue**, so an episode and a track can sit next to each other.
-- [ ] Streaming before/without download: if the local file is absent and a URL is present, libmpv streams with range requests (spec §5.3).
-- [ ] Tests: triage transitions; per-show override resolution; episode-into-unified-queue insertion.
+Split: **6b-ii-a** is the read-only three-pane browse (sidebar + episode list + detail); **6b-ii-b** is the triage actions, per-show overrides, episode→unified-queue insertion, and episode playback.
 
-*Usable artifact:* podcasts are browsable and triageable in the GUI, with episodes flowing into the one queue.
+##### Phase 6b-ii-a — Triage browse (read-only) ✅
+
+- [x] The Podcasts view (spec §3.7): a sidebar of triage buckets (Inbox / Queue / Played) and subscribed shows, an episode list (`ColumnView`) with a played-state glyph + title/date/length, and a detail pane with show notes, filling the 6b-i page (built lazily on `::map`). `conservatory/src/ui/podcasts.rs` (nested `gtk::Paned`; AdwNavigationSplitView is a later refinement). Tags sidebar section deferred to 6b-ii-b (needs a tag-filtered read).
+- [x] Core triage reads: `EpisodeListRow` + `episodes_for_show` + `episodes_in_bucket` (the §4.2 derivation: Queue = unified-queue membership, Played = `played >= PlayedFully`, Inbox = the rest). CLI `podcast episodes <db> [--show <id> | --bucket inbox|queue|played]` (the headless surface).
+- [x] Tests: the bucket derivation (core integration test); `EpisodeRow` formatting (unit); the GTK view's construction (display-guarded build test). Music-only build stays green.
+
+*Usable artifact:* open the Podcasts tab and browse your subscriptions: pick Inbox/Queue/Played or a show, see its episodes with state, read the show notes.
+
+##### Phase 6b-ii-b — Triage actions + episode playback
+
+- [ ] Triage transitions (mark played / unplayed / archived / starred, via `upsert_playback`); a Tags sidebar section (tag-filtered episode read).
+- [ ] Per-show overrides: speed, Smart Speed, Voice Boost, skip, retention, inbox policy (`upsert_show_settings`).
+- [ ] The structural change from Belfry: **Queue is the shared unified queue**, so an episode and a track can sit next to each other. New core `enqueue_episodes` + `load_queue_display` episode join; a `build_episode_queue` + a basic episode profile (Smart Speed / Voice Boost is 6c).
+- [ ] Streaming before/without download: if the local file is absent and a URL is present, libmpv streams with range requests (spec §5.3); libmpv's `loadfile` takes the URL as-is.
+- [ ] Tests: triage transitions; per-show override resolution; episode-into-unified-queue insertion; episode playback (null sink) over a local path and a stream URL.
+
+*Usable artifact:* podcasts are triageable in the GUI, with episodes flowing into the one queue and playing (downloaded or streamed).
 
 ### Phase 6c — Podcast playback profile + parity
 

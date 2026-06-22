@@ -1214,19 +1214,18 @@ impl ConservatoryWindow {
         // it. The placeholder is cheap; the heavy triage tree lands at 6b-ii.
         let podcasts_bin = adw::Bin::new();
         let built = Cell::new(false);
+        let weak = self.downgrade();
         podcasts_bin.connect_map(move |bin| {
             if built.replace(true) {
                 return;
             }
-            let status = adw::StatusPage::builder()
-                .icon_name("microphone-symbolic")
-                .title("Podcasts")
-                .description(
-                    "Subscribe with `conservatory-cli podcast add`, then refresh. \
-                     The Inbox → Queue → Played triage arrives in Phase 6b-ii.",
-                )
-                .build();
-            bin.set_child(Some(&status));
+            // Built on first map (lazy, spec §2.3) over the read pool. If the
+            // pool is somehow unset, leave the page empty rather than panic.
+            if let Some(win) = weak.upgrade()
+                && let Some(pool) = win.imp().pool.get().cloned()
+            {
+                bin.set_child(Some(&crate::ui::podcasts::build_podcasts_view(pool)));
+            }
         });
         stack.add_titled_with_icon(
             &podcasts_bin,

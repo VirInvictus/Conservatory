@@ -199,3 +199,148 @@ impl QueueRow {
         self.with(|r| r.artist.clone().unwrap_or_default())
     }
 }
+
+// --- Episode row (podcast triage list, Phase 6b-ii-a) ---
+
+#[cfg(feature = "podcasts")]
+mod episode_imp {
+    use super::*;
+    use conservatory_core::db::EpisodeListRow;
+
+    #[derive(Default)]
+    pub struct EpisodeRow {
+        pub row: RefCell<Option<EpisodeListRow>>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for EpisodeRow {
+        const NAME: &'static str = "ConservatoryEpisodeRow";
+        type Type = super::EpisodeRow;
+    }
+
+    impl ObjectImpl for EpisodeRow {}
+}
+
+#[cfg(feature = "podcasts")]
+glib::wrapper! {
+    pub struct EpisodeRow(ObjectSubclass<episode_imp::EpisodeRow>);
+}
+
+#[cfg(feature = "podcasts")]
+impl EpisodeRow {
+    pub fn new(row: &conservatory_core::db::EpisodeListRow) -> Self {
+        let obj: Self = glib::Object::new();
+        obj.imp().row.replace(Some(row.clone()));
+        obj
+    }
+
+    fn with<R>(&self, f: impl FnOnce(&conservatory_core::db::EpisodeListRow) -> R) -> R {
+        f(self.imp().row.borrow().as_ref().expect("row set"))
+    }
+
+    pub fn id(&self) -> i64 {
+        self.with(|r| r.id)
+    }
+
+    pub fn title(&self) -> String {
+        self.with(|r| r.title.clone())
+    }
+
+    pub fn show_title(&self) -> String {
+        self.with(|r| r.show_title.clone())
+    }
+
+    /// Show notes (raw feed text; the `ammonia` sanitize is deferred).
+    pub fn description(&self) -> String {
+        self.with(|r| r.description.clone().unwrap_or_default())
+    }
+
+    /// `YYYY-MM-DD`, or empty when the feed gave no date.
+    pub fn date_text(&self) -> String {
+        self.with(|r| {
+            r.pub_date
+                .map(|d| d.format("%Y-%m-%d").to_string())
+                .unwrap_or_default()
+        })
+    }
+
+    /// `h:mm:ss` / `m:ss`, or empty when unknown.
+    pub fn duration_text(&self) -> String {
+        let secs = self.with(|r| r.duration.unwrap_or(0)) as i64;
+        if secs <= 0 {
+            return String::new();
+        }
+        let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+        if h > 0 {
+            format!("{h}:{m:02}:{s:02}")
+        } else {
+            format!("{m}:{s:02}")
+        }
+    }
+
+    /// A symbolic icon name for the played state (bundle-safe Adwaita names).
+    pub fn state_icon(&self) -> &'static str {
+        use conservatory_core::db::PlayedState;
+        match self.with(|r| r.played) {
+            PlayedState::Unplayed => "media-record-symbolic",
+            PlayedState::InProgress => "media-playback-start-symbolic",
+            PlayedState::PlayedFully | PlayedState::ArchivedUnlistened => "object-select-symbolic",
+        }
+    }
+
+    /// A human label for the state (tooltip / accessibility).
+    pub fn state_label(&self) -> &'static str {
+        use conservatory_core::db::PlayedState;
+        match self.with(|r| r.played) {
+            PlayedState::Unplayed => "Unplayed",
+            PlayedState::InProgress => "In progress",
+            PlayedState::PlayedFully => "Played",
+            PlayedState::ArchivedUnlistened => "Archived",
+        }
+    }
+
+    pub fn starred(&self) -> bool {
+        self.with(|r| r.starred)
+    }
+
+    pub fn in_queue(&self) -> bool {
+        self.with(|r| r.in_queue)
+    }
+}
+
+#[cfg(all(test, feature = "podcasts"))]
+mod episode_tests {
+    use super::EpisodeRow;
+    use conservatory_core::db::{EpisodeListRow, PlayedState};
+
+    fn row(duration: Option<u32>, played: PlayedState) -> EpisodeListRow {
+        EpisodeListRow {
+            id: 1,
+            show_id: 1,
+            show_title: "Show".to_string(),
+            title: "Episode".to_string(),
+            description: None,
+            pub_date: None,
+            duration,
+            played,
+            position: 0.0,
+            starred: false,
+            in_queue: false,
+        }
+    }
+
+    #[test]
+    fn duration_and_state_formatting() {
+        let long = EpisodeRow::new(&row(Some(3725), PlayedState::PlayedFully));
+        assert_eq!(long.duration_text(), "1:02:05");
+        assert_eq!(long.state_icon(), "object-select-symbolic");
+
+        let short = EpisodeRow::new(&row(Some(95), PlayedState::Unplayed));
+        assert_eq!(short.duration_text(), "1:35");
+        assert_eq!(short.state_icon(), "media-record-symbolic");
+
+        let none = EpisodeRow::new(&row(None, PlayedState::InProgress));
+        assert_eq!(none.duration_text(), "");
+        assert_eq!(none.state_label(), "In progress");
+    }
+}

@@ -817,3 +817,121 @@ pub fn list_tags_for_show(conn: &Connection, show_id: i64) -> Result<Vec<Tag>> {
     })?;
     rows.map(|r| r.map_err(Into::into)).collect()
 }
+
+/// One episode as the triage list renders it (Phase 6b-ii-a): the display fields
+/// plus the show title and the triage state joined from `playback` (defaulting
+/// to Unplayed when there is no playback row) and `queue` membership.
+#[derive(Debug, Clone)]
+pub struct EpisodeListRow {
+    pub id: i64,
+    pub show_id: i64,
+    pub show_title: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub pub_date: Option<DateTime<Utc>>,
+    pub duration: Option<u32>, // seconds
+    pub played: PlayedState,
+    pub position: f64, // resume cursor, seconds
+    pub starred: bool,
+    pub in_queue: bool,
+}
+
+/// The triage buckets (spec §3.7, §4.2). Derived, not stored: Queue is unified-
+/// queue membership, Played is `playback.played >= PlayedFully`, Inbox is the
+/// rest (untouched or partially-played episodes not in the queue).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TriageBucket {
+    Inbox,
+    Queue,
+    Played,
+}
+
+impl TriageBucket {
+    /// Parse the CLI `--bucket` value.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "inbox" => Some(TriageBucket::Inbox),
+            "queue" => Some(TriageBucket::Queue),
+            "played" => Some(TriageBucket::Played),
+            _ => None,
+        }
+    }
+
+    /// The stable string name (CLI / display).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TriageBucket::Inbox => "inbox",
+            TriageBucket::Queue => "queue",
+            TriageBucket::Played => "played",
+        }
+    }
+}
+
+// The shared projection for an `EpisodeListRow`: episode display fields, the
+// show title, the played/position/starred state (COALESCEd so an episode with
+// no playback row reads as Unplayed at position 0), and the `in_queue` flag.
+const EPISODE_LIST_SELECT: &str = "
+    SELECT e.id, e.show_id, s.title AS show_title, e.title, e.description,
+           e.pub_date, e.duration,
+           COALESCE(p.played, 0)    AS played,
+           COALESCE(p.position, 0.0) AS position,
+           COALESCE(p.starred, 0)   AS starred,
+           EXISTS(SELECT 1 FROM queue q WHERE q.kind = 'episode' AND q.episode_id = e.id) AS in_queue
+    FROM episodes e
+    JOIN shows s ON s.id = e.show_id
+    LEFT JOIN playback p ON p.episode_id = e.id";
+
+fn row_to_episode_list_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeListRow> {
+    let pub_date: Option<i64> = row.get("pub_date")?;
+    let played: i64 = row.get("played")?;
+    let played = PlayedState::from_i64(played).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Integer, Box::new(e))
+    })?;
+    Ok(EpisodeListRow {
+        id: row.get("id")?,
+        show_id: row.get("show_id")?,
+        show_title: row.get("show_title")?,
+        title: row.get("title")?,
+        description: row.get("description")?,
+        pub_date: epoch_to_dt(pub_date),
+        duration: row.get::<_, Option<i64>>("duration")?.map(|v| v as u32),
+        played,
+        position: row.get("position")?,
+        starred: row.get("starred")?,
+        in_queue: row.get("in_queue")?,
+    })
+}
+
+/// A show's episodes with their triage state, newest first (the triage list).
+pub fn episodes_for_show(conn: &Connection, show_id: i64) -> Result<Vec<EpisodeListRow>> {
+    let sql =
+        format!("{EPISODE_LIST_SELECT} WHERE e.show_id = ?1 ORDER BY e.pub_date DESC, e.id DESC");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![show_id], row_to_episode_list_row)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// All episodes in a triage bucket, across every subscription (spec §4.2):
+/// Queue ordered by queue position, Inbox/Played newest first.
+pub fn episodes_in_bucket(conn: &Connection, bucket: TriageBucket) -> Result<Vec<EpisodeListRow>> {
+    // PlayedState::PlayedFully = 2; >= 2 also catches ArchivedUnlistened (3).
+    let sql = match bucket {
+        TriageBucket::Queue => format!(
+            "{EPISODE_LIST_SELECT}
+             JOIN queue q2 ON q2.kind = 'episode' AND q2.episode_id = e.id
+             ORDER BY q2.position"
+        ),
+        TriageBucket::Played => format!(
+            "{EPISODE_LIST_SELECT} WHERE COALESCE(p.played, 0) >= 2 ORDER BY e.pub_date DESC, e.id DESC"
+        ),
+        TriageBucket::Inbox => format!(
+            "{EPISODE_LIST_SELECT}
+             WHERE COALESCE(p.played, 0) < 2
+               AND NOT EXISTS(SELECT 1 FROM queue q WHERE q.kind = 'episode' AND q.episode_id = e.id)
+             ORDER BY e.pub_date DESC, e.id DESC"
+        ),
+    };
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], row_to_episode_list_row)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}

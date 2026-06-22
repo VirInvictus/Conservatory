@@ -470,3 +470,97 @@ async fn queue_gained_the_episode_foreign_key() {
         "book_id must not have an FK until Phase 7: {referenced:?}"
     );
 }
+
+#[tokio::test]
+async fn triage_buckets_partition_episodes() {
+    use conservatory_core::db::{TriageBucket, episodes_for_show, episodes_in_bucket};
+
+    let (dir, worker, pool) = fresh().await;
+    let show_id = worker
+        .get_or_create_show(sample_show("cast", "https://feeds.example/cast.xml"))
+        .await
+        .unwrap();
+
+    // Four episodes, one per triage state.
+    let played = worker
+        .upsert_episode(sample_episode(show_id, "ep-played", "Played", 4000))
+        .await
+        .unwrap();
+    let queued = worker
+        .upsert_episode(sample_episode(show_id, "ep-queued", "Queued", 3000))
+        .await
+        .unwrap();
+    let in_prog = worker
+        .upsert_episode(sample_episode(show_id, "ep-prog", "In progress", 2000))
+        .await
+        .unwrap();
+    let untouched = worker
+        .upsert_episode(sample_episode(show_id, "ep-fresh", "Fresh", 1000))
+        .await
+        .unwrap();
+
+    worker
+        .upsert_playback(Playback {
+            episode_id: played,
+            position: 1800.0,
+            played: PlayedState::PlayedFully,
+            last_played: Some(ts(5_000)),
+            play_count: 1,
+            starred: false,
+        })
+        .await
+        .unwrap();
+    worker
+        .upsert_playback(Playback {
+            episode_id: in_prog,
+            position: 60.0,
+            played: PlayedState::InProgress,
+            last_played: Some(ts(5_000)),
+            play_count: 0,
+            starred: true,
+        })
+        .await
+        .unwrap();
+
+    // Put `queued` in the unified queue. The episode-enqueue command lands at
+    // 6b-ii-b; here we insert the row directly to exercise the Queue derivation.
+    {
+        let conn = rusqlite::Connection::open(dir.path().join("t.db")).unwrap();
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO queue (position, kind, episode_id) VALUES (0, 'episode', ?1)",
+            [queued],
+        )
+        .unwrap();
+    }
+
+    let conn = pool.open().unwrap();
+    let bucket_ids = |b| {
+        episodes_in_bucket(&conn, b)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(bucket_ids(TriageBucket::Played), vec![played]);
+    assert_eq!(bucket_ids(TriageBucket::Queue), vec![queued]);
+    let mut inbox = bucket_ids(TriageBucket::Inbox);
+    inbox.sort_unstable();
+    let mut expect = vec![in_prog, untouched];
+    expect.sort_unstable();
+    assert_eq!(inbox, expect, "in-progress + untouched are Inbox");
+
+    // episodes_for_show carries the joined triage state for every episode.
+    let rows = episodes_for_show(&conn, show_id).unwrap();
+    assert_eq!(rows.len(), 4);
+    let by_id = |id| rows.iter().find(|r| r.id == id).unwrap().clone();
+    assert_eq!(by_id(played).played, PlayedState::PlayedFully);
+    assert!(by_id(queued).in_queue);
+    assert!(!by_id(played).in_queue);
+    assert!(by_id(in_prog).starred);
+    assert_eq!(by_id(untouched).played, PlayedState::Unplayed);
+    assert_eq!(by_id(played).show_title, "Reply All");
+
+    worker.shutdown_ack().await.unwrap();
+}

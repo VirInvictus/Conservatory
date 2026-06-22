@@ -294,6 +294,20 @@ enum PodcastAction {
         #[arg(long)]
         root: PathBuf,
     },
+    /// List episodes with their triage state (spec §3.7): a show's episodes, or
+    /// a triage bucket across all subscriptions. Read-only.
+    Episodes {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// A single show id (its episodes, newest first).
+        #[arg(long, conflicts_with = "bucket")]
+        show: Option<i64>,
+        /// A triage bucket across all shows: inbox | queue | played (default inbox).
+        #[arg(long)]
+        bucket: Option<String>,
+        #[arg(long, value_enum, default_value_t = Format::Tsv)]
+        format: Format,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1766,6 +1780,141 @@ fn podcast(action: PodcastAction) -> Result<()> {
             episode_id,
             root,
         } => block_on(run_podcast_download(db, episode_id, root)),
+        PodcastAction::Episodes {
+            db,
+            show,
+            bucket,
+            format,
+        } => run_podcast_episodes(db, show, bucket, format),
+    }
+}
+
+/// A minimal JSON string literal (quote + escape) for the hand-rolled `--json`
+/// output (serde is not a CLI dependency).
+#[cfg(feature = "podcasts")]
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// List episodes with triage state. Read-only: no worker, just the pool.
+#[cfg(feature = "podcasts")]
+fn run_podcast_episodes(
+    db: PathBuf,
+    show: Option<i64>,
+    bucket: Option<String>,
+    format: Format,
+) -> Result<()> {
+    use conservatory_core::db::{TriageBucket, episodes_for_show, episodes_in_bucket};
+
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let rows = if let Some(show_id) = show {
+        episodes_for_show(&conn, show_id).context("reading show episodes")?
+    } else {
+        let bucket = match bucket.as_deref() {
+            Some(s) => TriageBucket::parse(s)
+                .ok_or_else(|| anyhow::anyhow!("unknown bucket '{s}' (inbox | queue | played)"))?,
+            None => TriageBucket::Inbox,
+        };
+        episodes_in_bucket(&conn, bucket).context("reading triage bucket")?
+    };
+    print_episode_rows(&rows, format);
+    Ok(())
+}
+
+#[cfg(feature = "podcasts")]
+fn print_episode_rows(rows: &[conservatory_core::db::EpisodeListRow], format: Format) {
+    use conservatory_core::db::PlayedState;
+
+    let state = |p: PlayedState| match p {
+        PlayedState::Unplayed => "unplayed",
+        PlayedState::InProgress => "in-progress",
+        PlayedState::PlayedFully => "played",
+        PlayedState::ArchivedUnlistened => "archived",
+    };
+    let date = |r: &conservatory_core::db::EpisodeListRow| {
+        r.pub_date
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| "-".to_string())
+    };
+    let dur = |r: &conservatory_core::db::EpisodeListRow| {
+        r.duration
+            .map(|s| format!("{}:{:02}", s / 60, s % 60))
+            .unwrap_or_else(|| "-".to_string())
+    };
+
+    match format {
+        Format::Tsv => {
+            println!("id\tshow\ttitle\tdate\tduration\tstate\tstarred\tqueued");
+            for r in rows {
+                println!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    r.id,
+                    r.show_title,
+                    r.title,
+                    date(r),
+                    dur(r),
+                    state(r.played),
+                    r.starred,
+                    r.in_queue,
+                );
+            }
+        }
+        Format::Json => {
+            print!("[");
+            for (i, r) in rows.iter().enumerate() {
+                if i > 0 {
+                    print!(",");
+                }
+                print!(
+                    "{{\"id\":{},\"show\":{},\"title\":{},\"date\":\"{}\",\"state\":\"{}\",\"starred\":{},\"queued\":{}}}",
+                    r.id,
+                    json_str(&r.show_title),
+                    json_str(&r.title),
+                    date(r),
+                    state(r.played),
+                    r.starred,
+                    r.in_queue,
+                );
+            }
+            println!("]");
+        }
+        Format::Human => {
+            if rows.is_empty() {
+                println!("(no episodes)");
+            }
+            for r in rows {
+                let flags = match (r.starred, r.in_queue) {
+                    (true, true) => " ★ queued",
+                    (true, false) => " ★",
+                    (false, true) => " queued",
+                    (false, false) => "",
+                };
+                println!(
+                    "[{}] {} — {} ({}, {}){}",
+                    state(r.played),
+                    r.show_title,
+                    r.title,
+                    date(r),
+                    dur(r),
+                    flags,
+                );
+            }
+        }
     }
 }
 

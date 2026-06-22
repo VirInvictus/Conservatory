@@ -17,7 +17,9 @@ use rusqlite::Connection;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::db::command::Command;
-use crate::db::models::{Album, Artist, Chapter, Episode, Playback, Show, ShowSettings, Track};
+use crate::db::models::{
+    Album, Artist, Chapter, Episode, Playback, PlayedState, Show, ShowSettings, Track,
+};
 use crate::db::{connection, migrations, probe, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::{Error, Result};
@@ -388,6 +390,32 @@ impl WorkerHandle {
             .await
     }
 
+    /// Set an episode's played state (triage, Phase 6b-ii-b); preserves starred.
+    pub async fn set_episode_played(
+        &self,
+        episode_id: i64,
+        state: PlayedState,
+        when: Option<i64>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::SetEpisodePlayed {
+            episode_id,
+            state,
+            when,
+            reply,
+        })
+        .await
+    }
+
+    /// Toggle an episode's starred flag (triage, Phase 6b-ii-b).
+    pub async fn set_episode_starred(&self, episode_id: i64, starred: bool) -> Result<()> {
+        self.dispatch(|reply| Command::SetEpisodeStarred {
+            episode_id,
+            starred,
+            reply,
+        })
+        .await
+    }
+
     /// Upsert a show's per-show overrides.
     pub async fn upsert_show_settings(&self, settings: ShowSettings) -> Result<()> {
         self.dispatch(|reply| Command::UpsertShowSettings { settings, reply })
@@ -717,6 +745,21 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::UpsertPlayback { playback, reply } => {
             let _ = reply.send(writes::upsert_playback(conn, &playback));
+        }
+        Command::SetEpisodePlayed {
+            episode_id,
+            state,
+            when,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_episode_played(conn, episode_id, state, when));
+        }
+        Command::SetEpisodeStarred {
+            episode_id,
+            starred,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_episode_starred(conn, episode_id, starred));
         }
         Command::UpsertShowSettings { settings, reply } => {
             let _ = reply.send(writes::upsert_show_settings(conn, &settings));

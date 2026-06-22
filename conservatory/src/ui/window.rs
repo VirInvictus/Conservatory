@@ -1211,7 +1211,8 @@ impl ConservatoryWindow {
     ) {
         // Lazy construction (spec §2.3): the page's child is built on its first
         // `::map`, not eagerly at startup, so switching to it is what pays for
-        // it. The placeholder is cheap; the heavy triage tree lands at 6b-ii.
+        // it. Reads go through the pool; triage actions write through the worker
+        // (dispatched on the runtime, the GUI write idiom).
         let podcasts_bin = adw::Bin::new();
         let built = Cell::new(false);
         let weak = self.downgrade();
@@ -1219,12 +1220,17 @@ impl ConservatoryWindow {
             if built.replace(true) {
                 return;
             }
-            // Built on first map (lazy, spec §2.3) over the read pool. If the
-            // pool is somehow unset, leave the page empty rather than panic.
-            if let Some(win) = weak.upgrade()
-                && let Some(pool) = win.imp().pool.get().cloned()
-            {
-                bin.set_child(Some(&crate::ui::podcasts::build_podcasts_view(pool)));
+            if let Some(win) = weak.upgrade() {
+                let imp = win.imp();
+                if let (Some(pool), Some(worker), Some(rt)) =
+                    (imp.pool.get().cloned(), imp.worker.get(), imp.runtime.get())
+                {
+                    bin.set_child(Some(&crate::ui::podcasts::build_podcasts_view(
+                        pool,
+                        worker.clone(),
+                        rt.handle().clone(),
+                    )));
+                }
             }
         });
         stack.add_titled_with_icon(

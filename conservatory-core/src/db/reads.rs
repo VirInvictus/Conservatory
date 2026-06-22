@@ -935,3 +935,27 @@ pub fn episodes_in_bucket(conn: &Connection, bucket: TriageBucket) -> Result<Vec
     let rows = stmt.query_map([], row_to_episode_list_row)?;
     rows.map(|r| r.map_err(Into::into)).collect()
 }
+
+/// Every tag, name-ordered (the Podcasts sidebar Tags section, Phase 6b-ii-b).
+pub fn list_all_tags(conn: &Connection) -> Result<Vec<Tag>> {
+    let mut stmt = conn.prepare("SELECT id, name FROM tags ORDER BY name COLLATE NOCASE")?;
+    let rows = stmt.query_map([], |r| {
+        Ok(Tag {
+            id: r.get("id")?,
+            name: r.get("name")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// Episodes of every show carrying `tag_id`, with triage state, newest first.
+pub fn episodes_for_tag(conn: &Connection, tag_id: i64) -> Result<Vec<EpisodeListRow>> {
+    let sql = format!(
+        "{EPISODE_LIST_SELECT}
+         JOIN show_tags st ON st.show_id = e.show_id AND st.tag_id = ?1
+         ORDER BY e.pub_date DESC, e.id DESC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![tag_id], row_to_episode_list_row)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}

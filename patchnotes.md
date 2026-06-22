@@ -1,5 +1,20 @@
 # Patch Notes
 
+## v0.0.31
+
+Phase 6b-ii-b shipped: the Podcasts inbox is now actionable. Select an episode and mark it played, unplayed, or archived, or star it; the list's state glyph and the triage buckets update live. A Tags section joins the sidebar.
+
+- **Triage writes (`conservatory-core`):** two **partial** playback upserts so an action never clobbers its siblings: `set_episode_played(episode_id, state, when)` (preserves starred / play_count; marking unplayed rewinds the resume position) and `set_episode_starred(episode_id, starred)` (preserves played / position). New worker commands in the single-writer ledger.
+- **Tag reads:** `list_all_tags` (every tag, for the sidebar) and `episodes_for_tag` (episodes of shows carrying a tag, with triage state), reusing the 6b-ii-a episode-list projection.
+- **CLI:** `podcast mark <db> <episode_id> <played|unplayed|archived>` and `podcast star <db> <episode_id> [--off]`, the headless surface. Verified end to end against a live feed (mark an episode played, watch it move to the Played bucket; star preserved across the mark).
+- **GUI (`conservatory/src/ui/podcasts.rs`):** the detail pane gains a triage action bar (Mark played / unplayed, Archive, Star), enabled when an episode is selected, that writes through the single-writer worker (the music edit path's `rt.block_on(worker.*)` idiom) and re-loads the current source so the glyph and bucket counts refresh. The sidebar gains a Tags section.
+- **Feature-gated** as before; the `--no-default-features` music-only build is unchanged and green.
+- **Tests:** the partial writes (mark-played keeps starred and vice-versa; mark-unplayed rewinds position; archived maps to ArchivedUnlistened) and the tag-filter read, as a core integration test; the bucket reads reflect the new state.
+
+Deferred to 6b-ii-c: episode playback in the unified queue (stream or downloaded) and per-show overrides (speed / Smart Speed / Voice Boost / inbox policy). Those touch the player engine (per-kind persistence, a generalised queue item, resume), so they land as their own commit.
+
+Next: Phase 6b-ii-c (episode playback + the unified queue + per-show overrides).
+
 ## v0.0.30
 
 Phase 6b-ii-a shipped: the Podcasts tab can now browse your subscriptions. The empty placeholder from 6b-i is replaced with a three-pane triage browse (read-only); the triage actions and episode playback are the next step (6b-ii-b).

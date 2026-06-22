@@ -1,15 +1,18 @@
-//! The Podcasts triage browse (Phase 6b-ii-a, read-only).
+//! The Podcasts triage browse (Phase 6b-ii-a/b).
 //!
 //! Fills the 6b-i Podcasts page (spec §3.7): a sidebar of triage buckets
-//! (Inbox / Queue / Played) and subscribed shows, an episode list showing each
-//! episode's played state, and a detail pane with the show notes. Read-only;
-//! the triage *actions* (mark played/starred, enqueue) and episode playback are
-//! Phase 6b-ii-b. The whole module is compiled only with the `podcasts` feature.
+//! (Inbox / Queue / Played), subscribed shows, and tags; an episode list
+//! showing each episode's played state; and a detail pane with the show notes
+//! plus the triage actions (6b-ii-b: mark played / unplayed / archived, star).
+//! Episode playback is 6b-ii-c. The module compiles only with the `podcasts`
+//! feature.
 //!
-//! Built over the read pool with the core triage reads (`episodes_in_bucket`,
-//! `episodes_for_show`); no widget logic reaches into the database directly
-//! beyond those calls.
+//! Reads go through the read pool (`episodes_in_bucket` / `episodes_for_show` /
+//! `episodes_for_tag`); the actions write through the single-writer worker
+//! (`set_episode_played` / `set_episode_starred`), then re-load the current
+//! source so the list's state glyph and the bucket counts refresh.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk4 as gtk;
@@ -18,7 +21,8 @@ use libadwaita as adw;
 use adw::prelude::*;
 
 use conservatory_core::db::{
-    EpisodeListRow, ReadPool, TriageBucket, episodes_for_show, episodes_in_bucket, list_shows,
+    EpisodeListRow, PlayedState, ReadPool, TriageBucket, WorkerHandle, episodes_for_show,
+    episodes_for_tag, episodes_in_bucket, list_all_tags, list_shows,
 };
 
 use crate::ui::objects::EpisodeRow;
@@ -28,24 +32,46 @@ use crate::ui::objects::EpisodeRow;
 enum Source {
     Bucket(TriageBucket),
     Show(i64),
+    Tag(i64),
 }
 
-/// Shared state for the episode list + detail pane.
+/// A triage action button's effect.
+#[derive(Clone, Copy)]
+enum Action {
+    TogglePlayed,
+    Archive,
+    ToggleStar,
+}
+
+/// Shared state for the episode list, detail pane, and triage actions.
 struct Inner {
     pool: ReadPool,
+    worker: WorkerHandle,
+    rt: tokio::runtime::Handle,
     store: gtk::gio::ListStore,
+    selection: gtk::SingleSelection,
+    current: RefCell<Source>,
     title: gtk::Label,
     subtitle: gtk::Label,
     notes: gtk::Label,
+    actions: gtk::Box,
+    played_btn: gtk::Button,
+    star_btn: gtk::Button,
 }
 
 impl Inner {
     fn load(&self, source: Source) {
+        *self.current.borrow_mut() = source;
         self.store.remove_all();
         for row in &self.read(source) {
             self.store.append(&EpisodeRow::new(row));
         }
         self.show_detail(None);
+    }
+
+    fn reload(&self) {
+        let source = *self.current.borrow();
+        self.load(source);
     }
 
     fn read(&self, source: Source) -> Vec<EpisodeListRow> {
@@ -55,7 +81,12 @@ impl Inner {
         match source {
             Source::Bucket(b) => episodes_in_bucket(&conn, b).unwrap_or_default(),
             Source::Show(id) => episodes_for_show(&conn, id).unwrap_or_default(),
+            Source::Tag(id) => episodes_for_tag(&conn, id).unwrap_or_default(),
         }
+    }
+
+    fn selected(&self) -> Option<EpisodeRow> {
+        self.selection.selected_item().and_downcast::<EpisodeRow>()
     }
 
     fn show_detail(&self, row: Option<&EpisodeRow>) {
@@ -69,13 +100,59 @@ impl Inner {
                 } else {
                     &notes
                 });
+                self.actions.set_sensitive(true);
+                let played = r.played() == PlayedState::PlayedFully;
+                self.played_btn.set_label(if played {
+                    "Mark unplayed"
+                } else {
+                    "Mark played"
+                });
+                self.star_btn
+                    .set_label(if r.starred() { "Unstar" } else { "Star" });
             }
             None => {
                 self.title.set_text("");
                 self.subtitle.set_text("");
                 self.notes.set_text("Select an episode to read its notes.");
+                self.actions.set_sensitive(false);
             }
         }
+    }
+
+    /// Toggle the selected episode between played-fully and unplayed.
+    fn toggle_played(&self) {
+        if let Some(row) = self.selected() {
+            let next = if row.played() == PlayedState::PlayedFully {
+                PlayedState::Unplayed
+            } else {
+                PlayedState::PlayedFully
+            };
+            self.write_played(row.id(), next);
+        }
+    }
+
+    fn archive(&self) {
+        if let Some(row) = self.selected() {
+            self.write_played(row.id(), PlayedState::ArchivedUnlistened);
+        }
+    }
+
+    fn toggle_star(&self) {
+        if let Some(row) = self.selected() {
+            let starred = !row.starred();
+            let _ = self
+                .rt
+                .block_on(self.worker.set_episode_starred(row.id(), starred));
+            self.reload();
+        }
+    }
+
+    fn write_played(&self, episode_id: i64, state: PlayedState) {
+        let when = (state == PlayedState::PlayedFully).then(now_secs);
+        let _ = self
+            .rt
+            .block_on(self.worker.set_episode_played(episode_id, state, when));
+        self.reload();
     }
 }
 
@@ -89,8 +166,20 @@ fn detail_subtitle(r: &EpisodeRow) -> String {
     parts.join("  \u{2022}  ")
 }
 
-/// Build the read-only Podcasts triage view over the read pool.
-pub fn build_podcasts_view(pool: ReadPool) -> gtk::Widget {
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Build the Podcasts triage view: reads over `pool`, triage writes over
+/// `worker` (dispatched on `rt`, the GUI write idiom).
+pub fn build_podcasts_view(
+    pool: ReadPool,
+    worker: WorkerHandle,
+    rt: tokio::runtime::Handle,
+) -> gtk::Widget {
     let store = gtk::gio::ListStore::new::<EpisodeRow>();
     let selection = gtk::SingleSelection::builder()
         .model(&store)
@@ -121,6 +210,17 @@ pub fn build_podcasts_view(pool: ReadPool) -> gtk::Widget {
         .wrap(true)
         .css_classes(["dim-label"])
         .build();
+
+    // Triage action bar (insensitive until an episode is selected).
+    let played_btn = gtk::Button::with_label("Mark played");
+    let archive_btn = gtk::Button::with_label("Archive");
+    let star_btn = gtk::Button::with_label("Star");
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    actions.append(&played_btn);
+    actions.append(&archive_btn);
+    actions.append(&star_btn);
+    actions.set_sensitive(false);
+
     let notes = gtk::Label::builder()
         .xalign(0.0)
         .yalign(0.0)
@@ -142,19 +242,27 @@ pub fn build_podcasts_view(pool: ReadPool) -> gtk::Widget {
         .build();
     detail.append(&title);
     detail.append(&subtitle);
+    detail.append(&actions);
     detail.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     detail.append(&notes_scroll);
 
     let inner = Rc::new(Inner {
         pool: pool.clone(),
+        worker,
+        rt,
         store,
+        selection: selection.clone(),
+        current: RefCell::new(Source::Bucket(TriageBucket::Inbox)),
         title,
         subtitle,
         notes,
+        actions,
+        played_btn: played_btn.clone(),
+        star_btn: star_btn.clone(),
     });
     inner.show_detail(None);
 
-    // Episode selection drives the detail pane.
+    // Episode selection drives the detail pane (and the action labels).
     {
         let inner = inner.clone();
         selection.connect_selected_item_notify(move |sel| {
@@ -163,7 +271,21 @@ pub fn build_podcasts_view(pool: ReadPool) -> gtk::Widget {
         });
     }
 
-    // Sidebar: triage buckets, then subscribed shows. `sources` maps a row
+    // Triage action buttons.
+    for (btn, action) in [
+        (&played_btn, Action::TogglePlayed),
+        (&archive_btn, Action::Archive),
+        (&star_btn, Action::ToggleStar),
+    ] {
+        let inner = inner.clone();
+        btn.connect_clicked(move |_| match action {
+            Action::TogglePlayed => inner.toggle_played(),
+            Action::Archive => inner.archive(),
+            Action::ToggleStar => inner.toggle_star(),
+        });
+    }
+
+    // Sidebar: triage buckets, subscribed shows, then tags. `sources` maps a row
     // index to what it loads (header rows are `None`).
     let sidebar_list = gtk::ListBox::new();
     sidebar_list.add_css_class("navigation-sidebar");
@@ -180,10 +302,10 @@ pub fn build_podcasts_view(pool: ReadPool) -> gtk::Widget {
         sources.push(Some(Source::Bucket(bucket)));
     }
 
-    let shows = pool
-        .open()
-        .ok()
-        .and_then(|c| list_shows(&c).ok())
+    let conn = pool.open().ok();
+    let shows = conn
+        .as_ref()
+        .and_then(|c| list_shows(c).ok())
         .unwrap_or_default();
     if !shows.is_empty() {
         sidebar_list.append(&section_header("Shows"));
@@ -191,6 +313,19 @@ pub fn build_podcasts_view(pool: ReadPool) -> gtk::Widget {
         for show in &shows {
             sidebar_list.append(&sidebar_entry(&show.title, "microphone-symbolic"));
             sources.push(Some(Source::Show(show.id)));
+        }
+    }
+
+    let tags = conn
+        .as_ref()
+        .and_then(|c| list_all_tags(c).ok())
+        .unwrap_or_default();
+    if !tags.is_empty() {
+        sidebar_list.append(&section_header("Tags"));
+        sources.push(None);
+        for tag in &tags {
+            sidebar_list.append(&sidebar_entry(&tag.name, "tag-symbolic"));
+            sources.push(Some(Source::Tag(tag.id)));
         }
     }
 

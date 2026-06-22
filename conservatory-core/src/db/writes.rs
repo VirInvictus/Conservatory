@@ -6,7 +6,9 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::db::models::{Album, Artist, Chapter, Episode, Playback, Show, ShowSettings, Track};
+use crate::db::models::{
+    Album, Artist, Chapter, Episode, Playback, PlayedState, Show, ShowSettings, Track,
+};
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
 use crate::import::resolve::derive_sort_name;
@@ -624,6 +626,39 @@ pub(crate) fn upsert_playback(conn: &Connection, playback: &Playback) -> Result<
             playback.play_count as i64,
             playback.starred,
         ],
+    )?;
+    Ok(())
+}
+
+/// Set an episode's played state without touching `starred` / `play_count` (the
+/// triage actions, Phase 6b-ii-b). Marking Unplayed also rewinds the resume
+/// `position` (the Belfry behaviour). Creates the playback row if absent.
+pub(crate) fn set_episode_played(
+    conn: &Connection,
+    episode_id: i64,
+    state: PlayedState,
+    when: Option<i64>,
+) -> Result<()> {
+    let reset_position = state == PlayedState::Unplayed;
+    conn.execute(
+        "INSERT INTO playback (episode_id, played, position, last_played)
+         VALUES (?1, ?2, 0, ?3)
+         ON CONFLICT(episode_id) DO UPDATE SET
+            played = excluded.played,
+            last_played = excluded.last_played,
+            position = CASE WHEN ?4 THEN 0 ELSE position END",
+        params![episode_id, state.as_i64(), when, reset_position],
+    )?;
+    Ok(())
+}
+
+/// Toggle an episode's `starred` flag without touching played/position (6b-ii-b).
+/// Creates the playback row if absent.
+pub(crate) fn set_episode_starred(conn: &Connection, episode_id: i64, starred: bool) -> Result<()> {
+    conn.execute(
+        "INSERT INTO playback (episode_id, starred) VALUES (?1, ?2)
+         ON CONFLICT(episode_id) DO UPDATE SET starred = excluded.starred",
+        params![episode_id, starred],
     )?;
     Ok(())
 }

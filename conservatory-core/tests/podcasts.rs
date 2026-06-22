@@ -564,3 +564,105 @@ async fn triage_buckets_partition_episodes() {
 
     worker.shutdown_ack().await.unwrap();
 }
+
+#[tokio::test]
+async fn triage_actions_are_partial_and_tag_filter_works() {
+    use conservatory_core::db::{
+        TriageBucket, episodes_for_tag, episodes_in_bucket, list_all_tags,
+    };
+
+    let (_dir, worker, pool) = fresh().await;
+    let show_id = worker
+        .get_or_create_show(sample_show("cast", "https://feeds.example/cast.xml"))
+        .await
+        .unwrap();
+    let ep = worker
+        .upsert_episode(sample_episode(show_id, "g1", "Ep", 1000))
+        .await
+        .unwrap();
+
+    // A resume position, to prove mark-unplayed rewinds it.
+    worker
+        .upsert_playback(Playback {
+            episode_id: ep,
+            position: 500.0,
+            played: PlayedState::InProgress,
+            last_played: None,
+            play_count: 0,
+            starred: false,
+        })
+        .await
+        .unwrap();
+
+    // Star: played/position untouched.
+    worker.set_episode_starred(ep, true).await.unwrap();
+    {
+        let conn = pool.open().unwrap();
+        let pb = get_playback(&conn, ep).unwrap().unwrap();
+        assert!(pb.starred);
+        assert_eq!(pb.played, PlayedState::InProgress);
+        assert!((pb.position - 500.0).abs() < 1e-9);
+    }
+
+    // Mark played: starred preserved, last_played set, moves to the Played bucket.
+    worker
+        .set_episode_played(ep, PlayedState::PlayedFully, Some(9_999))
+        .await
+        .unwrap();
+    {
+        let conn = pool.open().unwrap();
+        let pb = get_playback(&conn, ep).unwrap().unwrap();
+        assert_eq!(pb.played, PlayedState::PlayedFully);
+        assert!(pb.starred, "mark-played must not clobber starred");
+        assert_eq!(pb.last_played, Some(ts(9_999)));
+        let played: Vec<_> = episodes_in_bucket(&conn, TriageBucket::Played)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(played, vec![ep]);
+    }
+
+    // Mark unplayed: rewinds position, keeps starred, returns to Inbox.
+    worker
+        .set_episode_played(ep, PlayedState::Unplayed, None)
+        .await
+        .unwrap();
+    {
+        let conn = pool.open().unwrap();
+        let pb = get_playback(&conn, ep).unwrap().unwrap();
+        assert_eq!(pb.played, PlayedState::Unplayed);
+        assert!(pb.position.abs() < 1e-9, "mark-unplayed rewinds position");
+        assert!(pb.starred, "still starred");
+        let inbox: Vec<_> = episodes_in_bucket(&conn, TriageBucket::Inbox)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(inbox, vec![ep]);
+    }
+
+    // Tag filter.
+    let tag_id = worker.get_or_create_tag("news").await.unwrap();
+    worker
+        .set_show_tags(show_id, vec!["news".to_string()])
+        .await
+        .unwrap();
+    {
+        let conn = pool.open().unwrap();
+        assert!(
+            list_all_tags(&conn)
+                .unwrap()
+                .iter()
+                .any(|t| t.name == "news")
+        );
+        let tagged: Vec<_> = episodes_for_tag(&conn, tag_id)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(tagged, vec![ep]);
+    }
+
+    worker.shutdown_ack().await.unwrap();
+}

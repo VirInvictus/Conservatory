@@ -299,6 +299,10 @@ impl EpisodeRow {
         }
     }
 
+    pub fn played(&self) -> conservatory_core::db::PlayedState {
+        self.with(|r| r.played)
+    }
+
     pub fn starred(&self) -> bool {
         self.with(|r| r.starred)
     }

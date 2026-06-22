@@ -308,6 +308,26 @@ enum PodcastAction {
         #[arg(long, value_enum, default_value_t = Format::Tsv)]
         format: Format,
     },
+    /// Set an episode's played state (triage, spec §3.7): played | unplayed |
+    /// archived. Preserves the starred flag; `unplayed` rewinds the position.
+    Mark {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The episode id.
+        episode_id: i64,
+        /// played | unplayed | archived.
+        state: String,
+    },
+    /// Star or unstar an episode (triage, spec §3.7).
+    Star {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The episode id.
+        episode_id: i64,
+        /// Unstar instead of star.
+        #[arg(long)]
+        off: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1786,6 +1806,16 @@ fn podcast(action: PodcastAction) -> Result<()> {
             bucket,
             format,
         } => run_podcast_episodes(db, show, bucket, format),
+        PodcastAction::Mark {
+            db,
+            episode_id,
+            state,
+        } => block_on(run_podcast_mark(db, episode_id, state)),
+        PodcastAction::Star {
+            db,
+            episode_id,
+            off,
+        } => block_on(run_podcast_star(db, episode_id, off)),
     }
 }
 
@@ -1808,6 +1838,44 @@ fn json_str(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(feature = "podcasts")]
+async fn run_podcast_mark(db: PathBuf, episode_id: i64, state: String) -> Result<()> {
+    use conservatory_core::db::PlayedState;
+
+    let played = match state.to_ascii_lowercase().as_str() {
+        "played" => PlayedState::PlayedFully,
+        "unplayed" => PlayedState::Unplayed,
+        "archived" => PlayedState::ArchivedUnlistened,
+        other => anyhow::bail!("unknown state '{other}' (played | unplayed | archived)"),
+    };
+    // Stamp last_played only when actually played.
+    let when = (played == PlayedState::PlayedFully).then(now_secs);
+
+    let worker = spawn_worker(db).context("spawning worker")?;
+    worker
+        .set_episode_played(episode_id, played, when)
+        .await
+        .context("setting played state")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Episode {episode_id} marked {state}.");
+    Ok(())
+}
+
+#[cfg(feature = "podcasts")]
+async fn run_podcast_star(db: PathBuf, episode_id: i64, off: bool) -> Result<()> {
+    let worker = spawn_worker(db).context("spawning worker")?;
+    worker
+        .set_episode_starred(episode_id, !off)
+        .await
+        .context("setting starred")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!(
+        "Episode {episode_id} {}.",
+        if off { "unstarred" } else { "starred" }
+    );
+    Ok(())
 }
 
 /// List episodes with triage state. Read-only: no worker, just the pool.

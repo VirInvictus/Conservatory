@@ -10,7 +10,9 @@
 
 use tokio::sync::oneshot;
 
-use crate::db::models::{Album, Artist, Chapter, Episode, Playback, Show, ShowSettings, Track};
+use crate::db::models::{
+    Album, Artist, Chapter, Episode, Playback, PlayedState, Show, ShowSettings, Track,
+};
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
 use crate::mover::journal::JobState;
@@ -254,6 +256,21 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Set an episode's played state (triage), preserving starred/play_count.
+    SetEpisodePlayed {
+        episode_id: i64,
+        state: PlayedState,
+        when: Option<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Toggle an episode's starred flag (triage), preserving played/position.
+    SetEpisodeStarred {
+        episode_id: i64,
+        starred: bool,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Upsert a show's per-show overrides.
     UpsertShowSettings {
         settings: ShowSettings,
@@ -328,6 +345,8 @@ impl Command {
             Self::UpsertEpisode { .. } => "upsert_episode",
             Self::SetEpisodeAudioPath { .. } => "set_episode_audio_path",
             Self::UpsertPlayback { .. } => "upsert_playback",
+            Self::SetEpisodePlayed { .. } => "set_episode_played",
+            Self::SetEpisodeStarred { .. } => "set_episode_starred",
             Self::UpsertShowSettings { .. } => "upsert_show_settings",
             Self::ReplaceChapters { .. } => "replace_chapters",
             Self::GetOrCreateTag { .. } => "get_or_create_tag",

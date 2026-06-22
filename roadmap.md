@@ -413,7 +413,7 @@ Split so the window-root restructure is isolated from the podcast feature work: 
 
 #### Phase 6b-ii — Triage panes
 
-Split: **6b-ii-a** is the read-only three-pane browse (sidebar + episode list + detail); **6b-ii-b** is the triage actions, per-show overrides, episode→unified-queue insertion, and episode playback.
+Split: **6b-ii-a** is the read-only three-pane browse (sidebar + episode list + detail); **6b-ii-b** is the triage actions (mark played/archived, star) + the Tags sidebar (DB + GUI, no engine); **6b-ii-c** is episode playback + the unified queue + per-show overrides (the engine-touching half).
 
 ##### Phase 6b-ii-a — Triage browse (read-only) ✅
 
@@ -423,15 +423,22 @@ Split: **6b-ii-a** is the read-only three-pane browse (sidebar + episode list + 
 
 *Usable artifact:* open the Podcasts tab and browse your subscriptions: pick Inbox/Queue/Played or a show, see its episodes with state, read the show notes.
 
-##### Phase 6b-ii-b — Triage actions + episode playback
+##### Phase 6b-ii-b — Triage actions + Tags ✅
 
-- [ ] Triage transitions (mark played / unplayed / archived / starred, via `upsert_playback`); a Tags sidebar section (tag-filtered episode read).
-- [ ] Per-show overrides: speed, Smart Speed, Voice Boost, skip, retention, inbox policy (`upsert_show_settings`).
-- [ ] The structural change from Belfry: **Queue is the shared unified queue**, so an episode and a track can sit next to each other. New core `enqueue_episodes` + `load_queue_display` episode join; a `build_episode_queue` + a basic episode profile (Smart Speed / Voice Boost is 6c).
-- [ ] Streaming before/without download: if the local file is absent and a URL is present, libmpv streams with range requests (spec §5.3); libmpv's `loadfile` takes the URL as-is.
-- [ ] Tests: triage transitions; per-show override resolution; episode-into-unified-queue insertion; episode playback (null sink) over a local path and a stream URL.
+- [x] Triage transitions (mark played / unplayed / archived, star) via **partial** playback upserts (`set_episode_played` / `set_episode_starred`, so an action never clobbers a sibling field; marking unplayed rewinds the position). A detail-pane action bar in the GUI; the list glyph + bucket counts refresh after each action. CLI `podcast mark` / `podcast star` (the headless surface).
+- [x] A Tags sidebar section: `list_all_tags` + a tag-filtered `episodes_for_tag` read; `Source::Tag` in the view.
+- [x] Tests: the partial writes (mark-played keeps starred and vice-versa; mark-unplayed rewinds; archived → ArchivedUnlistened) + the tag-filter read + bucket reflection, a core integration test.
 
-*Usable artifact:* podcasts are triageable in the GUI, with episodes flowing into the one queue and playing (downloaded or streamed).
+*Usable artifact:* the Podcasts inbox is actionable: mark episodes played / archived, star them, filter by tag, all reflected live.
+
+##### Phase 6b-ii-c — Episode playback + unified queue + per-show overrides
+
+- [ ] The structural change from Belfry: **Queue is the shared unified queue**, so an episode and a track sit next to each other. Engine work (exploration done): a generalised `PlayableItem` id (or an `episode_id`), `enqueue_episodes` / `replace_queue_with_episodes`, the `load_queue_display` episode join (else queued episodes render blank in the drawer), a `build_episode_queue` + a basic episode profile, and **per-kind engine persistence** (the engine writes the podcast `playback` table on tick/EOF, not the music `playback_state` singleton) + episode resume.
+- [ ] Streaming before/without download: if the local file is absent and a URL is present, libmpv streams with range requests (spec §5.3); `loadfile` takes the URL as-is (`PlayableItem.source` is a `PathBuf` that holds a URL string; the engine is kind-agnostic at load).
+- [ ] Per-show overrides: speed, Smart Speed, Voice Boost, skip, retention, inbox policy (`upsert_show_settings`); they are playback settings, so they ride with playback.
+- [ ] Tests: episode-into-unified-queue insertion; episode playback (null sink) over a local path and a stream URL; per-kind resume; per-show override resolution.
+
+*Usable artifact:* podcasts play in the one queue (downloaded or streamed), resuming where you left off, with per-show speed/boost settings. (Smart Speed / Voice Boost filters are 6c.)
 
 ### Phase 6c — Podcast playback profile + parity
 

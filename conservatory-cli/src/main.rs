@@ -221,6 +221,28 @@ enum Command {
         action: PodcastAction,
     },
 
+    /// Import subscriptions from an OPML file (spec §8): creates the shows and
+    /// their tags, network-free. Run `podcast refresh` afterwards to pull
+    /// episodes. Only present with the `podcasts` plugin.
+    #[cfg(feature = "podcasts")]
+    ImportOpml {
+        /// Path to the SQLite database (created if absent).
+        db: PathBuf,
+        /// The OPML file to import.
+        file: PathBuf,
+    },
+
+    /// Export every subscription (with tags + applePodcastsID) as OPML, to a
+    /// file or stdout. Read-only. Only present with the `podcasts` plugin.
+    #[cfg(feature = "podcasts")]
+    ExportOpml {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+
     /// Phase 3b smoke test: dump the faceted-browse panes (Genre → Album Artist
     /// → Album) with counts and the leaf track total. Read-only.
     DebugFacets {
@@ -424,6 +446,10 @@ fn main() -> Result<()> {
         Some(Command::Search { db, query, format }) => search(db, query, format),
         #[cfg(feature = "podcasts")]
         Some(Command::Podcast { action }) => podcast(action),
+        #[cfg(feature = "podcasts")]
+        Some(Command::ImportOpml { db, file }) => block_on(run_import_opml(db, file)),
+        #[cfg(feature = "podcasts")]
+        Some(Command::ExportOpml { db, out }) => block_on(run_export_opml(db, out)),
         Some(Command::DebugFacets { db }) => debug_facets(db),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
@@ -1843,6 +1869,39 @@ async fn run_podcast_refresh(db: PathBuf, show_id: Option<i64>, format: Format) 
                 println!("No subscriptions.");
             }
         }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "podcasts")]
+async fn run_import_opml(db: PathBuf, file: PathBuf) -> Result<()> {
+    let body = std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let summary = conservatory_podcasts::import_opml(&worker, &pool, &body)
+        .await
+        .context("importing OPML")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!(
+        "Imported {} subscription(s) ({} new). Run `podcast refresh` to pull episodes.",
+        summary.total, summary.created
+    );
+    Ok(())
+}
+
+#[cfg(feature = "podcasts")]
+async fn run_export_opml(db: PathBuf, out: Option<PathBuf>) -> Result<()> {
+    // Export is read-only: no worker, just the pool.
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let xml = conservatory_podcasts::export_opml(&pool)
+        .await
+        .context("exporting OPML")?;
+    match out {
+        Some(path) => {
+            std::fs::write(&path, &xml).with_context(|| format!("writing {}", path.display()))?;
+            eprintln!("Wrote OPML to {}.", path.display());
+        }
+        None => print!("{xml}"),
     }
     Ok(())
 }

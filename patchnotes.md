@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.0.27
+
+Phase 6a-iii-a shipped: OPML import and export. A subscription list round-trips, preserving tags and the Apple show id, so you can move in from another podcast app or back up your subscriptions.
+
+- **OPML module (`conservatory-podcasts/src/opml.rs`):** `parse_opml` reads every `<outline>` carrying an `xmlUrl` (folder hierarchy is flattened, the Belfry tag-round-trip stance), pulling the feed URL, the title (`title`, else `text`, else the URL), the Pocket Casts `category="a,b"` tags, and `applePodcastsID`. `write_opml` emits an OPML 2.0 document with XML-escaped attributes. The parser is forgiving in the house style: a malformed or foreign OPML yields whatever outlines parsed cleanly rather than erroring.
+- **Import is network-free:** `import_opml` creates (or resolves) each subscription's show through the single-writer worker and applies its tags via the `get_or_create_tag` / `set_show_tags` methods from 6a-i; `applePodcastsID` lands in `shows.apple_podcasts_id`. Episodes are not fetched here; a subsequent `podcast refresh` pulls them (so importing dozens of feeds is instant). `export_opml` reads the shows and their tags back out.
+- **CLI:** `import-opml <db> <file>` (reports created vs already-subscribed) and `export-opml <db> [--out <file>]` (stdout by default), both behind the `podcasts` feature. The music-only build does not expose them and stays green.
+- **Tests:** `opml.rs` unit tests (round-trip with escaping, forgiving parse of nested/foreign outlines, the title fallback chain) and `tests/opml.rs` (import through a real worker creates shows + tag links + the Apple id; a re-import is idempotent; export then re-parse returns the same subscription set). Hand-verified end to end through the CLI.
+
+No new dependencies (`quick-xml` was already pulled at 6a-ii-b). Next: Phase 6a-iii-b (libsecret credentials via `oo7` for HTTP Basic auth, and episode download into the managed tree).
+
 ## v0.0.26
 
 Phase 6a-ii-b shipped: feed parsing and the refresh pipeline. A feed URL now becomes a subscribed show with its episodes, entirely headless. This completes the headless fetch-and-parse half of the podcast absorption (6a-ii); OPML, credentials, and downloads are 6a-iii.

@@ -16,18 +16,21 @@
 //! the conditional-GET [`Fetcher`], both ported from Viaduct (ATTRIBUTIONS.md).
 //! Phase 6a-ii-b adds parsing ([`parse`] via feed-rs + the hand-rolled
 //! [`namespace`] handler) and the [`refresh`] orchestration (fetch → parse →
-//! upsert through the core worker). Triage, OPML, credentials, and downloads
-//! follow at 6a-iii / 6b.
+//! upsert through the core worker). Phase 6a-iii-a adds [`opml`] import/export
+//! round-trip. Credentials and episode downloads follow at 6a-iii-b; triage at
+//! 6b.
 
 pub mod error;
 pub mod fetcher;
 pub mod http;
 pub mod namespace;
+pub mod opml;
 pub mod parse;
 pub mod refresh;
 pub mod slug;
 
 pub use error::{FetchError, Result};
 pub use fetcher::{FetchResult, Fetcher};
+pub use opml::{ImportSummary, OpmlSubscription, export_opml, import_opml, parse_opml, write_opml};
 pub use parse::{ChannelMeta, ParsedEpisode, ParsedFeed, parse_feed};
 pub use refresh::{RefreshOutcome, RefreshStatus, add_show, refresh_all, refresh_show};

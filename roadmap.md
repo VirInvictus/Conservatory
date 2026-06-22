@@ -377,11 +377,23 @@ Split again: **6a-ii-a** is the RSS-catching layer (HTTP client + conditional-GE
 
 #### Phase 6a-iii — OPML + credentials + download (headless)
 
-- [ ] OPML import/export round-trip, preserving tags and `applePodcastsID` (spec §8). CLI: `import-opml` / `export-opml`.
-- [ ] HTTP Basic auth credentials in libsecret via `oo7` (the `auth_user` / `auth_pass_ref` hooks from 6a-i); episode `download` into the managed `Podcasts/<slug>/...` tree (spec §5.3). CLI `podcast download`.
-- [ ] Tests: OPML round-trip; credential store (in-memory backend); download writes the file and sets `audio_path`.
+Split: **6a-iii-a** is OPML round-trip (network-free, no new deps); **6a-iii-b** is the credential store (`oo7`) + HTTP Basic auth wiring + episode download.
 
-*Usable artifact:* OPML in/out round-trips; an episode downloads into the managed tree.
+##### Phase 6a-iii-a — OPML round-trip ✅
+
+- [x] OPML import/export round-trip, preserving tags and `applePodcastsID` (spec §8). `conservatory-podcasts/src/opml.rs`: `parse_opml` (forgiving, flattens folder hierarchy, every `<outline>` with an `xmlUrl` is a subscription; title = `title` else `text` else URL; tags from the Pocket Casts `category="a,b"`) and `write_opml` (OPML 2.0, XML-escaped). Import is **network-free**: `import_opml` creates the shows + tags through the worker (`get_or_create_show` / `get_or_create_tag` / `set_show_tags`), `applePodcastsID` into `shows.apple_podcasts_id`; episodes arrive on the next `refresh`. `export_opml` reads shows + tags back out.
+- [x] CLI: `import-opml <db> <file>` / `export-opml <db> [--out <file>]` behind `#[cfg(feature = "podcasts")]`. No new deps (`quick-xml` from 6a-ii-b).
+- [x] Tests: round-trip with escaping + the forgiving/nested/foreign parse + the title fallback (unit); import-through-a-worker creates shows + tag links + the Apple id, a re-import is idempotent, and export-then-reparse round-trips (`tests/opml.rs`).
+
+*Usable artifact:* `export-opml` backs up your subscriptions; `import-opml` brings a list in (then `podcast refresh` pulls episodes).
+
+##### Phase 6a-iii-b — Credentials (oo7) + episode download
+
+- [ ] A `CredentialStore` trait (the seam Belfry's fetch loop anticipated) with an `oo7`/libsecret backend and an in-memory test backend; `shows.auth_pass_ref` stores the lookup key, never the password (spec §8). HTTP Basic auth wired into the fetch path from `(auth_user, password)` when the show carries credentials. Dependency activation: `oo7` (signed off, spec §11).
+- [ ] Episode `download` into the managed `Podcasts/<slug>/<date>--<ep-slug>/` tree (spec §5.3): stream to a temp file, fsync, rename, verify (the `mover::fsops` crash-safe shape); a new core `set_episode_audio_path` worker command records the relative path (since `upsert_episode` preserves `audio_path`). CLI `podcast download <db> <episode_id> --root <root>`.
+- [ ] Tests: credential store round-trip (in-memory backend); a Basic-auth-gated download (401 without creds, 200 with); download writes the file and sets `audio_path`, against `wiremock`.
+
+*Usable artifact:* a private (Basic-auth) feed refreshes, and an episode downloads into the managed tree.
 
 ### Phase 6b — Podcasts tab + triage
 

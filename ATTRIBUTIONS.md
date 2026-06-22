@@ -52,7 +52,7 @@ Recorded here as dependencies are signed off (spec §11) and added to the worksp
 | `reqwest` | MIT OR Apache-2.0 | The podcast HTTP client (`conservatory-podcasts`): rustls-tls + gzip + brotli, the conditional-GET feed fetcher. `default-features = false` (no system OpenSSL). Pulls `hyper` / `rustls` (MIT/Apache-2.0/ISC) transitively | 6a-ii-a |
 | `wiremock` | MIT OR Apache-2.0 | Test-only: a local mock HTTP server for the fetcher's conditional-GET / 304 / 429 paths and the refresh round-trips, so the suite stays hermetic (no real network) | 6a-ii-a (dev) |
 | `feed-rs` | MIT | RSS / Atom / JSON Feed core parsing (`parse.rs`): channel metadata, entries, enclosures (`<enclosure>` → media objects), `itunes:duration`. Storage-agnostic; the `podcast:`/`itunes:` ordering fields it does not surface are filled by the ported namespace handler | 6a-ii-b |
-| `quick-xml` | MIT | The event reader behind the hand-rolled `podcast:`/`itunes:` namespace pass (`namespace.rs`, ported from Belfry), for the elements feed-rs does not cover | 6a-ii-b |
+| `quick-xml` | MIT | The event reader behind the hand-rolled `podcast:`/`itunes:` namespace pass (`namespace.rs`, ported from Belfry) and the OPML import/export round-trip (`opml.rs`) | 6a-ii-b / 6a-iii-a |
 
 External tools (shelled out, not linked): `rsgain` (BSD-2-Clause; the Phase 5c ReplayGain scanner, `replaygain.rs`. Chosen over the `ebur128` Rust crate because rsgain decodes every format itself, including Opus, which a pure-Rust decoder does not; needs bundling for the Flatpak). `flac` + `ffmpeg` are planned for the Phase 8a integrity audit.
 

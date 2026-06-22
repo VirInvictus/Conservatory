@@ -9,5 +9,17 @@ authors.workspace = true
 
 # Compile-time plugin crate (spec §2.2): the Belfry absorption lands here at
 # Phase 6, pulling its heavy dependencies (reqwest, feed-rs, quick-xml,
-# ammonia, id3, oo7) with it. Dependency-free stub until then.
+# ammonia, id3, oo7) with it. Deps are activated per sub-phase.
+#
+# Phase 6a-ii-a: the RSS-catching layer (HTTP client + conditional-GET fetcher),
+# ported from Viaduct's network/{http,fetcher}.rs (ATTRIBUTIONS.md). feed-rs /
+# quick-xml (parse) land at 6a-ii-b; ammonia / id3 / oo7 at 6a-iii.
 [dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }

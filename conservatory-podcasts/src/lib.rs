@@ -12,4 +12,14 @@
 //! unified queue, libmpv host, and spoken-word profile (Smart Speed / Voice
 //! Boost) are core. A music-only build simply has empty podcast tables.
 //!
-//! Phase 0.5 stub: no implementation until Phase 6a.
+//! Phase 6a-ii-a lands the RSS-catching layer: the HTTP client ([`http`]) and
+//! the conditional-GET [`Fetcher`], both ported from Viaduct (ATTRIBUTIONS.md).
+//! Parsing (feed-rs + the `podcast:` namespace handler) and the refresh
+//! orchestration arrive at 6a-ii-b.
+
+pub mod error;
+pub mod fetcher;
+pub mod http;
+
+pub use error::{FetchError, Result};
+pub use fetcher::{FetchResult, Fetcher};

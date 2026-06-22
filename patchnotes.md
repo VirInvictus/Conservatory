@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.25
+
+Phase 6a-ii-a shipped: the RSS-catching layer. The `conservatory-podcasts` plugin crate gains a real HTTP client and a conditional-GET feed fetcher, both ported from Viaduct. Headless and wiremock-tested; no parsing or CLI yet (that is 6a-ii-b).
+
+- **HTTP client (`conservatory-podcasts/src/http.rs`)**, ported from Viaduct's `network/http.rs` (lineage NetNewsWire): rustls TLS, gzip + brotli, `POOL_MAX_IDLE_PER_HOST = 4`, 30 s idle/request and 10 s connect timeouts, a descriptive `Conservatory/<version> (podcast client; +URL)` User-Agent, and the `ACCEPT_FEED` header. `build_client()`.
+- **Conditional-GET fetcher (`conservatory-podcasts/src/fetcher.rs`)**, ported from the network slice of Viaduct's `network/fetcher.rs`. This is the heart of your "use Viaduct's method for RSS catching" steer: Belfry's fetch loop was only ever a stub, so the mature path wins. `fetch(url, etag, last_modified)` sends `If-None-Match` / `If-Modified-Since`, short-circuits a 304 with an empty body, extracts `ETag` / `Last-Modified` / `Cache-Control: max-age` from a 2xx, and keeps a per-host 429 cooldown that honours `Retry-After` (a host in cooldown short-circuits without a network hit). `FetchError` is the typed error.
+- **Deliberately simpler than Viaduct:** the broadcast request-coalescing is dropped (each show has a distinct feed URL, so same-URL coalescing rarely helps) and the content-hash re-parse skip is deferred to the refresh orchestration at 6a-ii-b (where the stored hash will live). Documented in the module headers.
+- **Dependencies activated** in `conservatory-podcasts`: `reqwest` (rustls-tls + gzip + brotli), `tokio`, `chrono`, `thiserror`, `tracing`, plus `wiremock` as a dev-dep. `bytes` stays deferred (the body is a `Vec<u8>`, so the crate never names `Bytes`). `ATTRIBUTIONS.md` records the Viaduct/NNW provenance and the new deps.
+- **Tests (`tests/fetcher.rs`, wiremock, hermetic):** a 200 returns the body and extracts the validators; a conditional request sends `If-None-Match` and the server's 304 is handled; a 429 with `Retry-After` returns `RateLimited` and the cooldown short-circuits the next fetch (asserted by an `expect(1)` mock); an invalid URL is reported; plus `max-age` parse and client/UA unit smoke tests.
+
+The music-only build is unaffected (the plugin is excluded under `--no-default-features`). Next: Phase 6a-ii-b (feed-rs + Belfry's `namespace.rs` parse, the refresh orchestration writing through the 6a-i worker, and the `podcast add|remove|refresh` CLI verbs).
+
 ## v0.0.24
 
 Phase 6a-i shipped: the podcast schema and the core worker CRUD that backs it. **Phase 6 (absorb Belfry) begins.** This is the headless DB foundation; no network code yet (that is 6a-ii). The Belfry subsystem is being absorbed table by table into Conservatory's core-owned ledger.

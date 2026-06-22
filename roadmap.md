@@ -319,10 +319,22 @@ The headless absorption, split so each piece leaves a usable artifact: **6a-i** 
 
 #### Phase 6a-ii — Fetch + parse + refresh pipeline (headless)
 
-- [ ] Fetch loop: per-show polling with conditional GET (ETag / Last-Modified, 304 short-circuit) and jittered intervals. The `reqwest` client baseline is ported from **Viaduct's `network/http.rs`** (rustls, gzip/brotli, pool caps, connect + request timeouts, descriptive User-Agent); the conditional-GET state machine + per-host 429 cooldowns follow **Viaduct's `network/fetcher.rs`** (the more mature path than Belfry's never-implemented loop). Pulls `reqwest` / `bytes` into `conservatory-podcasts` (+ `wiremock` dev-dep); ATTRIBUTIONS.md updated.
-- [ ] Parse: `feed-rs` for the RSS/Atom core plus Belfry's hand-rolled `podcast:` namespace handler (`namespace.rs`, ported); episode identity by `(show_id, guid)`; three-source chapter precedence; show-note sanitize (`ammonia`). Dependency sign-off for `feed-rs`/`quick-xml`/`ammonia`/`id3` (spec §11).
-- [ ] The refresh orchestration writes episodes through the 6a-i worker methods; CLI `podcast add|remove|refresh`.
-- [ ] Tests: conditional-GET state machine (304 path), `(show_id, guid)` dedup, `podcast:` namespace parse, against `wiremock` fixtures.
+Split again: **6a-ii-a** is the RSS-catching layer (HTTP client + conditional-GET fetcher, no parse); **6a-ii-b** is feed-rs/namespace parse + the refresh orchestration + CLI.
+
+##### Phase 6a-ii-a — HTTP client + conditional-GET fetcher ✅
+
+- [x] `conservatory-podcasts/src/http.rs`: the `reqwest` client baseline ported from **Viaduct's `network/http.rs`** (rustls, gzip/brotli, `POOL_MAX_IDLE_PER_HOST=4`, 30 s idle/request + 10 s connect timeouts, a descriptive `Conservatory/<ver>` User-Agent, the `ACCEPT_FEED` header). `build_client()`.
+- [x] `conservatory-podcasts/src/fetcher.rs`: the conditional-GET `Fetcher` ported from the network slice of **Viaduct's `network/fetcher.rs`** (the mature path; Belfry's loop was never implemented). `fetch(url, etag, last_modified)` sends `If-None-Match` / `If-Modified-Since`, short-circuits 304 (empty body), extracts `ETag` / `Last-Modified` / `Cache-Control: max-age`, and keeps a per-host 429 cooldown honouring `Retry-After`. The broadcast request-coalescing and the content-hash re-parse skip are deliberately dropped/deferred (each show has a distinct feed URL; the content hash lives with the refresh state at ii-b). `FetchError` (`error.rs`).
+- [x] Deps activated in `conservatory-podcasts`: `reqwest` (rustls/gzip/brotli), `tokio`, `chrono`, `thiserror`, `tracing` (+ `wiremock` dev). `bytes` deferred (body is `Vec<u8>`); ATTRIBUTIONS.md updated with the Viaduct/NNW provenance.
+- [x] Tests (`tests/fetcher.rs`, `wiremock`, hermetic): 200 body + `ETag`/`Last-Modified`/`Cache-Control` extraction; conditional GET sends `If-None-Match` and handles 304; 429 + `Retry-After` returns `RateLimited` and the cooldown short-circuits the next fetch (verified by an `expect(1)` mock); invalid-URL path; `max-age` parse + UA/client smoke.
+
+*Usable artifact:* a `Fetcher` that does conditional GET against a feed URL, honouring 304 and 429, headless and wiremock-tested.
+
+##### Phase 6a-ii-b — feed-rs/namespace parse + refresh + CLI
+
+- [ ] Parse: `feed-rs` for the RSS/Atom core plus Belfry's hand-rolled `podcast:` namespace handler (`namespace.rs`, ported, merged to feed-rs entries by position with a guid cross-check); a fresh `Entry → Episode` mapping (enclosure from `entry.media`/links, guid = item `podcast:guid` else feed-rs id, pub_date/season/episode/type); episode identity by `(show_id, guid)`. Show-note sanitize (`ammonia`) and the three-source chapter precedence may slip to 6a-iii / 6b. Dependency sign-off for `feed-rs` / `quick-xml`.
+- [ ] A `slugify` for the managed `Podcasts/<slug>` folder (spec §5.3). The refresh orchestration fetches concurrently under a `Semaphore(REFRESH_PARALLELISM)` (`tokio::task::JoinSet`), parses, upserts episodes through the 6a-i worker methods, and stamps `etag` / `last_modified` / `last_fetched` on the show. CLI `podcast add|remove|refresh` behind `#[cfg(feature = "podcasts")]`.
+- [ ] Tests: `(show_id, guid)` dedup through a refresh, `podcast:` namespace parse, conditional-GET round-trip (etag stored then replayed), against `wiremock` feed fixtures.
 
 *Usable artifact:* `podcast add <url>` then `podcast refresh` subscribes to and pulls a show's episodes entirely headless.
 

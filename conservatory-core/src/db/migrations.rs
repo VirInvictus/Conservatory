@@ -44,10 +44,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 5,
         sql: include_str!("migrations/0005_queue.sql"),
     },
+    Migration {
+        version: 6,
+        sql: include_str!("migrations/0006_podcasts.sql"),
+    },
 ];
 
 /// The `user_version` a fully-migrated database reaches.
-pub const CURRENT_VERSION: i32 = 5;
+pub const CURRENT_VERSION: i32 = 6;
 
 /// Apply any unapplied migrations. Idempotent: running this on a
 /// fully-migrated database is a no-op.
@@ -160,7 +164,8 @@ mod tests {
         run(&mut conn).unwrap();
         assert_eq!(user_version(&conn), CURRENT_VERSION);
 
-        // Spot-check the Phase 1b music schema and the Phase 2c move journal landed.
+        // Spot-check the Phase 1b music schema, the Phase 2c move journal, and
+        // the Phase 6a-i podcast tables landed.
         for t in [
             "artists",
             "albums",
@@ -172,6 +177,14 @@ mod tests {
             "perspectives",
             "playback_state",
             "queue",
+            "shows",
+            "episodes",
+            "playback",
+            "show_settings",
+            "listening_sessions",
+            "chapters",
+            "tags",
+            "show_tags",
         ] {
             assert!(table_exists(&conn, t), "missing table: {t}");
         }

@@ -17,7 +17,7 @@ use rusqlite::Connection;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::db::command::Command;
-use crate::db::models::{Album, Artist, Track};
+use crate::db::models::{Album, Artist, Chapter, Episode, Playback, Show, ShowSettings, Track};
 use crate::db::{connection, migrations, probe, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::{Error, Result};
@@ -341,6 +341,71 @@ impl WorkerHandle {
         self.dispatch(|reply| Command::ClearQueue { reply }).await
     }
 
+    /// Resolve a show by `feed_url`, creating it on first sight (`podcast add`,
+    /// Phase 6a). Returns the show id; adding the same feed twice is idempotent.
+    pub async fn get_or_create_show(&self, show: Show) -> Result<i64> {
+        self.dispatch(|reply| Command::GetOrCreateShow { show, reply })
+            .await
+    }
+
+    /// Update a subscription in full (incl. the conditional-GET state the fetch
+    /// loop refreshes, Phase 6a-ii).
+    pub async fn update_show(&self, show: Show) -> Result<()> {
+        self.dispatch(|reply| Command::UpdateShow { show, reply })
+            .await
+    }
+
+    /// Delete a subscription (`podcast remove`); cascades its episodes and state.
+    pub async fn delete_show(&self, id: i64) -> Result<()> {
+        self.dispatch(|reply| Command::DeleteShow { id, reply })
+            .await
+    }
+
+    /// Insert or update an episode by `(show_id, guid)`, returning its id.
+    pub async fn upsert_episode(&self, episode: Episode) -> Result<i64> {
+        self.dispatch(|reply| Command::UpsertEpisode { episode, reply })
+            .await
+    }
+
+    /// Upsert an episode's triage/playback row.
+    pub async fn upsert_playback(&self, playback: Playback) -> Result<()> {
+        self.dispatch(|reply| Command::UpsertPlayback { playback, reply })
+            .await
+    }
+
+    /// Upsert a show's per-show overrides.
+    pub async fn upsert_show_settings(&self, settings: ShowSettings) -> Result<()> {
+        self.dispatch(|reply| Command::UpsertShowSettings { settings, reply })
+            .await
+    }
+
+    /// Replace an episode's chapter set.
+    pub async fn replace_chapters(&self, episode_id: i64, chapters: Vec<Chapter>) -> Result<()> {
+        self.dispatch(|reply| Command::ReplaceChapters {
+            episode_id,
+            chapters,
+            reply,
+        })
+        .await
+    }
+
+    /// Resolve a tag name to its id, creating it on first sight.
+    pub async fn get_or_create_tag(&self, name: impl Into<String>) -> Result<i64> {
+        let name = name.into();
+        self.dispatch(|reply| Command::GetOrCreateTag { name, reply })
+            .await
+    }
+
+    /// Replace a show's tag set (the OPML round-trip side).
+    pub async fn set_show_tags(&self, show_id: i64, tags: Vec<String>) -> Result<()> {
+        self.dispatch(|reply| Command::SetShowTags {
+            show_id,
+            tags,
+            reply,
+        })
+        .await
+    }
+
     /// Send a shutdown ack. The loop exits once every `WorkerHandle` clone has
     /// dropped and the channel closes; this just confirms the worker is alive.
     pub async fn shutdown_ack(&self) -> Result<()> {
@@ -611,6 +676,41 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::ClearQueue { reply } => {
             let _ = reply.send(writes::clear_queue(conn));
+        }
+        Command::GetOrCreateShow { show, reply } => {
+            let _ = reply.send(writes::get_or_create_show(conn, &show));
+        }
+        Command::UpdateShow { show, reply } => {
+            let _ = reply.send(writes::update_show(conn, &show));
+        }
+        Command::DeleteShow { id, reply } => {
+            let _ = reply.send(writes::delete_show(conn, id));
+        }
+        Command::UpsertEpisode { episode, reply } => {
+            let _ = reply.send(writes::upsert_episode(conn, &episode));
+        }
+        Command::UpsertPlayback { playback, reply } => {
+            let _ = reply.send(writes::upsert_playback(conn, &playback));
+        }
+        Command::UpsertShowSettings { settings, reply } => {
+            let _ = reply.send(writes::upsert_show_settings(conn, &settings));
+        }
+        Command::ReplaceChapters {
+            episode_id,
+            chapters,
+            reply,
+        } => {
+            let _ = reply.send(writes::replace_chapters(conn, episode_id, &chapters));
+        }
+        Command::GetOrCreateTag { name, reply } => {
+            let _ = reply.send(writes::get_or_create_tag(conn, &name));
+        }
+        Command::SetShowTags {
+            show_id,
+            tags,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_show_tags(conn, show_id, &tags));
         }
         Command::Shutdown { reply } => {
             let _ = reply.send(());

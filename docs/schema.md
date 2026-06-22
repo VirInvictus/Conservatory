@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), and `0005` (unified queue, Phase 4b-i). The podcast and audiobook tables below are still draft (they land at their phases). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
+> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), and `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i). The audiobook tables below are still draft (they land at Phase 7a). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
 
 ## Connection discipline
 
@@ -75,17 +75,17 @@ CREATE TABLE genre_aliases  (raw TEXT PRIMARY KEY, canonical TEXT NOT NULL);
 CREATE TABLE genre_priority (genre TEXT PRIMARY KEY, rank INTEGER NOT NULL);
 ```
 
-## Unified queue (Phase 4b-i, migration `0005`, spec §4.3)
+## Unified queue (Phase 4b-i, migration `0005`; episode FK at `0006`, spec §4.3)
 
-One ordered queue across all three media kinds; the bridge that makes the unified queue real. The full column set lands now (the unified queue is a core commitment), but **only `track_id` carries a foreign key**: with `foreign_keys = ON`, SQLite refuses any INSERT/UPDATE/DELETE on a child table whose parent does not exist yet, even when the referencing column is NULL. So `episode_id`/`book_id` are plain columns until `episodes` (Phase 6) and `books` (Phase 7) land, at which point a table rebuild re-adds their `REFERENCES ... ON DELETE CASCADE`; until then their integrity rests on the CHECK plus app logic.
+One ordered queue across all three media kinds; the bridge that makes the unified queue real. The full column set landed at `0005`, but **only `track_id` carried a foreign key then**: with `foreign_keys = ON`, SQLite refuses any INSERT/UPDATE/DELETE on a child table whose parent does not exist yet, even when the referencing column is NULL. So `episode_id`/`book_id` were plain columns until their parent tables land, at which point a table rebuild re-adds the `REFERENCES ... ON DELETE CASCADE`. **Migration `0006` rebuilt `queue` to add the `episode_id` FK now that `episodes` exists** (Phase 6a-i); `book_id` stays plain until `books` (Phase 7). The CHECK still guards the one-id-per-row invariant for the not-yet-FK'd column.
 
 ```sql
 CREATE TABLE queue (
     id          INTEGER PRIMARY KEY,
     position    INTEGER NOT NULL,       -- explicit, contiguous 0..n-1, drag-reorderable
     kind        TEXT NOT NULL CHECK (kind IN ('track','episode','audiobook')),
-    track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
-    episode_id  INTEGER,                -- FK added with `episodes` (Phase 6)
+    track_id    INTEGER REFERENCES tracks(id)   ON DELETE CASCADE,
+    episode_id  INTEGER REFERENCES episodes(id) ON DELETE CASCADE,  -- FK added at 0006 (Phase 6a-i)
     book_id     INTEGER,                -- FK added with `books` (Phase 7); audiobook = one entry (spec §3.8)
     CHECK ( (kind='track'     AND track_id   IS NOT NULL AND episode_id IS NULL AND book_id IS NULL)
          OR (kind='episode'   AND episode_id IS NOT NULL AND track_id   IS NULL AND book_id IS NULL)
@@ -150,9 +150,68 @@ CREATE TABLE perspectives (
 );
 ```
 
-## Podcast tables (Phase 6, spec §4.2)
+## Podcast tables (Phase 6a-i, migration `0006`, spec §4.2)
 
-Ported from Belfry §4.1 at Phase 6a: `shows`, `episodes`, `playback`, `show_settings`, `listening_sessions`, `chapters`, `tags`, `show_tags`. One change from Belfry: triage Queue state is represented through the unified `queue` table above rather than a per-episode `in_queue` flag. The append-only `listening_sessions` discipline is preserved. Column-level detail migrates into this file as the absorption is implemented.
+Ported from Belfry §4.1: `shows`, `episodes`, `playback`, `show_settings`, `listening_sessions`, `chapters`, `tags`, `show_tags`. **One change from Belfry:** triage Queue state is represented through the unified `queue` table above, not a per-episode flag, so `playback` drops Belfry's `in_queue` / `queue_position` columns (and the index that paired them). Inbox / Queue / Played is derived from `playback.played` plus membership in `queue`. The append-only `listening_sessions` discipline is preserved. `episode_type` is stored as the feed's raw string rather than a closed enum, so an unexpected value never fails a read.
+
+The conditional-GET bookkeeping (`shows.etag` / `last_modified` / `last_fetched`) and `auth_user` / `auth_pass_ref` (an oo7/libsecret reference, never an inline secret) are the hooks the Phase 6a-ii fetch loop writes; the columns land here so the schema is complete from the first podcast migration.
+
+```sql
+CREATE TABLE shows (
+    id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, feed_url TEXT UNIQUE NOT NULL,
+    title TEXT NOT NULL, author TEXT, description TEXT, homepage_url TEXT,
+    cover_path TEXT, accent_rgb INTEGER, apple_podcasts_id TEXT,     -- accent (spec §7.4); applePodcastsID on OPML round-trip
+    last_fetched INTEGER, last_modified TEXT, etag TEXT,             -- conditional-GET state (Phase 6a-ii)
+    fetch_interval INTEGER NOT NULL DEFAULT 3600,
+    auth_user TEXT, auth_pass_ref TEXT,                             -- HTTP Basic; pass is a libsecret ref (oo7)
+    auto_download INTEGER NOT NULL DEFAULT 1, keep_count INTEGER NOT NULL DEFAULT 0,
+    priority INTEGER NOT NULL DEFAULT 0,                            -- Overcast-style ordering
+    folder_path TEXT NOT NULL                                       -- <root>/Podcasts/<slug> (spec §5.3)
+);
+CREATE TABLE episodes (
+    id INTEGER PRIMARY KEY, show_id INTEGER NOT NULL REFERENCES shows(id) ON DELETE CASCADE,
+    guid TEXT NOT NULL, title TEXT NOT NULL, description TEXT,
+    pub_date INTEGER, duration INTEGER, file_size INTEGER,
+    audio_url TEXT, audio_path TEXT,                                -- audio_path NULL until downloaded (spec §5.3)
+    folder_path TEXT NOT NULL, mime_type TEXT,
+    season INTEGER, episode_number INTEGER, episode_type TEXT,
+    UNIQUE (show_id, guid)                                          -- episode identity (spec §8)
+);
+CREATE INDEX idx_episodes_show_pub ON episodes(show_id, pub_date DESC);
+
+-- Triage + playback. Queue membership is NOT here (it's the unified queue). played:
+-- 0=unplayed, 1=in-progress, 2=played-fully, 3=archived-unlistened.
+CREATE TABLE playback (
+    episode_id INTEGER PRIMARY KEY REFERENCES episodes(id) ON DELETE CASCADE,
+    position REAL NOT NULL DEFAULT 0, played INTEGER NOT NULL DEFAULT 0,
+    last_played INTEGER, play_count INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_playback_inbox   ON playback(played)  WHERE played = 0;
+CREATE INDEX idx_playback_starred ON playback(starred) WHERE starred = 1;
+
+CREATE TABLE show_settings (                                        -- per-show overrides (spec §3.7)
+    show_id INTEGER PRIMARY KEY REFERENCES shows(id) ON DELETE CASCADE,
+    playback_speed REAL NOT NULL DEFAULT 1.0, smart_speed INTEGER NOT NULL DEFAULT 1,
+    voice_boost INTEGER NOT NULL DEFAULT 0, skip_intro INTEGER NOT NULL DEFAULT 0,
+    skip_outro INTEGER NOT NULL DEFAULT 0, skip_forward INTEGER, skip_back INTEGER,  -- NULL = inherit global
+    inbox_policy TEXT NOT NULL DEFAULT 'inbox'                      -- 'inbox' | 'always_queue' | 'always_archive'
+);
+CREATE TABLE listening_sessions (                                  -- append-only; Smart Speed time-saved (spec §6.3)
+    id INTEGER PRIMARY KEY, episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+    started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL,
+    real_seconds REAL NOT NULL, audio_seconds REAL NOT NULL, smart_speed_saved REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE chapters (                                            -- podcast:chapters JSON or ID3 CHAP (spec §8)
+    id INTEGER PRIMARY KEY, episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+    start_time REAL NOT NULL, end_time REAL, title TEXT, url TEXT, image_path TEXT
+);
+CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL);
+CREATE TABLE show_tags (                                           -- preserved on OPML round-trip (spec §8)
+    show_id INTEGER REFERENCES shows(id) ON DELETE CASCADE,
+    tag_id  INTEGER REFERENCES tags(id)  ON DELETE CASCADE,
+    PRIMARY KEY (show_id, tag_id)
+);
+```
 
 ## Audiobook tables (Phase 7, spec §4.5)
 
@@ -195,7 +254,7 @@ CREATE TABLE book_playback (            -- one row per book; first-class resume 
 
 - `track_fts` (title, artist, album)
 - `album_fts` (title, album artist)
-- `episode_fts`, `show_fts` (Phase 6)
+- `episode_fts` (title, description), `show_fts` (title, author, description) — Phase 6a-i, migration `0006`
 - `book_fts` (title, author, narrator, series) (Phase 7)
 
 Triggers keep them in sync on insert/update/delete. Consumed by `conservatory-search` for the bare-text path and bm25 ranking (see [`search-grammar.md`](search-grammar.md)). Not transcripts (spec §14).

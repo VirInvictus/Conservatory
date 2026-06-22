@@ -130,6 +130,191 @@ pub struct QueueItem {
     pub book_id: Option<i64>,
 }
 
+// --- Podcast domain (spec §4.2). Ported in shape from `belfry-core`'s
+// `domain.rs`. These are core-owned types (the schema lives in core's migration
+// ledger, the §2.2 boundary rule); the `conservatory-podcasts` plugin consumes
+// them. A music-only build compiles them but leaves the tables empty.
+
+/// A podcast subscription (spec §4.2). The conditional-GET bookkeeping
+/// (`last_fetched` / `last_modified` / `etag`) is written by the fetch loop
+/// (Phase 6a-ii); `auth_pass_ref` is a libsecret reference, never an inline
+/// secret (oo7, Phase 6a-iii).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Show {
+    pub id: i64,
+    pub slug: String,
+    pub feed_url: String,
+    pub title: String,
+    pub author: Option<String>,
+    pub description: Option<String>,
+    pub homepage_url: Option<String>,
+    pub cover_path: Option<String>,
+    pub accent_rgb: Option<u32>,
+    pub apple_podcasts_id: Option<String>,
+    pub last_fetched: Option<DateTime<Utc>>,
+    pub last_modified: Option<String>,
+    pub etag: Option<String>,
+    pub fetch_interval: u32,
+    pub auth_user: Option<String>,
+    pub auth_pass_ref: Option<String>,
+    pub auto_download: bool,
+    pub keep_count: u32,
+    pub priority: i32,
+    pub folder_path: String,
+}
+
+/// One feed episode. Identity is `(show_id, guid)` (spec §8). `episode_type` is
+/// kept as the feed's raw string (commonly full / trailer / bonus) rather than a
+/// closed enum, so an unexpected value never fails a read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Episode {
+    pub id: i64,
+    pub show_id: i64,
+    pub guid: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub pub_date: Option<DateTime<Utc>>,
+    pub duration: Option<u32>, // seconds
+    pub file_size: Option<u64>,
+    pub audio_url: Option<String>,
+    pub audio_path: Option<String>, // None until downloaded (spec §5.3)
+    pub folder_path: String,
+    pub mime_type: Option<String>,
+    pub season: Option<u32>,
+    pub episode_number: Option<u32>,
+    pub episode_type: Option<String>,
+}
+
+/// Per-episode triage + playback state (spec §4.2). Queue membership is *not*
+/// here: it lives in the unified `queue` table (the §4.2 change from Belfry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayedState {
+    Unplayed = 0,
+    InProgress = 1,
+    PlayedFully = 2,
+    ArchivedUnlistened = 3,
+}
+
+impl PlayedState {
+    /// The INTEGER value stored in `playback.played`.
+    pub fn as_i64(self) -> i64 {
+        self as i64
+    }
+
+    /// Map a stored INTEGER back to a state.
+    pub fn from_i64(value: i64) -> Result<Self, Error> {
+        match value {
+            0 => Ok(PlayedState::Unplayed),
+            1 => Ok(PlayedState::InProgress),
+            2 => Ok(PlayedState::PlayedFully),
+            3 => Ok(PlayedState::ArchivedUnlistened),
+            other => Err(Error::InvalidEnum {
+                field: "playback.played",
+                value: other.to_string(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Playback {
+    pub episode_id: i64,
+    pub position: f64,
+    pub played: PlayedState,
+    pub last_played: Option<DateTime<Utc>>,
+    pub play_count: u32,
+    pub starred: bool,
+}
+
+/// What happens to a new episode of this show (Castro inbox policy, spec §3.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InboxPolicy {
+    Inbox,
+    AlwaysQueue,
+    AlwaysArchive,
+}
+
+impl InboxPolicy {
+    /// The TEXT value stored in `show_settings.inbox_policy`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InboxPolicy::Inbox => "inbox",
+            InboxPolicy::AlwaysQueue => "always_queue",
+            InboxPolicy::AlwaysArchive => "always_archive",
+        }
+    }
+}
+
+impl fmt::Display for InboxPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for InboxPolicy {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "inbox" => Ok(InboxPolicy::Inbox),
+            "always_queue" => Ok(InboxPolicy::AlwaysQueue),
+            "always_archive" => Ok(InboxPolicy::AlwaysArchive),
+            other => Err(Error::InvalidEnum {
+                field: "show_settings.inbox_policy",
+                value: other.to_string(),
+            }),
+        }
+    }
+}
+
+/// Per-show overrides (Overcast pattern, spec §3.7). `skip_forward` / `skip_back`
+/// of `None` inherit the global skip amounts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShowSettings {
+    pub show_id: i64,
+    pub playback_speed: f64,
+    pub smart_speed: bool,
+    pub voice_boost: bool,
+    pub skip_intro: u32,
+    pub skip_outro: u32,
+    pub skip_forward: Option<u32>,
+    pub skip_back: Option<u32>,
+    pub inbox_policy: InboxPolicy,
+}
+
+/// One playback session (spec §6.3). Append-only; drives Smart Speed time-saved
+/// accounting and the history view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListeningSession {
+    pub id: i64,
+    pub episode_id: i64,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub real_seconds: f64,
+    pub audio_seconds: f64,
+    pub smart_speed_saved: f64,
+}
+
+/// An episode chapter (spec §8). Source is `podcast:chapters` JSON or ID3 CHAP;
+/// `start_time` / `end_time` are seconds into the episode.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Chapter {
+    pub id: i64,
+    pub episode_id: i64,
+    pub start_time: f64,
+    pub end_time: Option<f64>,
+    pub title: Option<String>,
+    pub url: Option<String>,
+    pub image_path: Option<String>,
+}
+
+/// A show tag (Calibre loanword; secondary organization, preserved on OPML
+/// round-trip, spec §8).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tag {
+    pub id: i64,
+    pub name: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,6 +325,31 @@ mod tests {
             assert_eq!(kind.as_str().parse::<MediaKind>().unwrap(), kind);
         }
         assert!("bogus".parse::<MediaKind>().is_err());
+    }
+
+    #[test]
+    fn played_state_round_trips_through_i64() {
+        for state in [
+            PlayedState::Unplayed,
+            PlayedState::InProgress,
+            PlayedState::PlayedFully,
+            PlayedState::ArchivedUnlistened,
+        ] {
+            assert_eq!(PlayedState::from_i64(state.as_i64()).unwrap(), state);
+        }
+        assert!(PlayedState::from_i64(9).is_err());
+    }
+
+    #[test]
+    fn inbox_policy_round_trips_through_text() {
+        for policy in [
+            InboxPolicy::Inbox,
+            InboxPolicy::AlwaysQueue,
+            InboxPolicy::AlwaysArchive,
+        ] {
+            assert_eq!(policy.as_str().parse::<InboxPolicy>().unwrap(), policy);
+        }
+        assert!("bogus".parse::<InboxPolicy>().is_err());
     }
 
     #[test]

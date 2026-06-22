@@ -6,7 +6,7 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::db::models::{Album, Artist, Track};
+use crate::db::models::{Album, Artist, Chapter, Episode, Playback, Show, ShowSettings, Track};
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
 use crate::import::resolve::derive_sort_name;
@@ -437,6 +437,276 @@ pub(crate) fn replace_queue_with_tracks(conn: &mut Connection, track_ids: &[i64]
         tx.execute(
             "INSERT INTO queue (position, kind, track_id) VALUES (?1, 'track', ?2)",
             params![pos as i64, track_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+// --- Podcast writes (Phase 6a-i, spec §4.2). The fetch loop (Phase 6a-ii) and
+// the triage UI (Phase 6b) drive these through the worker; the schema is
+// core-owned (the §2.2 boundary rule). Reads use the pool (`reads.rs`).
+
+/// Resolve a show by its `feed_url` (the subscription identity), creating it on
+/// first sight (`podcast add`). An existing subscription is left untouched and
+/// its id returned, so adding the same feed twice is idempotent.
+pub(crate) fn get_or_create_show(conn: &Connection, show: &Show) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO shows (
+            slug, feed_url, title, author, description, homepage_url, cover_path,
+            accent_rgb, apple_podcasts_id, last_fetched, last_modified, etag,
+            fetch_interval, auth_user, auth_pass_ref, auto_download, keep_count,
+            priority, folder_path
+        ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+            ?16, ?17, ?18, ?19
+        )
+        ON CONFLICT(feed_url) DO NOTHING",
+        params![
+            show.slug,
+            show.feed_url,
+            show.title,
+            show.author,
+            show.description,
+            show.homepage_url,
+            show.cover_path,
+            show.accent_rgb,
+            show.apple_podcasts_id,
+            show.last_fetched.map(|t| t.timestamp()),
+            show.last_modified,
+            show.etag,
+            show.fetch_interval as i64,
+            show.auth_user,
+            show.auth_pass_ref,
+            show.auto_download,
+            show.keep_count as i64,
+            show.priority as i64,
+            show.folder_path,
+        ],
+    )?;
+    let id = conn.query_row(
+        "SELECT id FROM shows WHERE feed_url = ?1",
+        params![show.feed_url],
+        |r| r.get(0),
+    )?;
+    Ok(id)
+}
+
+/// Update a subscription in full by id, including the conditional-GET
+/// bookkeeping (`etag` / `last_modified` / `last_fetched`) the fetch loop
+/// refreshes after a poll (Phase 6a-ii). The FTS triggers re-sync on the UPDATE.
+pub(crate) fn update_show(conn: &Connection, show: &Show) -> Result<()> {
+    conn.execute(
+        "UPDATE shows SET
+            slug = ?2, feed_url = ?3, title = ?4, author = ?5, description = ?6,
+            homepage_url = ?7, cover_path = ?8, accent_rgb = ?9,
+            apple_podcasts_id = ?10, last_fetched = ?11, last_modified = ?12,
+            etag = ?13, fetch_interval = ?14, auth_user = ?15, auth_pass_ref = ?16,
+            auto_download = ?17, keep_count = ?18, priority = ?19, folder_path = ?20
+         WHERE id = ?1",
+        params![
+            show.id,
+            show.slug,
+            show.feed_url,
+            show.title,
+            show.author,
+            show.description,
+            show.homepage_url,
+            show.cover_path,
+            show.accent_rgb,
+            show.apple_podcasts_id,
+            show.last_fetched.map(|t| t.timestamp()),
+            show.last_modified,
+            show.etag,
+            show.fetch_interval as i64,
+            show.auth_user,
+            show.auth_pass_ref,
+            show.auto_download,
+            show.keep_count as i64,
+            show.priority as i64,
+            show.folder_path,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Delete a subscription (`podcast remove`). The FK `ON DELETE CASCADE` chain
+/// removes its episodes, playback, settings, sessions, chapters, tag links, and
+/// any unified-queue entries (the episode FK added in migration 0006).
+pub(crate) fn delete_show(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM shows WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+/// Insert or update an episode by its `(show_id, guid)` identity (spec §8): a
+/// re-fetch updates the descriptive fields rather than duplicating the row.
+/// `audio_path` is deliberately not overwritten on update, so a re-fetch never
+/// forgets a downloaded file. Returns the episode id.
+pub(crate) fn upsert_episode(conn: &Connection, episode: &Episode) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO episodes (
+            show_id, guid, title, description, pub_date, duration, file_size,
+            audio_url, audio_path, folder_path, mime_type, season, episode_number,
+            episode_type
+        ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+        )
+        ON CONFLICT(show_id, guid) DO UPDATE SET
+            title = excluded.title,
+            description = excluded.description,
+            pub_date = excluded.pub_date,
+            duration = excluded.duration,
+            file_size = excluded.file_size,
+            audio_url = excluded.audio_url,
+            folder_path = excluded.folder_path,
+            mime_type = excluded.mime_type,
+            season = excluded.season,
+            episode_number = excluded.episode_number,
+            episode_type = excluded.episode_type",
+        params![
+            episode.show_id,
+            episode.guid,
+            episode.title,
+            episode.description,
+            episode.pub_date.map(|t| t.timestamp()),
+            episode.duration,
+            episode.file_size,
+            episode.audio_url,
+            episode.audio_path,
+            episode.folder_path,
+            episode.mime_type,
+            episode.season,
+            episode.episode_number,
+            episode.episode_type,
+        ],
+    )?;
+    let id = conn.query_row(
+        "SELECT id FROM episodes WHERE show_id = ?1 AND guid = ?2",
+        params![episode.show_id, episode.guid],
+        |r| r.get(0),
+    )?;
+    Ok(id)
+}
+
+/// Upsert an episode's triage/playback row by `episode_id` (the triage actions
+/// and the resume cursor, spec §4.2).
+pub(crate) fn upsert_playback(conn: &Connection, playback: &Playback) -> Result<()> {
+    conn.execute(
+        "INSERT INTO playback (
+            episode_id, position, played, last_played, play_count, starred
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        ON CONFLICT(episode_id) DO UPDATE SET
+            position = excluded.position,
+            played = excluded.played,
+            last_played = excluded.last_played,
+            play_count = excluded.play_count,
+            starred = excluded.starred",
+        params![
+            playback.episode_id,
+            playback.position,
+            playback.played.as_i64(),
+            playback.last_played.map(|t| t.timestamp()),
+            playback.play_count as i64,
+            playback.starred,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Upsert a show's per-show overrides by `show_id` (spec §3.7).
+pub(crate) fn upsert_show_settings(conn: &Connection, settings: &ShowSettings) -> Result<()> {
+    conn.execute(
+        "INSERT INTO show_settings (
+            show_id, playback_speed, smart_speed, voice_boost, skip_intro,
+            skip_outro, skip_forward, skip_back, inbox_policy
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        ON CONFLICT(show_id) DO UPDATE SET
+            playback_speed = excluded.playback_speed,
+            smart_speed = excluded.smart_speed,
+            voice_boost = excluded.voice_boost,
+            skip_intro = excluded.skip_intro,
+            skip_outro = excluded.skip_outro,
+            skip_forward = excluded.skip_forward,
+            skip_back = excluded.skip_back,
+            inbox_policy = excluded.inbox_policy",
+        params![
+            settings.show_id,
+            settings.playback_speed,
+            settings.smart_speed,
+            settings.voice_boost,
+            settings.skip_intro as i64,
+            settings.skip_outro as i64,
+            settings.skip_forward.map(|v| v as i64),
+            settings.skip_back.map(|v| v as i64),
+            settings.inbox_policy.as_str(),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Replace an episode's chapter set (spec §8): clear and re-insert in one
+/// transaction so a reader never sees a partial set. The `id` on each `Chapter`
+/// is ignored (the rows are reassigned).
+pub(crate) fn replace_chapters(
+    conn: &mut Connection,
+    episode_id: i64,
+    chapters: &[Chapter],
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM chapters WHERE episode_id = ?1",
+        params![episode_id],
+    )?;
+    for ch in chapters {
+        tx.execute(
+            "INSERT INTO chapters (episode_id, start_time, end_time, title, url, image_path)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                episode_id,
+                ch.start_time,
+                ch.end_time,
+                ch.title,
+                ch.url,
+                ch.image_path,
+            ],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Resolve a tag name to its id, creating it on first sight (spec §8). The name
+/// is the unique key, mirroring `get_or_create_genre`.
+pub(crate) fn get_or_create_tag(conn: &Connection, name: &str) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO tags (name) VALUES (?1) ON CONFLICT(name) DO NOTHING",
+        params![name],
+    )?;
+    let id = conn.query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| {
+        r.get(0)
+    })?;
+    Ok(id)
+}
+
+/// Replace a show's tag set (spec §8, the OPML round-trip side): clear its
+/// `show_tags` links and re-link the given names (get-or-create each), in one
+/// transaction. Mirrors `set_track_genres`.
+pub(crate) fn set_show_tags(conn: &mut Connection, show_id: i64, tags: &[String]) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM show_tags WHERE show_id = ?1", params![show_id])?;
+    for name in tags {
+        tx.execute(
+            "INSERT INTO tags (name) VALUES (?1) ON CONFLICT(name) DO NOTHING",
+            params![name],
+        )?;
+        let tag_id: i64 =
+            tx.query_row("SELECT id FROM tags WHERE name = ?1", params![name], |r| {
+                r.get(0)
+            })?;
+        tx.execute(
+            "INSERT INTO show_tags (show_id, tag_id) VALUES (?1, ?2)
+             ON CONFLICT(show_id, tag_id) DO NOTHING",
+            params![show_id, tag_id],
         )?;
     }
     tx.commit()?;

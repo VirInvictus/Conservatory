@@ -306,14 +306,33 @@ Podcast parity. Belfry retires only when 6c lands (spec §16.8, CLAUDE.md). The 
 
 ### Phase 6a — Fetch/parse port (headless)
 
-- [ ] Schema: port Belfry's podcast tables (`shows`, `episodes`, `playback`, `show_settings`, `listening_sessions`, `chapters`, `tags`, `show_tags`), with triage Queue state expressed through the unified `queue` table rather than a per-episode flag (spec §4.2). Episode `episode_fts` / `show_fts` added to the FTS set. The migration lands in `conservatory-core`'s ledger, not the plugin crate (spec §2.2).
-- [ ] Fetch loop ported from `belfry-core`: per-show polling with conditional GET (ETag / Last-Modified) and jittered intervals. The shared `reqwest` client baseline is ported from Viaduct's `network/http.rs` (gzip/brotli, rustls, pool caps, connect + request timeouts, descriptive User-Agent).
-- [ ] Parse: `feed-rs` plus a hand-rolled `podcast:` namespace handler; episode identity by `(show_id, guid)`; three-source chapter precedence; show-note sanitize (`ammonia`). Dependency sign-off for `feed-rs`/`quick-xml`/`ammonia`/`id3`/`reqwest`/`oo7` (spec §11).
-- [ ] HTTP Basic auth credentials in libsecret via `oo7`.
-- [ ] OPML import/export round-trip, preserving tags and `applePodcastsID` (spec §8). CLI: `podcast add|remove|refresh|download`, `import-opml`/`export-opml`.
-- [ ] Tests: conditional-GET state machine (304 path), `(show_id, guid)` dedup, OPML round-trip, `podcast:` namespace parse, against `wiremock` fixtures.
+The headless absorption, split so each piece leaves a usable artifact: **6a-i** is the core DB foundation (schema + worker, no network); **6a-ii** is the Viaduct-style fetcher + `feed-rs`/namespace parse + the refresh pipeline; **6a-iii** is OPML round-trip, credentials, and episode download.
 
-*Usable artifact:* subscribe to and refresh a show entirely headless via the CLI.
+#### Phase 6a-i — Podcast schema + core worker + models (no network) ✅
+
+- [x] Schema: ported Belfry's eight podcast tables (`shows`, `episodes`, `playback`, `show_settings`, `listening_sessions`, `chapters`, `tags`, `show_tags`) as migration `0006`, with one change (spec §4.2): triage Queue state lives in the unified `queue` table, so `playback` drops Belfry's `in_queue` / `queue_position` (Inbox / Queue / Played derives from `playback.played` plus `queue` membership). `episode_fts` / `show_fts` added to the FTS set (ordinary tables + triggers, matching the music FTS style). The migration lands in `conservatory-core`'s ledger, not the plugin crate (spec §2.2).
+- [x] **Queue `episode_id` foreign key**: migration `0006` rebuilds the `queue` table to add the FK deferred at `0005` (the 4b-i note: `foreign_keys = ON` refused it until `episodes` existed); `book_id` stays plain until Phase 7. `docs/schema.md` updated.
+- [x] Core domain + DB plumbing: `Show` / `Episode` / `Playback`+`PlayedState` / `ShowSettings`+`InboxPolicy` / `ListeningSession` / `Chapter` / `Tag` models (`db/models.rs`); reads (`get_show`/`list_shows`, `get_episode_by_guid`/`list_episodes_for_show`, `get_playback`, `get_show_settings`, `list_chapters`, `list_tags_for_show`); worker commands + `WorkerHandle` methods (`get_or_create_show`, `update_show` carrying the conditional-GET state, `delete_show`, `upsert_episode` by `(show_id, guid)`, `upsert_playback`, `upsert_show_settings`, `replace_chapters`, `get_or_create_tag`, `set_show_tags`). The schema is core-owned (spec §2.2); the plugin (6a-ii+) consumes these typed methods.
+- [x] Tests (`tests/podcasts.rs`): show get-or-create idempotency; episode upsert dedups by guid + a re-fetch never erases a downloaded path; FTS sync across edit/delete; playback + show-settings round-trip; chapters replace; tags round-trip; the queue `episode_id` FK verified via `PRAGMA foreign_key_list`. Migration table-exists test extended. Music-only build (`--no-default-features`) stays green (core is feature-free; the tables apply in every build).
+
+*Usable artifact:* a show, its episodes, and its triage/playback/settings/chapters/tags round-trip through the single-writer worker, headless; the unified queue can now reference episodes.
+
+#### Phase 6a-ii — Fetch + parse + refresh pipeline (headless)
+
+- [ ] Fetch loop: per-show polling with conditional GET (ETag / Last-Modified, 304 short-circuit) and jittered intervals. The `reqwest` client baseline is ported from **Viaduct's `network/http.rs`** (rustls, gzip/brotli, pool caps, connect + request timeouts, descriptive User-Agent); the conditional-GET state machine + per-host 429 cooldowns follow **Viaduct's `network/fetcher.rs`** (the more mature path than Belfry's never-implemented loop). Pulls `reqwest` / `bytes` into `conservatory-podcasts` (+ `wiremock` dev-dep); ATTRIBUTIONS.md updated.
+- [ ] Parse: `feed-rs` for the RSS/Atom core plus Belfry's hand-rolled `podcast:` namespace handler (`namespace.rs`, ported); episode identity by `(show_id, guid)`; three-source chapter precedence; show-note sanitize (`ammonia`). Dependency sign-off for `feed-rs`/`quick-xml`/`ammonia`/`id3` (spec §11).
+- [ ] The refresh orchestration writes episodes through the 6a-i worker methods; CLI `podcast add|remove|refresh`.
+- [ ] Tests: conditional-GET state machine (304 path), `(show_id, guid)` dedup, `podcast:` namespace parse, against `wiremock` fixtures.
+
+*Usable artifact:* `podcast add <url>` then `podcast refresh` subscribes to and pulls a show's episodes entirely headless.
+
+#### Phase 6a-iii — OPML + credentials + download (headless)
+
+- [ ] OPML import/export round-trip, preserving tags and `applePodcastsID` (spec §8). CLI: `import-opml` / `export-opml`.
+- [ ] HTTP Basic auth credentials in libsecret via `oo7` (the `auth_user` / `auth_pass_ref` hooks from 6a-i); episode `download` into the managed `Podcasts/<slug>/...` tree (spec §5.3). CLI `podcast download`.
+- [ ] Tests: OPML round-trip; credential store (in-memory backend); download writes the file and sets `audio_path`.
+
+*Usable artifact:* OPML in/out round-trips; an episode downloads into the managed tree.
 
 ### Phase 6b — Podcasts tab + triage
 

@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.24
+
+Phase 6a-i shipped: the podcast schema and the core worker CRUD that backs it. **Phase 6 (absorb Belfry) begins.** This is the headless DB foundation; no network code yet (that is 6a-ii). The Belfry subsystem is being absorbed table by table into Conservatory's core-owned ledger.
+
+- **Migration `0006` — the eight podcast tables**, ported from Belfry (`shows`, `episodes`, `playback`, `show_settings`, `listening_sessions`, `chapters`, `tags`, `show_tags`), with one deliberate change (spec §4.2): triage Queue state lives in the unified `queue` table, so `playback` drops Belfry's `in_queue` / `queue_position` columns. Inbox / Queue / Played derives from `playback.played` plus `queue` membership. `episode_fts` / `show_fts` join the FTS set as ordinary trigger-synced tables, matching the music FTS style in `0001`.
+- **The unified queue gained its `episode_id` foreign key.** Migration `0006` rebuilds `queue` to add the FK that was deferred at `0005` (with `foreign_keys = ON`, SQLite refused a child FK to the then-absent `episodes` table). `book_id` stays plain until `books` lands at Phase 7. The saved playback queue is copied across the rebuild.
+- **Core domain models + worker CRUD:** `Show` / `Episode` / `Playback` (+`PlayedState`) / `ShowSettings` (+`InboxPolicy`) / `ListeningSession` / `Chapter` / `Tag` in `db/models.rs`; podcast reads in `db/reads.rs`; and the worker write path (`get_or_create_show`, `update_show` — carrying the conditional-GET state the fetch loop will refresh — `delete_show`, `upsert_episode` by `(show_id, guid)`, `upsert_playback`, `upsert_show_settings`, `replace_chapters`, `get_or_create_tag`, `set_show_tags`). The schema is core-owned (the §2.2 boundary rule); the `conservatory-podcasts` plugin (6a-ii onward) consumes these typed `WorkerHandle` methods. `upsert_episode` deliberately never overwrites a downloaded `audio_path` on a re-fetch.
+- **On the Viaduct/Belfry split (settled, lands at 6a-ii):** RSS *catching* (the HTTP client + conditional-GET fetcher) ports from **Viaduct** (`network/http.rs` + `network/fetcher.rs`), the mature, proven path; Belfry's fetch loop was only ever a planned stub. RSS *parsing* stays `feed-rs` plus Belfry's hand-rolled `podcast:` namespace handler (spec §8, §11).
+- **Tests:** `tests/podcasts.rs` (9) covers show idempotency, episode upsert/dedup + download-path preservation, FTS sync across edit/delete, playback + settings round-trip, chapter replace, tag round-trip, and the queue `episode_id` FK (via `PRAGMA foreign_key_list`); the migration table-exists check is extended. The music-only build (`--no-default-features`) stays green: core is feature-free and the tables apply in every build.
+
+No new dependencies (6a-i pulls none; the heavy podcast deps land with the fetcher at 6a-ii), so `ATTRIBUTIONS.md` is untouched. Next: Phase 6a-ii (the Viaduct-style fetcher + `feed-rs`/namespace parse + the refresh pipeline).
+
 ## v0.0.23
 
 The default music layout gains a top-level **`Music/`** folder, so a library root holds `Music/`, `Audiobooks/`, and `Podcasts/` side by side (spec §5.1).

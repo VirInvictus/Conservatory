@@ -9,7 +9,10 @@ use std::collections::HashMap;
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::db::models::{Album, Artist, MediaKind, Perspective, QueueItem, Track};
+use crate::db::models::{
+    Album, Artist, Chapter, Episode, InboxPolicy, MediaKind, Perspective, Playback, PlayedState,
+    QueueItem, Show, ShowSettings, Tag, Track,
+};
 use crate::errors::Result;
 
 /// Library-wide row counts, the Phase 1b "does it load" sanity surface.
@@ -615,4 +618,191 @@ pub fn perspective_expression(conn: &Connection, name: &str) -> Result<Option<St
             |r| r.get(0),
         )
         .optional()?)
+}
+
+// --- Podcast reads (Phase 6a-i, spec §4.2). The `conservatory-podcasts` plugin
+// (Phases 6a-ii+) consumes these through the read pool; writes go through the
+// worker (`writes.rs`).
+
+fn row_to_show(row: &rusqlite::Row<'_>) -> rusqlite::Result<Show> {
+    let accent: Option<i64> = row.get("accent_rgb")?;
+    let last_fetched: Option<i64> = row.get("last_fetched")?;
+    Ok(Show {
+        id: row.get("id")?,
+        slug: row.get("slug")?,
+        feed_url: row.get("feed_url")?,
+        title: row.get("title")?,
+        author: row.get("author")?,
+        description: row.get("description")?,
+        homepage_url: row.get("homepage_url")?,
+        cover_path: row.get("cover_path")?,
+        accent_rgb: accent.map(|v| v as u32),
+        apple_podcasts_id: row.get("apple_podcasts_id")?,
+        last_fetched: epoch_to_dt(last_fetched),
+        last_modified: row.get("last_modified")?,
+        etag: row.get("etag")?,
+        fetch_interval: row.get::<_, i64>("fetch_interval")? as u32,
+        auth_user: row.get("auth_user")?,
+        auth_pass_ref: row.get("auth_pass_ref")?,
+        auto_download: row.get("auto_download")?,
+        keep_count: row.get::<_, i64>("keep_count")? as u32,
+        priority: row.get::<_, i64>("priority")? as i32,
+        folder_path: row.get("folder_path")?,
+    })
+}
+
+fn row_to_episode(row: &rusqlite::Row<'_>) -> rusqlite::Result<Episode> {
+    let pub_date: Option<i64> = row.get("pub_date")?;
+    Ok(Episode {
+        id: row.get("id")?,
+        show_id: row.get("show_id")?,
+        guid: row.get("guid")?,
+        title: row.get("title")?,
+        description: row.get("description")?,
+        pub_date: epoch_to_dt(pub_date),
+        duration: row.get::<_, Option<i64>>("duration")?.map(|v| v as u32),
+        file_size: row.get::<_, Option<i64>>("file_size")?.map(|v| v as u64),
+        audio_url: row.get("audio_url")?,
+        audio_path: row.get("audio_path")?,
+        folder_path: row.get("folder_path")?,
+        mime_type: row.get("mime_type")?,
+        season: row.get::<_, Option<i64>>("season")?.map(|v| v as u32),
+        episode_number: row
+            .get::<_, Option<i64>>("episode_number")?
+            .map(|v| v as u32),
+        episode_type: row.get("episode_type")?,
+    })
+}
+
+fn row_to_playback(row: &rusqlite::Row<'_>) -> rusqlite::Result<Playback> {
+    let played: i64 = row.get("played")?;
+    let played = PlayedState::from_i64(played).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Integer, Box::new(e))
+    })?;
+    let last_played: Option<i64> = row.get("last_played")?;
+    Ok(Playback {
+        episode_id: row.get("episode_id")?,
+        position: row.get("position")?,
+        played,
+        last_played: epoch_to_dt(last_played),
+        play_count: row.get::<_, i64>("play_count")? as u32,
+        starred: row.get("starred")?,
+    })
+}
+
+fn row_to_show_settings(row: &rusqlite::Row<'_>) -> rusqlite::Result<ShowSettings> {
+    let policy: String = row.get("inbox_policy")?;
+    let inbox_policy = policy.parse::<InboxPolicy>().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    Ok(ShowSettings {
+        show_id: row.get("show_id")?,
+        playback_speed: row.get("playback_speed")?,
+        smart_speed: row.get("smart_speed")?,
+        voice_boost: row.get("voice_boost")?,
+        skip_intro: row.get::<_, i64>("skip_intro")? as u32,
+        skip_outro: row.get::<_, i64>("skip_outro")? as u32,
+        skip_forward: row.get::<_, Option<i64>>("skip_forward")?.map(|v| v as u32),
+        skip_back: row.get::<_, Option<i64>>("skip_back")?.map(|v| v as u32),
+        inbox_policy,
+    })
+}
+
+fn row_to_chapter(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chapter> {
+    Ok(Chapter {
+        id: row.get("id")?,
+        episode_id: row.get("episode_id")?,
+        start_time: row.get("start_time")?,
+        end_time: row.get("end_time")?,
+        title: row.get("title")?,
+        url: row.get("url")?,
+        image_path: row.get("image_path")?,
+    })
+}
+
+pub fn get_show(conn: &Connection, id: i64) -> Result<Option<Show>> {
+    conn.query_row(
+        "SELECT * FROM shows WHERE id = ?1",
+        params![id],
+        row_to_show,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// All subscriptions, highest `priority` first (the Overcast ordering), then
+/// title (Phase 6a-i).
+pub fn list_shows(conn: &Connection) -> Result<Vec<Show>> {
+    let mut stmt =
+        conn.prepare("SELECT * FROM shows ORDER BY priority DESC, title COLLATE NOCASE")?;
+    let rows = stmt.query_map([], row_to_show)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// Resolve an episode by its `(show_id, guid)` identity (spec §8), the key the
+/// fetch loop dedups against. `None` if not yet seen.
+pub fn get_episode_by_guid(conn: &Connection, show_id: i64, guid: &str) -> Result<Option<Episode>> {
+    conn.query_row(
+        "SELECT * FROM episodes WHERE show_id = ?1 AND guid = ?2",
+        params![show_id, guid],
+        row_to_episode,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// A show's episodes, newest first (the triage list order).
+pub fn list_episodes_for_show(conn: &Connection, show_id: i64) -> Result<Vec<Episode>> {
+    let mut stmt =
+        conn.prepare("SELECT * FROM episodes WHERE show_id = ?1 ORDER BY pub_date DESC, id DESC")?;
+    let rows = stmt.query_map(params![show_id], row_to_episode)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// An episode's triage/playback row, or `None` if it has never been touched
+/// (an untouched episode is Inbox by default).
+pub fn get_playback(conn: &Connection, episode_id: i64) -> Result<Option<Playback>> {
+    conn.query_row(
+        "SELECT * FROM playback WHERE episode_id = ?1",
+        params![episode_id],
+        row_to_playback,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// A show's per-show overrides, or `None` if it uses the global defaults.
+pub fn get_show_settings(conn: &Connection, show_id: i64) -> Result<Option<ShowSettings>> {
+    conn.query_row(
+        "SELECT * FROM show_settings WHERE show_id = ?1",
+        params![show_id],
+        row_to_show_settings,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// An episode's chapters in playback order.
+pub fn list_chapters(conn: &Connection, episode_id: i64) -> Result<Vec<Chapter>> {
+    let mut stmt =
+        conn.prepare("SELECT * FROM chapters WHERE episode_id = ?1 ORDER BY start_time")?;
+    let rows = stmt.query_map(params![episode_id], row_to_chapter)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// A show's tags, ordered by name (Phase 6a-i).
+pub fn list_tags_for_show(conn: &Connection, show_id: i64) -> Result<Vec<Tag>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.name FROM tags t
+         JOIN show_tags st ON st.tag_id = t.id
+         WHERE st.show_id = ?1
+         ORDER BY t.name COLLATE NOCASE",
+    )?;
+    let rows = stmt.query_map(params![show_id], |r| {
+        Ok(Tag {
+            id: r.get("id")?,
+            name: r.get("name")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
 }

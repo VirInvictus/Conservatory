@@ -10,7 +10,7 @@
 
 use tokio::sync::oneshot;
 
-use crate::db::models::{Album, Artist, Track};
+use crate::db::models::{Album, Artist, Chapter, Episode, Playback, Show, ShowSettings, Track};
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
 use crate::mover::journal::JobState;
@@ -213,6 +213,65 @@ pub(crate) enum Command {
     /// Empty the queue.
     ClearQueue { reply: oneshot::Sender<Result<()>> },
 
+    // --- Podcasts (Phase 6a-i, spec §4.2). The schema is core-owned, so these
+    // commands live here; the `conservatory-podcasts` plugin calls the typed
+    // `WorkerHandle` methods that build them.
+    /// Resolve a show by `feed_url`, creating it on first sight (`podcast add`).
+    GetOrCreateShow {
+        show: Show,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Update a subscription in full (incl. the conditional-GET bookkeeping).
+    UpdateShow {
+        show: Show,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Delete a subscription (cascades episodes/playback/settings/…).
+    DeleteShow {
+        id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Insert or update an episode by `(show_id, guid)`, returning its id.
+    UpsertEpisode {
+        episode: Episode,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Upsert an episode's triage/playback row.
+    UpsertPlayback {
+        playback: Playback,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Upsert a show's per-show overrides.
+    UpsertShowSettings {
+        settings: ShowSettings,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Replace an episode's chapter set.
+    ReplaceChapters {
+        episode_id: i64,
+        chapters: Vec<Chapter>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Resolve a tag name to its id, creating it on first sight.
+    GetOrCreateTag {
+        name: String,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Replace a show's tag set.
+    SetShowTags {
+        show_id: i64,
+        tags: Vec<String>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Ack a shutdown request. The loop exits naturally once every
     /// `WorkerHandle` clone has dropped and the channel closes.
     Shutdown { reply: oneshot::Sender<()> },
@@ -255,6 +314,15 @@ impl Command {
             Self::RemoveQueueItem { .. } => "remove_queue_item",
             Self::ReorderQueue { .. } => "reorder_queue",
             Self::ClearQueue { .. } => "clear_queue",
+            Self::GetOrCreateShow { .. } => "get_or_create_show",
+            Self::UpdateShow { .. } => "update_show",
+            Self::DeleteShow { .. } => "delete_show",
+            Self::UpsertEpisode { .. } => "upsert_episode",
+            Self::UpsertPlayback { .. } => "upsert_playback",
+            Self::UpsertShowSettings { .. } => "upsert_show_settings",
+            Self::ReplaceChapters { .. } => "replace_chapters",
+            Self::GetOrCreateTag { .. } => "get_or_create_tag",
+            Self::SetShowTags { .. } => "set_show_tags",
             Self::Shutdown { .. } => "shutdown",
             #[cfg(test)]
             Self::Panic => "panic",

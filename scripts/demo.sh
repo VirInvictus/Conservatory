@@ -72,6 +72,10 @@ if [ "${CONSERVATORY_DEMO_NO_GUI:-0}" = "1" ]; then
 fi
 
 echo "demo: launching the browse window (close it to clean up) ..."
+echo "  views:  the header switcher (or Alt+1 / Alt+2) flips between Music and"
+echo "          Podcasts; the Podcasts tab is an empty placeholder until its"
+echo "          triage UI lands (Phase 6b-ii). Shrink the window and the switcher"
+echo "          drops to a bottom bar above the Now-bar."
 echo "  browse: click a facet row to narrow; click a column header to sort;"
 echo "          press Ctrl+F and type a filter, e.g. genre:ambient or rating:>=1;"
 echo "          save it as a Perspective in the left sidebar, then reload it."

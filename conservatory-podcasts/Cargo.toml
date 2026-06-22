@@ -12,14 +12,21 @@ authors.workspace = true
 # ammonia, id3, oo7) with it. Deps are activated per sub-phase.
 #
 # Phase 6a-ii-a: the RSS-catching layer (HTTP client + conditional-GET fetcher),
-# ported from Viaduct's network/{http,fetcher}.rs (ATTRIBUTIONS.md). feed-rs /
-# quick-xml (parse) land at 6a-ii-b; ammonia / id3 / oo7 at 6a-iii.
+# ported from Viaduct's network/{http,fetcher}.rs (ATTRIBUTIONS.md).
+# Phase 6a-ii-b: feed-rs/quick-xml parse + the refresh orchestration. The plugin
+# now consumes conservatory-core's typed worker methods + models (the §2.2
+# boundary is code/deps, not the schema; no cycle, core never depends back).
+# ammonia / id3 / oo7 land at 6a-iii.
 [dependencies]
+conservatory-core = { path = "../conservatory-core" }
 tokio = { workspace = true }
 reqwest = { workspace = true }
+feed-rs = { workspace = true }
+quick-xml = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }
+tempfile = { workspace = true }

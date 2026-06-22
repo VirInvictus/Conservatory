@@ -212,11 +212,54 @@ enum Command {
         format: Format,
     },
 
+    /// Manage podcast subscriptions (spec §8, Phase 6): subscribe to a feed,
+    /// remove one, or refresh episodes via conditional GET. Only present when
+    /// built with the `podcasts` plugin (the default).
+    #[cfg(feature = "podcasts")]
+    Podcast {
+        #[command(subcommand)]
+        action: PodcastAction,
+    },
+
     /// Phase 3b smoke test: dump the faceted-browse panes (Genre → Album Artist
     /// → Album) with counts and the leaf track total. Read-only.
     DebugFacets {
         /// Path to the SQLite database.
         db: PathBuf,
+    },
+}
+
+/// Podcast subscription verbs (spec §9). Gated behind the `podcasts` plugin so
+/// the music-only build does not expose them.
+#[cfg(feature = "podcasts")]
+#[derive(Subcommand)]
+enum PodcastAction {
+    /// Subscribe to a feed URL: fetch it, create the show, and pull its
+    /// episodes. Re-adding an existing feed just refreshes it (idempotent).
+    Add {
+        /// Path to the SQLite database (created if absent).
+        db: PathBuf,
+        /// The RSS/Atom feed URL.
+        url: String,
+        #[arg(long, value_enum, default_value_t = Format::Tsv)]
+        format: Format,
+    },
+    /// Unsubscribe: delete a show and cascade its episodes / state / queue rows.
+    Remove {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The show id to remove.
+        show_id: i64,
+    },
+    /// Re-poll subscriptions with conditional GET and upsert new episodes. With
+    /// a show id, refreshes just that show; otherwise refreshes all.
+    Refresh {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// A single show id to refresh (omit to refresh every subscription).
+        show_id: Option<i64>,
+        #[arg(long, value_enum, default_value_t = Format::Tsv)]
+        format: Format,
     },
 }
 
@@ -379,6 +422,8 @@ fn main() -> Result<()> {
             root,
         }) => block_on(run_set_cover(db, album_id, image, root)),
         Some(Command::Search { db, query, format }) => search(db, query, format),
+        #[cfg(feature = "podcasts")]
+        Some(Command::Podcast { action }) => podcast(action),
         Some(Command::DebugFacets { db }) => debug_facets(db),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
@@ -1669,6 +1714,139 @@ fn to_item(r: &SearchRow) -> SearchItem {
 }
 
 /// Run a future on a fresh current-thread runtime (the CLI's worker pattern).
+#[cfg(feature = "podcasts")]
+fn podcast(action: PodcastAction) -> Result<()> {
+    match action {
+        PodcastAction::Add { db, url, format } => block_on(run_podcast_add(db, url, format)),
+        PodcastAction::Remove { db, show_id } => block_on(run_podcast_remove(db, show_id)),
+        PodcastAction::Refresh {
+            db,
+            show_id,
+            format,
+        } => block_on(run_podcast_refresh(db, show_id, format)),
+    }
+}
+
+#[cfg(feature = "podcasts")]
+async fn run_podcast_add(db: PathBuf, url: String, format: Format) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let fetcher = conservatory_podcasts::Fetcher::new().context("building feed fetcher")?;
+    let (show_id, new, total) = conservatory_podcasts::add_show(&worker, &pool, &fetcher, &url)
+        .await
+        .context("subscribing to feed")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+
+    match format {
+        Format::Json => println!("{{\"show_id\":{show_id},\"new\":{new},\"total\":{total}}}"),
+        Format::Tsv => {
+            println!("show_id\tnew\ttotal");
+            println!("{show_id}\t{new}\t{total}");
+        }
+        Format::Human => {
+            println!("Subscribed (show {show_id}): {new} new of {total} episode(s).")
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "podcasts")]
+async fn run_podcast_remove(db: PathBuf, show_id: i64) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    {
+        let pool = ReadPool::new(db, 3).context("opening read pool")?;
+        let conn = pool.open().context("opening pool connection")?;
+        if conservatory_core::db::get_show(&conn, show_id)
+            .context("looking up show")?
+            .is_none()
+        {
+            worker.shutdown_ack().await.ok();
+            anyhow::bail!("no show with id {show_id}");
+        }
+    }
+    worker.delete_show(show_id).await.context("deleting show")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Removed show {show_id} (its episodes and state cascade).");
+    Ok(())
+}
+
+#[cfg(feature = "podcasts")]
+async fn run_podcast_refresh(db: PathBuf, show_id: Option<i64>, format: Format) -> Result<()> {
+    use conservatory_podcasts::RefreshStatus;
+
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let fetcher = conservatory_podcasts::Fetcher::new().context("building feed fetcher")?;
+
+    let outcomes = if let Some(id) = show_id {
+        let show = {
+            let conn = pool.open().context("opening pool connection")?;
+            conservatory_core::db::get_show(&conn, id)
+                .context("looking up show")?
+                .ok_or_else(|| anyhow::anyhow!("no show with id {id}"))?
+        };
+        vec![
+            conservatory_podcasts::refresh_show(&worker, &pool, &fetcher, show)
+                .await
+                .context("refreshing show")?,
+        ]
+    } else {
+        conservatory_podcasts::refresh_all(&worker, &pool, &fetcher)
+            .await
+            .context("refreshing subscriptions")?
+    };
+    worker.shutdown_ack().await.context("shutdown ack")?;
+
+    let status_str = |s: &RefreshStatus| match s {
+        RefreshStatus::Updated { new, total } => format!("updated\t{new}\t{total}"),
+        RefreshStatus::NotModified => "not-modified\t0\t0".to_string(),
+        RefreshStatus::Failed(_) => "failed\t0\t0".to_string(),
+    };
+
+    match format {
+        Format::Tsv => {
+            println!("show_id\ttitle\tstatus\tnew\ttotal");
+            for o in &outcomes {
+                println!("{}\t{}\t{}", o.show_id, o.show_title, status_str(&o.status));
+            }
+        }
+        Format::Json => {
+            print!("[");
+            for (i, o) in outcomes.iter().enumerate() {
+                if i > 0 {
+                    print!(",");
+                }
+                let (status, new, total) = match &o.status {
+                    RefreshStatus::Updated { new, total } => ("updated", *new, *total),
+                    RefreshStatus::NotModified => ("not_modified", 0, 0),
+                    RefreshStatus::Failed(_) => ("failed", 0, 0),
+                };
+                print!(
+                    "{{\"show_id\":{},\"status\":\"{status}\",\"new\":{new},\"total\":{total}}}",
+                    o.show_id
+                );
+            }
+            println!("]");
+        }
+        Format::Human => {
+            for o in &outcomes {
+                let line = match &o.status {
+                    RefreshStatus::Updated { new, total } => {
+                        format!("{new} new of {total} episode(s)")
+                    }
+                    RefreshStatus::NotModified => "not modified".to_string(),
+                    RefreshStatus::Failed(e) => format!("FAILED: {e}"),
+                };
+                println!("{} — {}", o.show_title, line);
+            }
+            if outcomes.is_empty() {
+                println!("No subscriptions.");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn block_on<F: std::future::Future<Output = Result<()>>>(fut: F) -> Result<()> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

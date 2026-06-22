@@ -12,14 +12,22 @@
 //! unified queue, libmpv host, and spoken-word profile (Smart Speed / Voice
 //! Boost) are core. A music-only build simply has empty podcast tables.
 //!
-//! Phase 6a-ii-a lands the RSS-catching layer: the HTTP client ([`http`]) and
+//! Phase 6a-ii-a landed the RSS-catching layer: the HTTP client ([`http`]) and
 //! the conditional-GET [`Fetcher`], both ported from Viaduct (ATTRIBUTIONS.md).
-//! Parsing (feed-rs + the `podcast:` namespace handler) and the refresh
-//! orchestration arrive at 6a-ii-b.
+//! Phase 6a-ii-b adds parsing ([`parse`] via feed-rs + the hand-rolled
+//! [`namespace`] handler) and the [`refresh`] orchestration (fetch → parse →
+//! upsert through the core worker). Triage, OPML, credentials, and downloads
+//! follow at 6a-iii / 6b.
 
 pub mod error;
 pub mod fetcher;
 pub mod http;
+pub mod namespace;
+pub mod parse;
+pub mod refresh;
+pub mod slug;
 
 pub use error::{FetchError, Result};
 pub use fetcher::{FetchResult, Fetcher};
+pub use parse::{ChannelMeta, ParsedEpisode, ParsedFeed, parse_feed};
+pub use refresh::{RefreshOutcome, RefreshStatus, add_show, refresh_all, refresh_show};

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>Sample Cast</title>
+    <link>https://example.com/samplecast</link>
+    <description>A hermetic test feed.</description>
+    <itunes:author>The Hosts</itunes:author>
+    <podcast:guid>sample-cast-show-guid</podcast:guid>
+    <item>
+      <title>Episode Two</title>
+      <guid isPermaLink="false">ep-2</guid>
+      <pubDate>Tue, 12 Mar 2024 09:00:00 GMT</pubDate>
+      <enclosure url="https://cdn.example.com/ep2.mp3" length="2000000" type="audio/mpeg"/>
+      <itunes:duration>1500</itunes:duration>
+      <podcast:season>1</podcast:season>
+      <podcast:episode>2</podcast:episode>
+      <itunes:episodeType>full</itunes:episodeType>
+      <description>The second episode.</description>
+    </item>
+    <item>
+      <title>Episode One</title>
+      <guid isPermaLink="false">ep-1</guid>
+      <pubDate>Tue, 05 Mar 2024 09:00:00 GMT</pubDate>
+      <enclosure url="https://cdn.example.com/ep1.mp3" length="1000000" type="audio/mpeg"/>
+      <itunes:duration>1200</itunes:duration>
+      <podcast:season>1</podcast:season>
+      <podcast:episode>1</podcast:episode>
+      <itunes:episodeType>full</itunes:episodeType>
+      <description>The first episode.</description>
+    </item>
+  </channel>
+</rss>

@@ -11,7 +11,7 @@
 | `Ctrl+,` | Preferences (`AdwPreferencesDialog`) |
 | `Ctrl+Q` | Quit |
 | `F1` | Keyboard shortcuts window |
-| `Ctrl+1` / `Ctrl+2` | Switch view: Music / Podcasts |
+| `Alt+1` / `Alt+2` / `Alt+3` | Switch top-level view: Music / Podcasts / Audiobooks (the `AdwTabView` `Alt+N` convention; `win.view` action, Phase 6b-i) |
 | `Ctrl+J` | Open the jobs / activity surface (imports, moves, fetches) |
 
 ## Browse (Music)
@@ -66,4 +66,4 @@
 | `Esc` | Collapse Now Playing back to the Now-bar |
 | `S` | Sleep timer (episodes) |
 
-Conflicts to resolve at implementation: `Ctrl+1`/`Ctrl+2` are listed for both the top-level view switch and the podcast triage lists; the triage bindings only apply when the Podcasts view holds focus, but this overlap should be reviewed before it ships.
+The earlier `Ctrl+1`/`Ctrl+2` top-level-switch overlap with the podcast triage lists is resolved: top-level view switching moved to `Alt+1/2/3` (the `AdwTabView` convention), leaving `Ctrl+1/2/3` to the triage lists within the Podcasts view.

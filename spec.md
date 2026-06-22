@@ -22,7 +22,7 @@ Four commitments, in priority order:
 
 3. **One engine, one queue, three media types.** Music tracks, podcast episodes, and audiobooks share a single libmpv engine and a single play queue. Each queued item carries its own playback profile: gapless and ReplayGain for an album track, Smart Speed and Voice Boost for a spoken-word item (episode or audiobook). A first-class, mixed listening queue is the standout feature and the reason Belfry is absorbed rather than kept separate (§6.1). Audiobooks are long-form speech, so they ride the same absorbed speech engine as podcasts (variable speed, Smart Speed, Voice Boost, sleep timer, chapters, first-class resume); they differ in being *owned and curated* rather than ephemeral (§5.7).
 
-4. **A daily-driver player, not a previewer.** For libraries Conservatory manages, it is the place you listen, replacing deadbeef (and, for audiobooks, Cozy). Gapless, ReplayGain, crossfade, output-device selection, MPRIS, media keys (§6). This is required, not optional: because Conservatory moves files, any external player's in-place references go stale the moment a library is re-shelved.
+4. **A daily-driver player, not a previewer.** For libraries Conservatory manages, it is the place you listen, replacing deadbeef (and, for audiobooks, Cozy). Gapless, ReplayGain, EQ / DSP, output selection, MPRIS, media keys (§6). This is required, not optional: because Conservatory moves files, any external player's in-place references go stale the moment a library is re-shelved.
 
 Reference apps:
 
@@ -130,6 +130,12 @@ The Music view is the deadbeef-cui layout as a first-class window: N configurabl
 
 The Podcasts and Audiobooks tabs are plugin surfaces (§2.2): the view switcher offers only the tabs whose features are compiled in, and a music-only build opens straight into the Music view with no switcher.
 
+The switcher follows current libadwaita idiom (1.4+): an `AdwViewSwitcher` (`policy = wide`) lives in the header bar's title-widget, and an `AdwBreakpoint` hides it and reveals a bottom `AdwViewSwitcherBar` once the window is too narrow for the header switcher (HIG: the switcher migrates to the bottom edge). `AdwViewSwitcherTitle` is deprecated and not used. Three settled details:
+
+- **Bottom-bar stacking (an opinionated call, no GNOME precedent).** No shipping GNOME app pairs a persistent bottom transport bar with an adaptive bottom view switcher. The rule here: the Now-bar is the stable innermost bottom bar (always visible, closest to content); the `AdwViewSwitcherBar` reveals *beneath* it only at the narrow breakpoint. Locked by visual prototype when the shell is built (Phase 6b-i).
+- **State retention.** `AdwViewStack` keeps each page's widget tree alive, so scroll position and selection survive switching away and back. Heavy pages (Podcasts, Audiobooks) are built lazily on their child's `::map` signal rather than eagerly at startup.
+- **Keyboard.** `Alt+1` / `Alt+2` / `Alt+3` switch top-level views via a `win.view` action, mirroring `AdwTabView`'s `Alt+N` convention (GNOME has no standard for numeric view jumps; `Ctrl+N` is a browser-tab habit and is left free for the podcast triage lists, §3.7). See `docs/keymap.md`.
+
 ---
 
 ## 3. User Interface
@@ -191,7 +197,7 @@ Calibre's editor surface, music-shaped. Multi-select in any list, then edit fiel
 
 ### 3.6 Now Playing and the Queue
 
-The unified queue (§6.1) is the spine. The Now-bar persists across Music and Podcasts; tapping it expands to a Now Playing surface (the Hermitage Codex moment: full-bleed cover, accent-tinted scrubber, queue tail peek). For episodes the surface adds chapters, show notes, Smart Speed indicator, and sleep timer (Belfry §3.6). For tracks it shows album context, ReplayGain state, and gapless/crossfade status. The queue view itself is a single list that interleaves tracks and episodes, drag-reorderable, each row badged with its kind.
+The unified queue (§6.1) is the spine. The Now-bar persists across Music and Podcasts; tapping it expands to a Now Playing surface (the Hermitage Codex moment: full-bleed cover, accent-tinted scrubber, queue tail peek). For episodes the surface adds chapters, show notes, Smart Speed indicator, and sleep timer (Belfry §3.6). For tracks it shows album context, ReplayGain state, the active EQ / DSP, and gapless status. The queue view itself is a single list that interleaves tracks and episodes, drag-reorderable, each row badged with its kind.
 
 ### 3.7 Podcasts Tab
 
@@ -476,18 +482,20 @@ struct PlayableItem {
 }
 ```
 
-The queue (§4.3) interleaves all three kinds freely. On advance, the engine applies the item's profile (the right `af` filter chain, ReplayGain mode, gapless/crossfade behaviour) before playing. This single abstraction is what lets one queue, one Now-bar, one MPRIS surface, and one set of media keys serve music, podcasts, and audiobooks. An `Audiobook` item spans its book's ordered chapters (§4.5): chapter advance is *internal* to the item (no gap, the chapter boundary is just a seek across files or within an M4B), and the queue advances to the next item only when the book finishes.
+The queue (§4.3) interleaves all three kinds freely. On advance, the engine applies the item's profile (the right `af` filter chain, ReplayGain, gapless behaviour) before playing. This single abstraction is what lets one queue, one Now-bar, one MPRIS surface, and one set of media keys serve music, podcasts, and audiobooks. An `Audiobook` item spans its book's ordered chapters (§4.5): chapter advance is *internal* to the item (no gap, the chapter boundary is just a seek across files or within an M4B), and the queue advances to the next item only when the book finishes.
 
 ### 6.2 Music Profile
 
-- **Gapless** playback within an album (libmpv `--gapless-audio`).
-- **ReplayGain** track and album modes, read from `tracks.replaygain_*`. Whether Conservatory also *scans* ReplayGain values for untagged files, or only reads existing ones, is open (§16).
-- **Crossfade** between non-gapless tracks (user-configurable duration; off by default).
-- Optional **EQ / DSP**: depth is open (§16); deadbeef ships a full DSP chain, and matching it is its own project.
+Resolved into a labelled `af` filter chain built once per item and tuned at runtime via `af-command` (so a slider move never tears down the graph and clicks the audio). This section settles §16.6; Phase 5.5 builds it.
+
+- **Gapless** playback within an album: `--gapless-audio=weak` (preserves the source rate across a mixed-rate library; `audio-samplerate` / `audio-format` stay unset to avoid needless resampling). **Crossfade is deliberately not offered**: it is impossible in a single libmpv instance (the engine decodes one playlist entry at a time, so two tracks never overlap) and is mpv-maintainer-rejected. Conservatory ships gapless-only, the path real mpv-based players take.
+- **ReplayGain** applied as an explicit `volume` stage at the *head* of the chain, from the `tracks.replaygain_*` values (scanned in-app via rsgain, §16.7), with a user preamp and clip-prevention. This is preferred over mpv's built-in `--replaygain`, which is applied *after* the `af` chain (a boosting EQ would defeat clip-prevention) and is not re-applied per track across a gapless boundary (the whole queue would inherit the first track's gain, mpv bug #8267). Modes off / track / album as before.
+- **Equalizer**: a graphic EQ (stacked `equalizer` peaking bands at ISO centres) plus a parametric option (`anequalizer`), with named presets. The obvious-looking `superequalizer` / `firequalizer` are avoided: they carry no runtime command, so every adjustment would rebuild the graph and gap the audio.
+- **DSP modules**: an optional, ordered set of chain stages — compressor (`acompressor`), brick-wall limiter, volume leveler (`dynaudnorm`, single-pass/live) — each independently toggleable. A bounded, useful chain, **not** a deadbeef-class everything. Deferred and recorded (not built in v1): exclusive/bit-perfect output, LADSPA / raw-`af` plugin hosting, and native `crossfeed` for headphones (§16.6).
 
 ### 6.3 Podcast Profile
 
-Smart Speed (silence-skip via `silenceremove` + pitch-preserving `rubberband`) and Voice Boost (compression + EQ + loudness normalization), ported verbatim from Belfry §5.1–5.3, including the time-saved session accounting. Per-show overrides as in Belfry.
+Smart Speed (silence-skip via `silenceremove`) and Voice Boost (compression + EQ + loudness leveling), ported from Belfry §5.1–5.3, including the time-saved session accounting. Per-show overrides as in Belfry. These are **presets on the Phase 5.5 `af`-chain engine** (§6.2), not a separate path; two filter choices are validated against the Phase 5.5 findings (`docs/libmpv-profiles.md`): variable speed via mpv `--speed` + `audio-pitch-correction` (scaletempo2) rather than a chained `rubberband` at all speeds, and live single-pass `dynaudnorm` rather than two-pass/offline `loudnorm`.
 
 **Audiobooks share this profile.** An audiobook is long-form speech, so it uses the same spoken-word filter graph (variable speed, Smart Speed, Voice Boost), resolved with per-book overrides from `book_playback` (§4.5) instead of per-show ones. The only audiobook-specific behaviour is chapter navigation within the item (§6.1) and the first-class resume in §6.4; no new filter chain is introduced.
 
@@ -498,6 +506,8 @@ Position written on pause, seek (debounced), item end, app quit, and every 30 s 
 ### 6.5 System Integration
 
 MPRIS2 (`org.mpris.MediaPlayer2`) with full metadata for the current item regardless of kind; play/pause/next/previous/seek; exposure to GNOME's media overlay, lock screen, and headset buttons. PipeWire output-sink picker. Suspend inhibitor during active playback.
+
+Output selection covers the **device** (the PipeWire picker, Phase 4c-ii) and the **backend** (`--ao=pipewire|pulse|alsa|jack`), with high-quality resampler control for the unavoidable-resample case (Phase 5.5c). An exclusive / bit-perfect mode (ALSA `hw:` + `--audio-exclusive`) is **deferred and recorded** (§16.6): it is bare-install-only and fights the Flatpak sandbox, so the PipeWire path stays the everyday default.
 
 ---
 
@@ -578,10 +588,21 @@ default_unknown = "Unknown"
 # seed vocabulary source is OPEN (§16); empty until decided
 
 [playback]
-gapless = true
-crossfade_seconds = 0
+gapless = true                # --gapless-audio=weak; crossfade is not offered (§6.2)
 replaygain = "album"          # "off" | "track" | "album"
+replaygain_preamp = 0.0       # dB, applied at the head volume stage (§6.2)
+replaygain_clip = "prevent"   # "prevent" | "allow"
 # podcast Smart Speed / Voice Boost defaults inherited from Belfry config shape
+
+[audio]                       # the DSP chain + output (§6.2, §6.5; Phase 5.5)
+output_backend = "auto"       # "auto" | "pipewire" | "pulse" | "alsa" | "jack"
+eq_preset = "flat"            # named EQ preset; "flat" is a no-op chain
+# EQ bands and compressor / limiter / leveler settings live with the preset, not inline
+
+[scrobble]                    # optional, off by default (§14, Phase 9)
+enabled = false
+service = "listenbrainz"      # "listenbrainz" | "lastfm"
+# token stored in libsecret, not the config file
 
 [podcasts]
 library_subdir = "Podcasts"
@@ -629,7 +650,7 @@ GTK4 + libadwaita pull a ~150 MB C-side floor (measured in Viaduct); the targets
 
 ## 14. Out of Scope, Forever
 
-- Recommendations, "discover" tabs, charts, social features, sharing.
+- Recommendations, "discover" tabs, charts, in-app social feeds, a social graph, sharing-to-followers. (Narrow carve-out: *optional, off-by-default* listening-history scrobbling to ListenBrainz / Last.fm is allowed as a one-way sync protocol, Phase 9; with it disabled the app is unchanged and fully offline. This is a deliberate, scoped reversal of the original blanket "no social" line, kept to history submission, not a social product.)
 - A built-in music or podcast directory beyond import / OPML.
 - Cloud anything that is not an optional sync protocol; the app is fully functional offline.
 - DRM.
@@ -658,7 +679,7 @@ App ID: `org.gnome.Conservatory` (GNOME Circle) or `io.github.virinvictus.Conser
 3. **Genre instability.** Genre-first physical shelving amplifies the least stable tag into file moves. The shelf-genre field plus rendered template (§5.1–5.2) keep raw tags off disk and make re-shelving cheap, but this is the part most likely to need revision in practice. The genre-tree rollup is the escape hatch if flat shelving churns too much.
 4. **Genre vocabulary seed (settled, Phase 2b).** Start **empty and user-built**: Conservatory ships no default alias map or whitelist. `shelf_genre` derives from the raw tags as they are (case-folded, split, deduped), and `genre_aliases` / `genre_priority` are populated only as the user maps them. This avoids vendoring and maintaining a third-party list and avoids baking in someone else's genre opinions; the schema already supports seeding a vocabulary later (beets `lastgenre` or MusicBrainz) without a migration, so the door is open if curation friction demands it.
 5. **MusicBrainz tagging (OPEN).** In scope or assume pre-tagged files? Default is out; revisit if curation friction demands it.
-6. **EQ / DSP depth (OPEN).** None, a simple EQ, or a deadbeef-class DSP chain?
+6. **EQ / DSP depth + output quality (RESOLVED, Phase 5.5).** A real but bounded chain, not a deadbeef-class everything: a graphic + parametric equalizer and an ordered set of DSP modules (compressor, limiter, `dynaudnorm` leveler), built as a labelled `af` chain mutated via `af-command`, with ReplayGain re-staged at the chain head to fix mpv's post-`af` / gapless-boundary gain bug (#8267). Output gains a backend picker and resampler control (§6.5). Deferred and recorded (roadmap Phase 5.5c): exclusive/bit-perfect output, LADSPA / raw-`af` plugin hosting, `crossfeed`. **Crossfade is dropped** (impossible in one libmpv instance). The chain engine is shared with the spoken-word profile (§6.3), which is why it lands before podcasts (§17).
 7. **ReplayGain scan vs read (settled, Phase 5c, shipped).** Conservatory **scans in-app** via **`rsgain`**, it does not only read. The scanner computes album + track gain/peak for untagged albums and writes the tags, refreshing the DB `replaygain_*` columns so the playback profile resolution (§6.2) sees them; the read-only path (Phase 4a) stays the default and the scan is opt-in maintenance. `rsgain` (an external tool, ATTRIBUTIONS.md) was chosen over the `ebur128` Rust crate: the crate measures only decoded PCM and the pure-Rust decoder (symphonia) cannot decode Opus, which is a large fraction of the library, whereas rsgain decodes every format itself and writes correct RG2.0 tags including the Opus R128 convention and album gain.
 8. **Belfry absorption timing.** Belfry must not be retired until Conservatory reaches podcast parity; `belfry-core`'s worker migrates rather than being rewritten. The `~/.gitrepos` CLAUDE.md project map needs a note when that happens.
 9. **libmpv per-item profile switching.** Swapping filter graphs between a music track and a podcast episode mid-queue needs prototyping; gapless within an album plus profile switching at album/kind boundaries is the tricky bit. Audiobooks add no new graph (they share the spoken-word profile, §6.3), but chapter advance *within* a book must be gapless across files or M4B spans, which is the same boundary problem one level down.
@@ -682,8 +703,9 @@ The phases below are the contract-level shape. `roadmap.md` breaks each into ind
 - **Phase 3.** GTK browse: the Columns UI faceted view + search grammar + track list. A working library browser.
 - **Phase 4.** Playback: libmpv engine, music profile, unified queue, Now-bar, MPRIS. A daily-driver music player.
 - **Phase 5.** Bulk editing + embedded-tag write-back.
+- **Phase 5.5.** Audio engine: the labelled `af`-chain builder, a graphic + parametric equalizer, the DSP modules (compressor / limiter / leveler), correct head-staged ReplayGain, and output backend / resampler control. Resolves §16.6. Lands before podcasts because the chain engine is shared with the spoken-word profile (§6.3); the music daily-driver feels complete here.
 - **Phase 6.** Podcasts: absorb the Belfry subsystem as the `conservatory-podcasts` plugin crate (§2.2) behind the Podcasts tab, hook episodes into the unified queue. The podcast schema lands in core's ledger; the behaviour lands in the plugin. Podcast parity reached; Belfry can retire.
-- **Phase 7.** Audiobooks: the `conservatory-audiobooks` plugin crate (§2.2), a third tab over the absorbed spoken-word engine. The book/chapter/series data model and local-source import (headless), then the Audiobooks browse tab, then playback (chapters + first-class resume) reusing the Phase 6 engine. Placed after Phase 6 because it reuses that engine; the audiobook *manager* could in principle land earlier, but the deliberate choice is to keep it whole and post-podcast (§16.12).
+- **Phase 7.** Audiobooks: the `conservatory-audiobooks` plugin crate (§2.2), a third tab over the absorbed spoken-word engine. The book/chapter/series data model and local-source import (headless), then the Audiobooks browse tab, then playback (chapters + first-class resume) reusing the shared Phase 5.5 chain engine via the Phase 6c spoken-word presets. Placed after Phase 6 because it reuses that engine; the audiobook *manager* could in principle land earlier, but the deliberate choice is to keep it whole and post-podcast (§16.12).
 
 The manager half (Phases 1–3) must be usable before the player half is finished, and the player must be usable before podcasts arrive. Audiobooks (Phase 7) come last because they lean on the podcast engine; each is a hard phase that leaves a usable artifact. No phase leaves the app non-functional.
 

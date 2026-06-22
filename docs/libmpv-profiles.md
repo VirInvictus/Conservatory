@@ -1,10 +1,10 @@
 # libmpv Profile Reference
 
-> **Status: partly implemented (Phase 4a).** The music profile and the libmpv host landed at Phase 4a (`conservatory-core/src/player/`): a single libmpv instance, gapless + ReplayGain, the `playback_state` cursor, play-count-on-completion. The unified queue + profile switching (4b), MPRIS/inhibitor (4c), and the podcast/audiobook spoken-word chains (6c/7c) are still ahead. 4a settled two open questions by deferral: ReplayGain is read-only (no in-app scan, §16.7) and there is no EQ/DSP (§16.6). This expands spec §6 and is the contract the engine builds against. The podcast filter chains are ported verbatim from Belfry §5.
+> **Status: partly implemented; the DSP layer is Phase 5.5.** The music profile and libmpv host landed at Phase 4a–4c (`conservatory-core/src/player/`): a single libmpv instance, gapless + ReplayGain (read), the unified queue + Now-bar, MPRIS/inhibitor, the output-device picker. Phase 5c added in-app ReplayGain scanning (rsgain, §16.7 settled). Still ahead: the **Phase 5.5 audio engine** (the labelled `af`-chain builder, EQ, DSP modules, head-staged ReplayGain, output backend/resampler — §16.6, now resolved) and the podcast/audiobook spoken-word chains (6c/7c), which are **presets on that engine**. This expands spec §6 and is the contract the engine builds against. The current code still sets the flat `gapless`/`replaygain` properties (`player/host.rs`); 5.5a is the refactor to the chain.
 
 ## One engine, one queue, two profiles
 
-A single `libmpv` instance (via the `libmpv2` binding) is kept alive across items, using the property API plus the filter graph. The queue (spec §4.3) interleaves tracks, episodes, and audiobooks freely. On advance, the engine resolves the next item's **playback profile** and applies it (the right `af` filter chain, ReplayGain mode, gapless/crossfade behaviour) before playing.
+A single `libmpv` instance (via the `libmpv2` binding) is kept alive across items, using the property API plus the filter graph. The queue (spec §4.3) interleaves tracks, episodes, and audiobooks freely. On advance, the engine resolves the next item's **playback profile** and applies it (the right `af` filter chain, ReplayGain, gapless behaviour) before playing.
 
 ```rust
 struct PlayableItem {
@@ -16,22 +16,39 @@ struct PlayableItem {
 
 This single abstraction is what lets one queue, one Now-bar, one MPRIS surface, and one set of media keys serve all three media types.
 
+## DSP chain discipline (build once, mutate via `af-command`)
+
+mpv routes every libavfilter filter through one `lavfi` wrapper, and `af-command` reaches only the filters whose ffmpeg implementation supports runtime commands. The rules that fall out (Phase 5.5):
+
+- Build the full chain **once** with labelled stages (`@rg`, `@eq`, `@comp`, `@boost`); change *parameters* via `af-command` (gap-free).
+- Structural mutation (`af add` / `af set` / `af remove` / reorder) reinitializes the graph and **gaps the audio** — reserve it for explicit settings changes, never for a slider drag.
+- Order is signal flow: ReplayGain → EQ → compressor/limiter → leveler. Don't hand-place a resampler; mpv auto-inserts format conversion, and the speed/tempo filter (`scaletempo2`) is auto-inserted on `--speed`.
+- **Tarpits:** `superequalizer` / `firequalizer` (no runtime command, so every EQ change rebuilds the graph); `loudnorm` live (its accurate mode is two-pass/offline — use `dynaudnorm` for live leveling, reserve `loudnorm` for an optional import-time pass); `rubberband` in the chain *and* mpv `--speed` (two time-stretchers fight over the tempo factor — drive speed with `--speed` + `audio-pitch-correction` only); a libmpv-PCM visualizer (no audio callback exists in libmpv; a spectrum would need a separate PipeWire monitor tap).
+
 ## Music profile (spec §6.2)
 
-- **Gapless:** `--gapless-audio` within an album.
-- **ReplayGain:** track and album modes, read from `tracks.replaygain_track` / `tracks.replaygain_album`. Config `playback.replaygain = off | track | album`. Whether Conservatory also *scans* ReplayGain for untagged files or only reads existing tags is **OPEN** (spec §16.7).
-- **Crossfade:** between non-gapless tracks, user-configurable duration, off by default (`playback.crossfade_seconds = 0`).
-- **EQ / DSP:** depth is **OPEN** (spec §16.6): none, a simple EQ, or a deadbeef-class chain. A full DSP chain is its own project; do not assume it.
+Resolved into a **labelled `af` chain**, built once per item and tuned via `af-command` (the discipline above).
+
+- **ReplayGain (head stage):** an explicit `volume=<dB>` at the *head* of the chain, from `tracks.replaygain_track` / `_album` (scanned in-app via rsgain, §16.7 settled), with a preamp (`playback.replaygain_preamp`) and clip-prevention (`playback.replaygain_clip`). **Recomputed and reset on every track change.** This replaces mpv's built-in `--replaygain`, which sits *after* the `af` chain (a boosting EQ defeats clip-prevention) and is not re-applied per track across a gapless boundary (mpv bug #8267: the whole queue inherits track 1's gain). Modes off / track / album.
+- **Equalizer:** a graphic EQ as a stack of `equalizer` peaking bands at fixed ISO centres, gains moved live via `af-command`; a parametric option via `anequalizer` (live `change` per band). Named presets, `flat` is a no-op chain.
+- **DSP modules:** optional ordered stages — `acompressor`, a brick-wall limiter, `dynaudnorm` (single-pass leveler) — each independently toggleable.
+- **Gapless:** `--gapless-audio=weak` (preserves source rate on a mixed-rate library; `audio-samplerate` / `audio-format` left unset to avoid needless resampling).
+- **Crossfade: dropped.** Impossible in a single libmpv instance (one decoder, one playlist entry at a time; `acrossfade` is two-input and cannot span entries) and maintainer-rejected. Gapless-only; the old `crossfade_seconds` config key is removed.
+
+## Output (spec §6.5, Phase 5.5c)
+
+- **Backend** via `--ao=pipewire|pulse|alsa|jack`; **device** via the 4c-ii picker. High-quality resampler knobs (`audio-resample-*`) for the unavoidable-resample case; no resampling otherwise.
+- **Deferred (recorded, not built):** exclusive/bit-perfect (`--ao=alsa` `hw:` + `--audio-exclusive`) is bare-install-only and fights the Flatpak sandbox; LADSPA / raw-`af` hosting needs the `org.freedesktop.LinuxAudio.Plugins` extension + ffmpeg `--enable-ladspa`; native `crossfeed` is a cheap future headphone module.
 
 ## Podcast profile (spec §6.3, ported from Belfry §5.1–5.3)
 
 The filter graph that forces the project's GPL-3-or-later license (the `rubberband` link, spec §15).
 
-- **Smart Speed:** silence-skip via the ffmpeg `silenceremove` filter, with pitch-preserving time-stretch via `rubberband`. The combination shortens dead air without chipmunking speech. Includes the time-saved session accounting (how much wall-clock the silence-skip saved), surfaced in stats.
-- **Voice Boost:** dynamic-range compression (`acompressor`) + voice-band `equalizer` + loudness normalization (`loudnorm`), tuned to make quiet/uneven spoken audio intelligible at low volume.
+- **Smart Speed:** silence-skip via the ffmpeg `silenceremove` filter (negative `stop_periods` for mid-stream removal; `stop_threshold` / `stop_duration` tuned to trim dead air without clipping natural pauses). It changes stream duration on the fly, so seek / scrobble / position math must account for the non-linear timeline. Includes the time-saved session accounting (wall-clock the silence-skip saved), surfaced in stats. **Variable speed** is mpv's `--speed` + `audio-pitch-correction` (the built-in `scaletempo2`, WSOLA, strong at the 1.2x–2x range podcasts use), **not** a chained `rubberband`: running both stacks two time-stretchers at speed≠1.
+- **Voice Boost:** dynamic-range compression (`acompressor`) + voice-band EQ + **live loudness leveling via `dynaudnorm`** (single-pass, real-time; `gausssize` to tame pumping), tuned to make quiet/uneven spoken audio intelligible at low volume. `loudnorm` is *not* used live (its accurate mode is two-pass/offline); reserve it for an optional import-time normalization pass.
 - **Per-show overrides:** speed, Smart Speed on/off, Voice Boost on/off, skip intro/outro, as in Belfry. Resolved into the `PlaybackProfile` when the episode is queued.
 
-Required ffmpeg filters (the `mpv-libs` build must carry them): `silenceremove`, `rubberband`, `acompressor`, `equalizer`, `loudnorm`. On Fedora this means RPM Fusion's `ffmpeg-libs`, not `ffmpeg-free-libs` (rubberband is the one that is absent from the free build).
+Required ffmpeg filters (the `mpv-libs` build must carry them): `silenceremove`, `acompressor`, `equalizer` / `anequalizer`, `dynaudnorm`, `volume`. Variable speed uses mpv's built-in `scaletempo2` (no extra filter). `rubberband` remains available as an optional high-quality stretcher; whether librubberband stays linked as spec §15's GPL-3 driver or becomes optional now that speed defaults to `scaletempo2` is a Phase 6c license re-confirmation, and this doc does not change §15. On Fedora the full set means RPM Fusion's `ffmpeg-libs`, not `ffmpeg-free-libs`.
 
 ## Audiobook profile (spec §6.3, Phase 7c)
 

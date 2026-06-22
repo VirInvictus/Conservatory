@@ -159,7 +159,7 @@ A daily-driver music player. Profile switching at album/kind boundaries (spec §
 
 - [x] Dependency sign-off: `libmpv2` (spec §11; ATTRIBUTIONS.md) and the system `libmpv` (0.36+) requirement. `libmpv2 4.1` pulled into `conservatory-core` (the player lives in core, spec §16.13); `libmpv-dev` added to both CI jobs.
 - [x] A single libmpv instance kept alive across items (`player::host::MpvHost`, property API + the input-command layer, spec §6). The threaded `Player` handle + command channel are deferred to 4b, where the GTK Now-bar is the second consumer; 4a drives the host directly from the CLI loop (no speculative plumbing).
-- [x] Music profile (`player::profile`, pure + tested): gapless within an album (`gapless-audio`), ReplayGain via mpv's native `replaygain` property (mpv reads the file tags `lofty` stored), with the DB `replaygain_*` columns driving mode resolution (album→track→off downgrade by available tags). Crossfade is carried through (config field) but rendered at 4b with the queue (a between-tracks behaviour). **§16.7 deferred:** read-only ReplayGain, no in-app scan. **§16.6 deferred:** no EQ/DSP in 4a.
+- [x] Music profile (`player::profile`, pure + tested): gapless within an album (`gapless-audio`), ReplayGain via mpv's native `replaygain` property (mpv reads the file tags `lofty` stored), with the DB `replaygain_*` columns driving mode resolution (album→track→off downgrade by available tags). Crossfade is carried through (config field) but rendered at 4b with the queue (a between-tracks behaviour). *(Later dropped at Phase 5.5a: true crossfade is impossible in a single libmpv instance; the field is removed.)* **§16.7 deferred:** read-only ReplayGain, no in-app scan. **§16.6 deferred:** no EQ/DSP in 4a.
 - [x] State persistence (`player::state`, pure + tested): position written on the insurance interval (30 s) and on the forced points (pause/seek/item-end/quit), through the single-writer worker into the new singleton `playback_state` table (migration `0004`); `play_count` + `last_played` bumped on a natural end-of-file only (`EndReason::Eof`).
 - [x] Tests: profile resolution + ReplayGain downgrade (8 unit tests); state-write debounce + only-Eof-counts (4 unit tests); `playback_state` round-trip + play-count increment through the worker, and an `ao=null` libmpv smoke test that decodes a committed fixture to EOF (`tests/playback.rs`).
 
@@ -300,6 +300,43 @@ Implements the §7.4 covers-on-disk story that the Now-bar thumbnail and MPRIS a
 
 ---
 
+## Phase 5.5 — Audio engine (DSP chain, EQ, output quality)
+
+The music daily-driver's "feel good" phase, and a foundational refactor. Today the engine sets three mpv properties (`gapless`, `replaygain`, `audio-device`) and builds no `af` filter chain at all (`conservatory-core/src/player/`). This phase turns the flat `MusicProfile` into a **labelled `af`-chain builder** (`@rg → @eq → @comp → @boost` stages, built once per item, parameters mutated only via `af-command` so changes never tear down the graph and click the audio). That chain engine is shared infrastructure: the Phase 6c spoken-word chain (Smart Speed / Voice Boost) and the Phase 7c audiobook chain become **presets on it**, not a parallel hardcoded path, which is why it lands before podcasts (spec §17). No new Rust dependency: every filter rides the already-linked libmpv/ffmpeg (spec §11). Resolves spec §16.6. Settled scope (spec §6.2, §6.5): a real but bounded chain (EQ + compressor/limiter/leveler) and correct output, not a deadbeef-class everything; **crossfade is dropped** (impossible in a single libmpv instance, maintainer-rejected; the dead `crossfade_seconds` key is removed), and exclusive/bit-perfect output, LADSPA/raw-`af` hosting, and crossfeed are **deferred** (recorded, not built).
+
+### Phase 5.5a — Chain foundation + correct ReplayGain staging (headless, core)
+
+- [ ] Evolve `player/profile.rs` + `player/host.rs` from flat-field application to a **labelled `af`-chain builder**: one chain per item, each stage a labelled `lavfi` filter (`@rg`, `@eq`, …), parameters driven by `af-command` (the only gap-free path; structural `af add/set/remove` reinitialize the graph and are reserved for explicit settings changes).
+- [ ] **Own the ReplayGain gain stage** (fixes mpv bug #8267): inject `volume=<dB>` at the chain *head* from the 5c-scanned `tracks.replaygain_track/_album`, recomputed and reset on every track change. mpv's built-in `--replaygain` is dropped because (a) it is applied *after* the `af` chain, so a boosting EQ would defeat clip-prevention, and (b) per-track gain is not re-applied across a gapless boundary, so the whole unified queue inherits the first track's gain. Add `replaygain_preamp` and clip-prevention (peak-aware attenuation / limiter).
+- [ ] `--gapless-audio=weak` (preserve the source rate on a mixed-rate library; `yes` would resample everything to track 1's format); leave `audio-samplerate`/`audio-format` unset to avoid needless resampling.
+- [ ] **Drop crossfade**: remove the unused `crossfade_seconds` field (`profile.rs`) and the `playback.crossfade_seconds` config key; ship gapless-only (the path real mpv-based players take).
+- [ ] CLI: a `debug-dsp` verb prints the resolved `af` chain for a track (the every-surface-CLI-testable rule).
+- [ ] Tests: the head `volume` is recomputed per track across a queue advance (the #8267 regression guard); the chain builds with labelled stages; gapless preserved; music-only build green.
+
+*Usable artifact:* correct, per-track ReplayGain through the unified queue (a real bug-fix over naive `--replaygain`) on a labelled DSP chain, headless.
+
+### Phase 5.5b — Equalizer (core + GTK)
+
+- [ ] Graphic EQ: a stack of `equalizer` peaking bands at fixed ISO centre frequencies (10/15-band), gains moved live via `af-command` (NOT `superequalizer`/`firequalizer`, which carry no runtime command and would gap on every slider). Parametric option via `anequalizer` (per-band freq/Q/gain, live `change` command).
+- [ ] Named EQ presets (Flat default), persisted; per-output-device binding deferred with the broader output work.
+- [ ] First GTK preferences surface: a "Sound" `AdwPreferencesPage` (in an `AdwPreferencesDialog`) hosting the EQ (sliders + preset picker). This is the app's first settings UI; the Phase 10 config/preferences work builds on it.
+- [ ] CLI: get/set EQ bands and presets.
+- [ ] Tests: a band change maps to the expected `af-command` (no chain rebuild); preset round-trip; flat preset is a no-op chain.
+
+*Usable artifact:* a working graphic + parametric equalizer with presets, in the GUI and CLI.
+
+### Phase 5.5c — DSP modules + output quality (core + GTK)
+
+- [ ] DSP modules as toggleable chain stages: compressor (`acompressor`), a brick-wall limiter, and a volume leveler (`dynaudnorm`, single-pass/live; NOT `loudnorm`, whose accurate mode is two-pass/offline-only). Each independently enabled and configured.
+- [ ] Output quality: an output **backend** picker (`--ao=pipewire|pulse|alsa|jack`) alongside the existing device picker (4c-ii); high-quality resampler knobs (`audio-resample-*`) for the unavoidable-resample case; avoid-resample by default.
+- [ ] The "Sound" page (from 5.5b) consolidates the full chain: ReplayGain (mode / preamp / clip), EQ, DSP modules, output backend / device / resampler, gapless. Defaults flow into `build_play_queue` instead of `PlaybackConfig::default()`.
+- [ ] **Deferred and recorded (not built):** exclusive/bit-perfect output (ALSA `hw:` + `--audio-exclusive`, bare-install-only, fights the Flatpak sandbox); LADSPA / raw-`af` escape hatch (needs the `org.freedesktop.LinuxAudio.Plugins` extension + ffmpeg `--enable-ladspa`); native `crossfeed` headphone module (cheap, a natural future stage).
+- [ ] Tests: module toggle round-trips into the chain; backend switch; config persistence.
+
+*Usable artifact:* a foobar2000-style Sound/DSP preferences surface over the music engine. The music daily-driver feels complete before podcasts arrive.
+
+---
+
 ## Phase 6 — Podcasts (absorb Belfry)
 
 Podcast parity. Belfry retires only when 6c lands (spec §16.8, CLAUDE.md). The fetch/parse port is `belfry-core`'s; Viaduct contributes the HTTP-client baseline. The subsystem lands as the **`conservatory-podcasts` plugin crate** (spec §2.2), which is where the heavy dependencies (`reqwest`, `feed-rs`, `ammonia`, `id3`, `oo7`) get pulled; its schema still lands in core's migration ledger (the boundary rule).
@@ -348,7 +385,23 @@ Split again: **6a-ii-a** is the RSS-catching layer (HTTP client + conditional-GE
 
 ### Phase 6b — Podcasts tab + triage
 
-- [ ] The Podcasts view: Belfry's three-pane Inbox → Queue → Played triage (sidebar of triage lists / shows / tags; episode list; detail pane), intact (spec §3.7).
+Split so the window-root restructure is isolated from the podcast feature work: **6b-i** turns the single-view music window into the multi-view shell of spec §2.3 (the adaptive `AdwViewSwitcher` over an `AdwViewStack`, Music as the first page, an empty Podcasts page); **6b-ii** fills that page with Belfry's triage. The shell is where the second tab first exists, so it lands here rather than implicitly inside the triage work.
+
+#### Phase 6b-i — Window shell (AdwViewStack + adaptive view switcher)
+
+- [ ] Restructure the window root (spec §2.3): the music browse moves out of `AdwToolbarView`'s content into an `AdwViewStack` page ("Music"); the header gains an `AdwViewSwitcher` (`policy = wide`) bound to the stack. `AdwViewSwitcherTitle` is deprecated since libadwaita 1.4 and is not used.
+- [ ] Adaptive collapse: an `AdwBreakpoint` hides the header switcher and reveals a bottom `AdwViewSwitcherBar` on narrow widths (HIG: the switcher moves to the bottom edge when it no longer fits the header).
+- [ ] Now-bar / switcher-bar stacking (spec §2.3, the open call): the persistent Now-bar stays the stable innermost bottom bar; the `AdwViewSwitcherBar` reveals *beneath* it only at the narrow breakpoint. No shipping GNOME app pairs a bottom transport bar with an adaptive bottom switcher, so prototype this visually at the breakpoint and lock the order.
+- [ ] Feature-gated collapse: the switcher, bottom bar, and breakpoint exist only when ≥2 media-type features are compiled in; `--no-default-features` (music-only) opens straight into the bare Music browse with no switcher chrome (spec §2.2, §2.3).
+- [ ] Lazy page construction: heavy pages (Podcasts now, Audiobooks at 7b) build on the child's `::map` signal, not eagerly at startup. `AdwViewStack` retains each page's widget state (scroll, selection) once built.
+- [ ] Keyboard: `Alt+1` / `Alt+2` / `Alt+3` switch top-level views via a `win.view` action (the AdwTabView convention; *not* `Ctrl+N`, which frees `Ctrl+1/2/3` for the podcast triage lists). `docs/keymap.md` updated.
+- [ ] Tests: the switcher binds to the stack and `win.view` targets the right page; the music-only build compiles and runs with no switcher widgets present.
+
+*Usable artifact:* the GUI is a multi-view window. Switch between Music and an empty Podcasts tab, the switcher collapsing to a bottom bar on narrow widths, the Now-bar persistent across both. The music-only build is visually unchanged (no switcher).
+
+#### Phase 6b-ii — Triage panes
+
+- [ ] The Podcasts view: Belfry's three-pane Inbox → Queue → Played triage (sidebar of triage lists / shows / tags; episode list; detail pane), intact (spec §3.7), filling the 6b-i page.
 - [ ] Per-show overrides: speed, Smart Speed, Voice Boost, skip, retention, inbox policy.
 - [ ] The structural change from Belfry: **Queue is the shared unified queue**, so an episode and a track can sit next to each other.
 - [ ] Streaming before/without download: if the local file is absent and a URL is present, libmpv streams with range requests (spec §5.3).
@@ -358,7 +411,7 @@ Split again: **6a-ii-a** is the RSS-catching layer (HTTP client + conditional-GE
 
 ### Phase 6c — Podcast playback profile + parity
 
-- [ ] Podcast profile ported verbatim from Belfry §5: Smart Speed (silence-skip via `silenceremove` + pitch-preserving `rubberband`) and Voice Boost (compression + EQ + loudness normalization), including time-saved session accounting. This is the librubberband chain that forces GPL-3-or-later (spec §15).
+- [ ] Podcast profile ported from Belfry §5: Smart Speed (silence-skip via `silenceremove`) and Voice Boost (compression + EQ + loudness normalization), including time-saved session accounting. This is the librubberband-class chain that forces GPL-3-or-later (spec §15). **Built as presets on the Phase 5.5 `af`-chain engine, not a parallel hardcoded path.** Two filter choices to validate against the 5.5 findings at implementation (`docs/libmpv-profiles.md`): drive variable speed via mpv `--speed` + `audio-pitch-correction` (scaletempo2) rather than stacking `rubberband` in the chain at every speed, and use live single-pass `dynaudnorm` rather than two-pass/offline `loudnorm` for the Voice Boost leveler.
 - [ ] Episodes share the unified queue and the per-item profile switch prototyped in 4b; append-only `listening_sessions` discipline.
 - [ ] Now Playing additions for episodes: chapters, show notes, Smart Speed indicator, sleep timer.
 - [ ] Tests: filter-graph swap between a track and an episode mid-queue; time-saved accounting; resume offset on long items.
@@ -385,7 +438,7 @@ Audiobooks are the third media type (spec §3.8), landing as the **`conservatory
 
 ### Phase 7b — Audiobooks tab (browse)
 
-- [ ] The Audiobooks view (spec §3.8): a cover-grid shelf (accent-tinted, the Hermitage unit) plus a book detail pane (chapter list, progress, author/narrator, series/sequence, per-book speed + sleep-timer controls). Cozy's layout, rebuilt over Conservatory's database.
+- [ ] The Audiobooks view (spec §3.8): the third `AdwViewStack` page added to the Phase 6b-i shell (the switcher now offers all three), built lazily on `::map`. A cover-grid shelf (accent-tinted, the Hermitage unit) plus a book detail pane (chapter list, progress, author/narrator, series/sequence, per-book speed + sleep-timer controls). Cozy's layout, rebuilt over Conservatory's database.
 - [ ] State derivation: New / In progress / Finished from `book_playback`; in-progress books surface first.
 - [ ] Filter bar wired to `conservatory-search` with the audiobook fields (`author:`, `narrator:`, `series:`, `is:finished`); same grammar, no separate search mode.
 - [ ] Bulk edit (spec §3.5) across selected books; a path-affecting edit (author/series/title/year) enqueues a move via the Phase 2c mover.
@@ -396,7 +449,7 @@ Audiobooks are the third media type (spec §3.8), landing as the **`conservatory
 ### Phase 7c — Audiobook playback (chapters + first-class resume)
 
 - [ ] A book is one `PlayableItem` (kind `Audiobook`); the engine plays its ordered chapters with internal, gapless chapter advance (across files or within an M4B) and advances the queue only when the book finishes (spec §6.1).
-- [ ] Reuse the spoken-word profile (variable speed, Smart Speed, Voice Boost) with per-book overrides resolved from `book_playback` (spec §6.3). No new filter graph.
+- [ ] Reuse the spoken-word profile (variable speed, Smart Speed, Voice Boost) with per-book overrides resolved from `book_playback` (spec §6.3): the same Phase 5.5 `af`-chain engine and Phase 6c presets, resolved with book overrides instead of show ones. No new filter graph.
 - [ ] First-class resume: absolute `book_playback.position`, `finished` on completion, written on the insurance interval (spec §6.4). Now Playing additions for books: chapter list/jump, sleep timer, speed control.
 - [ ] MPRIS metadata for the current book/chapter (spec §6.5).
 - [ ] Tests: chapter advance across a multi-file book and within an M4B (no gap, correct offsets); resume-to-the-second across a restart; per-book override resolution; finished-state transition.
@@ -454,3 +507,17 @@ Modeled on Lattice's `--playlist` (rule-based smart `.m3u`), bridged to Conserva
 - [ ] Tests: exporting a search to m3u then re-importing round-trips to the same track set; missing-path entries are reported, not fatal.
 
 *Usable artifact:* move playlists in and out of Conservatory as portable `.m3u` files.
+
+---
+
+## Phase 9 — Listening history sync (optional, off by default)
+
+A peripheral "feel good" addition for the music-and-podcast lifer: scrobble completed plays to an external listening-history service. **Optional and off by default**, it sits late and self-contained so it never blocks the engine work, and it is the deliberate, scoped reversal of the spec §14 no-social/no-cloud stance (recorded there). Local-first is preserved: with sync off the app is unchanged, and **ListenBrainz leads** (open, self-hostable, fits the offline-first rule) with Last.fm as a secondary optional target. Reuses `reqwest` (already in the workspace via `conservatory-podcasts`); no new Rust dependency. Hooks the existing play-completion path (spec §6.4) that already updates play counts.
+
+- [ ] A `scrobble` module (in core, behind config): on track/episode completion, queue a "listen" submission; a small on-disk outbox survives offline and retries (local-first: a play is recorded locally first, synced when the network returns, never lost if the service is down).
+- [ ] ListenBrainz client (user token in libsecret via the existing `oo7`); "now playing" update on start + "listen" submission on completion. Last.fm client as an optional second target (session auth).
+- [ ] Config `[scrobble]`: `enabled = false`, `service = "listenbrainz"`, plus the token reference; a Preferences "Sync" group to enable it and paste a token.
+- [ ] Honours scope: music tracks and podcast episodes only by default; audiobooks excluded unless explicitly opted in (a 14-hour book is not a "listen").
+- [ ] Tests: outbox persists and retries across a simulated offline window; completion hook enqueues exactly once; disabled is a true no-op; credential store round-trip (in-memory backend).
+
+*Usable artifact:* completed plays scrobble to ListenBrainz (or Last.fm), surviving offline, with the feature entirely inert when disabled.

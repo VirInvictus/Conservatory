@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.27"
+version = "0.0.28"
 edition = "2024"
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
@@ -49,8 +49,11 @@ ammonia = "4.0"
 id3 = "1.16"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
-# Credentials (libsecret; pulled by conservatory-podcasts for HTTP Basic auth)
-oo7 = "0.3"
+# Credentials (libsecret; pulled by conservatory-podcasts for HTTP Basic auth).
+# default-features off: the default pulls the async-std runtime, which conflicts
+# with the tokio runtime the rest of the workspace uses. native_crypto keeps the
+# file backend pure-Rust (no system OpenSSL).
+oo7 = { version = "0.3", default-features = false, features = ["tokio", "native_crypto"] }
 
 # D-Bus (MPRIS2 + suspend inhibitor)
 zbus = { version = "5.2", default-features = false, features = ["tokio"] }

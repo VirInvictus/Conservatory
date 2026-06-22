@@ -25,6 +25,14 @@ pub enum FetchError {
     /// A database error from the core worker / read pool during a refresh.
     #[error("database error: {0}")]
     Core(#[from] conservatory_core::errors::Error),
+
+    /// A credential-store (libsecret / secret service) failure.
+    #[error("credential store error: {0}")]
+    Credentials(String),
+
+    /// An episode download failure (no audio URL, filesystem error).
+    #[error("download error: {0}")]
+    Download(String),
 }
 
 pub type Result<T> = std::result::Result<T, FetchError>;

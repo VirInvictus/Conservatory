@@ -367,6 +367,21 @@ impl WorkerHandle {
             .await
     }
 
+    /// Record an episode's downloaded `audio_path` (Phase 6a-iii-b download).
+    pub async fn set_episode_audio_path(
+        &self,
+        episode_id: i64,
+        audio_path: impl Into<String>,
+    ) -> Result<()> {
+        let audio_path = audio_path.into();
+        self.dispatch(|reply| Command::SetEpisodeAudioPath {
+            episode_id,
+            audio_path,
+            reply,
+        })
+        .await
+    }
+
     /// Upsert an episode's triage/playback row.
     pub async fn upsert_playback(&self, playback: Playback) -> Result<()> {
         self.dispatch(|reply| Command::UpsertPlayback { playback, reply })
@@ -688,6 +703,17 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::UpsertEpisode { episode, reply } => {
             let _ = reply.send(writes::upsert_episode(conn, &episode));
+        }
+        Command::SetEpisodeAudioPath {
+            episode_id,
+            audio_path,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_episode_audio_path(
+                conn,
+                episode_id,
+                &audio_path,
+            ));
         }
         Command::UpsertPlayback { playback, reply } => {
             let _ = reply.send(writes::upsert_playback(conn, &playback));

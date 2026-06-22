@@ -18,6 +18,7 @@ use chrono::{DateTime, Duration, Utc};
 use reqwest::{Client, StatusCode, header};
 use tokio::sync::Mutex;
 
+use crate::credentials::BasicAuth;
 use crate::error::{FetchError, Result};
 use crate::http;
 
@@ -73,6 +74,18 @@ impl Fetcher {
         etag: Option<&str>,
         last_modified: Option<&str>,
     ) -> Result<FetchResult> {
+        self.fetch_authed(url, etag, last_modified, None).await
+    }
+
+    /// As [`fetch`](Self::fetch), but attaches HTTP Basic auth when `auth` is
+    /// present (a private feed, spec §8). The no-auth path is identical.
+    pub async fn fetch_authed(
+        &self,
+        url: &str,
+        etag: Option<&str>,
+        last_modified: Option<&str>,
+        auth: Option<&BasicAuth>,
+    ) -> Result<FetchResult> {
         let parsed = reqwest::Url::parse(url).map_err(|e| FetchError::InvalidUrl(e.to_string()))?;
         let host = parsed.host_str().unwrap_or("").to_string();
 
@@ -97,6 +110,9 @@ impl Fetcher {
         }
         if let Some(l) = last_modified {
             req = req.header(header::IF_MODIFIED_SINCE, l);
+        }
+        if let Some(a) = auth {
+            req = req.basic_auth(&a.user, Some(&a.password));
         }
         tracing::debug!(
             url,

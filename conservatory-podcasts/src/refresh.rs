@@ -26,6 +26,7 @@ use conservatory_core::db::{
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
+use crate::credentials::CredentialStore;
 use crate::error::{FetchError, Result};
 use crate::fetcher::Fetcher;
 use crate::parse::{ParsedEpisode, ParsedFeed, parse_feed};
@@ -120,15 +121,28 @@ pub async fn refresh_show(
     pool: &ReadPool,
     fetcher: &Fetcher,
     show: Show,
+    creds: Option<&CredentialStore>,
 ) -> Result<RefreshOutcome> {
     let id = show.id;
     let title = show.title.clone();
 
+    // Resolve HTTP Basic auth for a private feed (spec §8); anonymous shows and
+    // a missing store both yield None.
+    let auth = match creds {
+        Some(store) => {
+            store
+                .resolve(show.auth_user.as_deref(), show.auth_pass_ref.as_deref())
+                .await?
+        }
+        None => None,
+    };
+
     let res = match fetcher
-        .fetch(
+        .fetch_authed(
             &show.feed_url,
             show.etag.as_deref(),
             show.last_modified.as_deref(),
+            auth.as_ref(),
         )
         .await
     {
@@ -160,6 +174,7 @@ pub async fn refresh_all(
     worker: &WorkerHandle,
     pool: &ReadPool,
     fetcher: &Fetcher,
+    creds: Option<CredentialStore>,
 ) -> Result<Vec<RefreshOutcome>> {
     let shows = {
         let conn = pool.open()?;
@@ -173,9 +188,10 @@ pub async fn refresh_all(
         let pool = pool.clone();
         let fetcher = fetcher.clone();
         let sem = sem.clone();
+        let creds = creds.clone();
         set.spawn(async move {
             let _permit = sem.acquire().await.expect("refresh semaphore never closed");
-            refresh_show(&worker, &pool, &fetcher, show).await
+            refresh_show(&worker, &pool, &fetcher, show, creds.as_ref()).await
         });
     }
 

@@ -1,5 +1,19 @@
 # Patch Notes
 
+## v0.0.28
+
+Phase 6a-iii-b shipped: private-feed credentials and episode download. This completes Phase 6a, the headless podcast subsystem; what remains for podcasts is the GUI (the Podcasts tab and triage, Phase 6b).
+
+- **Credential store (`conservatory-podcasts/src/credentials.rs`):** a `CredentialStore` enum with a libsecret backend (via `oo7`) and an in-memory backend for tests and headless environments. The password lives in the secret service; the database stores only `shows.auth_user` and an opaque `shows.auth_pass_ref` lookup key, never the password inline (spec §8). The enum (rather than a `dyn` trait) keeps the async methods simple.
+- **HTTP Basic auth wiring:** the fetcher gained `fetch_authed`, and `refresh_show` / `refresh_all` now resolve a show's stored credential and attach `Authorization: Basic` for a private feed. The anonymous path is unchanged; a missing secret service just leaves private feeds anonymous (a 401 then surfaces as that show's `Failed` outcome).
+- **Episode download (`conservatory-podcasts/src/download.rs`):** `download_episode` streams an episode's audio into `<root>/<folder_path>/<filename>` (the managed layout, spec §5.3) and records the relative `audio_path`. The write is crash-safe in the `mover::fsops` shape: stream to a sibling `.part` file, fsync, then rename into place, so a partial download is never mistaken for a complete one. It reuses the fetcher's connection pool and carries the show's Basic-auth credentials.
+- **Core:** a new `set_episode_audio_path` worker command records the download path (`upsert_episode` deliberately preserves `audio_path` across a re-fetch, so it cannot set it), plus a `get_episode` read by id.
+- **CLI:** `podcast download <db> <episode_id> --root <root>` (resolves the episode + its show's credentials, downloads, records the path), behind the `podcasts` feature; the music-only build stays green.
+- **Dependency:** `oo7` activated (signed off, spec §11; ATTRIBUTIONS.md), with `default-features = false` + the `tokio` runtime (its default pulls async-std, which clashes with the workspace's tokio) and `native_crypto` (pure-Rust file backend, no system OpenSSL).
+- **Tests:** credential round-trip + resolve rules (in-memory backend); a Basic-auth-gated download (401 without the credential, 200 with it flowing through the store); the download writes the file and sets `audio_path`; filename derivation (URL basename else MIME-typed fallback). All hermetic (wiremock + a temp-DB worker).
+
+Next: Phase 6b (the Podcasts tab: the window shell with an adaptive view switcher, then Belfry's Inbox → Queue → Played triage).
+
 ## v0.0.27
 
 Phase 6a-iii-a shipped: OPML import and export. A subscription list round-trips, preserving tags and the Apple show id, so you can move in from another podcast app or back up your subscriptions.

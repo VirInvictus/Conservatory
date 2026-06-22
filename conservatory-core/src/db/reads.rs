@@ -751,6 +751,17 @@ pub fn get_episode_by_guid(conn: &Connection, show_id: i64, guid: &str) -> Resul
     .map_err(Into::into)
 }
 
+/// Resolve an episode by its primary key (the download path, 6a-iii-b).
+pub fn get_episode(conn: &Connection, id: i64) -> Result<Option<Episode>> {
+    conn.query_row(
+        "SELECT * FROM episodes WHERE id = ?1",
+        params![id],
+        row_to_episode,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
 /// A show's episodes, newest first (the triage list order).
 pub fn list_episodes_for_show(conn: &Connection, show_id: i64) -> Result<Vec<Episode>> {
     let mut stmt =

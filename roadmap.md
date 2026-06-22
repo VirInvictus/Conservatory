@@ -387,13 +387,13 @@ Split: **6a-iii-a** is OPML round-trip (network-free, no new deps); **6a-iii-b**
 
 *Usable artifact:* `export-opml` backs up your subscriptions; `import-opml` brings a list in (then `podcast refresh` pulls episodes).
 
-##### Phase 6a-iii-b — Credentials (oo7) + episode download
+##### Phase 6a-iii-b — Credentials (oo7) + episode download ✅
 
-- [ ] A `CredentialStore` trait (the seam Belfry's fetch loop anticipated) with an `oo7`/libsecret backend and an in-memory test backend; `shows.auth_pass_ref` stores the lookup key, never the password (spec §8). HTTP Basic auth wired into the fetch path from `(auth_user, password)` when the show carries credentials. Dependency activation: `oo7` (signed off, spec §11).
-- [ ] Episode `download` into the managed `Podcasts/<slug>/<date>--<ep-slug>/` tree (spec §5.3): stream to a temp file, fsync, rename, verify (the `mover::fsops` crash-safe shape); a new core `set_episode_audio_path` worker command records the relative path (since `upsert_episode` preserves `audio_path`). CLI `podcast download <db> <episode_id> --root <root>`.
-- [ ] Tests: credential store round-trip (in-memory backend); a Basic-auth-gated download (401 without creds, 200 with); download writes the file and sets `audio_path`, against `wiremock`.
+- [x] A `CredentialStore` (an enum, not a `dyn` trait, so the async methods stay simple) with an `oo7`/libsecret backend and an in-memory test backend; `shows.auth_pass_ref` stores the lookup key, never the password (spec §8). HTTP Basic auth wired into the fetch path (`fetch_authed`) from `(auth_user, password)`; `refresh_show` / `refresh_all` resolve a show's credential and attach it. `oo7` activated (`default-features = false` + `tokio` + `native_crypto`, since the default async-std runtime clashes with the workspace's tokio).
+- [x] Episode `download` into the managed `Podcasts/<slug>/<date>--<ep-slug>/` tree (spec §5.3): stream to a sibling `.part` file, fsync, rename (the `mover::fsops` crash-safe shape); a new core `set_episode_audio_path` worker command + `get_episode` read record/resolve the row (`upsert_episode` preserves `audio_path`, so download sets it explicitly). CLI `podcast download <db> <episode_id> --root <root>`.
+- [x] Tests: credential store round-trip + resolve rules (in-memory backend); a Basic-auth-gated download (401 without creds, 200 with, the password flowing through the store); download writes the file and sets `audio_path`; filename derivation. Hermetic (`wiremock` + a temp-DB worker).
 
-*Usable artifact:* a private (Basic-auth) feed refreshes, and an episode downloads into the managed tree.
+*Usable artifact:* **Phase 6a (the headless podcast subsystem) is complete.** A private (Basic-auth) feed refreshes, and an episode downloads into the managed tree. What remains for podcasts is the GUI (Phase 6b).
 
 ### Phase 6b — Podcasts tab + triage
 

@@ -64,7 +64,7 @@ async fn add_then_refresh_dedups_by_guid() {
     }
 
     // Refresh: the 3-episode feed shares ep-1/ep-2, adds ep-3.
-    let outcomes = refresh_all(&worker, &pool, &fetcher).await.unwrap();
+    let outcomes = refresh_all(&worker, &pool, &fetcher, None).await.unwrap();
     assert_eq!(outcomes.len(), 1);
     assert_eq!(
         outcomes[0].status,
@@ -124,7 +124,9 @@ async fn conditional_get_304_leaves_episodes_untouched() {
         shows.into_iter().next().unwrap()
     };
 
-    let outcome = refresh_show(&worker, &pool, &fetcher, show).await.unwrap();
+    let outcome = refresh_show(&worker, &pool, &fetcher, show, None)
+        .await
+        .unwrap();
     assert_eq!(
         outcome.status,
         RefreshStatus::NotModified,

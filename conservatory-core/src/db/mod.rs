@@ -28,7 +28,7 @@ pub use pool::ReadPool;
 pub use probe::probe_read;
 pub use reads::{
     LibraryCounts, NowPlaying, PlaybackStateRow, QueueDisplayRow, SearchRow, SqlParam,
-    TrackRenderRow, WritebackRow, album_track_genres, fts_rank, get_album, get_artist,
+    TrackRenderRow, WritebackRow, album_track_genres, fts_rank, get_album, get_artist, get_episode,
     get_episode_by_guid, get_playback, get_show, get_show_settings, get_track, get_tracks,
     library_counts, list_albums, list_chapters, list_episodes_for_show, list_perspectives,
     list_shows, list_tags_for_show, load_queue, load_queue_display, perspective_expression,

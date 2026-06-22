@@ -588,6 +588,21 @@ pub(crate) fn upsert_episode(conn: &Connection, episode: &Episode) -> Result<i64
     Ok(id)
 }
 
+/// Record an episode's downloaded `audio_path` (Phase 6a-iii-b). Set explicitly
+/// because `upsert_episode` deliberately preserves `audio_path` across a
+/// re-fetch; the FTS triggers re-sync on the UPDATE.
+pub(crate) fn set_episode_audio_path(
+    conn: &Connection,
+    episode_id: i64,
+    audio_path: &str,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE episodes SET audio_path = ?2 WHERE id = ?1",
+        params![episode_id, audio_path],
+    )?;
+    Ok(())
+}
+
 /// Upsert an episode's triage/playback row by `episode_id` (the triage actions
 /// and the resume cursor, spec §4.2).
 pub(crate) fn upsert_playback(conn: &Connection, playback: &Playback) -> Result<()> {

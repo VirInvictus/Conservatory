@@ -283,6 +283,17 @@ enum PodcastAction {
         #[arg(long, value_enum, default_value_t = Format::Tsv)]
         format: Format,
     },
+    /// Download an episode's audio into the managed tree (spec §5.3) and record
+    /// its `audio_path`. Uses the show's stored Basic-auth credentials if any.
+    Download {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The episode id to download.
+        episode_id: i64,
+        /// Library root the managed `Podcasts/` tree hangs off.
+        #[arg(long)]
+        root: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1750,6 +1761,11 @@ fn podcast(action: PodcastAction) -> Result<()> {
             show_id,
             format,
         } => block_on(run_podcast_refresh(db, show_id, format)),
+        PodcastAction::Download {
+            db,
+            episode_id,
+            root,
+        } => block_on(run_podcast_download(db, episode_id, root)),
     }
 }
 
@@ -1803,6 +1819,11 @@ async fn run_podcast_refresh(db: PathBuf, show_id: Option<i64>, format: Format) 
     let worker = spawn_worker(db.clone()).context("spawning worker")?;
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
     let fetcher = conservatory_podcasts::Fetcher::new().context("building feed fetcher")?;
+    // Best-effort: a missing secret service just means private feeds stay
+    // anonymous (and a 401 surfaces as a per-show Failed outcome).
+    let creds = conservatory_podcasts::CredentialStore::secret_service()
+        .await
+        .ok();
 
     let outcomes = if let Some(id) = show_id {
         let show = {
@@ -1812,12 +1833,12 @@ async fn run_podcast_refresh(db: PathBuf, show_id: Option<i64>, format: Format) 
                 .ok_or_else(|| anyhow::anyhow!("no show with id {id}"))?
         };
         vec![
-            conservatory_podcasts::refresh_show(&worker, &pool, &fetcher, show)
+            conservatory_podcasts::refresh_show(&worker, &pool, &fetcher, show, creds.as_ref())
                 .await
                 .context("refreshing show")?,
         ]
     } else {
-        conservatory_podcasts::refresh_all(&worker, &pool, &fetcher)
+        conservatory_podcasts::refresh_all(&worker, &pool, &fetcher, creds)
             .await
             .context("refreshing subscriptions")?
     };
@@ -1870,6 +1891,50 @@ async fn run_podcast_refresh(db: PathBuf, show_id: Option<i64>, format: Format) 
             }
         }
     }
+    Ok(())
+}
+
+#[cfg(feature = "podcasts")]
+async fn run_podcast_download(db: PathBuf, episode_id: i64, root: PathBuf) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let fetcher = conservatory_podcasts::Fetcher::new().context("building fetcher")?;
+
+    let (episode, show) = {
+        let conn = pool.open().context("opening pool connection")?;
+        let episode = conservatory_core::db::get_episode(&conn, episode_id)
+            .context("looking up episode")?
+            .ok_or_else(|| anyhow::anyhow!("no episode with id {episode_id}"))?;
+        let show =
+            conservatory_core::db::get_show(&conn, episode.show_id).context("looking up show")?;
+        (episode, show)
+    };
+
+    // Resolve the show's Basic-auth credentials, if any (best-effort).
+    let creds = conservatory_podcasts::CredentialStore::secret_service()
+        .await
+        .ok();
+    let auth = match (&creds, &show) {
+        (Some(store), Some(s)) => store
+            .resolve(s.auth_user.as_deref(), s.auth_pass_ref.as_deref())
+            .await
+            .ok()
+            .flatten(),
+        _ => None,
+    };
+
+    let dst = conservatory_podcasts::download_episode(
+        &fetcher.client(),
+        &worker,
+        &root,
+        &episode,
+        auth.as_ref(),
+    )
+    .await
+    .context("downloading episode")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+
+    println!("Downloaded episode {episode_id} to {}.", dst.display());
     Ok(())
 }
 

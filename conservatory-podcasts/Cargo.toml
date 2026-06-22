@@ -26,6 +26,9 @@ quick-xml = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# Phase 6a-iii-b: HTTP Basic auth credentials in libsecret (the secret service),
+# behind the CredentialStore enum (an in-memory backend covers the tests).
+oo7 = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }

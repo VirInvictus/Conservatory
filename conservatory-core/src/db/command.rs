@@ -240,6 +240,14 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<i64>>,
     },
 
+    /// Record an episode's downloaded `audio_path` (the one field `upsert_episode`
+    /// deliberately preserves on re-fetch, so download sets it explicitly).
+    SetEpisodeAudioPath {
+        episode_id: i64,
+        audio_path: String,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Upsert an episode's triage/playback row.
     UpsertPlayback {
         playback: Playback,
@@ -318,6 +326,7 @@ impl Command {
             Self::UpdateShow { .. } => "update_show",
             Self::DeleteShow { .. } => "delete_show",
             Self::UpsertEpisode { .. } => "upsert_episode",
+            Self::SetEpisodeAudioPath { .. } => "set_episode_audio_path",
             Self::UpsertPlayback { .. } => "upsert_playback",
             Self::UpsertShowSettings { .. } => "upsert_show_settings",
             Self::ReplaceChapters { .. } => "replace_chapters",

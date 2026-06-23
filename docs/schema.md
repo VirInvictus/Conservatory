@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), and `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i). The audiobook tables below are still draft (they land at Phase 7a). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
+> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), and `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2). The audiobook tables below are still draft (they land at Phase 7a). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
 
 ## Connection discipline
 
@@ -96,9 +96,11 @@ CREATE INDEX idx_queue_position ON queue(position);
 
 The engine reads `queue` into an in-memory `Vec<PlayableItem>` (spec §6.1); positions are kept contiguous and renumbered transactionally on the single writer (enqueue/remove/reorder/clear). A whole audiobook is a single queue entry (chapters are navigated within it, not enqueued separately). `is:queued` (search §3.4) tests membership: the SQL path emits `tracks.id IN (SELECT track_id FROM queue WHERE kind='track' ...)`, the eval path reads the same via `SearchRow.queued`. Resume position for long items lives in the per-kind state tables (`tracks.last_played` / the podcast `playback` table / the `book_playback` table); the *current* item and its offset live in `playback_state` (below).
 
-## Playback state (Phase 4a, migration `0004`, spec §6.4)
+## Playback state (Phase 4a, migration `0004`; cursor kind at `0007`, spec §6.4)
 
-The transport cursor: a single row recording what is playing and where, so a restart resumes. The unified `queue` above holds the ordered list; this is the cursor *into* it. A singleton (the `id = 1` check), because there is exactly one "now playing" position. `track_id` is `ON DELETE SET NULL` so removing the playing track never dangles the cursor (`foreign_keys = ON`); `position` is absolute seconds into the current item.
+The transport cursor: a single row recording what is playing and where, so a restart resumes. The unified `queue` above holds the ordered list; this is the cursor *into* it. A singleton (the `id = 1` check), because there is exactly one "now playing" position. `position` is absolute seconds into the current item.
+
+The cursor is **per-kind** (Phase 6b-ii-c-2): the unified queue interleaves tracks and episodes, so the cursor records its `kind` plus the matching id, and a restart reopens an episode rather than only the last track. **Migration `0007`** adds `kind` (defaulting to `'track'`, so the pre-existing singleton stays a valid music cursor) and `episode_id`. `track_id` is set when `kind = 'track'`, `episode_id` when `kind = 'episode'`; both are `ON DELETE SET NULL` so removing the playing item from the library never dangles the cursor (`foreign_keys = ON`). The episode FK can be added by `ALTER ... ADD COLUMN` because its default is NULL.
 
 ```sql
 CREATE TABLE playback_state (
@@ -107,11 +109,13 @@ CREATE TABLE playback_state (
     position   REAL    NOT NULL DEFAULT 0,
     paused     INTEGER NOT NULL DEFAULT 0,
     volume     INTEGER NOT NULL DEFAULT 100,
-    updated_at INTEGER
+    updated_at INTEGER,
+    kind       TEXT    NOT NULL DEFAULT 'track',                    -- added at 0007 (Phase 6b-ii-c-2)
+    episode_id INTEGER REFERENCES episodes(id) ON DELETE SET NULL   -- added at 0007
 );
 ```
 
-Writes are debounced (the 30 s insurance interval, plus the forced pause/seek/end/quit points, spec §6.4) and go through the single writer. At Phase 4b the row gains a reference to the current `queue` entry; for now `track_id` is enough for music-only resume. `play_count` / `last_played` on `tracks` are bumped separately, only on a natural end-of-file.
+Writes are debounced (the 30 s insurance interval, plus the forced pause/seek/end/quit points, spec §6.4) and go through the single writer. The **per-episode** resume position + played state live in the podcast `playback` table (the engine writes them on an episode's tick/EOF, so they survive after the queue moves on); this singleton only records the *current* item to reopen. `play_count` / `last_played` are bumped separately, only on a natural end-of-file: on `tracks` for a track, in `playback` for an episode.
 
 ## Move journal (Phase 2c, spec §5.4)
 

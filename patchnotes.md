@@ -1,5 +1,18 @@
 # Patch Notes
 
+## v0.0.34
+
+Phase 6b-ii-c-2 shipped: podcast episodes now resume. Close the app mid-episode and reopen it, and you pick up where you left off, to the second, downloaded or streamed, in the one unified queue alongside music. An episode's progress and played state persist on their own, so finishing or part-listening to an episode is reflected in the triage list across restarts.
+
+- **Per-kind transport cursor (migration `0007`):** the singleton `playback_state` cursor gains `kind` + `episode_id`, so it records *what kind* of item was last playing. A restart reopens an episode (not just the last track) and seeks it to the saved position. The column adds are additive (`kind` defaults to `'track'`, the episode FK defaults NULL), so existing libraries migrate with no rewrite. `docs/schema.md` updated.
+- **Episode persistence (`conservatory-core`):** two partial-upsert worker writes mirror the triage actions: `set_episode_position` (records the resume position + marks InProgress, preserving starred / play_count) on a playback tick, and `complete_episode` (marks PlayedFully, bumps play_count, rewinds position) on a natural end-of-file. The per-episode state lives in the podcast `playback` table, so it survives the queue moving on to other items, distinct from the singleton cursor.
+- **Engine per-kind dispatch (`player/engine.rs`):** the three persistence sites (tick flush, end-of-file, terminal end-of-queue) now branch on `MediaKind`. A track writes the music cursor + `tracks.play_count` as before; an episode writes the podcast `playback` row + the episode-kinded cursor, and never an id into the music tables. The episode position write is synchronous and guarded on `!ended`, so it can never reorder past or clobber the terminal completion (both touch `playback.played`).
+- **Mixed-queue resume (CLI + GUI):** the saved queue is no longer track-only on resume. `conservatory-cli play` (`resolve_queue_items`) and the GUI `resume_saved_queue` rebuild an interleaved track + episode queue (`build_mixed_queue`) and resume at the cursor's `(kind, id)` + position; `load_queue_display` now carries each episode's audio source so the GUI rebuilds without extra reads.
+- **Refactor:** the cursor write is bundled into a `PlaybackCursor` struct (the codebase's struct-passing idiom) rather than a seven-argument call.
+- **Tests:** episode persistence + cursor round-trip through the worker; an episode plays to EOF writing the podcast `playback` row (PlayedFully + play_count) while leaving the music cursor and a colliding track untouched (the per-kind regression guard, strengthened from the c-1 guard test); `build_mixed_queue` interleave / source-skip / cursor re-index; the `--no-default-features` music-only build stays green.
+
+Next: Phase 6b-ii-c-3 (per-show overrides: speed, Smart Speed, Voice Boost, skip, retention, inbox policy).
+
 ## v0.0.33
 
 A cleanup pass over the podcast subsystem: a real correctness fix, a robustness fix, and doc/comment tidying. No new features.

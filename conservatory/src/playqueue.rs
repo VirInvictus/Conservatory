@@ -98,6 +98,82 @@ pub fn build_episode_queue(
     (items, start)
 }
 
+/// One saved-queue row resolved enough to rebuild a `PlayableItem` on resume
+/// (Phase 6b-ii-c-2): the kind, the track row (for a track) or the episode
+/// source (for an episode). Mirrors a `QueueDisplayRow` after the GUI has
+/// batch-read the tracks.
+#[derive(Debug, Clone)]
+pub struct MixedQueueRow {
+    pub kind: MediaKind,
+    pub track_id: Option<i64>,
+    pub episode_id: Option<i64>,
+    pub audio_path: Option<String>,
+    pub audio_url: Option<String>,
+}
+
+/// Rebuild a mixed (track + episode) play queue from the saved unified queue, in
+/// order, for launch-resume (Phase 6b-ii-c-2). Tracks resolve through `tracks`
+/// (root-joined `file_path` + music profile); episodes resolve to their
+/// downloaded file (`root` + `audio_path`) else their stream URL. Rows whose
+/// source cannot be resolved (a vanished track, a source-less episode) are
+/// skipped. `start` re-indexes onto the item matching the saved cursor
+/// `(cursor_kind, cursor_id)`, falling back to 0 if it vanished. Pure.
+pub fn build_mixed_queue(
+    rows: &[MixedQueueRow],
+    tracks: &[Track],
+    cursor_kind: MediaKind,
+    cursor_id: Option<i64>,
+    root: &Path,
+    cfg: &PlaybackConfig,
+) -> (Vec<PlayableItem>, usize) {
+    let by_id: HashMap<i64, &Track> = tracks.iter().map(|t| (t.id, t)).collect();
+    let mut items = Vec::new();
+    for row in rows {
+        match row.kind {
+            MediaKind::Track => {
+                let Some(track) = row.track_id.and_then(|id| by_id.get(&id)) else {
+                    continue;
+                };
+                items.push(PlayableItem {
+                    track_id: track.id,
+                    source: root.join(&track.file_path),
+                    profile: resolve_music_profile(track, cfg),
+                    album_id: track.album_id,
+                    kind: MediaKind::Track,
+                });
+            }
+            MediaKind::Episode => {
+                let Some(episode_id) = row.episode_id else {
+                    continue;
+                };
+                let source = match (row.audio_path.as_deref(), row.audio_url.as_deref()) {
+                    (Some(p), _) => root.join(p),
+                    (None, Some(url)) => std::path::PathBuf::from(url),
+                    (None, None) => continue,
+                };
+                items.push(PlayableItem {
+                    track_id: episode_id,
+                    source,
+                    profile: conservatory_core::resolve_episode_profile(),
+                    album_id: None,
+                    kind: MediaKind::Episode,
+                });
+            }
+            MediaKind::Audiobook => continue, // Phase 7
+        }
+    }
+
+    let start = cursor_id
+        .and_then(|id| {
+            items
+                .iter()
+                .position(|i| i.kind == cursor_kind && i.track_id == id)
+        })
+        .unwrap_or(0);
+
+    (items, start)
+}
+
 /// Which side of the drop-target row the dragged row lands on (from the cursor
 /// Y vs the row's mid-height, the GNOME/macOS reorder idiom).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,6 +337,94 @@ mod tests {
         assert_eq!(fmt_secs(-5.0), "0:00");
         assert_eq!(fmt_position(72.0, Some(220.0)), "1:12 / 3:40");
         assert_eq!(fmt_position(5.0, None), "0:05");
+    }
+
+    fn track_row(id: i64) -> MixedQueueRow {
+        MixedQueueRow {
+            kind: MediaKind::Track,
+            track_id: Some(id),
+            episode_id: None,
+            audio_path: None,
+            audio_url: None,
+        }
+    }
+
+    fn episode_row(id: i64, audio_path: Option<&str>, audio_url: Option<&str>) -> MixedQueueRow {
+        MixedQueueRow {
+            kind: MediaKind::Episode,
+            track_id: None,
+            episode_id: Some(id),
+            audio_path: audio_path.map(str::to_string),
+            audio_url: audio_url.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn mixed_queue_preserves_order_and_resolves_each_kind() {
+        use std::path::PathBuf;
+        let rows = vec![
+            track_row(1),
+            episode_row(7, Some("Podcasts/s/e/a.mp3"), Some("https://cdn/a.mp3")),
+            track_row(2),
+            episode_row(8, None, Some("https://cdn/b.mp3")),
+        ];
+        let tracks = vec![track(1, "a.flac"), track(2, "b.flac")];
+        // Cursor is the streamed episode (id 8): the start re-indexes onto it.
+        let (items, start) = build_mixed_queue(
+            &rows,
+            &tracks,
+            MediaKind::Episode,
+            Some(8),
+            Path::new("/lib"),
+            &PlaybackConfig::default(),
+        );
+        assert_eq!(items.len(), 4);
+        // Order preserved across kinds.
+        assert_eq!(items[0].kind, MediaKind::Track);
+        assert_eq!(items[0].source, Path::new("/lib/a.flac"));
+        // Downloaded episode: local file wins over the URL.
+        assert_eq!(items[1].kind, MediaKind::Episode);
+        assert_eq!(items[1].track_id, 7);
+        assert_eq!(items[1].source, Path::new("/lib/Podcasts/s/e/a.mp3"));
+        assert_eq!(items[2].track_id, 2);
+        // Undownloaded episode: stream the URL as-is.
+        assert_eq!(items[3].source, PathBuf::from("https://cdn/b.mp3"));
+        assert_eq!(start, 3, "cursor (Episode, 8) lands on index 3");
+    }
+
+    #[test]
+    fn mixed_queue_skips_sourceless_and_vanished_then_reindexes() {
+        // Track 1 vanished (not in `tracks`); episode 9 has no source: both drop.
+        let rows = vec![track_row(1), episode_row(9, None, None), track_row(2)];
+        let tracks = vec![track(2, "b.flac")];
+        let (items, start) = build_mixed_queue(
+            &rows,
+            &tracks,
+            MediaKind::Track,
+            Some(2),
+            Path::new("/m"),
+            &PlaybackConfig::default(),
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].track_id, 2);
+        assert_eq!(start, 0);
+    }
+
+    #[test]
+    fn mixed_queue_cursor_absent_falls_back_to_zero() {
+        let rows = vec![track_row(2)];
+        let tracks = vec![track(2, "b.flac")];
+        // Cursor points at an episode no longer in the queue: fall back to 0.
+        let (items, start) = build_mixed_queue(
+            &rows,
+            &tracks,
+            MediaKind::Episode,
+            Some(99),
+            Path::new("/m"),
+            &PlaybackConfig::default(),
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(start, 0);
     }
 
     #[cfg(feature = "podcasts")]

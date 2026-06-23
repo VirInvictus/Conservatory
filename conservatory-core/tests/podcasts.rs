@@ -5,11 +5,11 @@
 //! queue (the deferred `episode_id` foreign key).
 
 use chrono::{DateTime, TimeZone, Utc};
-use conservatory_core::db::{Chapter, WorkerHandle};
+use conservatory_core::db::{Chapter, MediaKind, PlaybackCursor, WorkerHandle};
 use conservatory_core::db::{
     Episode, InboxPolicy, Playback, PlayedState, ReadPool, Show, ShowSettings, get_episode_by_guid,
     get_playback, get_show, get_show_settings, list_chapters, list_episodes_for_show, list_shows,
-    list_tags_for_show, spawn_worker,
+    list_tags_for_show, read_playback_state, spawn_worker,
 };
 use tempfile::tempdir;
 
@@ -692,6 +692,76 @@ async fn episode_enqueue_shows_in_the_queue_display() {
     // The drawer renders an episode's title + its show as the "artist".
     assert_eq!(rows[0].title, "Ep One");
     assert_eq!(rows[0].artist.as_deref(), Some("Reply All"));
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+/// Phase 6b-ii-c-2: an episode's resume position + played state persist through
+/// the worker (its per-episode `playback` row), the partial writes preserve
+/// their siblings, and the transport cursor records `kind = Episode` so a
+/// restart reopens the episode rather than a track.
+#[tokio::test]
+async fn episode_playback_persists_position_completion_and_cursor() {
+    let (_dir, worker, pool) = fresh().await;
+    let show_id = worker
+        .get_or_create_show(sample_show("replyall", "https://example.com/feed.xml"))
+        .await
+        .unwrap();
+    let ep = worker
+        .upsert_episode(sample_episode(show_id, "guid-1", "Ep One", 1_000))
+        .await
+        .unwrap();
+
+    // Star it first: the position write must preserve the star (partial upsert).
+    worker.set_episode_starred(ep, true).await.unwrap();
+
+    // A playback tick marks InProgress and records the resume position.
+    worker
+        .set_episode_position(ep, 123.0, Some(50))
+        .await
+        .unwrap();
+    {
+        let conn = pool.open().unwrap();
+        let pb = get_playback(&conn, ep).unwrap().unwrap();
+        assert_eq!(pb.played, PlayedState::InProgress);
+        assert_eq!(pb.position, 123.0);
+        assert_eq!(pb.play_count, 0);
+        assert!(pb.starred, "the position write preserves starred");
+    }
+
+    // Playing to the end marks PlayedFully, bumps play_count, rewinds position.
+    worker.complete_episode(ep, Some(99)).await.unwrap();
+    {
+        let conn = pool.open().unwrap();
+        let pb = get_playback(&conn, ep).unwrap().unwrap();
+        assert_eq!(pb.played, PlayedState::PlayedFully);
+        assert_eq!(pb.position, 0.0);
+        assert_eq!(pb.play_count, 1);
+        assert!(pb.starred, "completion preserves starred");
+    }
+
+    // The transport cursor records kind = Episode + the episode id, never a
+    // track id, so launch-resume reopens the episode (6b-ii-c-2).
+    worker
+        .save_playback_state(PlaybackCursor {
+            kind: MediaKind::Episode,
+            track_id: None,
+            episode_id: Some(ep),
+            position: 123.0,
+            paused: true,
+            volume: 90,
+            updated_at: 1_500,
+        })
+        .await
+        .unwrap();
+    {
+        let conn = pool.open().unwrap();
+        let cur = read_playback_state(&conn).unwrap().unwrap();
+        assert_eq!(cur.kind, MediaKind::Episode);
+        assert_eq!(cur.episode_id, Some(ep));
+        assert_eq!(cur.track_id, None);
+        assert_eq!(cur.position, 123.0);
+    }
 
     worker.shutdown_ack().await.unwrap();
 }

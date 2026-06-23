@@ -19,7 +19,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::runtime::Handle;
 
-use crate::db::{MediaKind, WorkerHandle};
+use crate::db::{MediaKind, PlaybackCursor, WorkerHandle};
 use crate::errors::{Error, Result};
 use crate::player::handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 use crate::player::host::{HostEvent, MpvHost};
@@ -275,16 +275,17 @@ impl Engine {
 
     fn on_item_ended(&mut self, reason: EndReason) {
         match reason {
-            // Natural completion: count the play, then advance.
+            // Natural completion: record the completed play per kind, then
+            // advance. A track bumps `tracks.play_count`; an episode marks its
+            // podcast `playback` row PlayedFully + bumps its count (6b-ii-c-2).
+            // `track_id` carries the episode id for an episode item.
             EndReason::Eof => {
-                // Only tracks persist play counts / the cursor for now; per-kind
-                // episode persistence (the podcast `playback` table) is 6b-ii-c-2,
-                // so an episode plays but does not yet bump counts or resume.
-                if let Some(item) = self.current_item()
-                    && item.kind == MediaKind::Track
-                {
-                    let track_id = item.track_id;
-                    self.block_increment_play_count(track_id);
+                if let Some((kind, id)) = self.current_item().map(|i| (i.kind, i.track_id)) {
+                    match kind {
+                        MediaKind::Track => self.block_increment_play_count(id),
+                        MediaKind::Episode => self.block_complete_episode(id),
+                        MediaKind::Audiobook => {} // Phase 7
+                    }
                 }
                 self.advance_after_end();
             }
@@ -308,17 +309,14 @@ impl Engine {
             self.flush(StateEvent::Seek, false);
         } else {
             self.ended = true;
-            // Persist the finished item at offset 0 (the cursor for a resume).
-            // Tracks only (the §6b-ii-c-1 guard, matching `flush`): an episode's
-            // `track_id` field holds an *episode* id, which must never reach the
-            // music `playback_state`. So finishing an episode-tailed queue leaves
-            // the cursor on the last track; episode resume lands in the podcast
-            // `playback` table at 6b-ii-c-2.
-            if let Some(item) = self.current_item()
-                && item.kind == MediaKind::Track
-            {
-                let track_id = item.track_id;
-                self.save_cursor(track_id, 0.0, true);
+            // Persist the finished item at offset 0 as the resume cursor. Per
+            // kind (6b-ii-c-2): the cursor records `kind` + the right id, so a
+            // restart reopens an episode, not just the last track. This writes
+            // only the singleton cursor; the episode's `playback` row was already
+            // finalized by `block_complete_episode` in `on_item_ended`, so we do
+            // not re-touch it here (that would undo PlayedFully).
+            if let Some((kind, id)) = self.current_item().map(|i| (i.kind, i.track_id)) {
+                self.save_cursor(kind, id, 0.0, true);
             }
         }
     }
@@ -375,37 +373,57 @@ impl Engine {
         self.current.and_then(|i| self.queue.get(i))
     }
 
-    /// Persist the cursor for the relevant `event`, debounced. `Tick` writes at
-    /// most once per insurance interval; the forced events always write. A
-    /// `blocking` write waits for the worker's ack (terminal writes); otherwise
-    /// it is fired and forgotten through the runtime.
+    /// Persist the resume state for the relevant `event`, debounced. `Tick`
+    /// writes at most once per insurance interval; the forced events always
+    /// write. A `blocking` write waits for the worker's ack (terminal writes);
+    /// otherwise it is fired and forgotten through the runtime.
+    ///
+    /// Per-kind (6b-ii-c-2): a track writes only the singleton `playback_state`
+    /// cursor; an episode writes the cursor (so a restart reopens it) **and** its
+    /// own podcast `playback` row (the per-episode resume position + InProgress,
+    /// which survives moving on to other items). An audiobook is Phase 7.
     fn flush(&mut self, event: StateEvent, blocking: bool) {
         let now_ms = self.started.elapsed().as_millis() as u64;
         if !self.debounce.should_flush(now_ms, event) {
             return;
         }
-        let Some(item) = self.current_item() else {
+        let Some((kind, id)) = self.current_item().map(|i| (i.kind, i.track_id)) else {
             return;
         };
-        // Episodes/audiobooks don't persist to the music `playback_state` yet
-        // (6b-ii-c-2); guarding here keeps an episode id out of that table.
-        if item.kind != MediaKind::Track {
-            return;
-        }
-        let track_id = item.track_id;
         let position = self.host.time_pos().unwrap_or(0.0);
-        self.save_cursor(track_id, position, blocking);
+        self.save_cursor(kind, id, position, blocking);
+        // Persist the episode's in-progress position only while it is actually
+        // playing. Once the queue has `ended` the current episode already
+        // completed (`complete_episode` set PlayedFully); a terminal Quit flush
+        // re-marking it InProgress would clobber that. The synchronous write
+        // (unlike the fire-and-forget track cursor) keeps it ordered with the
+        // completion on the single writer, since both touch `playback.played`.
+        if kind == MediaKind::Episode && !self.ended {
+            self.persist_episode_position(id, position);
+        }
     }
 
-    fn save_cursor(&self, track_id: i64, position: f64, blocking: bool) {
+    /// Write the singleton transport cursor for the current item's `kind`
+    /// (6b-ii-c-2): `track_id` is set for a track, `episode_id` for an episode
+    /// (`id` carries whichever). The audiobook cursor lands at Phase 7.
+    fn save_cursor(&self, kind: MediaKind, id: i64, position: f64, blocking: bool) {
+        let (track_id, episode_id) = match kind {
+            MediaKind::Track => (Some(id), None),
+            MediaKind::Episode => (None, Some(id)),
+            MediaKind::Audiobook => return,
+        };
+        let cursor = PlaybackCursor {
+            kind,
+            track_id,
+            episode_id,
+            position,
+            paused: self.paused,
+            volume: self.volume,
+            updated_at: now_secs(),
+        };
         let worker = self.worker.clone();
-        let paused = self.paused;
-        let volume = self.volume;
-        let updated = now_secs();
         let fut = async move {
-            let _ = worker
-                .save_playback_state(Some(track_id), position, paused, volume, updated)
-                .await;
+            let _ = worker.save_playback_state(cursor).await;
         };
         if blocking {
             self.rt.block_on(fut);
@@ -414,11 +432,37 @@ impl Engine {
         }
     }
 
+    /// Persist an episode's per-episode resume position (its podcast `playback`
+    /// row, marked InProgress), separate from the singleton cursor so it survives
+    /// after the queue moves on to other items (6b-ii-c-2). Synchronous: it
+    /// touches `playback.played`, so it must land in order with the terminal
+    /// `complete_episode` (see `flush`). Episode position writes fire on the
+    /// debounced insurance interval / forced points, so blocking here is cheap.
+    fn persist_episode_position(&self, episode_id: i64, position: f64) {
+        let worker = self.worker.clone();
+        let when = now_secs();
+        self.rt.block_on(async move {
+            let _ = worker
+                .set_episode_position(episode_id, position, Some(when))
+                .await;
+        });
+    }
+
     fn block_increment_play_count(&self, track_id: i64) {
         let worker = self.worker.clone();
         let when = now_secs();
         self.rt.block_on(async move {
             let _ = worker.increment_play_count(track_id, when).await;
+        });
+    }
+
+    /// Episode end-of-file: mark its podcast `playback` row PlayedFully + bump
+    /// its play_count (the episode analogue of `block_increment_play_count`).
+    fn block_complete_episode(&self, episode_id: i64) {
+        let worker = self.worker.clone();
+        let when = now_secs();
+        self.rt.block_on(async move {
+            let _ = worker.complete_episode(episode_id, Some(when)).await;
         });
     }
 

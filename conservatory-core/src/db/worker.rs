@@ -18,7 +18,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::db::command::Command;
 use crate::db::models::{
-    Album, Artist, Chapter, Episode, Playback, PlayedState, Show, ShowSettings, Track,
+    Album, Artist, Chapter, Episode, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
+    Track,
 };
 use crate::db::{connection, migrations, probe, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
@@ -284,24 +285,12 @@ impl WorkerHandle {
             .await
     }
 
-    /// Save the singleton playback cursor (spec §6.4, Phase 4a).
-    pub async fn save_playback_state(
-        &self,
-        track_id: Option<i64>,
-        position: f64,
-        paused: bool,
-        volume: i64,
-        updated_at: i64,
-    ) -> Result<()> {
-        self.dispatch(|reply| Command::SavePlaybackState {
-            track_id,
-            position,
-            paused,
-            volume,
-            updated_at,
-            reply,
-        })
-        .await
+    /// Save the singleton playback cursor (spec §6.4, Phase 4a). The cursor's
+    /// `kind` (Phase 6b-ii-c-2) records what was last playing; `track_id` is set
+    /// for a track, `episode_id` for an episode.
+    pub async fn save_playback_state(&self, cursor: PlaybackCursor) -> Result<()> {
+        self.dispatch(|reply| Command::SavePlaybackState { cursor, reply })
+            .await
     }
 
     /// Record a completed play: bump `play_count` and stamp `last_played`.
@@ -423,6 +412,36 @@ impl WorkerHandle {
         self.dispatch(|reply| Command::SetEpisodeStarred {
             episode_id,
             starred,
+            reply,
+        })
+        .await
+    }
+
+    /// Persist an episode's resume position during playback (Phase 6b-ii-c-2):
+    /// the engine's tick / pause / seek write. Marks `InProgress`, preserves
+    /// starred / play_count.
+    pub async fn set_episode_position(
+        &self,
+        episode_id: i64,
+        position: f64,
+        when: Option<i64>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::SetEpisodePosition {
+            episode_id,
+            position,
+            when,
+            reply,
+        })
+        .await
+    }
+
+    /// Record an episode played through to the end (Phase 6b-ii-c-2): marks
+    /// `PlayedFully`, bumps play_count, rewinds position. The podcast analogue of
+    /// `increment_play_count`.
+    pub async fn complete_episode(&self, episode_id: i64, when: Option<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::CompleteEpisode {
+            episode_id,
+            when,
             reply,
         })
         .await
@@ -698,17 +717,8 @@ fn handle(conn: &mut Connection, command: Command) {
         Command::DeletePerspective { id, reply } => {
             let _ = reply.send(writes::delete_perspective(conn, id));
         }
-        Command::SavePlaybackState {
-            track_id,
-            position,
-            paused,
-            volume,
-            updated_at,
-            reply,
-        } => {
-            let _ = reply.send(writes::save_playback_state(
-                conn, track_id, position, paused, volume, updated_at,
-            ));
+        Command::SavePlaybackState { cursor, reply } => {
+            let _ = reply.send(writes::save_playback_state(conn, &cursor));
         }
         Command::IncrementPlayCount {
             track_id,
@@ -778,6 +788,23 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::set_episode_starred(conn, episode_id, starred));
+        }
+        Command::SetEpisodePosition {
+            episode_id,
+            position,
+            when,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_episode_position(
+                conn, episode_id, position, when,
+            ));
+        }
+        Command::CompleteEpisode {
+            episode_id,
+            when,
+            reply,
+        } => {
+            let _ = reply.send(writes::complete_episode(conn, episode_id, when));
         }
         Command::UpsertShowSettings { settings, reply } => {
             let _ = reply.send(writes::upsert_show_settings(conn, &settings));

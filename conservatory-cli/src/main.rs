@@ -11,9 +11,9 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    MediaKind, ReadPool, SearchRow, SqlParam, fts_rank, get_album, get_track, library_counts,
-    load_queue, probe_read, read_playback_state, search_rows, search_track_ids, spawn_worker,
-    track_render_rows, writeback_rows,
+    MediaKind, ReadPool, SearchRow, SqlParam, fts_rank, get_album, get_episode, get_track,
+    library_counts, load_queue, probe_read, read_playback_state, search_rows, search_track_ids,
+    spawn_worker, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
@@ -21,8 +21,8 @@ use conservatory_core::{
     PathTemplate, PlayableItem, PlaybackConfig, TagWrite, TrackDraft, TrackEdit, TrackFields,
     any_path_affecting, build_album_edit, build_track_edit, compute_accent, find_collisions,
     find_cover_bytes, genres_assignment, import_folder, parse_assignment, read_track, replace_in,
-    replaygain_from_file, resolve_album, resolve_music_profile, resync_album_covers,
-    rsgain_available, scan_album_files, sync_album_cover, write_track_tags,
+    replaygain_from_file, resolve_album, resolve_episode_profile, resolve_music_profile,
+    resync_album_covers, rsgain_available, scan_album_files, sync_album_cover, write_track_tags,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -1428,10 +1428,12 @@ async fn run_set_cover(db: PathBuf, album_id: i64, image: PathBuf, root: PathBuf
     Ok(())
 }
 
-/// Resolve the queue rows into `PlayableItem`s the engine can play. Phase 4b-i
-/// is music-only, so non-track rows (none yet) are skipped. `tracks.file_path`
-/// is stored relative to the library root, so it is joined with `root` to get
-/// the absolute path libmpv loads.
+/// Resolve the queue rows into `PlayableItem`s the engine can play. Tracks and
+/// episodes interleave in the one unified queue (spec §4.3); each kind resolves
+/// its own source. `tracks.file_path` / a downloaded `episodes.audio_path` are
+/// stored relative to the library root, so they are joined with `root`; an
+/// undownloaded episode streams its `audio_url` (libmpv loads a URL as-is).
+/// Rows whose source cannot be resolved are skipped.
 fn resolve_queue_items(
     pool: &ReadPool,
     root: &Path,
@@ -1440,17 +1442,42 @@ fn resolve_queue_items(
     let conn = pool.open().context("opening pool connection")?;
     let mut items = Vec::new();
     for row in load_queue(&conn).context("loading queue")? {
-        let Some(track_id) = row.track_id else {
-            continue;
-        };
-        if let Some(track) = get_track(&conn, track_id).context("looking up track")? {
-            items.push(PlayableItem {
-                track_id,
-                source: root.join(&track.file_path),
-                profile: resolve_music_profile(&track, cfg),
-                album_id: track.album_id,
-                kind: MediaKind::Track,
-            });
+        match row.kind {
+            MediaKind::Track => {
+                let Some(track_id) = row.track_id else {
+                    continue;
+                };
+                if let Some(track) = get_track(&conn, track_id).context("looking up track")? {
+                    items.push(PlayableItem {
+                        track_id,
+                        source: root.join(&track.file_path),
+                        profile: resolve_music_profile(&track, cfg),
+                        album_id: track.album_id,
+                        kind: MediaKind::Track,
+                    });
+                }
+            }
+            MediaKind::Episode => {
+                let Some(episode_id) = row.episode_id else {
+                    continue;
+                };
+                let Some(ep) = get_episode(&conn, episode_id).context("looking up episode")? else {
+                    continue;
+                };
+                let source = match (ep.audio_path.as_deref(), ep.audio_url.as_deref()) {
+                    (Some(p), _) => root.join(p),
+                    (None, Some(url)) => PathBuf::from(url),
+                    (None, None) => continue,
+                };
+                items.push(PlayableItem {
+                    track_id: episode_id, // the queue item's id field carries the episode id
+                    source,
+                    profile: resolve_episode_profile(),
+                    album_id: None,
+                    kind: MediaKind::Episode,
+                });
+            }
+            MediaKind::Audiobook => continue, // Phase 7
         }
     }
     Ok(items)
@@ -1495,12 +1522,22 @@ fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>) -> Result<()> {
 
     let (start, start_pos) = match track_id {
         Some(_) => (0, 0.0),
+        // Resume at the saved cursor, matched by kind + id: the cursor's id is
+        // its track_id (track) or episode_id (episode), and a queue item's
+        // `track_id` field carries whichever id its kind implies (6b-ii-c-2).
         None => saved
-            .and_then(|s| s.track_id.map(|t| (t, s.position)))
-            .and_then(|(tid, pos)| {
+            .and_then(|s| {
+                let id = match s.kind {
+                    MediaKind::Track => s.track_id,
+                    MediaKind::Episode => s.episode_id,
+                    MediaKind::Audiobook => None,
+                };
+                id.map(|id| (s.kind, id, s.position))
+            })
+            .and_then(|(kind, id, pos)| {
                 items
                     .iter()
-                    .position(|i| i.track_id == tid)
+                    .position(|i| i.kind == kind && i.track_id == id)
                     .map(|i| (i, pos))
             })
             .unwrap_or((0, 0.0)),

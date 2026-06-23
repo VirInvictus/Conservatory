@@ -11,7 +11,8 @@
 use tokio::sync::oneshot;
 
 use crate::db::models::{
-    Album, Artist, Chapter, Episode, Playback, PlayedState, Show, ShowSettings, Track,
+    Album, Artist, Chapter, Episode, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
+    Track,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -171,11 +172,7 @@ pub(crate) enum Command {
     /// Upsert the singleton playback cursor (what is playing and where), so a
     /// restart resumes (spec §6.4, Phase 4a).
     SavePlaybackState {
-        track_id: Option<i64>,
-        position: f64,
-        paused: bool,
-        volume: i64,
-        updated_at: i64,
+        cursor: PlaybackCursor,
         reply: oneshot::Sender<Result<()>>,
     },
 
@@ -283,6 +280,24 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Persist an episode's resume position during playback (the engine's tick /
+    /// pause / seek write, Phase 6b-ii-c-2); marks InProgress, preserves
+    /// starred/play_count.
+    SetEpisodePosition {
+        episode_id: i64,
+        position: f64,
+        when: Option<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Record an episode played through to the end (the engine's natural-EOF
+    /// write, Phase 6b-ii-c-2); marks PlayedFully, bumps play_count.
+    CompleteEpisode {
+        episode_id: i64,
+        when: Option<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Upsert a show's per-show overrides.
     UpsertShowSettings {
         settings: ShowSettings,
@@ -361,6 +376,8 @@ impl Command {
             Self::UpsertPlayback { .. } => "upsert_playback",
             Self::SetEpisodePlayed { .. } => "set_episode_played",
             Self::SetEpisodeStarred { .. } => "set_episode_starred",
+            Self::SetEpisodePosition { .. } => "set_episode_position",
+            Self::CompleteEpisode { .. } => "complete_episode",
             Self::UpsertShowSettings { .. } => "upsert_show_settings",
             Self::ReplaceChapters { .. } => "replace_chapters",
             Self::GetOrCreateTag { .. } => "get_or_create_tag",

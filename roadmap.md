@@ -442,10 +442,10 @@ Episode playback splits again, because the per-kind persistence + resume is the 
 
 *Usable artifact:* double-click an episode in the Podcasts list and it plays (downloaded or streamed) in the unified queue, with the Now-bar + queue drawer.
 
-###### Phase 6b-ii-c-2 — Episode resume + per-kind persistence
+###### Phase 6b-ii-c-2 — Episode resume + per-kind persistence ✅
 
-- [ ] The engine writes the podcast `playback` table on episode tick/EOF (position + `played`/`play_count`), not the music `playback_state` singleton; the resume cursor learns the current item's kind (or a per-kind cursor) so a restart resumes an episode to the second.
-- [ ] Tests: per-kind resume; an episode's position/played persist across a restart.
+- [x] The engine writes the podcast `playback` table on episode tick/EOF (position + `played`/`play_count`), not the music `playback_state` singleton; the resume cursor learns the current item's kind so a restart resumes an episode to the second. Migration `0007` adds `playback_state.kind` + `episode_id` (the cursor); new partial-upsert worker writes `set_episode_position` (InProgress, preserving starred/play_count) and `complete_episode` (PlayedFully + play_count bump) carry the per-episode state. The engine's three persistence sites dispatch by `MediaKind` (the episode position write is synchronous + guarded on `!ended` so a terminal flush cannot clobber the completion). The CLI `play` and GUI `resume_saved_queue` rebuild a mixed track+episode queue (`build_mixed_queue`) and resume at the cursor's `(kind, id)`.
+- [x] Tests: episode persistence + cursor round-trip through the worker (`podcasts.rs`); an episode plays to EOF writing the podcast `playback` row (PlayedFully + play_count) but never the music cursor, with a colliding track untouched (`queue.rs`); `build_mixed_queue` interleave / skip / cursor re-index (`playqueue.rs`); the music-only build stays green.
 
 ###### Phase 6b-ii-c-3 — Per-show overrides
 
@@ -459,7 +459,8 @@ Episode playback splits again, because the per-kind persistence + resume is the 
 - [ ] Podcast profile ported from Belfry §5: Smart Speed (silence-skip via `silenceremove`) and Voice Boost (compression + EQ + loudness normalization), including time-saved session accounting. This is the librubberband-class chain that forces GPL-3-or-later (spec §15). **Built as presets on the Phase 5.5 `af`-chain engine, not a parallel hardcoded path.** Two filter choices to validate against the 5.5 findings at implementation (`docs/libmpv-profiles.md`): drive variable speed via mpv `--speed` + `audio-pitch-correction` (scaletempo2) rather than stacking `rubberband` in the chain at every speed, and use live single-pass `dynaudnorm` rather than two-pass/offline `loudnorm` for the Voice Boost leveler.
 - [ ] Episodes share the unified queue and the per-item profile switch prototyped in 4b; append-only `listening_sessions` discipline.
 - [ ] Now Playing additions for episodes: chapters, show notes, Smart Speed indicator, sleep timer.
-- [ ] Tests: filter-graph swap between a track and an episode mid-queue; time-saved accounting; resume offset on long items.
+- [ ] **Chapter persistence + navigation.** Persist the parsed chapter set (the 6a-ii note: the `podcast:chapters` URL / ID3 CHAP are captured but not yet stored) into the `chapters` table, then a **skip-to-next / skip-to-previous-chapter** transport action (an absolute `seek` to the neighbouring `chapters.start_time`) wired to buttons in the Now Playing surface and a keybinding. This is the shared chapter-skip mechanism the audiobook engine reuses at 7c (`docs/keymap.md` + the player engine, not a podcast-only path).
+- [ ] Tests: filter-graph swap between a track and an episode mid-queue; time-saved accounting; resume offset on long items; chapter-skip lands on the neighbouring chapter boundary (forward, back, and clamped at the ends).
 
 *Usable artifact:* **podcast parity reached.** One queue, one engine, both media types, full Smart Speed / Voice Boost. **Belfry can retire**: update the `~/.gitrepos` project map and archive the Belfry repo (spec §16.8).
 
@@ -496,8 +497,9 @@ Audiobooks are the third media type (spec §3.8), landing as the **`conservatory
 - [ ] A book is one `PlayableItem` (kind `Audiobook`); the engine plays its ordered chapters with internal, gapless chapter advance (across files or within an M4B) and advances the queue only when the book finishes (spec §6.1).
 - [ ] Reuse the spoken-word profile (variable speed, Smart Speed, Voice Boost) with per-book overrides resolved from `book_playback` (spec §6.3): the same Phase 5.5 `af`-chain engine and Phase 6c presets, resolved with book overrides instead of show ones. No new filter graph.
 - [ ] First-class resume: absolute `book_playback.position`, `finished` on completion, written on the insurance interval (spec §6.4). Now Playing additions for books: chapter list/jump, sleep timer, speed control.
+- [ ] **Chapter navigation** reuses the 6c skip-to-next / skip-to-previous-chapter transport mechanism (an absolute seek to the neighbouring `book_chapters` boundary), spanning the file/M4B-span boundary a multi-file book introduces; surfaced as Now Playing buttons + the same keybinding as podcasts.
 - [ ] MPRIS metadata for the current book/chapter (spec §6.5).
-- [ ] Tests: chapter advance across a multi-file book and within an M4B (no gap, correct offsets); resume-to-the-second across a restart; per-book override resolution; finished-state transition.
+- [ ] Tests: chapter advance across a multi-file book and within an M4B (no gap, correct offsets); chapter-skip across a file boundary lands on the right offset; resume-to-the-second across a restart; per-book override resolution; finished-state transition.
 
 *Usable artifact:* **audiobook parity.** Play a book from the shelf with chapters, variable speed, sleep timer, and exact resume, in the one unified queue alongside music and podcasts.
 
@@ -566,3 +568,57 @@ A peripheral "feel good" addition for the music-and-podcast lifer: scrobble comp
 - [ ] Tests: outbox persists and retries across a simulated offline window; completion hook enqueues exactly once; disabled is a true no-op; credential store round-trip (in-memory backend).
 
 *Usable artifact:* completed plays scrobble to ListenBrainz (or Last.fm), surviving offline, with the feature entirely inert when disabled.
+
+---
+
+## Phase 10 — Configuration & preferences
+
+> **Stub.** This phase is referenced throughout the earlier phases (the library root sourced from config rather than a CLI arg; user-reconfigurable + persisted facet-pane order; the consolidated "Sound" page the EQ/DSP work at 5.5b/c builds toward) but is not yet broken into sub-phases. It is recorded here so those forward references resolve; the detailed checklist lands when the phase is scoped. Known contents so far:
+
+- [ ] A persisted config (spec §10): the library root, the `[playback]` defaults that today flow from `PlaybackConfig::default()`, and the per-pane field expressions + order (the §3.2 "panes are configurable 1 to 5" promise, deferred from 3b/3c).
+- [ ] An `AdwPreferencesDialog` consolidating the Phase 5.5 "Sound" page (ReplayGain / EQ / DSP / output) with a General page (library root, import defaults) and a Library page (pane configuration).
+- [ ] The library root stops being a CLI arg (the carry-forward note from 4b-ii-a / 4b-ii-c).
+
+*Usable artifact:* (to be detailed) the app is configured from a Preferences dialog, not CLI args, and remembers the user's browse layout.
+
+---
+
+## Phase 11 — Browse & player polish (Columns UI parity)
+
+The finishing pass that brings the music surface up to the deadbeef / foobar2000 Columns UI the browse is modeled on (spec §3.2, §3.3): the side panels, the chrome, and the player conveniences a daily driver is expected to have. Each piece is small and self-contained, GTK-side over logic that already exists in core, so they ship independently and none blocks the others. Modeled on the reference deadbeef layout (the cover-art + properties + status-bar furniture around the central facet/track view).
+
+### Phase 11a — Track properties inspector + cover-art panel
+
+- [ ] A **properties / metadata inspector** for the selected track (the deadbeef `selproperties` widget): location, codec / format, sample rate, channels, bitrate, file size, duration, ReplayGain values, embedded-vs-sidecar cover, MusicBrainz id. Read-only; all of it is already in the DB (`tracks`) or cheap to stat. A collapsible side panel, not a modal.
+- [ ] A **cover-art panel** in the browse window (the deadbeef `coverart` widget, "playing or selected" mode): the album art at a readable size, accent-tinted (the Hermitage unit), distinct from the small Now-bar thumbnail. Reuses `albums.cover_path` (Phase 5d) and the accent.
+- [ ] Tests: the inspector field projection (a pure map from a `Track` + album row to the displayed fields); the panel is build + manual (the 3b/3c precedent).
+
+*Usable artifact:* select a track and see its full technical metadata and a large cover, as in the deadbeef layout.
+
+### Phase 11b — Status bar + play-status glyph column
+
+- [ ] A **status bar** (spec §3.2 footer): the current track's format / sample-rate / channels, plus the active view's track count and total playtime (the deadbeef "N tracks, D total playtime" line). The aggregate is a cheap core read over the current facet/filter selection.
+- [ ] The **play-status glyph column** (the leftmost ♫ in the deadbeef track list): a per-row playing / paused indicator. This is the item **explicitly owed from Phase 3c** ("the per-row playing/status glyph waits for playback state, Phase 4"); Phase 4 shipped the playback state, so it is now unblocked. Driven by the engine snapshot's current item (a symbolic icon, no font assumption).
+- [ ] Tests: the aggregate-count / total-playtime read against a fixture; the glyph follows the snapshot's current index (headless logic); widgets build + manual.
+
+*Usable artifact:* the browse window shows the playing row at a glance and a foobar-style status line.
+
+### Phase 11c — Now Playing expanded surface
+
+- [ ] Implement the **Now Playing surface** already promised in spec §3.6 (the "Hermitage Codex moment"): tapping the Now-bar expands to a full-bleed cover, an accent-tinted scrubber, and a queue-tail peek. For tracks it shows album context, ReplayGain state, the active EQ / DSP, and gapless status; for episodes it adds chapters, show notes, the Smart Speed indicator, and the sleep timer (the episode additions overlap Phase 6c, so this consumes what 6c builds rather than duplicating it).
+- [ ] Tests: the surface state projection from the snapshot + the current item's metadata (headless); widget build + manual.
+
+*Usable artifact:* the Now-bar expands into a proper Now Playing view across both media types.
+
+### Phase 11d — Transport conveniences
+
+- [ ] **Stop-after-current** (the deadbeef `toggle_stop_after_current`, the user's `Ctrl+M`): the engine finishes the current item, then stops instead of advancing. A small flag on the engine consulted in `advance_after_end`.
+- [ ] **Jump-to-current-track** (the user's `Ctrl+J`): scroll the browse / queue to the playing row and select it.
+- [ ] Both as menu actions and keybindings (`docs/keymap.md`), the spec §3.1 "every action visible and keyboard-accessible" rule.
+- [ ] Tests: the stop-after-current flag gates the advance (engine null-host integration); the jump resolves the current row index (headless).
+
+*Usable artifact:* **Columns UI parity.** The music surface matches the deadbeef daily-driver layout: side panels, status bar, an expanded Now Playing view, and the expected transport conveniences.
+
+### Deferred (recorded, not built)
+
+- [ ] **Spectrum visualizer** (the deadbeef `spectrum` widget): a real-time frequency-bar analyzer. Captured here at the user's request, but **post-1.0 and optional**: it needs an audio-tap off the libmpv output (an `af` data sink or a visualizer hook) and is player-toy territory rather than core to "Calibre for audio". Built only after the parity furniture above, if at all.

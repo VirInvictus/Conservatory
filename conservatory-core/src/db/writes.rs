@@ -7,7 +7,8 @@
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
-    Album, Artist, Chapter, Episode, Playback, PlayedState, Show, ShowSettings, Track,
+    Album, Artist, Chapter, Episode, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
+    Track,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -314,25 +315,31 @@ pub(crate) fn delete_perspective(conn: &Connection, id: i64) -> Result<()> {
 }
 
 /// Upsert the singleton playback cursor (Phase 4a, spec §6.4). One row, id = 1;
-/// later saves overwrite it. A `None` track clears the cursor.
-pub(crate) fn save_playback_state(
-    conn: &Connection,
-    track_id: Option<i64>,
-    position: f64,
-    paused: bool,
-    volume: i64,
-    updated_at: i64,
-) -> Result<()> {
+/// later saves overwrite it. The cursor's `kind` (Phase 6b-ii-c-2) records what
+/// was last playing so a restart reopens it: `track_id` is set for a track,
+/// `episode_id` for an episode (the other is `None`). A cursor with neither id
+/// is a cleared cursor.
+pub(crate) fn save_playback_state(conn: &Connection, cursor: &PlaybackCursor) -> Result<()> {
     conn.execute(
-        "INSERT INTO playback_state (id, track_id, position, paused, volume, updated_at)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5)
+        "INSERT INTO playback_state (id, kind, track_id, episode_id, position, paused, volume, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(id) DO UPDATE SET
+            kind = excluded.kind,
             track_id = excluded.track_id,
+            episode_id = excluded.episode_id,
             position = excluded.position,
             paused = excluded.paused,
             volume = excluded.volume,
             updated_at = excluded.updated_at",
-        params![track_id, position, paused, volume, updated_at],
+        params![
+            cursor.kind.as_str(),
+            cursor.track_id,
+            cursor.episode_id,
+            cursor.position,
+            cursor.paused,
+            cursor.volume,
+            cursor.updated_at
+        ],
     )?;
     Ok(())
 }
@@ -697,6 +704,52 @@ pub(crate) fn set_episode_starred(conn: &Connection, episode_id: i64, starred: b
         "INSERT INTO playback (episode_id, starred) VALUES (?1, ?2)
          ON CONFLICT(episode_id) DO UPDATE SET starred = excluded.starred",
         params![episode_id, starred],
+    )?;
+    Ok(())
+}
+
+/// Persist an episode's resume position during playback (Phase 6b-ii-c-2): the
+/// engine's insurance-interval / pause / seek write. Marks the episode
+/// `InProgress` and stamps `last_played`, preserving `starred` / `play_count`
+/// (the partial-upsert discipline of the triage writes). Creates the row if
+/// absent. The completion bump is `complete_episode`, not this.
+pub(crate) fn set_episode_position(
+    conn: &Connection,
+    episode_id: i64,
+    position: f64,
+    when: Option<i64>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO playback (episode_id, position, played, last_played)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(episode_id) DO UPDATE SET
+            position = excluded.position,
+            played = excluded.played,
+            last_played = excluded.last_played",
+        params![episode_id, position, PlayedState::InProgress.as_i64(), when],
+    )?;
+    Ok(())
+}
+
+/// Record an episode played through to the end (Phase 6b-ii-c-2): the engine's
+/// natural-EOF write. Marks `PlayedFully`, bumps `play_count`, stamps
+/// `last_played`, and rewinds `position` to 0 (a finished episode re-plays from
+/// the start), preserving `starred`. The podcast analogue of
+/// `increment_play_count` + the music cursor's end-of-file handling.
+pub(crate) fn complete_episode(
+    conn: &Connection,
+    episode_id: i64,
+    when: Option<i64>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO playback (episode_id, position, played, last_played, play_count)
+         VALUES (?1, 0, ?2, ?3, 1)
+         ON CONFLICT(episode_id) DO UPDATE SET
+            position = 0,
+            played = excluded.played,
+            last_played = excluded.last_played,
+            play_count = play_count + 1",
+        params![episode_id, PlayedState::PlayedFully.as_i64(), when],
     )?;
     Ok(())
 }

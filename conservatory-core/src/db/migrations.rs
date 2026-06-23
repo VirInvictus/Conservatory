@@ -48,10 +48,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 6,
         sql: include_str!("migrations/0006_podcasts.sql"),
     },
+    Migration {
+        version: 7,
+        sql: include_str!("migrations/0007_playback_cursor_kind.sql"),
+    },
 ];
 
 /// The `user_version` a fully-migrated database reaches.
-pub const CURRENT_VERSION: i32 = 6;
+pub const CURRENT_VERSION: i32 = 7;
 
 /// Apply any unapplied migrations. Idempotent: running this on a
 /// fully-migrated database is a no-op.
@@ -115,6 +119,19 @@ mod tests {
             |_| Ok(()),
         )
         .is_ok()
+    }
+
+    fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap();
+        let mut rows = stmt.query([]).unwrap();
+        while let Some(row) = rows.next().unwrap() {
+            if row.get::<_, String>(1).unwrap() == column {
+                return true;
+            }
+        }
+        false
     }
 
     #[test]
@@ -188,6 +205,11 @@ mod tests {
         ] {
             assert!(table_exists(&conn, t), "missing table: {t}");
         }
+
+        // Migration 0007 adds the transport-cursor kind discriminator + the
+        // episode reference to the singleton playback_state.
+        assert!(column_exists(&conn, "playback_state", "kind"));
+        assert!(column_exists(&conn, "playback_state", "episode_id"));
     }
 
     #[test]

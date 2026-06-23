@@ -22,7 +22,7 @@ pub use facets::{
 pub use migrations::CURRENT_VERSION;
 pub use models::{
     Album, Artist, Chapter, Episode, Genre, InboxPolicy, ListeningSession, MediaKind, Perspective,
-    Playback, PlayedState, QueueItem, Show, ShowSettings, Tag, Track,
+    Playback, PlaybackCursor, PlayedState, QueueItem, Show, ShowSettings, Tag, Track,
 };
 pub use pool::ReadPool;
 pub use probe::probe_read;

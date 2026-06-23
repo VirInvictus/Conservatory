@@ -8,7 +8,9 @@
 use std::path::PathBuf;
 
 use conservatory_core::db::fixtures::{self, FixtureScale};
-use conservatory_core::db::{ReadPool, get_track, read_playback_state, spawn_worker};
+use conservatory_core::db::{
+    MediaKind, PlaybackCursor, ReadPool, get_track, read_playback_state, spawn_worker,
+};
 use conservatory_core::{EndReason, HostEvent, MpvHost, MusicProfile, ReplayGain};
 use tempfile::tempdir;
 
@@ -38,13 +40,23 @@ async fn playback_state_round_trips() {
     }
 
     worker
-        .save_playback_state(Some(1), 42.5, true, 80, 1_000)
+        .save_playback_state(PlaybackCursor {
+            kind: MediaKind::Track,
+            track_id: Some(1),
+            episode_id: None,
+            position: 42.5,
+            paused: true,
+            volume: 80,
+            updated_at: 1_000,
+        })
         .await
         .unwrap();
     {
         let conn = pool.open().unwrap();
         let s = read_playback_state(&conn).unwrap().unwrap();
+        assert_eq!(s.kind, MediaKind::Track);
         assert_eq!(s.track_id, Some(1));
+        assert_eq!(s.episode_id, None);
         assert_eq!(s.position, 42.5);
         assert!(s.paused);
         assert_eq!(s.volume, 80);
@@ -53,7 +65,15 @@ async fn playback_state_round_trips() {
 
     // A second save overwrites the one row rather than inserting another.
     worker
-        .save_playback_state(Some(2), 3.0, false, 100, 2_000)
+        .save_playback_state(PlaybackCursor {
+            kind: MediaKind::Track,
+            track_id: Some(2),
+            episode_id: None,
+            position: 3.0,
+            paused: false,
+            volume: 100,
+            updated_at: 2_000,
+        })
         .await
         .unwrap();
     {

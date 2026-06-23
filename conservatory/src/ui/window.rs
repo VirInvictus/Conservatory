@@ -26,8 +26,9 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 
 use conservatory_core::db::{
-    FacetFilter, Perspective, ReadPool, WorkerHandle, facet_rows, get_tracks, list_perspectives,
-    load_queue_display, read_playback_state, spawn_worker, track_render_rows, writeback_rows,
+    FacetFilter, MediaKind, Perspective, ReadPool, WorkerHandle, facet_rows, get_tracks,
+    list_perspectives, load_queue_display, read_playback_state, spawn_worker, track_render_rows,
+    writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
@@ -35,7 +36,7 @@ use conservatory_core::{
     build_track_edit, genres_assignment, parse_assignment, write_track_tags,
 };
 
-use crate::playqueue::{build_play_queue, fmt_position};
+use crate::playqueue::{MixedQueueRow, build_mixed_queue, build_play_queue, fmt_position};
 use crate::query::query_leaf;
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
@@ -648,25 +649,40 @@ impl ConservatoryWindow {
             return;
         }
         let saved = read_playback_state(&conn).ok().flatten();
-        let ordered_ids: Vec<i64> = rows.iter().filter_map(|r| r.track_id).collect();
+        // The Now-bar label map is keyed by the item's id (a track id, or an
+        // episode id for an episode item, mirroring PlayableItem.track_id).
         let mut labels = std::collections::HashMap::new();
         for r in &rows {
-            if let Some(id) = r.track_id {
+            if let Some(id) = r.track_id.or(r.episode_id) {
                 labels.insert(id, (r.title.clone(), r.artist.clone().unwrap_or_default()));
             }
         }
-        let tracks = get_tracks(&conn, &ordered_ids).unwrap_or_default();
+        let track_ids: Vec<i64> = rows.iter().filter_map(|r| r.track_id).collect();
+        let tracks = get_tracks(&conn, &track_ids).unwrap_or_default();
         drop(conn);
 
-        let activated = saved
-            .as_ref()
-            .and_then(|s| s.track_id)
-            .and_then(|tid| ordered_ids.iter().position(|&id| id == tid))
-            .unwrap_or(0);
-        let (items, start) = build_play_queue(
-            &ordered_ids,
-            activated,
+        let mixed: Vec<MixedQueueRow> = rows
+            .iter()
+            .map(|r| MixedQueueRow {
+                kind: r.kind,
+                track_id: r.track_id,
+                episode_id: r.episode_id,
+                audio_path: r.audio_path.clone(),
+                audio_url: r.audio_url.clone(),
+            })
+            .collect();
+        // The cursor's id is its track_id (track) or episode_id (episode).
+        let cursor_kind = saved.as_ref().map(|s| s.kind).unwrap_or(MediaKind::Track);
+        let cursor_id = saved.as_ref().and_then(|s| match s.kind {
+            MediaKind::Track => s.track_id,
+            MediaKind::Episode => s.episode_id,
+            MediaKind::Audiobook => None,
+        });
+        let (items, start) = build_mixed_queue(
+            &mixed,
             &tracks,
+            cursor_kind,
+            cursor_id,
             root,
             &PlaybackConfig::default(),
         );

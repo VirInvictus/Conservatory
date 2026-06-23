@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    ReadPool, get_track, load_queue, read_playback_state, search_rows, spawn_worker,
+    Episode, MediaKind, PlayedState, ReadPool, Show, get_playback, get_track, load_queue,
+    read_playback_state, search_rows, spawn_worker,
 };
 use conservatory_core::player;
 use conservatory_core::{
@@ -246,11 +247,13 @@ fn engine_plays_queue_to_end() {
     runtime.block_on(worker.shutdown_ack()).ok();
 }
 
-/// An episode plays to EOF through the engine, but (Phase 6b-ii-c-1) the
-/// per-kind persistence guard keeps it out of the music `playback_state`
-/// cursor (and `tracks.play_count`). Episode resume + counts land at 6b-ii-c-2.
+/// An episode plays to EOF through the engine and persists to the **podcast**
+/// `playback` table (PlayedFully + play_count), while the per-kind guard keeps
+/// the episode id out of the music tables: the transport cursor records
+/// `kind = Episode` + `episode_id` (never `track_id`), and a colliding track's
+/// `play_count` is untouched (Phase 6b-ii-c-2).
 #[test]
-fn engine_plays_an_episode_without_writing_the_music_cursor() {
+fn engine_plays_an_episode_to_podcast_playback_not_the_track_tables() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -264,12 +267,12 @@ fn engine_plays_an_episode_without_writing_the_music_cursor() {
     let root = libdir.path().to_path_buf();
     let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
 
-    // Import one fixture so a real track exists. This is load-bearing: an
-    // unguarded episode save would write the episode id into
-    // `playback_state.track_id`, which has an FK to `tracks(id)`; with no track
-    // present the FK rejects the write and silently masks the leak. With a track
-    // whose id the episode collides with, the leak actually persists, so this
-    // test catches a regression of the per-kind guard.
+    // Import one fixture so a real track exists, then create a real episode whose
+    // id collides with the track id (track and episode ids share an integer
+    // space across their separate tables). This is load-bearing: if the engine
+    // leaked the episode id into `playback_state.track_id` or bumped
+    // `tracks.play_count`, the colliding track would be wrongly affected, so the
+    // assertions below catch a regression of the per-kind dispatch.
     std::fs::copy(
         fixtures_dir.join("sample.mp3"),
         srcdir.path().join("sample.mp3"),
@@ -280,7 +283,7 @@ fn engine_plays_an_episode_without_writing_the_music_cursor() {
         spawn_worker(db.clone()).unwrap()
     };
     let pool = ReadPool::new(db.clone(), 3).unwrap();
-    runtime.block_on(async {
+    let episode_id = runtime.block_on(async {
         let opts = ImportOptions {
             library_root: root.clone(),
             mode: MoveMode::Copy,
@@ -288,20 +291,31 @@ fn engine_plays_an_episode_without_writing_the_music_cursor() {
         import_folder(&worker, &pool, srcdir.path(), &opts)
             .await
             .unwrap();
+        let show_id = worker
+            .get_or_create_show(sample_show("replyall", "https://example.com/feed.xml"))
+            .await
+            .unwrap();
+        worker
+            .upsert_episode(sample_episode(show_id, "guid-1", "Ep One"))
+            .await
+            .unwrap()
     });
     let track_id = {
         let conn = pool.open().unwrap();
         search_rows(&conn).unwrap()[0].track_id
     };
+    assert_eq!(
+        track_id, episode_id,
+        "the test wants the ids to collide so a leak would be observable"
+    );
 
-    // An Episode whose `track_id` field collides with the real track id (episode
-    // and track ids share an integer space across their separate tables).
+    // The queue item's `track_id` field carries the *episode* id (the c-1 reuse).
     let item = PlayableItem {
-        track_id,
+        track_id: episode_id,
         source: fixtures_dir.join("sample.mp3"),
         profile: conservatory_core::resolve_episode_profile(),
         album_id: None,
-        kind: conservatory_core::db::MediaKind::Episode,
+        kind: MediaKind::Episode,
     };
 
     let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
@@ -318,14 +332,17 @@ fn engine_plays_an_episode_without_writing_the_music_cursor() {
     player.shutdown();
 
     let conn = pool.open().unwrap();
-    // The `save_cursor` guard (both `flush` and the terminal `advance_after_end`):
-    // no music cursor written, even though the FK would now accept the id.
-    assert!(
-        read_playback_state(&conn)
-            .unwrap()
-            .and_then(|s| s.track_id)
-            .is_none(),
-        "episode playback must not set the music playback_state cursor (6b-ii-c-1 guard)"
+    // The episode persisted to the podcast `playback` table on EOF.
+    let pb = get_playback(&conn, episode_id).unwrap().unwrap();
+    assert_eq!(pb.played, PlayedState::PlayedFully);
+    assert_eq!(pb.play_count, 1);
+    // The cursor records kind = Episode + the episode id, never a track id.
+    let cur = read_playback_state(&conn).unwrap().unwrap();
+    assert_eq!(cur.kind, MediaKind::Episode);
+    assert_eq!(cur.episode_id, Some(episode_id));
+    assert_eq!(
+        cur.track_id, None,
+        "episode playback must not write a music playback_state track cursor"
     );
     // The play-count guard (`on_item_ended`): the colliding track is not bumped.
     assert_eq!(
@@ -335,6 +352,52 @@ fn engine_plays_an_episode_without_writing_the_music_cursor() {
     );
 
     runtime.block_on(worker.shutdown_ack()).ok();
+}
+
+/// Minimal podcast fixtures for the engine episode test (no chrono / network).
+fn sample_show(slug: &str, feed_url: &str) -> Show {
+    Show {
+        id: 0,
+        slug: slug.to_string(),
+        feed_url: feed_url.to_string(),
+        title: "Reply All".to_string(),
+        author: None,
+        description: None,
+        homepage_url: None,
+        cover_path: None,
+        accent_rgb: None,
+        apple_podcasts_id: None,
+        last_fetched: None,
+        last_modified: None,
+        etag: None,
+        fetch_interval: 3600,
+        auth_user: None,
+        auth_pass_ref: None,
+        auto_download: false,
+        keep_count: 0,
+        priority: 0,
+        folder_path: format!("Podcasts/{slug}"),
+    }
+}
+
+fn sample_episode(show_id: i64, guid: &str, title: &str) -> Episode {
+    Episode {
+        id: 0,
+        show_id,
+        guid: guid.to_string(),
+        title: title.to_string(),
+        description: None,
+        pub_date: None,
+        duration: None,
+        file_size: None,
+        audio_url: Some(format!("https://cdn.example.com/{guid}.mp3")),
+        audio_path: None,
+        folder_path: format!("Podcasts/replyall/{guid}"),
+        mime_type: Some("audio/mpeg".to_string()),
+        season: None,
+        episode_number: None,
+        episode_type: None,
+    }
 }
 
 /// Live move/remove keep `current_index` aligned without auto-advancing: start

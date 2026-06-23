@@ -1,0 +1,21 @@
+-- 0007_playback_cursor_kind.sql — Phase 6b-ii-c-2 (spec §6.4, docs/schema.md).
+--
+-- The transport cursor (`playback_state`, migration 0004) was track-only: one
+-- `track_id` with an FK to `tracks`. The unified queue interleaves tracks and
+-- episodes (spec §4.3, §6.1), so the cursor must record *which kind* of item was
+-- last playing, so a restart reopens an episode (not just the last track) and
+-- seeks it to the second.
+--
+-- Two additive columns, no table rebuild: `kind` discriminates the cursor and
+-- `episode_id` references the episode when `kind = 'episode'` (the existing
+-- `track_id` is used when `kind = 'track'`). The episode FK can be added by
+-- ALTER because its default is NULL (SQLite forbids ADD COLUMN with a non-NULL
+-- default referencing another table; NULL is fine). `kind` defaults to 'track'
+-- so the pre-existing singleton row stays a valid music cursor with no rewrite.
+--
+-- Per-episode resume *position* + played/play_count live in the podcast
+-- `playback` table (migration 0006), written by the engine on episode tick/EOF;
+-- this cursor only remembers what to reopen. `user_version` is bumped by the
+-- runner (db/migrations.rs); this file is pure DDL.
+ALTER TABLE playback_state ADD COLUMN kind TEXT NOT NULL DEFAULT 'track';
+ALTER TABLE playback_state ADD COLUMN episode_id INTEGER REFERENCES episodes(id) ON DELETE SET NULL;

@@ -130,6 +130,21 @@ pub struct QueueItem {
     pub book_id: Option<i64>,
 }
 
+/// The singleton transport cursor as written (spec §6.4, Phase 6b-ii-c-2): what
+/// was last playing and where, so a restart resumes. `kind` records the media
+/// kind; `track_id` is set for a track, `episode_id` for an episode (the read
+/// side is [`crate::db::PlaybackStateRow`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlaybackCursor {
+    pub kind: MediaKind,
+    pub track_id: Option<i64>,
+    pub episode_id: Option<i64>,
+    pub position: f64,
+    pub paused: bool,
+    pub volume: i64,
+    pub updated_at: i64,
+}
+
 // --- Podcast domain (spec §4.2). Ported in shape from `belfry-core`'s
 // `domain.rs`. These are core-owned types (the schema lives in core's migration
 // ledger, the §2.2 boundary rule); the `conservatory-podcasts` plugin consumes

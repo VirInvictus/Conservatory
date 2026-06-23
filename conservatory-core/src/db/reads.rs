@@ -244,10 +244,14 @@ pub fn writeback_rows(conn: &Connection, ids: &[i64]) -> Result<Vec<WritebackRow
 
 /// The singleton playback cursor (spec §6.4, Phase 4a): what was playing and
 /// where, read on startup to resume. Absent (`None`) on a library that has
-/// never played anything.
+/// never played anything. The cursor carries its `kind` (Phase 6b-ii-c-2) so a
+/// restart reopens an episode, not just the last track; `track_id` is set when
+/// `kind == Track`, `episode_id` when `kind == Episode`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlaybackStateRow {
+    pub kind: MediaKind,
     pub track_id: Option<i64>,
+    pub episode_id: Option<i64>,
     pub position: f64,
     pub paused: bool,
     pub volume: i64,
@@ -257,12 +261,22 @@ pub struct PlaybackStateRow {
 /// Read the saved playback cursor, if any (the row with id = 1).
 pub fn read_playback_state(conn: &Connection) -> Result<Option<PlaybackStateRow>> {
     conn.query_row(
-        "SELECT track_id, position, paused, volume, updated_at
+        "SELECT kind, track_id, episode_id, position, paused, volume, updated_at
          FROM playback_state WHERE id = 1",
         [],
         |row| {
+            let kind: String = row.get("kind")?;
+            let kind = kind.parse::<MediaKind>().map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
             Ok(PlaybackStateRow {
+                kind,
                 track_id: row.get("track_id")?,
+                episode_id: row.get("episode_id")?,
                 position: row.get("position")?,
                 paused: row.get::<_, i64>("paused")? != 0,
                 volume: row.get("volume")?,
@@ -351,16 +365,24 @@ pub struct QueueDisplayRow {
     pub episode_id: Option<i64>,
     pub title: String,
     pub artist: Option<String>,
+    /// Episode source (Phase 6b-ii-c-2), so a resume can rebuild episode items
+    /// without a second read: the downloaded file (relative to the root) else
+    /// the stream URL. Both `None` for a track row or an undownloaded+URL-less
+    /// episode.
+    pub audio_path: Option<String>,
+    pub audio_url: Option<String>,
 }
 
 /// The unified queue in order, with display fields joined in (Phase 4b-ii-b;
 /// episodes joined at 6b-ii-c). Title/artist coalesce across the kind: a track's
-/// artist, an episode's show.
+/// artist, an episode's show. Episode audio source is carried for resume.
 pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
     let mut stmt = conn.prepare(
         "SELECT q.position, q.kind, q.track_id, q.episode_id,
                 COALESCE(t.title, e.title) AS title,
-                COALESCE(ar.name, s.title) AS artist
+                COALESCE(ar.name, s.title) AS artist,
+                e.audio_path AS audio_path,
+                e.audio_url  AS audio_url
          FROM queue q
          LEFT JOIN tracks t ON t.id = q.track_id
          LEFT JOIN artists ar ON ar.id = t.artist_id
@@ -380,6 +402,8 @@ pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
             episode_id: row.get("episode_id")?,
             title: row.get::<_, Option<String>>("title")?.unwrap_or_default(),
             artist: row.get("artist")?,
+            audio_path: row.get("audio_path")?,
+            audio_url: row.get("audio_url")?,
         })
     })?;
     rows.map(|r| r.map_err(Into::into)).collect()

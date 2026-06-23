@@ -51,8 +51,14 @@ pub enum PlayerCommand {
     ClearQueue,
     /// Switch the audio output device (mpv `audio-device`).
     SetAudioDevice(String),
-    /// Set the active equalizer (Phase 5.5b); applied from the next loaded item.
+    /// Set the active equalizer (Phase 5.5b); applied live when playing, else
+    /// from the next loaded item.
     SetEq(EqState),
+    /// Set one EQ band's gain live (Phase 5.5b-ii); gap-free via `af-command`.
+    SetEqBand {
+        index: usize,
+        gain: f64,
+    },
     /// Halt playback and persist, but keep the engine thread alive.
     Stop,
     /// Stop and exit the engine thread (joined by [`PlayerHandle::shutdown`]).
@@ -208,9 +214,14 @@ impl PlayerHandle {
         let _ = self.tx.send(PlayerCommand::SetAudioDevice(name.into()));
     }
 
-    /// Set the active equalizer (Phase 5.5b); applied from the next loaded item.
+    /// Set the active equalizer (Phase 5.5b): a preset switch / launch state.
     pub fn set_eq(&self, eq: EqState) {
         let _ = self.tx.send(PlayerCommand::SetEq(eq));
+    }
+
+    /// Set one EQ band's gain live (Phase 5.5b-ii): the slider-drag path.
+    pub fn set_eq_band(&self, index: usize, gain: f64) {
+        let _ = self.tx.send(PlayerCommand::SetEqBand { index, gain });
     }
 
     pub fn stop(&self) {

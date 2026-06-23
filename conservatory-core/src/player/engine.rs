@@ -264,9 +264,13 @@ impl Engine {
                 }
             }
             PlayerCommand::SetEq(eq) => {
-                // Applied into the `af` chain on the next load (the per-item
-                // rebuild); live per-band mutation is 5.5b-ii.
+                // A preset switch / launch state: applied live when playing
+                // (structural rebuild), else from the next load.
                 self.host.set_eq(eq);
+            }
+            PlayerCommand::SetEqBand { index, gain } => {
+                // The slider-drag path: live, gap-free, via `af-command`.
+                let _ = self.host.set_eq_band(index, gain);
             }
             PlayerCommand::Stop => {
                 self.set_paused(true);

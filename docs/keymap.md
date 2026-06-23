@@ -45,6 +45,7 @@
 |---|---|
 | `Ctrl+U` | Show / focus the queue |
 | `Ctrl+I` | Show / hide the Now Playing details drawer (v0.0.38; also opened by clicking the Now-bar cover/title) |
+| `Ctrl+,` | Open the Sound preferences (the equalizer; v0.0.41; also the header speaker-card button) |
 | `Alt+↑` / `Alt+↓` | Move the selected queue item up / down |
 | `Delete` | Remove the selected item from the queue |
 | `Ctrl+Shift+C` | Clear the queue |

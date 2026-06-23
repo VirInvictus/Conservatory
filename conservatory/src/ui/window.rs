@@ -26,9 +26,10 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 
 use conservatory_core::db::{
-    FacetFilter, MediaKind, Perspective, ReadPool, WorkerHandle, facet_rows, get_tracks,
-    list_perspectives, load_queue_display, read_playback_state, show_settings_map, spawn_worker,
-    track_render_rows, writeback_rows,
+    EQ_CENTRES, EqState, FacetFilter, MediaKind, Perspective, ReadPool, WorkerHandle, facet_rows,
+    get_eq_preset, get_eq_state, get_tracks, list_eq_presets, list_perspectives,
+    load_queue_display, read_playback_state, show_settings_map, spawn_worker, track_render_rows,
+    writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
@@ -46,6 +47,7 @@ use crate::ui::now_playing_panel::{
 };
 use crate::ui::objects::TrackRow;
 use crate::ui::queue_panel::{QueuePanel, build_queue_panel};
+use crate::ui::sound;
 use crate::ui::track_list::{Leaf, build_leaf};
 
 type Coalescer = CoalescingQueue<usize, Box<dyn FnMut(Vec<usize>)>>;
@@ -317,6 +319,15 @@ impl ConservatoryWindow {
             }
         });
         header.pack_end(&info_btn);
+        let sound_btn = gtk::Button::from_icon_name("audio-card-symbolic");
+        sound_btn.set_tooltip_text(Some("Sound: equalizer (Ctrl+comma)"));
+        let weak = self.downgrade();
+        sound_btn.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.open_sound_settings();
+            }
+        });
+        header.pack_end(&sound_btn);
         header.pack_end(&self.build_output_menu_button());
 
         let edit_btn = gtk::Button::from_icon_name("document-edit-symbolic");
@@ -507,8 +518,283 @@ impl ConservatoryWindow {
             self.populate_initial();
             self.refresh_perspectives();
         }
+        // Apply the persisted equalizer so it is active from the first track
+        // (Phase 5.5b-ii).
+        self.apply_persisted_eq();
         // Load the saved queue paused at the cursor (Phase 4b-ii-c).
         self.resume_saved_queue();
+    }
+
+    /// Push the persisted EQ state into the engine at startup (Phase 5.5b-ii).
+    fn apply_persisted_eq(&self) {
+        let imp = self.imp();
+        let (Some(pool), Some(player)) = (imp.pool.get(), imp.player.get()) else {
+            return;
+        };
+        if let Ok(conn) = pool.open()
+            && let Ok(eq) = get_eq_state(&conn)
+        {
+            player.set_eq(eq);
+        }
+    }
+
+    /// Open the "Sound" preferences dialog (Phase 5.5b-ii): the app's first
+    /// `adw::PreferencesDialog`, hosting the 10-band graphic equalizer. Sliders
+    /// drive the engine live (gap-free `af-command`); presets persist. Built
+    /// fresh each open from the stored state.
+    fn open_sound_settings(&self) {
+        let Some(pool) = self.imp().pool.get() else {
+            return;
+        };
+        let (state, presets) = {
+            let Ok(conn) = pool.open() else { return };
+            (
+                get_eq_state(&conn).unwrap_or_else(|_| EqState::flat()),
+                list_eq_presets(&conn).unwrap_or_default(),
+            )
+        };
+        // Suppress the slider/combo feedback loop while we set values
+        // programmatically (a preset load / reset), so it is not seen as an edit.
+        let suppress = Rc::new(Cell::new(false));
+
+        // The EQ sliders, one per band, under a centre-frequency label.
+        let slider_box = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        slider_box.set_homogeneous(true);
+        slider_box.set_margin_top(6);
+        slider_box.set_margin_bottom(6);
+        let mut sliders = Vec::with_capacity(EQ_CENTRES.len());
+        for (i, centre) in EQ_CENTRES.iter().enumerate() {
+            let col = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            col.set_hexpand(true);
+            let slider = sound::eq_slider(state.bands[i]);
+            let label = gtk::Label::new(Some(&fmt_centre(*centre)));
+            label.add_css_class("caption");
+            label.add_css_class("dim-label");
+            col.append(&slider);
+            col.append(&label);
+            slider_box.append(&col);
+            sliders.push(slider);
+        }
+        let sliders = Rc::new(sliders);
+
+        let eq_group = adw::PreferencesGroup::new();
+        eq_group.set_title("Equalizer");
+        eq_group.set_description(Some("Drag a band to hear it change live (dB)."));
+        eq_group.add(&slider_box);
+
+        // Preset picker: the named presets plus a trailing "Custom" marker.
+        let preset_names: Vec<String> = presets.iter().map(|p| p.name.clone()).collect();
+        let custom_index = preset_names.len() as u32;
+        let mut items: Vec<&str> = preset_names.iter().map(String::as_str).collect();
+        items.push(sound::CUSTOM_LABEL);
+        let model = gtk::StringList::new(&items);
+        let preset_row = adw::ComboRow::new();
+        preset_row.set_title("Preset");
+        preset_row.set_model(Some(&model));
+        let initial = match sound::match_preset(&state.bands, &presets) {
+            Some(name) => preset_names
+                .iter()
+                .position(|n| *n == name)
+                .map_or(custom_index, |i| i as u32),
+            None => custom_index,
+        };
+        preset_row.set_selected(initial);
+
+        let save_btn = gtk::Button::with_label("Save as…");
+        let delete_btn = gtk::Button::with_label("Delete");
+        let reset_btn = gtk::Button::with_label("Reset");
+        let btns = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        btns.append(&save_btn);
+        btns.append(&delete_btn);
+        btns.append(&reset_btn);
+        let presets_group = adw::PreferencesGroup::new();
+        presets_group.set_title("Presets");
+        presets_group.set_header_suffix(Some(&btns));
+        presets_group.add(&preset_row);
+
+        let page = adw::PreferencesPage::new();
+        page.set_title("Sound");
+        page.set_icon_name(Some("audio-card-symbolic"));
+        page.add(&eq_group);
+        page.add(&presets_group);
+
+        let dialog = adw::PreferencesDialog::new();
+        dialog.set_title("Sound");
+        dialog.add(&page);
+
+        // Slider drag → live band change + mark the EQ "Custom".
+        for (i, slider) in sliders.iter().enumerate() {
+            let weak = self.downgrade();
+            let suppress = suppress.clone();
+            let preset_row = preset_row.clone();
+            slider.connect_value_changed(move |s| {
+                if suppress.get() {
+                    return;
+                }
+                let gain = s.value();
+                if let Some(win) = weak.upgrade()
+                    && let Some(player) = win.imp().player.get()
+                {
+                    player.set_eq_band(i, gain);
+                }
+                suppress.set(true);
+                preset_row.set_selected(custom_index);
+                suppress.set(false);
+            });
+        }
+
+        // Preset selected → load it into the sliders + the engine.
+        {
+            let weak = self.downgrade();
+            let suppress = suppress.clone();
+            let sliders = sliders.clone();
+            let names = preset_names.clone();
+            preset_row.connect_selected_notify(move |row| {
+                if suppress.get() || row.selected() == custom_index {
+                    return;
+                }
+                if let (Some(win), Some(name)) =
+                    (weak.upgrade(), names.get(row.selected() as usize))
+                {
+                    win.load_eq_preset(name, &sliders, &suppress);
+                }
+            });
+        }
+
+        // Save / Delete / Reset.
+        {
+            let weak = self.downgrade();
+            let sliders = sliders.clone();
+            save_btn.connect_clicked(move |btn| {
+                if let Some(win) = weak.upgrade() {
+                    win.prompt_save_eq_preset(&sliders, btn);
+                }
+            });
+        }
+        {
+            let weak = self.downgrade();
+            let preset_row = preset_row.clone();
+            let names = preset_names.clone();
+            delete_btn.connect_clicked(move |_| {
+                let idx = preset_row.selected();
+                if let (Some(win), Some(name)) = (weak.upgrade(), names.get(idx as usize)) {
+                    win.delete_eq_preset(name);
+                }
+            });
+        }
+        {
+            let weak = self.downgrade();
+            let sliders = sliders.clone();
+            let suppress = suppress.clone();
+            let preset_row = preset_row.clone();
+            reset_btn.connect_clicked(move |_| {
+                let Some(win) = weak.upgrade() else { return };
+                suppress.set(true);
+                for s in sliders.iter() {
+                    s.set_value(0.0);
+                }
+                preset_row.set_selected(0); // Flat is seeded first
+                suppress.set(false);
+                win.persist_and_apply_eq([0.0; EQ_CENTRES.len()], Some("Flat".to_string()));
+            });
+        }
+
+        // Persist the final slider state on close (live drags apply instantly but
+        // are saved here; explicit actions above persist immediately).
+        {
+            let weak = self.downgrade();
+            let sliders = sliders.clone();
+            dialog.connect_closed(move |_| {
+                if let Some(win) = weak.upgrade() {
+                    let bands = read_slider_bands(&sliders);
+                    let preset = sound::match_preset(&bands, &presets);
+                    win.persist_eq(bands, preset);
+                }
+            });
+        }
+
+        dialog.present(Some(self));
+    }
+
+    /// Load a named preset into the sliders + the engine (Phase 5.5b-ii).
+    fn load_eq_preset(&self, name: &str, sliders: &[gtk::Scale], suppress: &Rc<Cell<bool>>) {
+        let Some(pool) = self.imp().pool.get() else {
+            return;
+        };
+        let bands = {
+            let Ok(conn) = pool.open() else { return };
+            match get_eq_preset(&conn, name) {
+                Ok(Some(b)) => b,
+                _ => return,
+            }
+        };
+        suppress.set(true);
+        for (s, g) in sliders.iter().zip(bands.iter()) {
+            s.set_value(*g);
+        }
+        suppress.set(false);
+        self.persist_and_apply_eq(bands, Some(name.to_string()));
+    }
+
+    /// Prompt for a name and save the current sliders as a preset (Phase 5.5b-ii).
+    fn prompt_save_eq_preset(&self, sliders: &[gtk::Scale], anchor: &gtk::Button) {
+        let bands = read_slider_bands(sliders);
+        let entry = gtk::Entry::builder()
+            .placeholder_text("Preset name")
+            .build();
+        let dialog = adw::AlertDialog::new(Some("Save EQ preset"), None);
+        dialog.set_extra_child(Some(&entry));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("save", "Save");
+        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("save"));
+        let weak = self.downgrade();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "save" {
+                return;
+            }
+            let name = entry.text().trim().to_string();
+            if name.is_empty() {
+                return;
+            }
+            if let Some(win) = weak.upgrade() {
+                if let (Some(worker), Some(rt)) = (win.imp().worker.get(), win.imp().runtime.get())
+                {
+                    let _ = rt.block_on(worker.save_eq_preset(name.clone(), bands));
+                }
+                win.persist_and_apply_eq(bands, Some(name));
+            }
+        });
+        dialog.present(Some(anchor));
+    }
+
+    /// Delete a named preset (Phase 5.5b-ii); `Flat` is protected.
+    fn delete_eq_preset(&self, name: &str) {
+        if name == "Flat" {
+            return;
+        }
+        if let (Some(worker), Some(rt)) = (self.imp().worker.get(), self.imp().runtime.get()) {
+            let _ = rt.block_on(worker.delete_eq_preset(name.to_string()));
+        }
+    }
+
+    /// Persist the active EQ state through the worker (Phase 5.5b-ii).
+    fn persist_eq(&self, bands: [f64; EQ_CENTRES.len()], preset: Option<String>) {
+        if let (Some(worker), Some(rt)) = (self.imp().worker.get(), self.imp().runtime.get()) {
+            let _ = rt.block_on(worker.set_eq_state(EqState { bands, preset }));
+        }
+    }
+
+    /// Persist the EQ state *and* push it to the engine (Phase 5.5b-ii): the
+    /// preset-load / reset path, where the whole band set changes at once.
+    fn persist_and_apply_eq(&self, bands: [f64; EQ_CENTRES.len()], preset: Option<String>) {
+        if let Some(player) = self.imp().player.get() {
+            player.set_eq(EqState {
+                bands,
+                preset: preset.clone(),
+            });
+        }
+        self.persist_eq(bands, preset);
     }
 
     /// Double-click / Enter on a track: play the visible leaf list from that row
@@ -1238,6 +1524,16 @@ impl ConservatoryWindow {
                 glib::Propagation::Stop
             })),
         ));
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>comma"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade() {
+                    win.open_sound_settings();
+                }
+                glib::Propagation::Stop
+            })),
+        ));
         self.add_controller(global);
 
         let local = gtk::ShortcutController::new();
@@ -1836,6 +2132,24 @@ fn view_page_name(n: u8) -> Option<&'static str> {
         3 => Some("audiobooks"),
         _ => None,
     }
+}
+
+/// A short EQ band-centre label (`16000` → `16k`, `500` → `500`).
+fn fmt_centre(centre: u32) -> String {
+    if centre >= 1000 {
+        format!("{}k", centre / 1000)
+    } else {
+        centre.to_string()
+    }
+}
+
+/// Read the current band gains off the EQ sliders into the fixed band array.
+fn read_slider_bands(sliders: &[gtk::Scale]) -> [f64; EQ_CENTRES.len()] {
+    let mut bands = [0.0; EQ_CENTRES.len()];
+    for (slot, s) in bands.iter_mut().zip(sliders.iter()) {
+        *slot = s.value();
+    }
+    bands
 }
 
 #[cfg(test)]

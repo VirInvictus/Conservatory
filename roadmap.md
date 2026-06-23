@@ -327,14 +327,14 @@ Split headless-first: **5.5b-i** lands the graphic EQ in the chain + persistence
 - [x] CLI: `eq show` (bands + preset + the resolved `@eq` chain), `eq set <band> <gain>` (±24 dB clamp; marks custom), `eq preset list|save|load|delete` (`Flat` is undeletable).
 - [x] Tests: the `@eq` builder (flat → no stage; non-flat → named bands at the ISO centres; `@rg` precedes `@eq`); EqState/preset round-trips + forgiving CSV parse (`tests/eq.rs`); the migration table-exists; the libmpv EOF test now sets a non-flat `@eq` chain (proves the `equalizer@b0=f=31:t=o:w=1:g=…` mpv syntax). Music-only build green.
 
-#### Phase 5.5b-ii — Live mutation + the GTK "Sound" dialog
+#### Phase 5.5b-ii — Live mutation + the GTK "Sound" dialog ✅ (v0.0.41)
 
-- [ ] Live per-band gain via `af-command` (gap-free slider drags; structural rebuild only on a preset switch / flat↔non-flat transition). The engine gains a per-band command + `host.af_command`.
-- [ ] First GTK preferences surface: a "Sound" `AdwPreferencesPage` (in an `AdwPreferencesDialog`) hosting the EQ (sliders + preset picker). The app's first settings UI; the Phase 10 config/preferences work builds on it.
+- [x] Live per-band gain via `af-command` (`host.af_command` → `equalizer@b<n>`'s `gain` command, gap-free; ffmpeg's `equalizer` supports it). `host.set_eq_band` does the live path when the `@eq` stage is present, and a **structural rebuild** only at the flat↔non-flat boundary (the stage appears / disappears) or on a preset switch (`set_eq` applies-when-playing). The host now keeps the `current_profile` so it can rebuild mid-playback. Engine `SetEqBand` + `PlayerHandle::set_eq_band`; a pure `eq_band_command` (unit-tested: a band change maps to `af-command @eq gain <dB> b<n>`).
+- [x] First GTK preferences surface: a "Sound" `adw::PreferencesPage` in an `adw::PreferencesDialog` (the app's first; Phase 10 builds on it), opened by a header button or `Ctrl+,`. An Equalizer group of 10 vertical sliders (−12..+12 dB, 0-detent) under their ISO centre labels + a preset `ComboRow` (the saved presets + "Custom") + Save as… / Delete / Reset. Sliders drive the engine live and select "Custom"; preset/reset push the whole state; persistence is on close (slider edits) and immediate (explicit actions). The persisted EQ is also pushed to the engine at startup (`apply_persisted_eq`), which the GUI never did before.
 - [ ] (Later) the parametric option via `anequalizer` (per-band freq/Q/gain, live `change`).
-- [ ] Tests: a band change maps to the expected `af-command` (no chain rebuild); build + manual for the dialog.
+- [x] Tests: the `eq_band_command` mapping (no chain rebuild); an engine null-host integration that mutates bands live mid-playback and still reaches EOF (the real mpv `af-command` path); the `match_preset` projection; build + manual for the dialog. Music-only build green.
 
-*Usable artifact:* (5.5b-i) a working graphic equalizer with persisted presets via the CLI, applied to playback; (5.5b-ii) the same with live sliders in a Sound preferences dialog.
+*Usable artifact:* (5.5b-i) a graphic equalizer with persisted presets via the CLI, applied to playback; **(5.5b-ii) the same with live sliders in the Sound preferences dialog — drag a band and hear it move.** **Phase 5.5b is complete.**
 
 ### Phase 5.5c — DSP modules + output quality (core + GTK)
 

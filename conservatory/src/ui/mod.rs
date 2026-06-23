@@ -9,5 +9,6 @@ pub mod objects;
 #[cfg(feature = "podcasts")]
 pub mod podcasts;
 pub mod queue_panel;
+pub mod sound;
 pub mod track_list;
 pub mod window;

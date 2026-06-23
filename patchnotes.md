@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.41
+
+Phase 5.5b-ii shipped: the equalizer is now interactive. Open the new Sound preferences (the speaker-card button in the header, or Ctrl+,), drag a band, and hear it change live; presets are a click away. This completes Phase 5.5b.
+
+- **Live, gap-free per-band changes (`conservatory-core`):** dragging a band sends mpv an `af-command` to the named `equalizer@b<n>` filter (ffmpeg's `equalizer` supports a runtime `gain` command), so the change is instant with no click or gap in the audio. A structural chain rebuild is reserved for the moments that need it: switching presets, or crossing the flat↔non-flat boundary where the `@eq` stage appears or disappears. The host now remembers the playing item's profile so it can rebuild mid-track. New engine command `SetEqBand` + `PlayerHandle::set_eq_band`; the `af-command` mapping is a pure, unit-tested helper.
+- **The app's first preferences dialog (`conservatory/src/ui/sound.rs`):** a "Sound" page in an `adw::PreferencesDialog` (Phase 10's config work builds on this surface). An Equalizer group of 10 vertical sliders (−12 to +12 dB, with a detent at 0) under their ISO centre-frequency labels, plus a preset dropdown (your saved presets and a "Custom" marker) and Save as… / Delete / Reset. Dragging a slider applies live and marks the EQ "Custom"; choosing a preset or Reset moves the sliders and the sound together. Edits persist when you close the dialog; preset actions persist immediately.
+- **The persisted EQ is now active from launch.** The GUI never pushed the stored EQ to the engine at startup; it does now, so your equalizer applies from the first track, not only after you open the dialog.
+- **Opens via** the header speaker-card button or **Ctrl+,**.
+- **Tests:** the `eq_band_command` mapping (a band change maps to `af-command @eq gain <dB> b<n>`, no chain rebuild); a null-output engine run that mutates bands live mid-playback and still reaches end-of-file (the real mpv `af-command` path); the `match_preset` projection. Full suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green. No new dependency; no schema change.
+
+Next: Phase 5.5c (the DSP modules — compressor, brick-wall limiter, `dynaudnorm` leveler — plus output backend / resampler control, and peak-aware ReplayGain clip-prevention), then Phase 6c (the spoken-word Smart Speed / Voice Boost presets on this engine).
+
 ## v0.0.40
 
 Phase 5.5b-i shipped: the graphic equalizer, in the chain and the CLI (headless). A 10-band ISO-octave EQ now joins the `af` chain as the `@eq` stage; presets persist; the live sliders and the GTK "Sound" dialog are the next step (5.5b-ii).

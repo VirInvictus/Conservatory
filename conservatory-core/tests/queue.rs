@@ -411,6 +411,59 @@ fn engine_unpauses_a_newly_loaded_item_after_a_pause() {
     runtime.block_on(worker.shutdown_ack()).ok();
 }
 
+/// Phase 5.5b-ii: a live EQ band change (af-command) does not interrupt
+/// playback. With a non-flat EQ active, the `@eq` stage is in the chain, so a
+/// `set_eq_band` goes through `af-command` (not a rebuild); the item still plays
+/// to EOF. Exercises the real mpv `af-command` path through a null audio output.
+#[test]
+fn engine_applies_a_live_eq_band_change_without_stopping() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+    let item = || PlayableItem {
+        track_id: 1,
+        source: fixtures_dir.join("sample.flac"),
+        profile: conservatory_core::resolve_episode_profile(None),
+        album_id: None,
+        kind: MediaKind::Track,
+        streaming: false,
+    };
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    // A non-flat EQ so the @eq stage is built into the chain (the live path).
+    let mut eq = conservatory_core::db::EqState::flat();
+    eq.bands[0] = 6.0;
+    player.set_eq(eq);
+    player.play_queue(vec![item()], 0);
+    std::thread::sleep(Duration::from_millis(120));
+    // Live per-band changes while playing.
+    player.set_eq_band(0, -3.0);
+    player.set_eq_band(9, 4.0);
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if player.snapshot().ended {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "playback did not finish after a live EQ change"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    player.shutdown();
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
 /// Minimal podcast fixtures for the engine episode test (no chrono / network).
 fn sample_show(slug: &str, feed_url: &str) -> Show {
     Show {

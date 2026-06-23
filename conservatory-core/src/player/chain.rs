@@ -58,6 +58,14 @@ pub fn eq_stage(eq: &EqState) -> Option<String> {
     Some(format!("@eq:lavfi=[{}]", bands.join(",")))
 }
 
+/// The mpv `af-command` arguments to set EQ band `index` to `gain` dB live
+/// (Phase 5.5b-ii): `(label, command, argument, target)` =
+/// `("@eq", "gain", "<dB>", "b<index>")`. The target names the `equalizer@b<n>`
+/// instance inside the `@eq` lavfi graph (see [`eq_stage`]). Pure.
+pub fn eq_band_command(index: usize, gain: f64) -> (&'static str, &'static str, String, String) {
+    ("@eq", "gain", fmt_db(gain), format!("b{index}"))
+}
+
 /// Format a dB value for the filter string with a minimal representation
 /// (`-6.0` → `-6`, `-6.5` → `-6.5`), so the chain string is stable and readable.
 fn fmt_db(db: f64) -> String {
@@ -136,6 +144,18 @@ mod tests {
         assert!(stage.contains("equalizer@b9=f=16000:t=o:w=1:g=-4.5"));
         // All ten bands are present.
         assert_eq!(stage.matches("equalizer@b").count(), EQ_BAND_COUNT);
+    }
+
+    #[test]
+    fn eq_band_command_targets_the_named_band() {
+        // The roadmap guard: a band change maps to the expected `af-command`.
+        let (label, cmd, arg, target) = eq_band_command(3, -4.5);
+        assert_eq!(label, "@eq");
+        assert_eq!(cmd, "gain");
+        assert_eq!(arg, "-4.5");
+        assert_eq!(target, "b3");
+        // Integer gains render minimally.
+        assert_eq!(eq_band_command(0, 6.0).2, "6");
     }
 
     #[test]

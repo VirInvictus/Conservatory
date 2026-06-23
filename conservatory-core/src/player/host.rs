@@ -48,8 +48,12 @@ pub struct MpvHost {
     mpv: Mpv,
     /// The active equalizer (Phase 5.5b), applied into the `af` chain on each
     /// load. Defaults to flat (no `@eq` stage); the engine updates it via
-    /// [`MpvHost::set_eq`].
+    /// [`MpvHost::set_eq`] / [`MpvHost::set_eq_band`].
     eq: EqState,
+    /// The currently-loaded item's profile (Phase 5.5b-ii), kept so the `af`
+    /// chain can be rebuilt mid-playback on an EQ change. `None` when nothing is
+    /// loaded (an EQ change then just updates state, applied on the next load).
+    current_profile: Option<MusicProfile>,
 }
 
 impl MpvHost {
@@ -88,13 +92,64 @@ impl MpvHost {
         Ok(Self {
             mpv,
             eq: EqState::flat(),
+            current_profile: None,
         })
     }
 
-    /// Set the active equalizer (Phase 5.5b). Applied into the `af` chain on the
-    /// next [`MpvHost::load`]; live (gap-free) per-band mutation is 5.5b-ii.
+    /// Set the whole active equalizer (Phase 5.5b): a preset switch / launch
+    /// state. Applied immediately when playing (a structural `af` rebuild — an
+    /// explicit settings change, gap-acceptable per docs/libmpv-profiles.md),
+    /// else stored for the next [`MpvHost::load`].
     pub fn set_eq(&mut self, eq: EqState) {
         self.eq = eq;
+        let _ = self.rebuild_af();
+    }
+
+    /// Set one EQ band's gain (Phase 5.5b-ii). The common case (the `@eq` stage
+    /// already present, staying non-flat) mutates that band **live and gap-free**
+    /// via `af-command`. Crossing the flat↔non-flat boundary (the `@eq` stage
+    /// must appear or disappear) does a one-time structural rebuild. Not playing:
+    /// just store, applied at the next load.
+    pub fn set_eq_band(&mut self, index: usize, gain: f64) -> Result<()> {
+        if index >= self.eq.bands.len() {
+            return Ok(());
+        }
+        let was_flat = self.eq.is_flat();
+        self.eq.bands[index] = gain;
+        let now_flat = self.eq.is_flat();
+        if self.current_profile.is_none() {
+            return Ok(());
+        }
+        if was_flat != now_flat {
+            self.rebuild_af()
+        } else if !now_flat {
+            let (label, cmd, arg, target) = crate::player::chain::eq_band_command(index, gain);
+            self.af_command(label, cmd, &arg, &target)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Send a runtime command to a labelled `af` filter (Phase 5.5b-ii). libmpv2's
+    /// `command` joins the args into one string, so this becomes
+    /// `af-command <label> <cmd> <arg> <target>`; `target` selects the filter
+    /// instance within the `@<label>` lavfi graph (e.g. an EQ band `b3`).
+    pub fn af_command(&self, label: &str, cmd: &str, arg: &str, target: &str) -> Result<()> {
+        self.mpv
+            .command("af-command", &[label, cmd, arg, target])
+            .map_err(|e| Error::Player(format!("af-command {label} {cmd}: {e}")))
+    }
+
+    /// Re-set the `af` property from the current item's profile + the active EQ
+    /// (the structural path). A no-op when nothing is loaded.
+    fn rebuild_af(&self) -> Result<()> {
+        let Some(profile) = self.current_profile else {
+            return Ok(());
+        };
+        let af = crate::player::chain::build_af_chain(&profile, &self.eq);
+        self.mpv
+            .set_property("af", af.as_str())
+            .map_err(|e| Error::Player(format!("rebuilding af chain: {e}")))
     }
 
     /// Apply `profile` and start playing `path`. The profile properties are set
@@ -132,12 +187,15 @@ impl MpvHost {
         self.mpv
             .command("loadfile", &[&quote_arg(path)])
             .map_err(|e| Error::Player(format!("loadfile: {e}")))?;
+        // Remember the profile so a live EQ change can rebuild the chain.
+        self.current_profile = Some(*profile);
         Ok(())
     }
 
     /// Stop playback and unload the current file (mpv `stop`). Used when the
     /// queue is cleared; the host stays alive for the next load.
     pub fn stop(&mut self) -> Result<()> {
+        self.current_profile = None;
         self.mpv
             .command("stop", &[])
             .map_err(|e| Error::Player(format!("stop: {e}")))

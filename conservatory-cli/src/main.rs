@@ -19,10 +19,11 @@ use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
     AlbumEdit, Assignment, DEFAULT_TARGET_LUFS, Field, GenreVocab, ImportOptions, ImportReport,
     PathTemplate, PlayableItem, PlaybackConfig, TagWrite, TrackDraft, TrackEdit, TrackFields,
-    any_path_affecting, build_album_edit, build_track_edit, compute_accent, find_collisions,
-    find_cover_bytes, genres_assignment, import_folder, parse_assignment, read_track, replace_in,
-    replaygain_from_file, resolve_album, resolve_episode_profile, resolve_music_profile,
-    resync_album_covers, rsgain_available, scan_album_files, sync_album_cover, write_track_tags,
+    any_path_affecting, build_af_chain, build_album_edit, build_track_edit, compute_accent,
+    find_collisions, find_cover_bytes, genres_assignment, import_folder, parse_assignment,
+    read_track, replace_in, replaygain_from_file, resolve_album, resolve_episode_profile,
+    resolve_music_profile, resync_album_covers, rsgain_available, scan_album_files,
+    sync_album_cover, write_track_tags,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -81,6 +82,16 @@ enum Command {
     DebugPaths {
         /// Path to the SQLite database.
         db: PathBuf,
+    },
+
+    /// Phase 5.5a smoke test: resolve the playback profile for a track and print
+    /// the libmpv `af` chain it renders to (the ReplayGain head stage), plus the
+    /// ReplayGain / gapless / speed breakdown. Read-only.
+    DebugDsp {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// A track id (omit for the first track in the library).
+        track_id: Option<i64>,
     },
 
     /// Phase 2b smoke test: derive each album's shelf genre from its track tags
@@ -470,6 +481,7 @@ fn main() -> Result<()> {
         Some(Command::DebugFixture { db, scale }) => debug_fixture(db, scale),
         Some(Command::DebugTags { file }) => debug_tags(file),
         Some(Command::DebugPaths { db }) => debug_paths(db),
+        Some(Command::DebugDsp { db, track_id }) => debug_dsp(db, track_id),
         Some(Command::DebugShelfGenre { db }) => debug_shelf_genre(db),
         Some(Command::Import {
             db,
@@ -604,6 +616,61 @@ fn debug_tags(file: PathBuf) -> Result<()> {
         }
         None => println!("cover:        (none)"),
     }
+    Ok(())
+}
+
+fn debug_dsp(db: PathBuf, track_id: Option<i64>) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+
+    // The given track, or the first in the library.
+    let id = match track_id {
+        Some(id) => id,
+        None => track_render_rows(&conn)
+            .context("reading tracks")?
+            .first()
+            .map(|r| r.track_id)
+            .ok_or_else(|| anyhow::anyhow!("the library has no tracks"))?,
+    };
+    let track = conservatory_core::db::get_track(&conn, id)
+        .context("looking up track")?
+        .ok_or_else(|| anyhow::anyhow!("no track with id {id}"))?;
+
+    let cfg = PlaybackConfig::default();
+    let profile = resolve_music_profile(&track, &cfg);
+    let chain = build_af_chain(&profile);
+
+    println!("track:        {} {}", track.id, track.title);
+    println!(
+        "replaygain:   mode={} (track={} album={})",
+        cfg.replaygain.as_str(),
+        track
+            .replaygain_track
+            .map_or("none".to_string(), |g| format!("{g} dB")),
+        track
+            .replaygain_album
+            .map_or("none".to_string(), |g| format!("{g} dB")),
+    );
+    println!(
+        "  preamp={:+} dB  clip={}  -> net={}",
+        cfg.replaygain_preamp,
+        cfg.replaygain_clip,
+        profile
+            .replaygain_db
+            .map_or("off".to_string(), |g| format!("{g} dB")),
+    );
+    println!(
+        "gapless:      {}",
+        if profile.gapless { "weak" } else { "no" }
+    );
+    println!(
+        "speed:        {}  pitch_correction={}",
+        profile.speed, profile.pitch_correction
+    );
+    println!(
+        "af chain:     {}",
+        if chain.is_empty() { "(empty)" } else { &chain }
+    );
     Ok(())
 }
 

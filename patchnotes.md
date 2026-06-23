@@ -1,5 +1,21 @@
 # Patch Notes
 
+## v0.0.39
+
+Phase 5.5a shipped: the chain foundation and correct head-staged ReplayGain. This begins Phase 5.5 (the music DSP engine) and fixes a real ReplayGain bug, headless/core. It is the substrate the Phase 6c spoken-word chain (Smart Speed / Voice Boost) is built on.
+
+- **Labelled `af`-chain builder (`conservatory-core/src/player/chain.rs`):** the flat profile-to-properties application becomes a real mpv `af` filter chain, built once per item with labelled stages. 5.5a emits the `@rg` ReplayGain head stage; the `@eq` / `@comp` / `@boost` slots (equalizer, compressor/limiter, leveler) join in 5.5b/c. `build_af_chain` is pure and unit-tested.
+- **ReplayGain moves to the chain head and is recomputed per track, fixing mpv #8267.** ReplayGain is now an explicit `@rg:lavfi=[volume=<dB>]` at the *head* of the chain, computed from the DB's `replaygain_track` / `_album` (read from tags at import or written by the rsgain scan). mpv's built-in `--replaygain` is dropped: it sat *after* the `af` chain (a boosting EQ would defeat clip-prevention) and was not re-applied per track across a gapless boundary, so a whole queue inherited the first track's gain (mpv bug #8267). Because the host rebuilds the chain from each item's profile on load, every track gets its own gain.
+- **Preamp + clip-prevention.** A `replaygain_preamp` offset, and a clip guard: with no peak data stored, the safe default (`replaygain_clip`) clamps the net gain to attenuate-only (≤ 0 dB), which can never push a sample over full scale. The real brick-wall limiter and peak-aware attenuation arrive in 5.5c.
+- **Gapless: `--gapless-audio=weak`** when gapless (preserves the source rate across a mixed-rate library), `no` for single items.
+- **Crossfade removed.** The unused `crossfade_seconds` field and config key are gone (crossfade is impossible in a single libmpv instance and maintainer-rejected; the codebase never set it non-zero). Gapless-only, the path real mpv-based players take.
+- **CLI `debug-dsp <db> [track_id]`:** prints the resolved `af` chain plus the ReplayGain breakdown (mode, raw track/album gains, preamp, clip, net dB), gapless, and speed. The every-surface-CLI-testable rule; verified against the real `testdata/` albums.
+- **Tests:** the chain builder (the `@rg` string; empty when off; **different gains produce different chains**, the per-track #8267 guard); profile resolution (mode downgrade, preamp, the clip clamp, off → none, episode → none); and the libmpv EOF test now plays a fixture with a real `@rg` chain set, proving the `af` syntax is valid and does not break decode. Full suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green. No new dependency (every filter rides the already-linked libmpv/ffmpeg); no schema change.
+
+Also corrected a stale phasing claim: spec §17 / the roadmap said Phase 5.5 "lands before podcasts," but 6a/6b (the podcast manager and triage) are independent of the audio engine and shipped first. The wording now says 5.5 lands before the **Phase 6c spoken-word chain** specifically, which is the piece that actually depends on it.
+
+Next: Phase 5.5b (the graphic + parametric equalizer, the first GTK "Sound" preferences surface, and live `af-command` parameter mutation).
+
 ## v0.0.38
 
 Playback feedback, diagnostics, and a Now Playing drawer. The player no longer runs silently: it tells you what it is doing, the two bugs from hands-on use are fixed, you can turn on logs, and clicking the Now-bar opens a details panel.

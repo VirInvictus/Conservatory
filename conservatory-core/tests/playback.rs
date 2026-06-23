@@ -11,7 +11,7 @@ use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
     MediaKind, PlaybackCursor, ReadPool, get_track, read_playback_state, spawn_worker,
 };
-use conservatory_core::{EndReason, HostEvent, MpvHost, MusicProfile, ReplayGain};
+use conservatory_core::{EndReason, HostEvent, MpvHost, MusicProfile};
 use tempfile::tempdir;
 
 fn audio_fixture(name: &str) -> PathBuf {
@@ -128,10 +128,11 @@ fn host_plays_fixture_to_eof() {
     let Ok(mut host) = MpvHost::new_null() else {
         return;
     };
+    // A real ReplayGain head stage (Phase 5.5a): this also proves the `@rg`
+    // `af`-chain syntax is accepted by libmpv and does not break decode.
     let profile = MusicProfile {
         gapless: true,
-        replaygain: ReplayGain::Off,
-        crossfade_seconds: 0,
+        replaygain_db: Some(-6.0),
         speed: 1.0,
         pitch_correction: false,
     };
@@ -166,8 +167,7 @@ fn host_load_applies_profile_speed() {
     };
     let profile = MusicProfile {
         gapless: false,
-        replaygain: ReplayGain::Off,
-        crossfade_seconds: 0,
+        replaygain_db: None,
         speed: 1.5,
         pitch_correction: true,
     };

@@ -1,13 +1,17 @@
 //! Playback profile resolution for music (spec §6.2, docs/libmpv-profiles.md).
 //!
 //! Pure: this module never touches libmpv. It turns a [`Track`] plus the user's
-//! `[playback]` config (spec §10) into a [`MusicProfile`] the host applies as
-//! mpv properties. Keeping it pure is what lets the resolution be unit-tested
+//! `[playback]` config (spec §10) into a [`MusicProfile`], which the host renders
+//! into a labelled `af` filter chain ([`crate::player::chain`]) plus a couple of
+//! flat mpv properties. Keeping it pure is what lets the resolution be unit-tested
 //! headless (the CLAUDE.md rule: logic in core, the host is thin glue).
 //!
-//! Phase 4a covers the music profile only. Phase 6b-ii-c-3-a adds per-show
-//! playback speed for episodes (mpv `speed` + `audio-pitch-correction`); the
-//! spoken-word `af` chain (Smart Speed, Voice Boost) lands at Phase 6c.
+//! Phase 5.5a turns ReplayGain into an explicit head-of-chain `volume` stage
+//! (`replaygain_db`), recomputed per track, replacing mpv's built-in
+//! `--replaygain` (which is applied *after* the `af` chain and inherits the first
+//! track's gain across a gapless boundary, mpv bug #8267). Phase 6b-ii-c-3-a adds
+//! per-show episode speed; the spoken-word `af` stages (Smart Speed, Voice Boost)
+//! land at Phase 6c as presets on this chain.
 
 #[cfg(test)]
 use crate::db::models::InboxPolicy;
@@ -18,8 +22,9 @@ use crate::db::models::{ShowSettings, Track};
 const MIN_SPEED: f64 = 0.25;
 const MAX_SPEED: f64 = 4.0;
 
-/// ReplayGain mode (spec §6.2). mpv applies the gain from the file's own RG
-/// tags (the same tags `lofty` read into the DB at import); we choose the mode.
+/// ReplayGain mode (spec §6.2): which stored gain to apply. The gain itself comes
+/// from `tracks.replaygain_track` / `_album` (read from the file's RG tags at
+/// import, or written by the rsgain scan, Phase 5c); the mode picks which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayGain {
     /// No normalization.
@@ -31,27 +36,32 @@ pub enum ReplayGain {
 }
 
 impl ReplayGain {
-    /// The mpv `replaygain` property value.
-    pub fn as_mpv(self) -> &'static str {
+    /// A display label (the CLI `debug-dsp` surface).
+    pub fn as_str(self) -> &'static str {
         match self {
-            ReplayGain::Off => "no",
+            ReplayGain::Off => "off",
             ReplayGain::Track => "track",
             ReplayGain::Album => "album",
         }
     }
 }
 
-/// The `[playback]` configuration (spec §10). Phase 4a uses the defaults; the
-/// TOML loader is Phase 10, so this carries the values directly for now.
+/// The `[playback]` configuration (spec §10). The TOML loader / preferences UI is
+/// Phase 10 / 5.5b, so this carries the values directly via [`Default`] for now.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlaybackConfig {
-    /// Gapless playback within an album (`--gapless-audio`).
+    /// Gapless playback within an album (mpv `--gapless-audio=weak` when on).
     pub gapless: bool,
     /// Requested ReplayGain mode; resolution downgrades it per available tags.
     pub replaygain: ReplayGain,
-    /// Crossfade between non-gapless tracks, seconds. 0 = off (the default).
-    /// Rendered at Phase 4b with the queue; 4a only carries it through.
-    pub crossfade_seconds: u32,
+    /// A user gain offset added to the ReplayGain value, dB (Phase 5.5a). 0 = the
+    /// scanned reference level.
+    pub replaygain_preamp: f64,
+    /// Prevent ReplayGain from clipping (Phase 5.5a). With no peak data stored,
+    /// the safe clamp is attenuate-only: the net gain is capped at 0 dB so it can
+    /// never push a sample over full scale. Off applies the raw gain + preamp
+    /// (full normalization, may clip until the 5.5c brick-wall limiter).
+    pub replaygain_clip: bool,
 }
 
 impl Default for PlaybackConfig {
@@ -60,21 +70,24 @@ impl Default for PlaybackConfig {
         Self {
             gapless: true,
             replaygain: ReplayGain::Album,
-            crossfade_seconds: 0,
+            replaygain_preamp: 0.0,
+            replaygain_clip: true,
         }
     }
 }
 
-/// The resolved playback profile for one item, ready to apply to the libmpv
-/// host. The single per-item profile of spec §6.1 (named `MusicProfile` for now;
-/// episodes/audiobooks fill the spoken-word fields). `speed` + `pitch_correction`
-/// drive mpv's `speed` / `audio-pitch-correction` (scaletempo2): per-show speed
-/// for episodes (Phase 6b-ii-c-3-a), native speed for music.
+/// The resolved playback profile for one item, ready to render into the libmpv
+/// host's `af` chain + properties. The single per-item profile of spec §6.1
+/// (named `MusicProfile` for now; episodes/audiobooks fill the spoken-word
+/// fields). `speed` + `pitch_correction` drive mpv's `speed` /
+/// `audio-pitch-correction` (scaletempo2).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MusicProfile {
     pub gapless: bool,
-    pub replaygain: ReplayGain,
-    pub crossfade_seconds: u32,
+    /// The ReplayGain head-stage gain in dB to apply (preamp-adjusted, clamped),
+    /// or `None` for no normalization (Phase 5.5a). Rendered as a `volume` filter
+    /// at the head of the `af` chain, recomputed per track (the #8267 fix).
+    pub replaygain_db: Option<f64>,
     /// Playback rate (1.0 = native). Episodes resolve it from the show's
     /// `playback_speed`; music plays at 1.0.
     pub speed: f64,
@@ -83,43 +96,36 @@ pub struct MusicProfile {
     pub pitch_correction: bool,
 }
 
-/// Resolve the music profile for `track` under `cfg`.
-///
-/// ReplayGain is downgraded to what the track actually carries: an album-mode
-/// request on a track with only track gain falls back to track mode, and a
-/// track with no RG tags at all resolves to `Off` rather than asking mpv to
-/// normalize against absent data. This is the read-only stance settled for 4a
-/// (spec §16.7): we never scan, only consult the tags import already stored.
-pub fn resolve_music_profile(track: &Track, cfg: &PlaybackConfig) -> MusicProfile {
-    let has_album = track.replaygain_album.is_some();
-    let has_track = track.replaygain_track.is_some();
+/// Resolve which stored gain (dB) ReplayGain should apply for `track` under the
+/// mode, downgrading to what the track actually carries: an album-mode request on
+/// a track with only track gain falls back to track gain, and a track with no RG
+/// tags resolves to `None` (no normalization against absent data). The read-only
+/// stance (spec §16.7): we consult the tags import / the rsgain scan stored,
+/// never invent a value.
+fn resolve_replaygain_raw(track: &Track, mode: ReplayGain) -> Option<f64> {
+    match mode {
+        ReplayGain::Off => None,
+        ReplayGain::Album => track.replaygain_album.or(track.replaygain_track),
+        ReplayGain::Track => track.replaygain_track.or(track.replaygain_album),
+    }
+}
 
-    let replaygain = match cfg.replaygain {
-        ReplayGain::Off => ReplayGain::Off,
-        ReplayGain::Album => {
-            if has_album {
-                ReplayGain::Album
-            } else if has_track {
-                ReplayGain::Track
-            } else {
-                ReplayGain::Off
-            }
+/// Resolve the music profile for `track` under `cfg`. The ReplayGain gain is the
+/// stored value plus the preamp, then clamped to ≤ 0 dB when `replaygain_clip`
+/// (the no-peak-data clip guard, Phase 5.5a).
+pub fn resolve_music_profile(track: &Track, cfg: &PlaybackConfig) -> MusicProfile {
+    let replaygain_db = resolve_replaygain_raw(track, cfg.replaygain).map(|raw| {
+        let net = raw + cfg.replaygain_preamp;
+        if cfg.replaygain_clip {
+            net.min(0.0)
+        } else {
+            net
         }
-        ReplayGain::Track => {
-            if has_track {
-                ReplayGain::Track
-            } else if has_album {
-                ReplayGain::Album
-            } else {
-                ReplayGain::Off
-            }
-        }
-    };
+    });
 
     MusicProfile {
         gapless: cfg.gapless,
-        replaygain,
-        crossfade_seconds: cfg.crossfade_seconds,
+        replaygain_db,
         speed: 1.0,
         pitch_correction: false,
     }
@@ -131,8 +137,8 @@ pub fn resolve_music_profile(track: &Track, cfg: &PlaybackConfig) -> MusicProfil
 /// `None` for a show with no overrides (the schema default 1.0). The stored
 /// speed is clamped to `[MIN_SPEED, MAX_SPEED]` so a bad value never yields
 /// unusable audio. Pitch correction is on so faster speech stays natural. The
-/// Smart Speed / Voice Boost `af` chain (and the `smart_speed`/`voice_boost`
-/// flags those consume) is Phase 6c.
+/// Smart Speed / Voice Boost `af` stages (and the `smart_speed`/`voice_boost`
+/// flags those consume) are Phase 6c.
 pub fn resolve_episode_profile(settings: Option<&ShowSettings>) -> MusicProfile {
     let speed = settings
         .map(|s| s.playback_speed)
@@ -140,8 +146,7 @@ pub fn resolve_episode_profile(settings: Option<&ShowSettings>) -> MusicProfile 
         .clamp(MIN_SPEED, MAX_SPEED);
     MusicProfile {
         gapless: false,
-        replaygain: ReplayGain::Off,
-        crossfade_seconds: 0,
+        replaygain_db: None,
         speed,
         pitch_correction: true,
     }
@@ -178,15 +183,12 @@ mod tests {
     }
 
     #[test]
-    fn gapless_and_crossfade_pass_through() {
+    fn gapless_passes_through() {
         let cfg = PlaybackConfig {
             gapless: false,
-            replaygain: ReplayGain::Off,
-            crossfade_seconds: 7,
+            ..PlaybackConfig::default()
         };
-        let p = resolve_music_profile(&track(), &cfg);
-        assert!(!p.gapless);
-        assert_eq!(p.crossfade_seconds, 7);
+        assert!(!resolve_music_profile(&track(), &cfg).gapless);
     }
 
     #[test]
@@ -197,7 +199,7 @@ mod tests {
             replaygain: ReplayGain::Off,
             ..PlaybackConfig::default()
         };
-        assert_eq!(resolve_music_profile(&t, &cfg).replaygain, ReplayGain::Off);
+        assert_eq!(resolve_music_profile(&t, &cfg).replaygain_db, None);
     }
 
     #[test]
@@ -205,22 +207,16 @@ mod tests {
         let mut t = track();
         t.replaygain_album = Some(-7.0);
         t.replaygain_track = Some(-6.0);
-        let cfg = PlaybackConfig::default(); // album
-        assert_eq!(
-            resolve_music_profile(&t, &cfg).replaygain,
-            ReplayGain::Album
-        );
+        let cfg = PlaybackConfig::default(); // album, preamp 0, clip on
+        assert_eq!(resolve_music_profile(&t, &cfg).replaygain_db, Some(-7.0));
     }
 
     #[test]
     fn album_request_falls_back_to_track_gain() {
         let mut t = track();
         t.replaygain_track = Some(-6.0); // album absent
-        let cfg = PlaybackConfig::default(); // album
-        assert_eq!(
-            resolve_music_profile(&t, &cfg).replaygain,
-            ReplayGain::Track
-        );
+        let cfg = PlaybackConfig::default();
+        assert_eq!(resolve_music_profile(&t, &cfg).replaygain_db, Some(-6.0));
     }
 
     #[test]
@@ -231,26 +227,52 @@ mod tests {
             replaygain: ReplayGain::Track,
             ..PlaybackConfig::default()
         };
-        assert_eq!(
-            resolve_music_profile(&t, &cfg).replaygain,
-            ReplayGain::Album
-        );
+        assert_eq!(resolve_music_profile(&t, &cfg).replaygain_db, Some(-7.0));
     }
 
     #[test]
-    fn no_tags_resolves_to_off() {
+    fn no_tags_resolves_to_none() {
         let cfg = PlaybackConfig::default(); // album requested
-        assert_eq!(
-            resolve_music_profile(&track(), &cfg).replaygain,
-            ReplayGain::Off
-        );
+        assert_eq!(resolve_music_profile(&track(), &cfg).replaygain_db, None);
     }
 
     #[test]
-    fn mode_maps_to_mpv_string() {
-        assert_eq!(ReplayGain::Off.as_mpv(), "no");
-        assert_eq!(ReplayGain::Track.as_mpv(), "track");
-        assert_eq!(ReplayGain::Album.as_mpv(), "album");
+    fn preamp_adds_then_clip_clamps_to_zero() {
+        let mut t = track();
+        t.replaygain_album = Some(-3.0);
+        // Preamp +6 → net +3; clip on clamps to 0.
+        let cfg = PlaybackConfig {
+            replaygain_preamp: 6.0,
+            replaygain_clip: true,
+            ..PlaybackConfig::default()
+        };
+        assert_eq!(resolve_music_profile(&t, &cfg).replaygain_db, Some(0.0));
+
+        // A net-negative result is untouched by the clamp.
+        let cfg2 = PlaybackConfig {
+            replaygain_preamp: 1.0,
+            ..PlaybackConfig::default()
+        };
+        assert_eq!(resolve_music_profile(&t, &cfg2).replaygain_db, Some(-2.0));
+    }
+
+    #[test]
+    fn clip_off_allows_positive_boost() {
+        let mut t = track();
+        t.replaygain_album = Some(-3.0);
+        let cfg = PlaybackConfig {
+            replaygain_preamp: 6.0,
+            replaygain_clip: false,
+            ..PlaybackConfig::default()
+        };
+        assert_eq!(resolve_music_profile(&t, &cfg).replaygain_db, Some(3.0));
+    }
+
+    #[test]
+    fn mode_label() {
+        assert_eq!(ReplayGain::Off.as_str(), "off");
+        assert_eq!(ReplayGain::Track.as_str(), "track");
+        assert_eq!(ReplayGain::Album.as_str(), "album");
     }
 
     #[test]
@@ -279,7 +301,7 @@ mod tests {
         let p = resolve_episode_profile(Some(&show_settings(1.5)));
         assert_eq!(p.speed, 1.5);
         assert!(p.pitch_correction, "spoken word keeps pitch correction on");
-        assert_eq!(p.replaygain, ReplayGain::Off);
+        assert_eq!(p.replaygain_db, None);
         assert!(!p.gapless);
     }
 

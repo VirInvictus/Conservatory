@@ -11,6 +11,7 @@
 //! `state` are pure and unit-tested headless; `host` is the thin libmpv glue,
 //! kept in core (not the GTK binary) so the whole engine stays CLI-driveable.
 
+pub mod chain;
 pub mod engine;
 pub mod handle;
 pub mod host;
@@ -18,6 +19,7 @@ pub mod item;
 pub mod profile;
 pub mod state;
 
+pub use chain::build_af_chain;
 pub use engine::{spawn, spawn_null, spawn_with};
 pub use handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 pub use host::{AudioDevice, HostEvent, MpvHost};

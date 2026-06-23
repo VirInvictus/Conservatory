@@ -87,12 +87,11 @@ impl MpvHost {
     /// before the load so they take effect for this item (spec §6.1: the engine
     /// applies the item's profile before playing).
     pub fn load(&mut self, path: &str, profile: &MusicProfile) -> Result<()> {
+        // Gapless: `weak` preserves the source rate across a mixed-rate library
+        // (spec §6.2); `no` for single items (episodes).
         self.mpv
-            .set_property("gapless-audio", profile.gapless)
+            .set_property("gapless-audio", if profile.gapless { "weak" } else { "no" })
             .map_err(|e| Error::Player(format!("setting gapless-audio: {e}")))?;
-        self.mpv
-            .set_property("replaygain", profile.replaygain.as_mpv())
-            .map_err(|e| Error::Player(format!("setting replaygain: {e}")))?;
         // Per-show variable speed (Phase 6b-ii-c-3-a): keep pitch constant via
         // scaletempo2 so faster speech stays natural. 1.0 / off is a no-op for
         // music, so the track path is unchanged.
@@ -102,6 +101,15 @@ impl MpvHost {
         self.mpv
             .set_property("speed", profile.speed)
             .map_err(|e| Error::Player(format!("setting speed: {e}")))?;
+        // The labelled `af` chain (Phase 5.5a): built fresh from this item's
+        // profile, so ReplayGain (the `@rg` head `volume`) is recomputed per
+        // track — the fix for mpv #8267, where the built-in `--replaygain` (now
+        // dropped) sat after the chain and inherited the first track's gain. An
+        // empty string clears any prior chain.
+        let af = crate::player::chain::build_af_chain(profile);
+        self.mpv
+            .set_property("af", af.as_str())
+            .map_err(|e| Error::Player(format!("setting af chain: {e}")))?;
         // libmpv2's `command` builds a single command *string* (no array form),
         // so an unescaped path with spaces would split into multiple args. mpv's
         // command parser reads a double-quoted token (with backslash escapes) as

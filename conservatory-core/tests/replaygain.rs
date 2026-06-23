@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{ReadPool, get_track, spawn_worker};
 use conservatory_core::{
-    DEFAULT_TARGET_LUFS, PlaybackConfig, ReplayGain, replaygain_from_file, resolve_music_profile,
+    DEFAULT_TARGET_LUFS, PlaybackConfig, replaygain_from_file, resolve_music_profile,
     rsgain_available, scan_album_files,
 };
 use lofty::config::WriteOptions;
@@ -59,9 +59,10 @@ async fn worker_set_replaygain_feeds_the_profile() {
     assert_eq!(track.replaygain_track, Some(-6.0));
     assert_eq!(track.replaygain_album, Some(-7.0));
 
-    // With album gain present, the default (album) profile stays album.
+    // With album gain present, the default (album, preamp 0, clip on) profile
+    // applies the album gain at the head stage (Phase 5.5a).
     let profile = resolve_music_profile(&track, &PlaybackConfig::default());
-    assert_eq!(profile.replaygain, ReplayGain::Album);
+    assert_eq!(profile.replaygain_db, Some(-7.0));
     worker.shutdown_ack().await.unwrap();
 }
 

@@ -294,6 +294,21 @@ enum PodcastAction {
         #[arg(long)]
         root: PathBuf,
     },
+    /// Prune downloaded episodes beyond a show's `keep_count` (retention, Phase
+    /// 6b-ii-c-3-b): delete the oldest downloads' files and revert them to
+    /// stream-only. Dry-run by default (lists what would go); `--apply` deletes.
+    Prune {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// A single show id (omit to prune every subscription).
+        show_id: Option<i64>,
+        /// Library root the managed `Podcasts/` tree hangs off.
+        #[arg(long)]
+        root: PathBuf,
+        /// Actually delete the files (default: dry-run preview only).
+        #[arg(long)]
+        apply: bool,
+    },
     /// List episodes with their triage state (spec §3.7): a show's episodes, or
     /// a triage bucket across all subscriptions. Read-only.
     Episodes {
@@ -1851,6 +1866,12 @@ fn podcast(action: PodcastAction) -> Result<()> {
             episode_id,
             root,
         } => block_on(run_podcast_download(db, episode_id, root)),
+        PodcastAction::Prune {
+            db,
+            show_id,
+            root,
+            apply,
+        } => block_on(run_podcast_prune(db, show_id, root, apply)),
         PodcastAction::Episodes {
             db,
             show,
@@ -2257,6 +2278,41 @@ async fn run_podcast_download(db: PathBuf, episode_id: i64, root: PathBuf) -> Re
     worker.shutdown_ack().await.context("shutdown ack")?;
 
     println!("Downloaded episode {episode_id} to {}.", dst.display());
+    Ok(())
+}
+
+#[cfg(feature = "podcasts")]
+async fn run_podcast_prune(
+    db: PathBuf,
+    show_id: Option<i64>,
+    root: PathBuf,
+    apply: bool,
+) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+
+    let plan = conservatory_podcasts::retention::plan(&pool, show_id).context("planning prune")?;
+    if plan.is_empty() {
+        println!("Nothing to prune (no downloads beyond keep_count).");
+        worker.shutdown_ack().await.context("shutdown ack")?;
+        return Ok(());
+    }
+
+    if apply {
+        let pruned = conservatory_podcasts::retention::apply(&worker, &root, &plan)
+            .await
+            .context("applying prune")?;
+        println!("Pruned {pruned} of {} downloaded episode(s):", plan.len());
+    } else {
+        println!(
+            "Would prune {} downloaded episode(s) (dry-run; pass --apply to delete):",
+            plan.len()
+        );
+    }
+    for p in &plan {
+        println!("  {}\t{}\t{}", p.show_title, p.episode_title, p.audio_path);
+    }
+    worker.shutdown_ack().await.context("shutdown ack")?;
     Ok(())
 }
 

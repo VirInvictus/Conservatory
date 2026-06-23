@@ -18,7 +18,10 @@
 //! [`namespace`] handler) and the [`refresh`] orchestration (fetch → parse →
 //! upsert through the core worker). Phase 6a-iii-a adds [`opml`] import/export
 //! round-trip. Phase 6a-iii-b adds the [`credentials`] store (HTTP Basic auth
-//! in libsecret) and episode [`download`] into the managed tree. Triage is 6b.
+//! in libsecret) and episode [`download`] into the managed tree. Phase
+//! 6b-ii-c-3-b adds inbox-policy routing on the [`refresh`] path and
+//! [`retention`] pruning of downloaded episodes beyond a show's `keep_count`.
+//! Triage browse / actions are 6b.
 
 pub mod credentials;
 pub mod download;
@@ -29,6 +32,7 @@ pub mod namespace;
 pub mod opml;
 pub mod parse;
 pub mod refresh;
+pub mod retention;
 pub mod slug;
 
 pub use credentials::{BasicAuth, CredentialStore};
@@ -38,3 +42,4 @@ pub use fetcher::{FetchResult, Fetcher};
 pub use opml::{ImportSummary, OpmlSubscription, export_opml, import_opml, parse_opml, write_opml};
 pub use parse::{ChannelMeta, ParsedEpisode, ParsedFeed, parse_feed};
 pub use refresh::{RefreshOutcome, RefreshStatus, add_show, refresh_all, refresh_show};
+pub use retention::{RetentionPrune, prune};

@@ -385,6 +385,14 @@ impl WorkerHandle {
         .await
     }
 
+    /// Clear an episode's downloaded `audio_path` (retention prune, Phase
+    /// 6b-ii-c-3-b): the file was deleted from disk, so the row reverts to
+    /// stream-only.
+    pub async fn clear_episode_audio_path(&self, episode_id: i64) -> Result<()> {
+        self.dispatch(|reply| Command::ClearEpisodeAudioPath { episode_id, reply })
+            .await
+    }
+
     /// Upsert an episode's triage/playback row.
     pub async fn upsert_playback(&self, playback: Playback) -> Result<()> {
         self.dispatch(|reply| Command::UpsertPlayback { playback, reply })
@@ -770,6 +778,9 @@ fn handle(conn: &mut Connection, command: Command) {
                 episode_id,
                 &audio_path,
             ));
+        }
+        Command::ClearEpisodeAudioPath { episode_id, reply } => {
+            let _ = reply.send(writes::clear_episode_audio_path(conn, episode_id));
         }
         Command::UpsertPlayback { playback, reply } => {
             let _ = reply.send(writes::upsert_playback(conn, &playback));

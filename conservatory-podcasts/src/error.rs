@@ -33,6 +33,10 @@ pub enum FetchError {
     /// An episode download failure (no audio URL, filesystem error).
     #[error("download error: {0}")]
     Download(String),
+
+    /// A retention-prune filesystem failure (deleting a downloaded episode).
+    #[error("retention error: {0}")]
+    Retention(String),
 }
 
 pub type Result<T> = std::result::Result<T, FetchError>;

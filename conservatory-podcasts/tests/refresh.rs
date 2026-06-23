@@ -4,9 +4,16 @@
 //! `(show_id, guid)` and only counts the genuinely-new episode; and the
 //! conditional-GET round-trip (an ETag stored on `add` is replayed on
 //! `refresh`, and a 304 leaves the episode set untouched).
+//!
+//! Phase 6b-ii-c-3-b adds inbox-policy routing: a genuinely-new episode is
+//! routed through the show's `inbox_policy` (AlwaysQueue / AlwaysArchive /
+//! Inbox), and only new episodes route (a re-refresh never re-routes one the
+//! user has since moved).
 
 use conservatory_core::db::{
-    ReadPool, WorkerHandle, list_episodes_for_show, list_shows, spawn_worker,
+    InboxPolicy, PlayedState, ReadPool, ShowSettings, TriageBucket, WorkerHandle,
+    episodes_in_bucket, get_episode_by_guid, get_playback, list_episodes_for_show, list_shows,
+    spawn_worker,
 };
 use conservatory_podcasts::{Fetcher, RefreshStatus, add_show, refresh_all, refresh_show};
 use tempfile::tempdir;
@@ -139,6 +146,151 @@ async fn conditional_get_304_leaves_episodes_untouched() {
         2,
         "a 304 changes no episodes"
     );
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+/// Mount a two-then-three episode feed (the dedup harness) and `add` the show.
+/// Returns the show id; ep-1/ep-2 land at add (default Inbox), ep-3 arrives on
+/// the next `refresh_all` and is the genuinely-new one that routes.
+async fn add_two_then_serve_three(
+    worker: &WorkerHandle,
+    pool: &ReadPool,
+    fetcher: &Fetcher,
+    server: &MockServer,
+) -> i64 {
+    Mock::given(method("GET"))
+        .and(path("/feed.xml"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(FEED_2EP))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/feed.xml"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(FEED_3EP))
+        .with_priority(2)
+        .mount(server)
+        .await;
+
+    let url = format!("{}/feed.xml", server.uri());
+    let (show_id, new, _) = add_show(worker, pool, fetcher, &url).await.unwrap();
+    assert_eq!(new, 2, "add pulls ep-1/ep-2 as new (default Inbox)");
+    show_id
+}
+
+/// Store a show's inbox policy (the other fields are schema defaults).
+async fn set_policy(worker: &WorkerHandle, show_id: i64, policy: InboxPolicy) {
+    worker
+        .upsert_show_settings(ShowSettings {
+            show_id,
+            playback_speed: 1.0,
+            smart_speed: true,
+            voice_boost: false,
+            skip_intro: 0,
+            skip_outro: 0,
+            skip_forward: None,
+            skip_back: None,
+            inbox_policy: policy,
+        })
+        .await
+        .unwrap();
+}
+
+fn episode_id(pool: &ReadPool, show_id: i64, guid: &str) -> i64 {
+    let conn = pool.open().unwrap();
+    get_episode_by_guid(&conn, show_id, guid)
+        .unwrap()
+        .unwrap()
+        .id
+}
+
+#[tokio::test]
+async fn always_queue_routes_only_the_new_episode() {
+    let (_dir, worker, pool) = fresh();
+    let server = MockServer::start().await;
+    let fetcher = Fetcher::new().unwrap();
+
+    let show_id = add_two_then_serve_three(&worker, &pool, &fetcher, &server).await;
+    set_policy(&worker, show_id, InboxPolicy::AlwaysQueue).await;
+
+    // ep-3 is the only new episode on this refresh, so it is the only one queued
+    // (ep-1/ep-2 predate the policy and stay in Inbox).
+    refresh_all(&worker, &pool, &fetcher, None).await.unwrap();
+    let ep3 = episode_id(&pool, show_id, "ep-3");
+    let queued: Vec<i64> = episodes_in_bucket(&pool.open().unwrap(), TriageBucket::Queue)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(queued, vec![ep3], "only the new episode is auto-queued");
+
+    // Remove it by hand, then refresh again: ep-3 is no longer new, so the
+    // policy must not re-queue it (the only-new-episodes-route invariant).
+    worker.clear_queue().await.unwrap();
+    refresh_all(&worker, &pool, &fetcher, None).await.unwrap();
+    assert!(
+        episodes_in_bucket(&pool.open().unwrap(), TriageBucket::Queue)
+            .unwrap()
+            .is_empty(),
+        "a re-refresh does not re-queue an already-seen episode"
+    );
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+#[tokio::test]
+async fn always_archive_routes_the_new_episode_out_of_inbox() {
+    let (_dir, worker, pool) = fresh();
+    let server = MockServer::start().await;
+    let fetcher = Fetcher::new().unwrap();
+
+    let show_id = add_two_then_serve_three(&worker, &pool, &fetcher, &server).await;
+    set_policy(&worker, show_id, InboxPolicy::AlwaysArchive).await;
+
+    refresh_all(&worker, &pool, &fetcher, None).await.unwrap();
+    let ep3 = episode_id(&pool, show_id, "ep-3");
+
+    let conn = pool.open().unwrap();
+    assert_eq!(
+        get_playback(&conn, ep3).unwrap().unwrap().played,
+        PlayedState::ArchivedUnlistened,
+        "the new episode is archived"
+    );
+    let inbox: Vec<i64> = episodes_in_bucket(&conn, TriageBucket::Inbox)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    assert!(!inbox.contains(&ep3), "an archived episode is out of Inbox");
+    // ep-1/ep-2 (no policy applied at add) remain in Inbox.
+    assert_eq!(inbox.len(), 2, "the pre-policy episodes stay in Inbox");
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+#[tokio::test]
+async fn default_inbox_policy_leaves_new_episode_in_inbox() {
+    let (_dir, worker, pool) = fresh();
+    let server = MockServer::start().await;
+    let fetcher = Fetcher::new().unwrap();
+
+    // No settings stored: the show defaults to Inbox.
+    let show_id = add_two_then_serve_three(&worker, &pool, &fetcher, &server).await;
+    refresh_all(&worker, &pool, &fetcher, None).await.unwrap();
+    let ep3 = episode_id(&pool, show_id, "ep-3");
+
+    let conn = pool.open().unwrap();
+    assert!(
+        get_playback(&conn, ep3).unwrap().is_none(),
+        "Inbox routing writes no playback row"
+    );
+    let inbox: Vec<i64> = episodes_in_bucket(&conn, TriageBucket::Inbox)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    assert!(inbox.contains(&ep3), "the new episode lands in Inbox");
 
     worker.shutdown_ack().await.unwrap();
 }

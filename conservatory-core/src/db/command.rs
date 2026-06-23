@@ -259,6 +259,14 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Clear an episode's downloaded `audio_path` (retention prune, Phase
+    /// 6b-ii-c-3-b): the file has been deleted from disk, so the row reverts to
+    /// stream-only.
+    ClearEpisodeAudioPath {
+        episode_id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Upsert an episode's triage/playback row.
     UpsertPlayback {
         playback: Playback,
@@ -373,6 +381,7 @@ impl Command {
             Self::DeleteShow { .. } => "delete_show",
             Self::UpsertEpisode { .. } => "upsert_episode",
             Self::SetEpisodeAudioPath { .. } => "set_episode_audio_path",
+            Self::ClearEpisodeAudioPath { .. } => "clear_episode_audio_path",
             Self::UpsertPlayback { .. } => "upsert_playback",
             Self::SetEpisodePlayed { .. } => "set_episode_played",
             Self::SetEpisodeStarred { .. } => "set_episode_starred",

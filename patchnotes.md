@@ -1,5 +1,19 @@
 # Patch Notes
 
+## v0.0.36
+
+Phase 6b-ii-c-3-b shipped: inbox-policy routing and retention, the management half of per-show overrides. A show set to auto-queue drops its new episodes straight into the queue; one set to auto-archive keeps them out of your inbox; and a show with a keep limit prunes its oldest downloads so they do not pile up on disk.
+
+- **Inbox-policy routing (`conservatory-podcasts`, on refresh):** `refresh::apply_feed` now reads each show's `inbox_policy` once (the schema default, Inbox, when a show has no stored settings) and routes every **genuinely-new** episode through it: `AlwaysQueue` enqueues it into the unified queue, `AlwaysArchive` marks it `ArchivedUnlistened`, `Inbox` does nothing (the §4.2 derivation already puts a row-less, un-queued episode in the Inbox bucket). Only new episodes route, so a re-refresh never re-queues an episode you have since removed from the queue or un-archives one you archived by hand.
+- **Retention (`conservatory-podcasts/src/retention.rs`):** prune downloaded episodes beyond a show's `keep_count` (0 = keep all). The oldest downloads lose their audio file and their `audio_path`, reverting to stream-only; the row, triage state, and resume position survive, only the bytes go. It is a separate **root-aware** pass (it deletes files under the library root), split `plan` → `apply` in the mover's dry-run-then-apply shape, and only ever touches files you actually downloaded (`auto_download` is off by default). The empty episode dir is removed best-effort.
+- **Core:** a new `clear_episode_audio_path` worker command (the counterpart to `set_episode_audio_path`, which can only set) reverts an episode to stream-only after its file is pruned.
+- **CLI:** `podcast prune <db> [show_id] --root <root> [--apply]` (one show or all). Dry-run by default: it lists the downloads it would delete; `--apply` does the deletion. Routing needs no new verb (it rides `podcast refresh`).
+- **Tests:** a new episode routes per each of the three policies and an already-seen one does not re-route (`refresh.rs`); retention prunes the oldest downloads, keeps the newest, is a no-op at `keep_count = 0`, and never counts stream-only episodes toward the cap (`retention.rs`). The `--no-default-features` music-only build stays green.
+
+This is the second of the per-show overrides (c-3 split a/b/c): **a** was speed, **b** is this (inbox routing + retention), **c** is the GUI per-show settings panel. The Smart Speed / Voice Boost flags are stored but their filters remain Phase 6c.
+
+Next: Phase 6b-ii-c-3-c (the GUI per-show settings panel), which surfaces speed, the Smart Speed / Voice Boost toggles, skip intro/outro, and the inbox policy in the Podcasts detail pane.
+
 ## v0.0.35
 
 Phase 6b-ii-c-3-a shipped: per-show podcast playback speed. Set a show to play at 1.5x and its episodes play at that rate, with pitch held constant so faster speech still sounds natural, in the one unified queue alongside music.

@@ -650,6 +650,17 @@ pub(crate) fn set_episode_audio_path(
     Ok(())
 }
 
+/// Clear an episode's downloaded `audio_path` (retention prune, Phase
+/// 6b-ii-c-3-b): the on-disk file has been removed, so the row reverts to
+/// stream-only. The counterpart to `set_episode_audio_path`.
+pub(crate) fn clear_episode_audio_path(conn: &Connection, episode_id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE episodes SET audio_path = NULL WHERE id = ?1",
+        params![episode_id],
+    )?;
+    Ok(())
+}
+
 /// Upsert an episode's triage/playback row by `episode_id` (the triage actions
 /// and the resume cursor, spec §4.2).
 pub(crate) fn upsert_playback(conn: &Connection, playback: &Playback) -> Result<()> {

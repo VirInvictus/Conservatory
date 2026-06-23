@@ -460,10 +460,10 @@ Split, because the six settings span playback (resolved into the profile) and ma
 
 *Usable artifact:* set a show's speed (`podcast settings ... --speed 1.5`) and its episodes play at that rate with corrected pitch, in the unified queue.
 
-###### Phase 6b-ii-c-3-b — Inbox-policy routing + retention
+###### Phase 6b-ii-c-3-b — Inbox-policy routing + retention ✅
 
-- [ ] Apply a show's `inbox_policy` to new episodes on refresh (Inbox / AlwaysQueue / AlwaysArchive); prune downloaded episodes beyond `keep_count` (retention). These are management settings on the refresh path (`conservatory-podcasts`), not playback.
-- [ ] Tests: a new episode routes per policy; retention prunes the oldest downloads.
+- [x] Apply a show's `inbox_policy` to new episodes on refresh (Inbox / AlwaysQueue / AlwaysArchive); prune downloaded episodes beyond `keep_count` (retention). These are management settings (`conservatory-podcasts`), not playback. Routing rides `refresh::apply_feed`: the show's settings are read once (default Inbox when absent), and **only genuinely-new episodes route** (a re-refresh never re-queues one the user removed); `AlwaysQueue` enqueues to the unified queue, `AlwaysArchive` marks `ArchivedUnlistened`, `Inbox` is a no-op (the §4.2 derivation). Retention is a separate **root-aware** pass (`retention.rs`: `plan` → `apply`, the mover's dry-run-then-apply shape): downloaded episodes beyond `keep_count` (0 = keep all) lose their file + `audio_path` (revert to stream-only); a new `clear_episode_audio_path` worker command + the `podcast prune <db> [show_id] --root [--apply]` verb (dry-run default).
+- [x] Tests: a new episode routes per policy and an already-seen one does not re-route (`refresh.rs`); retention prunes the oldest downloads, keeps the newest, ignores `keep_count = 0` and stream-only episodes (`retention.rs`); music-only build green.
 
 ###### Phase 6b-ii-c-3-c — GUI per-show settings panel
 

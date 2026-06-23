@@ -10,18 +10,23 @@
 //! - [`refresh_all`]: poll every subscription concurrently under a
 //!   [`Semaphore`], aggregating per-show outcomes.
 //!
-//! Triage (inbox policy, playback rows, queue insertion) is **not** here; that
-//! is Phase 6b. Refresh only upserts episodes and stamps the conditional-GET
-//! bookkeeping. User-configured show fields (priority, keep_count,
+//! Refresh stamps the conditional-GET bookkeeping, upserts episodes, and routes
+//! each **genuinely-new** episode through the show's `inbox_policy` (Phase
+//! 6b-ii-c-3-b): `AlwaysQueue` enqueues it, `AlwaysArchive` marks it archived,
+//! `Inbox` (the default) leaves it for the derived Inbox bucket. Only new
+//! episodes route, so a re-refresh never re-queues an episode the user has
+//! since removed. User-configured show fields (priority, keep_count,
 //! auto_download, auth, cover/accent) are preserved across a refresh: only the
-//! descriptive metadata and the HTTP validators are rewritten.
+//! descriptive metadata and the HTTP validators are rewritten. Retention
+//! pruning is a separate, root-aware pass ([`crate::retention`]).
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use chrono::Utc;
 use conservatory_core::db::{
-    Episode, ReadPool, Show, WorkerHandle, get_show, list_episodes_for_show, list_shows,
+    Episode, InboxPolicy, PlayedState, ReadPool, Show, WorkerHandle, get_show, get_show_settings,
+    list_episodes_for_show, list_shows,
 };
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -233,6 +238,15 @@ async fn apply_feed(
     let show_slug = show.slug.clone();
     worker.update_show(show).await?;
 
+    // The show's inbox policy routes genuinely-new episodes; absence is the
+    // schema default (Inbox). Read once per refresh.
+    let policy = {
+        let conn = pool.open()?;
+        get_show_settings(&conn, show_id)?
+            .map(|s| s.inbox_policy)
+            .unwrap_or(InboxPolicy::Inbox)
+    };
+
     // Existing guids, read once, to count genuinely-new episodes.
     let existing: HashSet<String> = {
         let conn = pool.open()?;
@@ -245,12 +259,28 @@ async fn apply_feed(
     let total = parsed.episodes.len();
     let mut new = 0;
     for pe in parsed.episodes {
-        if !existing.contains(&pe.guid) {
+        let is_new = !existing.contains(&pe.guid);
+        if is_new {
             new += 1;
         }
-        worker
+        let episode_id = worker
             .upsert_episode(to_episode(show_id, &show_slug, pe))
             .await?;
+        // Route only genuinely-new episodes: re-routing on every refresh would
+        // re-queue an episode the user has since removed from the queue, or
+        // un-archive one they archived by hand. Inbox needs no write (the §4.2
+        // derivation puts a row-less, un-queued episode in Inbox).
+        if is_new {
+            match policy {
+                InboxPolicy::Inbox => {}
+                InboxPolicy::AlwaysQueue => worker.enqueue_episodes(vec![episode_id]).await?,
+                InboxPolicy::AlwaysArchive => {
+                    worker
+                        .set_episode_played(episode_id, PlayedState::ArchivedUnlistened, None)
+                        .await?
+                }
+            }
+        }
     }
     Ok((new, total))
 }

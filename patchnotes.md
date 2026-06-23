@@ -1,5 +1,19 @@
 # Patch Notes
 
+## v0.0.37
+
+Phase 6b-ii-c-3-c shipped: per-show podcast settings in the GUI. Select a show in the Podcasts tab, click the gear in the detail pane, and set its playback speed, Smart Speed and Voice Boost, intro/outro skip, and what happens to new episodes (inbox, queue, or archive). This completes the per-show overrides and Phase 6b-ii-c.
+
+- **Settings gear (`conservatory/src/ui/podcasts.rs`):** when a show is the selected sidebar source, a gear button appears in the detail pane (hidden for the triage buckets and tags, where a single show does not apply). The detail header now shows the show's title when no episode is selected.
+- **Settings dialog:** the gear opens an `adw::AlertDialog` whose content is an `adw::PreferencesGroup` of rows, pre-populated from the show's stored overrides (or the schema defaults when it has none): a speed spin row (0.25x–4.0x, the same bounds the player clamps to), Smart Speed and Voice Boost switches, intro/outro skip spin rows, and a "New episodes" dropdown (Add to Inbox / Add to Queue / Archive, the inbox policy that drives v0.0.36's routing). Save writes through the single-writer worker (`upsert_show_settings`), the same path the `podcast settings` CLI uses. The dialog reuses the bulk-edit dialog idiom; the existing episode-detail and triage flows are untouched.
+- **Honest about 6c:** Smart Speed and Voice Boost are saved per show, but their audio processing (the `af`-chain filters) lands at Phase 6c; the dialog says so, so the toggles persist intent without overstating what plays today.
+- **No clobber:** the panel does not expose the global-inherit `skip_forward` / `skip_back` fields, so a save preserves whatever those were rather than resetting them.
+- **Tests:** the pure form mapping is unit-tested headless (the inbox-policy index round-trip and out-of-range degrade-to-inbox; `settings_from_form` applies the edited fields and preserves the skip-forward/back inherits; the default skeleton matches the schema). The dialog widget tree is build + manual (the 3b/3c GUI precedent). First use of the libadwaita preference-row widgets (`SpinRow` / `SwitchRow` / `ComboRow`); no new dependency. The `--no-default-features` music-only build stays green.
+
+With this, **Phase 6b-ii-c is complete** (episode playback, resume, and per-show overrides), and so is **Phase 6b-ii** (the Podcasts triage panes). What remains for podcast parity is Phase 6c (the Smart Speed / Voice Boost `af`-chain, built on the Phase 5.5 engine, plus chapters and the now-playing additions).
+
+Next: Phase 5.5 (the DSP `af`-chain engine that 6c builds on) or Phase 6c (the spoken-word profile), per the spec §17 ordering.
+
 ## v0.0.36
 
 Phase 6b-ii-c-3-b shipped: inbox-policy routing and retention, the management half of per-show overrides. A show set to auto-queue drops its new episodes straight into the queue; one set to auto-archive keeps them out of your inbox; and a show with a keep limit prunes its oldest downloads so they do not pile up on disk.

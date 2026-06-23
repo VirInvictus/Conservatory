@@ -14,8 +14,11 @@
 //!   source so the list glyph and the bucket counts refresh.
 //! - **Playback (6b-ii-c-1):** double-click / Enter plays the visible list from
 //!   that row, `Ctrl+Enter` appends; episodes flow into the one unified queue
-//!   via `build_episode_queue` + the `PlayerHandle` (streamed or local). Episode
-//!   resume + per-show overrides are 6b-ii-c-2/c-3.
+//!   via `build_episode_queue` + the `PlayerHandle` (streamed or local).
+//! - **Per-show settings (6b-ii-c-3-c):** when a show is the selected sidebar
+//!   source, a gear button in the detail pane opens a settings dialog (speed,
+//!   Smart Speed / Voice Boost, skip intro/outro, inbox policy) writing through
+//!   `upsert_show_settings`. The CLI analogue is `podcast settings`.
 //!
 //! Worker writes are dispatched with `rt.block_on(worker.*)` from the GTK main
 //! thread, the app-wide GUI-write idiom (the worker runs on a dedicated runtime
@@ -33,9 +36,9 @@ use gtk::glib;
 
 use conservatory_core::PlayerHandle;
 use conservatory_core::db::{
-    EpisodeListRow, PlayedState, ReadPool, ShowSettings, TriageBucket, WorkerHandle,
-    episodes_for_show, episodes_for_tag, episodes_in_bucket, list_all_tags, list_shows,
-    show_settings_map,
+    EpisodeListRow, InboxPolicy, PlayedState, ReadPool, ShowSettings, TriageBucket, WorkerHandle,
+    episodes_for_show, episodes_for_tag, episodes_in_bucket, get_show, get_show_settings,
+    list_all_tags, list_shows, show_settings_map,
 };
 
 use crate::playqueue::{EpisodeSource, build_episode_queue};
@@ -67,17 +70,37 @@ struct Inner {
     store: gtk::gio::ListStore,
     selection: gtk::SingleSelection,
     current: RefCell<Source>,
+    /// The selected show's title, shown in the detail header when no episode is
+    /// selected (empty for bucket/tag sources).
+    show_title: RefCell<String>,
     title: gtk::Label,
     subtitle: gtk::Label,
     notes: gtk::Label,
     actions: gtk::Box,
     played_btn: gtk::Button,
     star_btn: gtk::Button,
+    /// Per-show settings affordance, visible only for a show source.
+    settings_btn: gtk::Button,
 }
 
 impl Inner {
     fn load(&self, source: Source) {
         *self.current.borrow_mut() = source;
+        // The per-show settings affordance and the detail header are only
+        // meaningful for a single show; resolve the show title once here.
+        let show_title = match source {
+            Source::Show(id) => self
+                .pool
+                .open()
+                .ok()
+                .and_then(|conn| get_show(&conn, id).ok().flatten())
+                .map(|s| s.title)
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        *self.show_title.borrow_mut() = show_title;
+        self.settings_btn
+            .set_visible(matches!(source, Source::Show(_)));
         self.store.remove_all();
         for row in &self.read(source) {
             self.store.append(&EpisodeRow::new(row));
@@ -127,7 +150,7 @@ impl Inner {
                     .set_label(if r.starred() { "Unstar" } else { "Star" });
             }
             None => {
-                self.title.set_text("");
+                self.title.set_text(&self.show_title.borrow());
                 self.subtitle.set_text("");
                 self.notes.set_text("Select an episode to read its notes.");
                 self.actions.set_sensitive(false);
@@ -246,7 +269,169 @@ impl Inner {
             player.append(items);
         }
     }
+
+    /// Open the per-show settings dialog for the selected show (Phase
+    /// 6b-ii-c-3-c): an `adw::PreferencesGroup` pre-populated from the stored
+    /// overrides (or the schema defaults), saved through `upsert_show_settings`.
+    /// `anchor` is the gear button, used to root the dialog on the window.
+    fn open_settings(self: &Rc<Self>, anchor: &gtk::Button) {
+        let Source::Show(show_id) = *self.current.borrow() else {
+            return;
+        };
+        let current = self
+            .pool
+            .open()
+            .ok()
+            .and_then(|conn| get_show_settings(&conn, show_id).ok().flatten());
+        let cur = current.clone().unwrap_or_else(|| default_settings(show_id));
+
+        let group = adw::PreferencesGroup::new();
+        group.set_description(Some(
+            "Smart Speed and Voice Boost are saved per show; their audio \
+             processing arrives in a later update.",
+        ));
+
+        // Speed bounds mirror player::profile's MIN/MAX_SPEED (the real clamp
+        // stays at resolve_episode_profile, so the UI cap is only a guard rail).
+        let speed = adw::SpinRow::with_range(MIN_SPEED, MAX_SPEED, 0.05);
+        speed.set_title("Playback speed");
+        speed.set_digits(2);
+        speed.set_value(cur.playback_speed);
+
+        let smart = adw::SwitchRow::new();
+        smart.set_title("Smart Speed");
+        smart.set_active(cur.smart_speed);
+
+        let voice = adw::SwitchRow::new();
+        voice.set_title("Voice Boost");
+        voice.set_active(cur.voice_boost);
+
+        let intro = adw::SpinRow::with_range(0.0, 600.0, 1.0);
+        intro.set_title("Skip intro (seconds)");
+        intro.set_value(cur.skip_intro as f64);
+
+        let outro = adw::SpinRow::with_range(0.0, 600.0, 1.0);
+        outro.set_title("Skip outro (seconds)");
+        outro.set_value(cur.skip_outro as f64);
+
+        let policy = adw::ComboRow::new();
+        policy.set_title("New episodes");
+        policy.set_model(Some(&gtk::StringList::new(&[
+            "Add to Inbox",
+            "Add to Queue",
+            "Archive",
+        ])));
+        policy.set_selected(inbox_policy_index(cur.inbox_policy));
+
+        for row in [
+            speed.upcast_ref::<gtk::Widget>(),
+            smart.upcast_ref(),
+            voice.upcast_ref(),
+            intro.upcast_ref(),
+            outro.upcast_ref(),
+            policy.upcast_ref(),
+        ] {
+            group.add(row);
+        }
+
+        let dialog = adw::AlertDialog::new(Some("Show settings"), None);
+        dialog.set_extra_child(Some(&group));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("save", "Save");
+        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("save"));
+        dialog.set_close_response("cancel");
+
+        let inner = self.clone();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "save" {
+                return;
+            }
+            let settings = settings_from_form(
+                current.as_ref(),
+                show_id,
+                speed.value(),
+                smart.is_active(),
+                voice.is_active(),
+                intro.value() as u32,
+                outro.value() as u32,
+                inbox_policy_from_index(policy.selected()),
+            );
+            let _ = inner
+                .rt
+                .block_on(inner.worker.upsert_show_settings(settings));
+        });
+        dialog.present(Some(anchor));
+    }
 }
+
+/// The schema defaults for a show with no stored `show_settings` row (mirrors
+/// the CLI `run_podcast_settings` skeleton and the migration `0006` defaults).
+fn default_settings(show_id: i64) -> ShowSettings {
+    ShowSettings {
+        show_id,
+        playback_speed: 1.0,
+        smart_speed: true,
+        voice_boost: false,
+        skip_intro: 0,
+        skip_outro: 0,
+        skip_forward: None,
+        skip_back: None,
+        inbox_policy: InboxPolicy::Inbox,
+    }
+}
+
+/// The `ComboRow` index for an inbox policy (0 = Inbox, 1 = Queue, 2 = Archive).
+fn inbox_policy_index(policy: InboxPolicy) -> u32 {
+    match policy {
+        InboxPolicy::Inbox => 0,
+        InboxPolicy::AlwaysQueue => 1,
+        InboxPolicy::AlwaysArchive => 2,
+    }
+}
+
+/// The inbox policy for a `ComboRow` index; an out-of-range index degrades to
+/// Inbox (the schema default) rather than panicking.
+fn inbox_policy_from_index(index: u32) -> InboxPolicy {
+    match index {
+        1 => InboxPolicy::AlwaysQueue,
+        2 => InboxPolicy::AlwaysArchive,
+        _ => InboxPolicy::Inbox,
+    }
+}
+
+/// Build the `ShowSettings` to persist from the dialog's field values,
+/// preserving `skip_forward` / `skip_back` from `current` (the panel does not
+/// expose those global-inherit fields, so a save must not clobber them).
+#[allow(clippy::too_many_arguments)]
+fn settings_from_form(
+    current: Option<&ShowSettings>,
+    show_id: i64,
+    speed: f64,
+    smart_speed: bool,
+    voice_boost: bool,
+    skip_intro: u32,
+    skip_outro: u32,
+    inbox_policy: InboxPolicy,
+) -> ShowSettings {
+    ShowSettings {
+        show_id,
+        playback_speed: speed,
+        smart_speed,
+        voice_boost,
+        skip_intro,
+        skip_outro,
+        skip_forward: current.and_then(|c| c.skip_forward),
+        skip_back: current.and_then(|c| c.skip_back),
+        inbox_policy,
+    }
+}
+
+/// Variable-speed bounds for the speed spin row, mirroring `player::profile`
+/// (`MIN_SPEED` / `MAX_SPEED`). The authoritative clamp is at playback
+/// resolution; this only bounds the input widget.
+const MIN_SPEED: f64 = 0.25;
+const MAX_SPEED: f64 = 4.0;
 
 fn detail_subtitle(r: &EpisodeRow) -> String {
     let mut parts = vec![r.show_title()];
@@ -297,8 +482,20 @@ pub fn build_podcasts_view(
     let title = gtk::Label::builder()
         .xalign(0.0)
         .wrap(true)
+        .hexpand(true)
         .css_classes(["title-3"])
         .build();
+    // Per-show settings gear, shown only for a show source (wired below).
+    let settings_btn = gtk::Button::builder()
+        .icon_name("emblem-system-symbolic")
+        .tooltip_text("Show settings")
+        .valign(gtk::Align::Start)
+        .visible(false)
+        .css_classes(["flat"])
+        .build();
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    header.append(&title);
+    header.append(&settings_btn);
     let subtitle = gtk::Label::builder()
         .xalign(0.0)
         .wrap(true)
@@ -334,7 +531,7 @@ pub fn build_podcasts_view(
         .margin_end(12)
         .width_request(280)
         .build();
-    detail.append(&title);
+    detail.append(&header);
     detail.append(&subtitle);
     detail.append(&actions);
     detail.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -349,14 +546,23 @@ pub fn build_podcasts_view(
         store,
         selection: selection.clone(),
         current: RefCell::new(Source::Bucket(TriageBucket::Inbox)),
+        show_title: RefCell::new(String::new()),
         title,
         subtitle,
         notes,
         actions,
         played_btn: played_btn.clone(),
         star_btn: star_btn.clone(),
+        settings_btn: settings_btn.clone(),
     });
     inner.show_detail(None);
+
+    // The detail-pane gear opens the per-show settings dialog (shown only for a
+    // show source; visibility toggled in `load`).
+    {
+        let inner = inner.clone();
+        settings_btn.connect_clicked(move |btn| inner.open_settings(btn));
+    }
 
     // Double-click / Enter plays the visible list from that row; Ctrl+Enter
     // appends the selection (the music leaf idiom, spec §3.6).
@@ -575,4 +781,81 @@ fn text_column(
 // The widget tree itself is verified by build + manual launch (the 3b/3c/4b/6b-i
 // precedent): a `gtk::init()`-based construction test hangs under cargo's
 // multi-threaded runner because GTK must run on the main thread. The row
-// formatting that backs the list is unit-tested in `objects.rs`.
+// formatting that backs the list is unit-tested in `objects.rs`. The settings
+// dialog's pure form mapping is unit-tested below (it constructs no widgets).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inbox_policy_index_round_trips() {
+        for policy in [
+            InboxPolicy::Inbox,
+            InboxPolicy::AlwaysQueue,
+            InboxPolicy::AlwaysArchive,
+        ] {
+            assert_eq!(inbox_policy_from_index(inbox_policy_index(policy)), policy);
+        }
+        // The fixed ComboRow order.
+        assert_eq!(inbox_policy_index(InboxPolicy::Inbox), 0);
+        assert_eq!(inbox_policy_index(InboxPolicy::AlwaysQueue), 1);
+        assert_eq!(inbox_policy_index(InboxPolicy::AlwaysArchive), 2);
+    }
+
+    #[test]
+    fn inbox_policy_from_out_of_range_index_degrades_to_inbox() {
+        assert_eq!(inbox_policy_from_index(99), InboxPolicy::Inbox);
+    }
+
+    #[test]
+    fn settings_from_form_applies_edits_and_preserves_skip_fields() {
+        // A stored row carries custom global-inherit skip overrides the panel
+        // does not expose; a save must keep them.
+        let current = ShowSettings {
+            show_id: 7,
+            playback_speed: 1.0,
+            smart_speed: true,
+            voice_boost: false,
+            skip_intro: 0,
+            skip_outro: 0,
+            skip_forward: Some(45),
+            skip_back: Some(15),
+            inbox_policy: InboxPolicy::Inbox,
+        };
+        let out = settings_from_form(
+            Some(&current),
+            7,
+            1.5,
+            false,
+            true,
+            30,
+            20,
+            InboxPolicy::AlwaysQueue,
+        );
+        assert_eq!(out.playback_speed, 1.5);
+        assert!(!out.smart_speed);
+        assert!(out.voice_boost);
+        assert_eq!((out.skip_intro, out.skip_outro), (30, 20));
+        assert_eq!(out.inbox_policy, InboxPolicy::AlwaysQueue);
+        // Untouched, inherited from `current`.
+        assert_eq!(out.skip_forward, Some(45));
+        assert_eq!(out.skip_back, Some(15));
+    }
+
+    #[test]
+    fn settings_from_form_without_current_leaves_skip_fields_unset() {
+        let out = settings_from_form(None, 3, 1.0, true, false, 0, 0, InboxPolicy::AlwaysArchive);
+        assert_eq!(out.skip_forward, None);
+        assert_eq!(out.skip_back, None);
+        assert_eq!(out.inbox_policy, InboxPolicy::AlwaysArchive);
+    }
+
+    #[test]
+    fn default_settings_matches_schema_defaults() {
+        let d = default_settings(1);
+        assert_eq!(d.playback_speed, 1.0);
+        assert!(d.smart_speed);
+        assert!(!d.voice_boost);
+        assert_eq!(d.inbox_policy, InboxPolicy::Inbox);
+    }
+}

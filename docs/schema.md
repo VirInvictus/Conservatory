@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), and `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2). The audiobook tables below are still draft (they land at Phase 7a). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
+> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2), and `0008` (the equalizer: `eq_presets` + `eq_state`, Phase 5.5b). The audiobook tables below are still draft (they land at Phase 7a). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
 
 ## Connection discipline
 
@@ -151,6 +151,23 @@ CREATE TABLE perspectives (
     scope TEXT NOT NULL DEFAULT 'tracks',
     created_at INTEGER,
     UNIQUE (name)
+);
+```
+
+## Equalizer (Phase 5.5b, migration `0008`, spec §6.2)
+
+The graphic equalizer (10-band ISO octave) rendered as the `@eq` stage of the `af` chain. `eq_presets` are named gain sets (the `perspectives` precedent), seeded with `Flat`; `eq_state` is the singleton active EQ: the live band values plus the selected preset name (`NULL` once a band is edited away from a preset). `bands` is a CSV of ten gains in dB (no serde in core; the read is forgiving — a bad value reads as 0 dB for that band). A flat state renders to a no-op chain (no `@eq` stage). Live per-band mutation (`af-command`) and the GTK Sound dialog land at 5.5b-ii.
+
+```sql
+CREATE TABLE eq_presets (
+    name  TEXT PRIMARY KEY,
+    bands TEXT NOT NULL              -- CSV of 10 gains, dB
+);
+
+CREATE TABLE eq_state (
+    id          INTEGER PRIMARY KEY CHECK (id = 0),  -- singleton
+    preset_name TEXT,                                -- selected preset; NULL = custom
+    bands       TEXT NOT NULL                        -- live band values, CSV of 10 gains, dB
 );
 ```
 

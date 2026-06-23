@@ -11,7 +11,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use crate::db::MediaKind;
+use crate::db::{EqState, MediaKind};
 use crate::player::host::AudioDevice;
 use crate::player::item::PlayableItem;
 
@@ -51,6 +51,8 @@ pub enum PlayerCommand {
     ClearQueue,
     /// Switch the audio output device (mpv `audio-device`).
     SetAudioDevice(String),
+    /// Set the active equalizer (Phase 5.5b); applied from the next loaded item.
+    SetEq(EqState),
     /// Halt playback and persist, but keep the engine thread alive.
     Stop,
     /// Stop and exit the engine thread (joined by [`PlayerHandle::shutdown`]).
@@ -204,6 +206,11 @@ impl PlayerHandle {
     /// Switch the audio output device (spec §6.5).
     pub fn set_audio_device(&self, name: impl Into<String>) {
         let _ = self.tx.send(PlayerCommand::SetAudioDevice(name.into()));
+    }
+
+    /// Set the active equalizer (Phase 5.5b); applied from the next loaded item.
+    pub fn set_eq(&self, eq: EqState) {
+        let _ = self.tx.send(PlayerCommand::SetEq(eq));
     }
 
     pub fn stop(&self) {

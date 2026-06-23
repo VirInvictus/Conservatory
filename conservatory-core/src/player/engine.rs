@@ -263,6 +263,11 @@ impl Engine {
                     self.audio_device = Some(name);
                 }
             }
+            PlayerCommand::SetEq(eq) => {
+                // Applied into the `af` chain on the next load (the per-item
+                // rebuild); live per-band mutation is 5.5b-ii.
+                self.host.set_eq(eq);
+            }
             PlayerCommand::Stop => {
                 self.set_paused(true);
                 self.flush(StateEvent::Quit, true);

@@ -318,13 +318,23 @@ The music daily-driver's "feel good" phase, and a foundational refactor. Today t
 
 ### Phase 5.5b — Equalizer (core + GTK)
 
-- [ ] Graphic EQ: a stack of `equalizer` peaking bands at fixed ISO centre frequencies (10/15-band), gains moved live via `af-command` (NOT `superequalizer`/`firequalizer`, which carry no runtime command and would gap on every slider). Parametric option via `anequalizer` (per-band freq/Q/gain, live `change` command).
-- [ ] Named EQ presets (Flat default), persisted; per-output-device binding deferred with the broader output work.
-- [ ] First GTK preferences surface: a "Sound" `AdwPreferencesPage` (in an `AdwPreferencesDialog`) hosting the EQ (sliders + preset picker). This is the app's first settings UI; the Phase 10 config/preferences work builds on it.
-- [ ] CLI: get/set EQ bands and presets.
-- [ ] Tests: a band change maps to the expected `af-command` (no chain rebuild); preset round-trip; flat preset is a no-op chain.
+Split headless-first: **5.5b-i** lands the graphic EQ in the chain + persistence + the CLI (applied at load); **5.5b-ii** adds live per-band `af-command` mutation and the first GTK "Sound" preferences dialog. Settled scope: a **10-band ISO octave** graphic EQ (31 / 62 / 125 / 250 / 500 / 1k / 2k / 4k / 8k / 16k Hz); the **parametric `anequalizer`** is a later follow-up, not 5.5b.
 
-*Usable artifact:* a working graphic + parametric equalizer with presets, in the GUI and CLI.
+#### Phase 5.5b-i — Graphic EQ core + persistence + CLI (headless) ✅ (v0.0.40)
+
+- [x] Graphic EQ in the chain (`player/chain.rs`): `build_af_chain(profile, eq)` appends `@eq:lavfi=[equalizer@b0=f=31:t=o:w=1:g=…, … equalizer@b9=…]`, a stack of named `equalizer` peaking bands at the ISO centres, **only when the EQ is non-flat** (flat ⇒ no `@eq`, the no-op chain). Each band is named `equalizer@b<n>` so 5.5b-ii can target it live with `af-command`. Avoids `superequalizer`/`firequalizer` (no runtime command). `eq_stage` is pure + unit-tested.
+- [x] Named EQ presets + the active state **persisted** in the DB (migration `0008`, the `perspectives` precedent): `eq_presets(name, bands CSV)` seeded `Flat`, and the singleton `eq_state` (live bands + selected preset). `EqState` model (`bands: [f64; 10]`, `preset`), reads (`get_eq_state` / `list_eq_presets` / `get_eq_preset`), worker writes (`set_eq_state` / `save_eq_preset` / `delete_eq_preset`). The engine gained `PlayerCommand::SetEq` (host holds the EQ, applied on the next load); CLI `play` sends the persisted EQ.
+- [x] CLI: `eq show` (bands + preset + the resolved `@eq` chain), `eq set <band> <gain>` (±24 dB clamp; marks custom), `eq preset list|save|load|delete` (`Flat` is undeletable).
+- [x] Tests: the `@eq` builder (flat → no stage; non-flat → named bands at the ISO centres; `@rg` precedes `@eq`); EqState/preset round-trips + forgiving CSV parse (`tests/eq.rs`); the migration table-exists; the libmpv EOF test now sets a non-flat `@eq` chain (proves the `equalizer@b0=f=31:t=o:w=1:g=…` mpv syntax). Music-only build green.
+
+#### Phase 5.5b-ii — Live mutation + the GTK "Sound" dialog
+
+- [ ] Live per-band gain via `af-command` (gap-free slider drags; structural rebuild only on a preset switch / flat↔non-flat transition). The engine gains a per-band command + `host.af_command`.
+- [ ] First GTK preferences surface: a "Sound" `AdwPreferencesPage` (in an `AdwPreferencesDialog`) hosting the EQ (sliders + preset picker). The app's first settings UI; the Phase 10 config/preferences work builds on it.
+- [ ] (Later) the parametric option via `anequalizer` (per-band freq/Q/gain, live `change`).
+- [ ] Tests: a band change maps to the expected `af-command` (no chain rebuild); build + manual for the dialog.
+
+*Usable artifact:* (5.5b-i) a working graphic equalizer with persisted presets via the CLI, applied to playback; (5.5b-ii) the same with live sliders in a Sound preferences dialog.
 
 ### Phase 5.5c — DSP modules + output quality (core + GTK)
 

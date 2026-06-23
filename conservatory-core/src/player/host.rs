@@ -16,6 +16,7 @@ use libmpv2::events::Event;
 use libmpv2::mpv_node::MpvNode;
 use libmpv2::{EndFileReason, Mpv, mpv_end_file_reason};
 
+use crate::db::models::EqState;
 use crate::errors::{Error, Result};
 use crate::player::profile::MusicProfile;
 use crate::player::state::EndReason;
@@ -45,6 +46,10 @@ pub enum HostEvent {
 /// a dedicated thread behind a command channel.
 pub struct MpvHost {
     mpv: Mpv,
+    /// The active equalizer (Phase 5.5b), applied into the `af` chain on each
+    /// load. Defaults to flat (no `@eq` stage); the engine updates it via
+    /// [`MpvHost::set_eq`].
+    eq: EqState,
 }
 
 impl MpvHost {
@@ -80,7 +85,16 @@ impl MpvHost {
             Ok(())
         })
         .map_err(|e| Error::Player(format!("initializing libmpv: {e}")))?;
-        Ok(Self { mpv })
+        Ok(Self {
+            mpv,
+            eq: EqState::flat(),
+        })
+    }
+
+    /// Set the active equalizer (Phase 5.5b). Applied into the `af` chain on the
+    /// next [`MpvHost::load`]; live (gap-free) per-band mutation is 5.5b-ii.
+    pub fn set_eq(&mut self, eq: EqState) {
+        self.eq = eq;
     }
 
     /// Apply `profile` and start playing `path`. The profile properties are set
@@ -106,7 +120,7 @@ impl MpvHost {
         // track — the fix for mpv #8267, where the built-in `--replaygain` (now
         // dropped) sat after the chain and inherited the first track's gain. An
         // empty string clears any prior chain.
-        let af = crate::player::chain::build_af_chain(profile);
+        let af = crate::player::chain::build_af_chain(profile, &self.eq);
         self.mpv
             .set_property("af", af.as_str())
             .map_err(|e| Error::Player(format!("setting af chain: {e}")))?;

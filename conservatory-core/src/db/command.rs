@@ -11,8 +11,8 @@
 use tokio::sync::oneshot;
 
 use crate::db::models::{
-    Album, Artist, Chapter, Episode, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
-    Track,
+    Album, Artist, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState,
+    Show, ShowSettings, Track,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -166,6 +166,25 @@ pub(crate) enum Command {
     /// Delete a Perspective by id.
     DeletePerspective {
         id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Overwrite the singleton active EQ state (Phase 5.5b).
+    SetEqState {
+        state: EqState,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Save (insert or overwrite by name) a named EQ preset.
+    SaveEqPreset {
+        name: String,
+        bands: [f64; EQ_BAND_COUNT],
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Delete a named EQ preset.
+    DeleteEqPreset {
+        name: String,
         reply: oneshot::Sender<Result<()>>,
     },
 
@@ -367,6 +386,9 @@ impl Command {
             Self::SetJobState { .. } => "set_job_state",
             Self::SavePerspective { .. } => "save_perspective",
             Self::DeletePerspective { .. } => "delete_perspective",
+            Self::SetEqState { .. } => "set_eq_state",
+            Self::SaveEqPreset { .. } => "save_eq_preset",
+            Self::DeleteEqPreset { .. } => "delete_eq_preset",
             Self::SavePlaybackState { .. } => "save_playback_state",
             Self::IncrementPlayCount { .. } => "increment_play_count",
             Self::EnqueueTracks { .. } => "enqueue_tracks",

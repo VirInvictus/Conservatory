@@ -10,8 +10,8 @@ use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
-    Album, Artist, Chapter, Episode, InboxPolicy, MediaKind, Perspective, Playback, PlayedState,
-    QueueItem, Show, ShowSettings, Tag, Track,
+    Album, Artist, Chapter, EQ_BAND_COUNT, Episode, EqPreset, EqState, InboxPolicy, MediaKind,
+    Perspective, Playback, PlayedState, QueueItem, Show, ShowSettings, Tag, Track,
 };
 use crate::errors::Result;
 
@@ -1052,4 +1052,54 @@ pub fn episodes_for_tag(conn: &Connection, tag_id: i64) -> Result<Vec<EpisodeLis
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![tag_id], row_to_episode_list_row)?;
     rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// The active equalizer state (Phase 5.5b): the singleton `eq_state` row. The
+/// migration seeds it to Flat, so a managed DB always has a row; a missing row
+/// (impossible post-migration) falls back to flat rather than erroring.
+pub fn get_eq_state(conn: &Connection) -> Result<EqState> {
+    let row = conn
+        .query_row(
+            "SELECT preset_name, bands FROM eq_state WHERE id = 0",
+            [],
+            |row| {
+                let preset_name: Option<String> = row.get("preset_name")?;
+                let bands: String = row.get("bands")?;
+                Ok((preset_name, bands))
+            },
+        )
+        .optional()?;
+    Ok(match row {
+        Some((preset, bands)) => EqState {
+            bands: EqState::parse_bands(&bands),
+            preset,
+        },
+        None => EqState::flat(),
+    })
+}
+
+/// Every named EQ preset, alphabetical (`Flat` is seeded by the migration).
+pub fn list_eq_presets(conn: &Connection) -> Result<Vec<EqPreset>> {
+    let mut stmt = conn.prepare("SELECT name, bands FROM eq_presets ORDER BY name")?;
+    let rows = stmt.query_map([], |row| {
+        let name: String = row.get("name")?;
+        let bands: String = row.get("bands")?;
+        Ok(EqPreset {
+            name,
+            bands: EqState::parse_bands(&bands),
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// A named preset's band gains, or `None` if no preset by that name.
+pub fn get_eq_preset(conn: &Connection, name: &str) -> Result<Option<[f64; EQ_BAND_COUNT]>> {
+    conn.query_row(
+        "SELECT bands FROM eq_presets WHERE name = ?1",
+        params![name],
+        |row| row.get::<_, String>("bands"),
+    )
+    .optional()
+    .map(|opt| opt.map(|csv| EqState::parse_bands(&csv)))
+    .map_err(Into::into)
 }

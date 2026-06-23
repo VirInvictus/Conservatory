@@ -17,12 +17,13 @@
 //! Speed is **not** a stage: mpv auto-inserts `scaletempo2` on `--speed`
 //! (`audio-pitch-correction`), so it stays a flat property on the host.
 
+use crate::db::models::{EQ_CENTRES, EqState};
 use crate::player::profile::MusicProfile;
 
-/// Build the mpv `af` chain string for `profile`. Returns `""` when no stages are
-/// active (which clears mpv's `af`). Phase 5.5a emits only the `@rg` head stage;
-/// `@eq` / `@comp` / `@boost` join here in 5.5b/c.
-pub fn build_af_chain(profile: &MusicProfile) -> String {
+/// Build the mpv `af` chain string for `profile` + the active `eq`. Returns `""`
+/// when no stages are active (which clears mpv's `af`). 5.5a added the `@rg` head
+/// stage; 5.5b adds `@eq` (the graphic equalizer); `@comp` / `@boost` join at 5.5c.
+pub fn build_af_chain(profile: &MusicProfile, eq: &EqState) -> String {
     let mut stages: Vec<String> = Vec::new();
 
     // @rg: ReplayGain as a head-of-chain volume (dB). A bridged ffmpeg `volume`
@@ -31,7 +32,30 @@ pub fn build_af_chain(profile: &MusicProfile) -> String {
         stages.push(format!("@rg:lavfi=[volume={}dB]", fmt_db(db)));
     }
 
+    // @eq: the graphic equalizer (a flat EQ contributes no stage — the no-op
+    // chain). Each band is a named `equalizer` peaking filter so 5.5b-ii can
+    // address it live via `af-command`.
+    if let Some(stage) = eq_stage(eq) {
+        stages.push(stage);
+    }
+
     stages.join(",")
+}
+
+/// The `@eq` stage for `eq`, or `None` when the EQ is flat (the no-op chain). A
+/// stack of named `equalizer` peaking bands at the ISO centres, each one octave
+/// wide, under a single `@eq` lavfi label.
+pub fn eq_stage(eq: &EqState) -> Option<String> {
+    if eq.is_flat() {
+        return None;
+    }
+    let bands: Vec<String> = EQ_CENTRES
+        .iter()
+        .zip(eq.bands.iter())
+        .enumerate()
+        .map(|(i, (centre, gain))| format!("equalizer@b{i}=f={centre}:t=o:w=1:g={}", fmt_db(*gain)))
+        .collect();
+    Some(format!("@eq:lavfi=[{}]", bands.join(",")))
 }
 
 /// Format a dB value for the filter string with a minimal representation
@@ -45,6 +69,7 @@ fn fmt_db(db: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::models::EQ_BAND_COUNT;
 
     fn profile(replaygain_db: Option<f64>) -> MusicProfile {
         MusicProfile {
@@ -55,29 +80,33 @@ mod tests {
         }
     }
 
+    fn flat() -> EqState {
+        EqState::flat()
+    }
+
     #[test]
     fn replaygain_head_stage_is_emitted() {
         assert_eq!(
-            build_af_chain(&profile(Some(-6.0))),
+            build_af_chain(&profile(Some(-6.0)), &flat()),
             "@rg:lavfi=[volume=-6dB]"
         );
         assert_eq!(
-            build_af_chain(&profile(Some(-6.5))),
+            build_af_chain(&profile(Some(-6.5)), &flat()),
             "@rg:lavfi=[volume=-6.5dB]"
         );
     }
 
     #[test]
-    fn no_replaygain_is_an_empty_chain() {
-        assert_eq!(build_af_chain(&profile(None)), "");
+    fn no_replaygain_and_flat_eq_is_an_empty_chain() {
+        assert_eq!(build_af_chain(&profile(None), &flat()), "");
     }
 
     #[test]
     fn different_gains_produce_different_chains() {
         // The per-track recompute that fixes mpv #8267: each item's head volume
         // is its own, so two tracks with different gains never share a chain.
-        let a = build_af_chain(&profile(Some(-6.0)));
-        let b = build_af_chain(&profile(Some(-3.0)));
+        let a = build_af_chain(&profile(Some(-6.0)), &flat());
+        let b = build_af_chain(&profile(Some(-3.0)), &flat());
         assert_ne!(a, b);
         assert_eq!(b, "@rg:lavfi=[volume=-3dB]");
     }
@@ -86,8 +115,37 @@ mod tests {
     fn float_noise_is_rounded_out() {
         // -6.9 + 0.1 style arithmetic should not leak a long decimal.
         assert_eq!(
-            build_af_chain(&profile(Some(-6.9 + 0.1))),
+            build_af_chain(&profile(Some(-6.9 + 0.1)), &flat()),
             "@rg:lavfi=[volume=-6.8dB]"
         );
+    }
+
+    #[test]
+    fn flat_eq_contributes_no_stage() {
+        assert_eq!(eq_stage(&flat()), None);
+    }
+
+    #[test]
+    fn nonflat_eq_emits_named_bands_at_iso_centres() {
+        let mut eq = EqState::flat();
+        eq.bands[0] = 6.0; // 31 Hz +6 dB
+        eq.bands[9] = -4.5; // 16 kHz -4.5 dB
+        let stage = eq_stage(&eq).expect("non-flat EQ has a stage");
+        assert!(stage.starts_with("@eq:lavfi=["));
+        assert!(stage.contains("equalizer@b0=f=31:t=o:w=1:g=6"));
+        assert!(stage.contains("equalizer@b9=f=16000:t=o:w=1:g=-4.5"));
+        // All ten bands are present.
+        assert_eq!(stage.matches("equalizer@b").count(), EQ_BAND_COUNT);
+    }
+
+    #[test]
+    fn rg_and_eq_compose_in_order() {
+        let mut eq = EqState::flat();
+        eq.bands[4] = 3.0;
+        let chain = build_af_chain(&profile(Some(-6.0)), &eq);
+        // @rg precedes @eq (signal-flow order).
+        let rg = chain.find("@rg").unwrap();
+        let e = chain.find("@eq").unwrap();
+        assert!(rg < e, "ReplayGain head stage precedes the EQ");
     }
 }

@@ -19,7 +19,7 @@ pub mod item;
 pub mod profile;
 pub mod state;
 
-pub use chain::build_af_chain;
+pub use chain::{build_af_chain, eq_stage};
 pub use engine::{spawn, spawn_null, spawn_with};
 pub use handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 pub use host::{AudioDevice, HostEvent, MpvHost};

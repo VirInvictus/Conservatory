@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use conservatory_core::db::EqState;
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
     MediaKind, PlaybackCursor, ReadPool, get_track, read_playback_state, spawn_worker,
@@ -128,14 +129,19 @@ fn host_plays_fixture_to_eof() {
     let Ok(mut host) = MpvHost::new_null() else {
         return;
     };
-    // A real ReplayGain head stage (Phase 5.5a): this also proves the `@rg`
-    // `af`-chain syntax is accepted by libmpv and does not break decode.
+    // A real ReplayGain head stage (Phase 5.5a) plus a non-flat equalizer (Phase
+    // 5.5b): this proves both the `@rg` and the `@eq` `af`-chain syntax are
+    // accepted by libmpv and do not break decode.
     let profile = MusicProfile {
         gapless: true,
         replaygain_db: Some(-6.0),
         speed: 1.0,
         pitch_correction: false,
     };
+    let mut eq = EqState::flat();
+    eq.bands[0] = 6.0; // 31 Hz +6 dB
+    eq.bands[9] = -4.5; // 16 kHz -4.5 dB
+    host.set_eq(eq);
     host.load(audio_fixture("sample.flac").to_str().unwrap(), &profile)
         .expect("loading fixture");
 

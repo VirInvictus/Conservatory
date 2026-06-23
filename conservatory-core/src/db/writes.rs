@@ -7,8 +7,8 @@
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
-    Album, Artist, Chapter, Episode, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
-    Track,
+    Album, Artist, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState,
+    Show, ShowSettings, Track,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -311,6 +311,37 @@ pub(crate) fn save_perspective(
 /// Delete a Perspective by id (idempotent: deleting a gone row is fine).
 pub(crate) fn delete_perspective(conn: &Connection, id: i64) -> Result<()> {
     conn.execute("DELETE FROM perspectives WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+/// Overwrite the singleton active EQ state (Phase 5.5b): the live band values +
+/// the selected preset name (`None` for a custom edit).
+pub(crate) fn set_eq_state(conn: &Connection, state: &EqState) -> Result<()> {
+    conn.execute(
+        "UPDATE eq_state SET preset_name = ?1, bands = ?2 WHERE id = 0",
+        params![state.preset, EqState::format_bands(&state.bands)],
+    )?;
+    Ok(())
+}
+
+/// Save (or overwrite) a named EQ preset (Phase 5.5b).
+pub(crate) fn save_eq_preset(
+    conn: &Connection,
+    name: &str,
+    bands: &[f64; EQ_BAND_COUNT],
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO eq_presets (name, bands) VALUES (?1, ?2)
+         ON CONFLICT(name) DO UPDATE SET bands = excluded.bands",
+        params![name, EqState::format_bands(bands)],
+    )?;
+    Ok(())
+}
+
+/// Delete a named EQ preset (idempotent). `Flat` is seeded by the migration; the
+/// CLI/UI guards against deleting it, but the write itself is unconditional.
+pub(crate) fn delete_eq_preset(conn: &Connection, name: &str) -> Result<()> {
+    conn.execute("DELETE FROM eq_presets WHERE name = ?1", params![name])?;
     Ok(())
 }
 

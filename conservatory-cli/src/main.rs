@@ -254,11 +254,76 @@ enum Command {
         out: Option<PathBuf>,
     },
 
+    /// The graphic equalizer (Phase 5.5b, spec §6.2): show the active EQ, set a
+    /// band, or manage named presets. The values apply to playback from the next
+    /// loaded track; the live (instant) GUI sliders are Phase 5.5b-ii.
+    Eq {
+        #[command(subcommand)]
+        action: EqAction,
+    },
+
     /// Phase 3b smoke test: dump the faceted-browse panes (Genre → Album Artist
     /// → Album) with counts and the leaf track total. Read-only.
     DebugFacets {
         /// Path to the SQLite database.
         db: PathBuf,
+    },
+}
+
+/// Equalizer verbs (Phase 5.5b).
+#[derive(Subcommand)]
+enum EqAction {
+    /// Print the active EQ: each band's centre + gain, the selected preset, and
+    /// the resolved `@eq` chain. Read-only.
+    Show {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
+    /// Set one band's gain in dB (clamped to ±24); marks the EQ a custom edit.
+    #[command(allow_negative_numbers = true)]
+    Set {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Band index, 0 (lowest) to 9 (highest).
+        band: usize,
+        /// Gain in dB (may be negative).
+        gain: f64,
+    },
+    /// Manage named presets.
+    Preset {
+        #[command(subcommand)]
+        action: EqPresetAction,
+    },
+}
+
+/// Equalizer-preset verbs (Phase 5.5b).
+#[derive(Subcommand)]
+enum EqPresetAction {
+    /// List every named preset with its band gains. Read-only.
+    List {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
+    /// Save the current EQ as a named preset (overwrites a same-named one).
+    Save {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Preset name.
+        name: String,
+    },
+    /// Load a named preset into the active EQ.
+    Load {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Preset name.
+        name: String,
+    },
+    /// Delete a named preset (`Flat` cannot be deleted).
+    Delete {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Preset name.
+        name: String,
     },
 }
 
@@ -535,6 +600,7 @@ fn main() -> Result<()> {
         Some(Command::ImportOpml { db, file }) => block_on(run_import_opml(db, file)),
         #[cfg(feature = "podcasts")]
         Some(Command::ExportOpml { db, out }) => block_on(run_export_opml(db, out)),
+        Some(Command::Eq { action }) => eq(action),
         Some(Command::DebugFacets { db }) => debug_facets(db),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
@@ -619,6 +685,134 @@ fn debug_tags(file: PathBuf) -> Result<()> {
     Ok(())
 }
 
+fn eq(action: EqAction) -> Result<()> {
+    match action {
+        EqAction::Show { db } => eq_show(db),
+        EqAction::Set { db, band, gain } => block_on(run_eq_set(db, band, gain)),
+        EqAction::Preset { action } => match action {
+            EqPresetAction::List { db } => eq_preset_list(db),
+            EqPresetAction::Save { db, name } => block_on(run_eq_preset_save(db, name)),
+            EqPresetAction::Load { db, name } => block_on(run_eq_preset_load(db, name)),
+            EqPresetAction::Delete { db, name } => block_on(run_eq_preset_delete(db, name)),
+        },
+    }
+}
+
+fn eq_show(db: PathBuf) -> Result<()> {
+    use conservatory_core::db::{EQ_CENTRES, get_eq_state};
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let state = get_eq_state(&conn).context("reading EQ state")?;
+    println!("preset:  {}", state.preset.as_deref().unwrap_or("(custom)"));
+    for (i, (centre, gain)) in EQ_CENTRES.iter().zip(state.bands.iter()).enumerate() {
+        println!("  [{i}] {centre:>6} Hz  {gain:+.1} dB");
+    }
+    let chain = conservatory_core::eq_stage(&state);
+    println!(
+        "af @eq:  {}",
+        chain.as_deref().unwrap_or("(flat — no stage)")
+    );
+    Ok(())
+}
+
+async fn run_eq_set(db: PathBuf, band: usize, gain: f64) -> Result<()> {
+    use conservatory_core::db::{EQ_BAND_COUNT, get_eq_state};
+    anyhow::ensure!(
+        band < EQ_BAND_COUNT,
+        "band must be 0..={}",
+        EQ_BAND_COUNT - 1
+    );
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let mut state = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_eq_state(&conn).context("reading EQ state")?
+    };
+    let clamped = gain.clamp(-24.0, 24.0);
+    state.bands[band] = clamped;
+    state.preset = None; // a manual edit detaches from any preset
+    worker
+        .set_eq_state(state)
+        .await
+        .context("saving EQ state")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Set band {band} to {clamped:+.1} dB.");
+    Ok(())
+}
+
+fn eq_preset_list(db: PathBuf) -> Result<()> {
+    use conservatory_core::db::list_eq_presets;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    for p in list_eq_presets(&conn).context("listing presets")? {
+        let bands = p
+            .bands
+            .iter()
+            .map(|g| format!("{g:+}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        println!("{:<16} {bands}", p.name);
+    }
+    Ok(())
+}
+
+async fn run_eq_preset_save(db: PathBuf, name: String) -> Result<()> {
+    use conservatory_core::db::get_eq_state;
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let mut state = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_eq_state(&conn).context("reading EQ state")?
+    };
+    worker
+        .save_eq_preset(name.clone(), state.bands)
+        .await
+        .context("saving preset")?;
+    // The active EQ is now exactly this preset.
+    state.preset = Some(name.clone());
+    worker
+        .set_eq_state(state)
+        .await
+        .context("updating EQ state")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Saved preset {name:?}.");
+    Ok(())
+}
+
+async fn run_eq_preset_load(db: PathBuf, name: String) -> Result<()> {
+    use conservatory_core::db::{EqState, get_eq_preset};
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let bands = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_eq_preset(&conn, &name)
+            .context("reading preset")?
+            .ok_or_else(|| anyhow::anyhow!("no preset named {name:?}"))?
+    };
+    worker
+        .set_eq_state(EqState {
+            bands,
+            preset: Some(name.clone()),
+        })
+        .await
+        .context("applying preset")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Loaded preset {name:?}.");
+    Ok(())
+}
+
+async fn run_eq_preset_delete(db: PathBuf, name: String) -> Result<()> {
+    anyhow::ensure!(name != "Flat", "the Flat preset cannot be deleted");
+    let worker = spawn_worker(db).context("spawning worker")?;
+    worker
+        .delete_eq_preset(name.clone())
+        .await
+        .context("deleting preset")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Deleted preset {name:?}.");
+    Ok(())
+}
+
 fn debug_dsp(db: PathBuf, track_id: Option<i64>) -> Result<()> {
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
     let conn = pool.open().context("opening pool connection")?;
@@ -638,7 +832,8 @@ fn debug_dsp(db: PathBuf, track_id: Option<i64>) -> Result<()> {
 
     let cfg = PlaybackConfig::default();
     let profile = resolve_music_profile(&track, &cfg);
-    let chain = build_af_chain(&profile);
+    let eq = conservatory_core::db::get_eq_state(&conn).context("reading EQ state")?;
+    let chain = build_af_chain(&profile, &eq);
 
     println!("track:        {} {}", track.id, track.title);
     println!(
@@ -1645,6 +1840,13 @@ fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>) -> Result<()> {
 
     let player = conservatory_core::player::spawn(worker.clone(), runtime.handle().clone())
         .context("starting the player engine")?;
+    // Apply the persisted equalizer (Phase 5.5b) before playing, so headless
+    // playback honours the user's EQ.
+    if let Ok(conn) = pool.open()
+        && let Ok(eq) = conservatory_core::db::get_eq_state(&conn)
+    {
+        player.set_eq(eq);
+    }
     println!("Playing {} item(s), starting at #{start}.", items.len());
     player.play_queue(items, start);
     if start_pos > 0.0 {

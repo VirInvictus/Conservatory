@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.40
+
+Phase 5.5b-i shipped: the graphic equalizer, in the chain and the CLI (headless). A 10-band ISO-octave EQ now joins the `af` chain as the `@eq` stage; presets persist; the live sliders and the GTK "Sound" dialog are the next step (5.5b-ii).
+
+- **`@eq` chain stage (`conservatory-core/src/player/chain.rs`):** `build_af_chain` now also renders the equalizer: `@eq:lavfi=[equalizer@b0=f=31:t=o:w=1:g=…, … equalizer@b9=f=16000:…]`, a stack of named `equalizer` peaking bands at the ISO octave centres (31 / 62 / 125 / 250 / 500 / 1k / 2k / 4k / 8k / 16k Hz). A flat EQ contributes **no** stage (the no-op chain). Each band is named `equalizer@b<n>` so the next sub-phase can mutate it live via `af-command` without rebuilding the graph. The libmpv EOF test confirms the syntax decodes.
+- **Persistence (migration `0008`, the `perspectives` precedent):** `eq_presets` (named, seeded with `Flat`) and the singleton `eq_state` (the live band values + the selected preset). The `EqState` model carries `bands: [f64; 10]` + the preset name; reads and worker writes round-trip through the single-writer worker. CSV-backed, forgiving (a bad stored row reads as flat rather than breaking playback).
+- **Engine:** a new `SetEq` player command. The host holds the active EQ and applies it into the chain on the next loaded track. (Instant, gap-free per-band changes are 5.5b-ii.)
+- **CLI `eq` verb:** `eq show` (each band's centre + gain, the active preset, and the resolved `@eq` chain), `eq set <band 0-9> <gain dB>` (clamped to ±24, marks the EQ a custom edit), and `eq preset list | save <name> | load <name> | delete <name>` (`Flat` is undeletable). `play` applies the persisted EQ.
+- **Tests:** the `@eq` builder (flat → no stage; a non-flat EQ → the named bands at the ISO centres; `@rg` precedes `@eq`); the EqState + preset round-trips and the forgiving CSV parse; the migration table-exists; the libmpv EOF run now sets a real `@eq` chain. Full suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green. No new dependency (the EQ rides the linked libmpv/ffmpeg `equalizer` filter); one schema migration.
+
+Next: Phase 5.5b-ii (live `af-command` slider mutation + the app's first GTK "Sound" preferences dialog).
+
 ## v0.0.39
 
 Phase 5.5a shipped: the chain foundation and correct head-staged ReplayGain. This begins Phase 5.5 (the music DSP engine) and fixes a real ReplayGain bug, headless/core. It is the substrate the Phase 6c spoken-word chain (Smart Speed / Voice Boost) is built on.

@@ -330,6 +330,65 @@ pub struct Tag {
     pub name: String,
 }
 
+/// Number of graphic-equalizer bands (Phase 5.5b): a 10-band ISO octave EQ.
+pub const EQ_BAND_COUNT: usize = 10;
+
+/// The graphic-EQ band centre frequencies in Hz (ISO octave centres). Indexes
+/// align with [`EqState::bands`].
+pub const EQ_CENTRES: [u32; EQ_BAND_COUNT] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+
+/// The active equalizer state (spec §6.2): per-band gains in dB plus the selected
+/// preset name (`None` once a band is edited away from a preset). Rendered as the
+/// `@eq` stage of the `af` chain; an all-zero state ([`Self::is_flat`]) is a no-op
+/// (no `@eq` stage at all).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EqState {
+    pub bands: [f64; EQ_BAND_COUNT],
+    pub preset: Option<String>,
+}
+
+impl EqState {
+    /// The flat state: every band 0 dB, the `Flat` preset selected.
+    pub fn flat() -> Self {
+        Self {
+            bands: [0.0; EQ_BAND_COUNT],
+            preset: Some("Flat".to_string()),
+        }
+    }
+
+    /// Whether every band is effectively 0 dB (renders to a no-op chain).
+    pub fn is_flat(&self) -> bool {
+        self.bands.iter().all(|g| g.abs() < 0.05)
+    }
+
+    /// Parse a CSV of band gains (the storage form). Forgiving: a malformed or
+    /// short value reads as 0 dB for that band, so a bad stored row never breaks
+    /// playback.
+    pub fn parse_bands(csv: &str) -> [f64; EQ_BAND_COUNT] {
+        let mut bands = [0.0; EQ_BAND_COUNT];
+        for (slot, part) in bands.iter_mut().zip(csv.split(',')) {
+            *slot = part.trim().parse().unwrap_or(0.0);
+        }
+        bands
+    }
+
+    /// Format band gains as the CSV storage form.
+    pub fn format_bands(bands: &[f64; EQ_BAND_COUNT]) -> String {
+        bands
+            .iter()
+            .map(|g| g.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+/// A named EQ preset (Phase 5.5b): the `eq_presets` row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EqPreset {
+    pub name: String,
+    pub bands: [f64; EQ_BAND_COUNT],
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

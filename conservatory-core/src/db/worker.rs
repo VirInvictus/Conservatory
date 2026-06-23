@@ -18,8 +18,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::db::command::Command;
 use crate::db::models::{
-    Album, Artist, Chapter, Episode, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
-    Track,
+    Album, Artist, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState,
+    Show, ShowSettings, Track,
 };
 use crate::db::{connection, migrations, probe, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
@@ -282,6 +282,24 @@ impl WorkerHandle {
     /// Delete a Perspective by id.
     pub async fn delete_perspective(&self, id: i64) -> Result<()> {
         self.dispatch(|reply| Command::DeletePerspective { id, reply })
+            .await
+    }
+
+    /// Overwrite the singleton active EQ state (Phase 5.5b).
+    pub async fn set_eq_state(&self, state: EqState) -> Result<()> {
+        self.dispatch(|reply| Command::SetEqState { state, reply })
+            .await
+    }
+
+    /// Save (insert or overwrite by name) a named EQ preset.
+    pub async fn save_eq_preset(&self, name: String, bands: [f64; EQ_BAND_COUNT]) -> Result<()> {
+        self.dispatch(|reply| Command::SaveEqPreset { name, bands, reply })
+            .await
+    }
+
+    /// Delete a named EQ preset.
+    pub async fn delete_eq_preset(&self, name: String) -> Result<()> {
+        self.dispatch(|reply| Command::DeleteEqPreset { name, reply })
             .await
     }
 
@@ -724,6 +742,15 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::DeletePerspective { id, reply } => {
             let _ = reply.send(writes::delete_perspective(conn, id));
+        }
+        Command::SetEqState { state, reply } => {
+            let _ = reply.send(writes::set_eq_state(conn, &state));
+        }
+        Command::SaveEqPreset { name, bands, reply } => {
+            let _ = reply.send(writes::save_eq_preset(conn, &name, &bands));
+        }
+        Command::DeleteEqPreset { name, reply } => {
+            let _ = reply.send(writes::delete_eq_preset(conn, &name));
         }
         Command::SavePlaybackState { cursor, reply } => {
             let _ = reply.send(writes::save_playback_state(conn, &cursor));

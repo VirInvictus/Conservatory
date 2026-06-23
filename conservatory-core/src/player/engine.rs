@@ -357,10 +357,20 @@ impl Engine {
         };
         let path = item.source.to_string_lossy().into_owned();
         let profile = item.profile;
+        let kind = item.kind;
+        let streaming = item.streaming;
+        tracing::debug!(?kind, streaming, source = %path, index = ?self.current, "player: loading item");
         if let Err(e) = self.host.load(&path, &profile) {
             tracing::warn!(error = %e, path, "player: load failed");
         }
         let _ = self.host.set_volume(self.volume);
+        // Sync mpv's pause state to "playing". load() (loadfile) inherits mpv's
+        // prior pause property, so without this an item loaded after a paused one
+        // (notably the launch-resume queue, which loads paused) would come up
+        // paused while the engine and UI think it is playing — the "had to press
+        // pause then play" bug. A caller that wants paused (launch-resume) sets it
+        // again right after, in SetQueue.
+        let _ = self.host.set_paused(false);
         self.paused = false;
     }
 
@@ -467,12 +477,18 @@ impl Engine {
     }
 
     fn refresh_snapshot(&self) {
+        let current = self.current_item();
         let snap = PlayerSnapshot {
             current_index: self.current,
-            track_id: self.current_item().map(|i| i.track_id),
+            track_id: current.map(|i| i.track_id),
+            kind: current.map(|i| i.kind),
             position: self.host.time_pos().unwrap_or(0.0),
             duration: self.host.duration(),
             paused: self.paused,
+            streaming: current.is_some_and(|i| i.streaming),
+            // Buffering only matters while we mean to be playing: a paused or
+            // ended player is idle on purpose, not stalled on the network.
+            buffering: !self.paused && !self.ended && self.host.is_buffering(),
             volume: self.volume,
             queue_len: self.queue.len(),
             ended: self.ended,

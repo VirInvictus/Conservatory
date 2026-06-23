@@ -194,40 +194,29 @@ impl Inner {
         self.reload();
     }
 
-    /// The visible episode list, in display order, as playable sources + ids.
-    fn episode_sources(&self) -> (Vec<EpisodeSource>, Vec<i64>) {
-        let mut sources = Vec::new();
-        let mut ids = Vec::new();
-        for i in 0..self.store.n_items() {
-            if let Some(row) = self.store.item(i).and_downcast::<EpisodeRow>() {
-                ids.push(row.id());
-                sources.push(EpisodeSource {
-                    id: row.id(),
-                    show_id: row.show_id(),
-                    audio_path: row.audio_path(),
-                    audio_url: row.audio_url(),
-                });
-            }
-        }
-        (sources, ids)
-    }
-
-    /// Play the visible list from `activated` (double-click / Enter, the
-    /// deadbeef idiom): write the DB queue through, then hand the engine the
-    /// resolved items.
+    /// Play **just the activated episode** (double-click / Enter). Unlike the
+    /// music leaf (where playing a row queues the whole visible album/view, the
+    /// deadbeef idiom), a podcast feed can be hundreds of episodes, so pressing
+    /// play on one must not dump the entire list into the queue. The Queue is
+    /// built deliberately, via triage or Ctrl+Enter (`append_selected`).
     fn play_from(&self, activated: u32) {
         let (Some(player), Some(root)) = (self.player.as_ref(), self.root.as_ref()) else {
             return;
         };
-        let (sources, ids) = self.episode_sources();
-        if ids.is_empty() {
+        let Some(row) = self.store.item(activated).and_downcast::<EpisodeRow>() else {
             return;
-        }
-        let settings = self.show_settings_for(&sources);
+        };
+        let source = EpisodeSource {
+            id: row.id(),
+            show_id: row.show_id(),
+            audio_path: row.audio_path(),
+            audio_url: row.audio_url(),
+        };
+        let settings = self.show_settings_for(std::slice::from_ref(&source));
         let _ = self
             .rt
-            .block_on(self.worker.replace_queue_with_episodes(ids));
-        let (items, start) = build_episode_queue(&sources, activated as usize, root, &settings);
+            .block_on(self.worker.replace_queue_with_episodes(vec![source.id]));
+        let (items, start) = build_episode_queue(std::slice::from_ref(&source), 0, root, &settings);
         if !items.is_empty() {
             player.play_queue(items, start);
         }
@@ -469,6 +458,7 @@ pub fn build_podcasts_view(
     let column_view = gtk::ColumnView::new(Some(selection.clone()));
     column_view.add_css_class("data-table");
     column_view.append_column(&state_column());
+    column_view.append_column(&download_column());
     column_view.append_column(&text_column("Episode", true, EpisodeRow::title));
     column_view.append_column(&text_column("Date", false, EpisodeRow::date_text));
     column_view.append_column(&text_column("Length", false, EpisodeRow::duration_text));
@@ -741,6 +731,40 @@ fn state_column() -> gtk::ColumnViewColumn {
         ) {
             img.set_icon_name(Some(row.state_icon()));
             img.set_tooltip_text(Some(row.state_label()));
+        }
+    });
+    let col = gtk::ColumnViewColumn::new(Some(""), Some(factory));
+    col.set_fixed_width(36);
+    col
+}
+
+/// A glyph column for the episode's media availability (v0.0.38): a downloaded
+/// episode (a local `audio_path`) vs a stream-only one. ("Downloading" is not a
+/// state yet — there is no GUI-triggered download.)
+fn download_column() -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        item.set_child(Some(&gtk::Image::new()));
+    });
+    factory.connect_bind(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        if let (Some(row), Some(img)) = (
+            item.item().and_downcast::<EpisodeRow>(),
+            item.child().and_downcast::<gtk::Image>(),
+        ) {
+            let downloaded = row.audio_path().is_some();
+            img.set_icon_name(Some(if downloaded {
+                "folder-download-symbolic"
+            } else {
+                "network-wireless-symbolic"
+            }));
+            img.set_tooltip_text(Some(if downloaded {
+                "Downloaded"
+            } else {
+                "Stream only"
+            }));
+            img.add_css_class("dim-label");
         }
     });
     let col = gtk::ColumnViewColumn::new(Some(""), Some(factory));

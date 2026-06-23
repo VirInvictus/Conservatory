@@ -21,4 +21,7 @@ pub struct PlayableItem {
     pub profile: MusicProfile,
     pub album_id: Option<i64>,
     pub kind: MediaKind,
+    /// The source is a remote URL streamed over the network (an undownloaded
+    /// episode), not a local file. Drives the Now-bar streaming glyph (v0.0.38).
+    pub streaming: bool,
 }

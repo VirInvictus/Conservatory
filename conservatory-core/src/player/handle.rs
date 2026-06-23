@@ -11,6 +11,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use crate::db::MediaKind;
 use crate::player::host::AudioDevice;
 use crate::player::item::PlayableItem;
 
@@ -63,9 +64,19 @@ pub enum PlayerCommand {
 pub struct PlayerSnapshot {
     pub current_index: Option<usize>,
     pub track_id: Option<i64>,
+    /// The current item's media kind, so the UI knows whether `track_id` is a
+    /// track or an episode id and reads the right metadata (v0.0.38). `None` when
+    /// nothing is loaded.
+    pub kind: Option<MediaKind>,
     pub position: f64,
     pub duration: Option<f64>,
     pub paused: bool,
+    /// The current item streams from a remote URL (an undownloaded episode), not
+    /// a local file (v0.0.38).
+    pub streaming: bool,
+    /// mpv is waiting on the network/cache (not producing audio while meant to be
+    /// playing): drives the Now-bar "Buffering…" indicator (v0.0.38).
+    pub buffering: bool,
     pub volume: i64,
     pub queue_len: usize,
     /// The queue has been played to its end (or is empty): a poller can stop.
@@ -81,9 +92,12 @@ impl Default for PlayerSnapshot {
         Self {
             current_index: None,
             track_id: None,
+            kind: None,
             position: 0.0,
             duration: None,
             paused: false,
+            streaming: false,
+            buffering: false,
             volume: 100,
             queue_len: 0,
             ended: false,

@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# Conservatory browse demo.
+# Conservatory demo.
 #
-# Imports the local testdata albums into a throwaway library under $TMPDIR and
-# launches the GTK browse window: faceted panes, a sortable track list, and the
-# Ctrl+F filter bar (Phase 3c). Nothing is written to the repo or your real music
-# library (testdata is copied, not moved); the throwaway library is removed when
-# you close the window. Run it from anywhere:
+# Imports the local testdata albums into a throwaway library under $TMPDIR,
+# subscribes to one real podcast feed, and launches the GTK app: the Music
+# browse (faceted panes, sortable track list, Ctrl+F filter bar) and the
+# Podcasts triage tab (Phase 6b). Nothing is written to the repo or your real
+# music library (testdata is copied, not moved); the throwaway library is
+# removed when you close the window. Run it from anywhere:
 #
 #   scripts/demo.sh
 #
 # Set CONSERVATORY_DEMO_NO_GUI=1 to import-and-exit without launching the window:
-# a headless smoke check that previews the facets and the filter-bar grammar.
+# a headless smoke check that previews the facets, the filter-bar grammar, and
+# the podcast triage. Set CONSERVATORY_DEMO_FEED=<url> to subscribe to a
+# different feed (default: Cortex). The feed fetch is best-effort: offline just
+# leaves the Podcasts tab empty and the music demo is unaffected.
 
 set -euo pipefail
 
@@ -50,6 +54,18 @@ if [ "$found" -eq 0 ]; then
   exit 1
 fi
 
+# Subscribe to one real podcast feed so the Podcasts tab has something to browse
+# (Phase 6b). `podcast add` fetches the feed and upserts its episodes, so this
+# needs the network; it is best-effort, so offline (or a 429) just leaves the
+# Podcasts tab empty without failing the music demo. Override with
+# CONSERVATORY_DEMO_FEED. The feed lands in the unified queue alongside music.
+FEED="${CONSERVATORY_DEMO_FEED:-https://www.relay.fm/cortex/feed}"
+echo "demo: subscribing to a podcast feed ($FEED) ..."
+if ! "$CLI" podcast add "$DB" "$FEED" --format human; then
+  echo "demo: podcast add failed (offline, or the feed throttled us); the" >&2
+  echo "      Podcasts tab will be empty. The music demo is unaffected." >&2
+fi
+
 if [ "${CONSERVATORY_DEMO_NO_GUI:-0}" = "1" ]; then
   echo "demo: CONSERVATORY_DEMO_NO_GUI set; previewing headless, skipping the window."
   echo
@@ -68,14 +84,20 @@ if [ "${CONSERVATORY_DEMO_NO_GUI:-0}" = "1" ]; then
   "$CLI" search "$DB" 'rating:5' --format human
   echo "--- tag set: a path-affecting year edit previews the move (dry-run) ---"
   "$CLI" tag set "$DB" 'format:opus' year=1992 --root "$LIB"
+  echo
+  echo "=== podcasts (Phase 6b; the engine behind the Podcasts tab) ==="
+  echo "--- inbox episodes across subscriptions, first 12 (newest first) ---"
+  # Capture the full output first, then trim: piping the CLI straight into
+  # `head` closes its stdout early (SIGPIPE), which trips `set -o pipefail`.
+  inbox="$("$CLI" podcast episodes "$DB" --bucket inbox --format human)"
+  printf '%s\n' "$inbox" | head -n 12
   exit 0
 fi
 
-echo "demo: launching the browse window (close it to clean up) ..."
+echo "demo: launching the app (close the window to clean up) ..."
 echo "  views:  the header switcher (or Alt+1 / Alt+2) flips between Music and"
-echo "          Podcasts; the Podcasts tab is an empty placeholder until its"
-echo "          triage UI lands (Phase 6b-ii). Shrink the window and the switcher"
-echo "          drops to a bottom bar above the Now-bar."
+echo "          Podcasts. Shrink the window and the switcher drops to a bottom"
+echo "          bar above the Now-bar."
 echo "  browse: click a facet row to narrow; click a column header to sort;"
 echo "          press Ctrl+F and type a filter, e.g. genre:ambient or rating:>=1;"
 echo "          save it as a Perspective in the left sidebar, then reload it."
@@ -84,6 +106,12 @@ echo "          Now-bar at the bottom drives transport; Ctrl+U opens the queue"
 echo "          (drag to reorder); the header speaker icon picks the output device."
 echo "  edit:   select track(s) and press Ctrl+E (or the header pencil) to bulk-edit"
 echo "          fields; a year/album/genre change previews the file move before applying."
+echo "  podcasts: Alt+2 opens the Podcasts tab: a sidebar of triage buckets"
+echo "          (Inbox / Queue / Played), shows, and tags; an episode list; and a"
+echo "          detail pane. Double-click an episode to play it in the SAME queue"
+echo "          as music (streamed if not downloaded); the detail buttons mark it"
+echo "          played/archived or star it. With a show selected, the gear opens"
+echo "          its per-show settings (speed, Smart Speed, inbox policy)."
 # The library root (second arg) is what lets the player resolve the managed
 # relative track paths; without it the GUI browses but can't play (Phase 4).
 "$GUI" "$DB" "$LIB"

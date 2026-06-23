@@ -39,6 +39,7 @@ pub fn build_play_queue(
             profile: resolve_music_profile(track, cfg),
             album_id: track.album_id,
             kind: MediaKind::Track,
+            streaming: false,
         })
         .collect();
 
@@ -80,9 +81,9 @@ pub fn build_episode_queue(
     let items: Vec<PlayableItem> = ordered
         .iter()
         .filter_map(|e| {
-            let source = match (&e.audio_path, &e.audio_url) {
-                (Some(path), _) => root.join(path),
-                (None, Some(url)) => std::path::PathBuf::from(url),
+            let (source, streaming) = match (&e.audio_path, &e.audio_url) {
+                (Some(path), _) => (root.join(path), false),
+                (None, Some(url)) => (std::path::PathBuf::from(url), true),
                 (None, None) => return None,
             };
             Some(PlayableItem {
@@ -91,6 +92,7 @@ pub fn build_episode_queue(
                 profile: conservatory_core::resolve_episode_profile(settings.get(&e.show_id)),
                 album_id: None,
                 kind: MediaKind::Episode,
+                streaming,
             })
         })
         .collect();
@@ -147,17 +149,19 @@ pub fn build_mixed_queue(
                     profile: resolve_music_profile(track, cfg),
                     album_id: track.album_id,
                     kind: MediaKind::Track,
+                    streaming: false,
                 });
             }
             MediaKind::Episode => {
                 let Some(episode_id) = row.episode_id else {
                     continue;
                 };
-                let source = match (row.audio_path.as_deref(), row.audio_url.as_deref()) {
-                    (Some(p), _) => root.join(p),
-                    (None, Some(url)) => std::path::PathBuf::from(url),
-                    (None, None) => continue,
-                };
+                let (source, streaming) =
+                    match (row.audio_path.as_deref(), row.audio_url.as_deref()) {
+                        (Some(p), _) => (root.join(p), false),
+                        (None, Some(url)) => (std::path::PathBuf::from(url), true),
+                        (None, None) => continue,
+                    };
                 let show_settings = row.show_id.and_then(|sid| settings.get(&sid));
                 items.push(PlayableItem {
                     track_id: episode_id,
@@ -165,6 +169,7 @@ pub fn build_mixed_queue(
                     profile: conservatory_core::resolve_episode_profile(show_settings),
                     album_id: None,
                     kind: MediaKind::Episode,
+                    streaming,
                 });
             }
             MediaKind::Audiobook => continue, // Phase 7

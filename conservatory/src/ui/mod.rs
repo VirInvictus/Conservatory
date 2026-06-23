@@ -4,6 +4,7 @@
 pub mod coalescing;
 pub mod facet_pane;
 pub mod now_bar;
+pub mod now_playing_panel;
 pub mod objects;
 #[cfg(feature = "podcasts")]
 pub mod podcasts;

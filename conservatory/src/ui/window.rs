@@ -41,6 +41,9 @@ use crate::query::query_leaf;
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
 use crate::ui::now_bar::{NowBar, build_now_bar};
+use crate::ui::now_playing_panel::{
+    NowPlayingPanel, build_now_playing_panel, episode_fields, track_fields,
+};
 use crate::ui::objects::TrackRow;
 use crate::ui::queue_panel::{QueuePanel, build_queue_panel};
 use crate::ui::track_list::{Leaf, build_leaf};
@@ -93,6 +96,10 @@ mod imp {
         // window updates it from the snapshot and rebuilds the drawer.
         pub queue_panel: OnceCell<QueuePanel>,
         pub queue_current: OnceCell<Rc<Cell<Option<i64>>>>,
+        // The bottom Now Playing drawer (v0.0.38): current-item metadata, the
+        // future visualizer home. Refreshed on track change, toggled by the
+        // Now-bar cover/title click, a header button, or Ctrl+I.
+        pub now_playing: OnceCell<NowPlayingPanel>,
         // The top-level view stack (Phase 6b-i): Music first, plus the
         // feature-gated Podcasts/Audiobooks plugin pages. `Alt+1/2/3` switch
         // its visible child by name.
@@ -287,6 +294,10 @@ impl ConservatoryWindow {
         let stack = adw::ViewStack::new();
         stack.add_titled_with_icon(&music_page, Some("music"), "Music", "folder-music-symbolic");
 
+        // The bottom Now Playing drawer (v0.0.38): built here so the toolbar
+        // content can stack it above the Now-bar (it slides up from the bottom).
+        let now_playing = build_now_playing_panel();
+
         let header = adw::HeaderBar::new();
         let queue_btn = gtk::Button::from_icon_name("view-list-symbolic");
         queue_btn.set_tooltip_text(Some("Show / hide the queue (Ctrl+U)"));
@@ -297,6 +308,15 @@ impl ConservatoryWindow {
             }
         });
         header.pack_end(&queue_btn);
+        let info_btn = gtk::Button::from_icon_name("dialog-information-symbolic");
+        info_btn.set_tooltip_text(Some("Now Playing details (Ctrl+I)"));
+        let weak = self.downgrade();
+        info_btn.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.toggle_now_playing();
+            }
+        });
+        header.pack_end(&info_btn);
         header.pack_end(&self.build_output_menu_button());
 
         let edit_btn = gtk::Button::from_icon_name("document-edit-symbolic");
@@ -319,13 +339,30 @@ impl ConservatoryWindow {
         });
         header.pack_start(&embed_btn);
 
+        // The toolbar content is the view stack with the Now Playing drawer
+        // stacked beneath it: the drawer slides up from the bottom of the content
+        // area, above the persistent Now-bar (v0.0.38).
+        let content_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        content_box.append(&stack);
+        content_box.append(&now_playing.revealer);
+
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
-        toolbar.set_content(Some(&stack));
+        toolbar.set_content(Some(&content_box));
         // The Now-bar is the stable innermost bottom bar (spec §2.3); the
         // adaptive view-switcher bar reveals *beneath* it at the narrow
         // breakpoint (added in `attach_podcasts_view`).
         toolbar.add_bottom_bar(&now_bar.root);
+
+        // The Now-bar cover/title cluster toggles the drawer (the click handle).
+        let click = gtk::GestureClick::new();
+        let weak = self.downgrade();
+        click.connect_released(move |_, _, _, _| {
+            if let Some(win) = weak.upgrade() {
+                win.toggle_now_playing();
+            }
+        });
+        now_bar.left.add_controller(click);
 
         // The multi-view chrome (switcher in the header, the adaptive bottom
         // switcher bar, the breakpoint, the Podcasts page) exists only when a
@@ -341,6 +378,7 @@ impl ConservatoryWindow {
         let _ = imp.leaf.set(leaf);
         let _ = imp.filter_entry.set(filter.clone());
         let _ = imp.now_bar.set(now_bar);
+        let _ = imp.now_playing.set(now_playing);
         let _ = imp.queue_current.set(queue_current);
         self.install_queue_keys(&queue_panel.list);
         self.install_view_keys();
@@ -1190,6 +1228,16 @@ impl ConservatoryWindow {
                 glib::Propagation::Stop
             })),
         ));
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>i"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade() {
+                    win.toggle_now_playing();
+                }
+                glib::Propagation::Stop
+            })),
+        ));
         self.add_controller(global);
 
         let local = gtk::ShortcutController::new();
@@ -1330,6 +1378,7 @@ impl ConservatoryWindow {
             if imp.last_shown.get().is_some() {
                 imp.last_shown.set(None);
                 now.clear();
+                self.refresh_now_playing(None, None);
             }
             return;
         }
@@ -1337,31 +1386,37 @@ impl ConservatoryWindow {
         if imp.last_shown.get() != snap.track_id {
             imp.last_shown.set(snap.track_id);
             if let Some(id) = snap.track_id {
-                let labels = imp.now_labels.borrow();
-                let (title, artist) = labels
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or_else(|| ("\u{2014}".to_string(), String::new()));
+                // Resolve title / artist / cover by (kind, id). A track and an
+                // episode share the snapshot's id field, so the kind decides which
+                // read to use: without this an episode read nothing from
+                // `track_metadata` and the Now-bar kept the previous song's cover.
+                let np =
+                    imp.pool
+                        .get()
+                        .and_then(|pool| pool.open().ok())
+                        .and_then(|conn| match snap.kind {
+                            Some(MediaKind::Episode) => {
+                                conservatory_core::db::episode_metadata(&conn, id)
+                                    .ok()
+                                    .flatten()
+                            }
+                            _ => conservatory_core::db::track_metadata(&conn, id)
+                                .ok()
+                                .flatten(),
+                        });
+                let (title, artist, cover) = match np {
+                    Some(np) => (np.title, np.artist.unwrap_or_default(), np.album_cover_path),
+                    None => ("\u{2014}".to_string(), String::new(), None),
+                };
                 now.title.set_text(&title);
                 now.artist.set_text(&artist);
-                drop(labels);
-                // Album cover thumbnail (Phase 5d): resolve the cover path and
-                // load it (placeholder when absent).
-                let cover = imp
-                    .pool
-                    .get()
-                    .and_then(|pool| pool.open().ok())
-                    .and_then(|conn| {
-                        conservatory_core::db::track_metadata(&conn, id)
-                            .ok()
-                            .flatten()
-                    })
-                    .and_then(|np| np.album_cover_path);
                 let abs = match (imp.library_root.get(), cover) {
                     (Some(root), Some(cp)) => Some(root.join(cp)),
                     _ => None,
                 };
                 now.set_cover(abs.as_deref());
+                // Keep the Now Playing drawer in step with the new item.
+                self.refresh_now_playing(snap.kind, Some(id));
             }
         }
 
@@ -1370,6 +1425,8 @@ impl ConservatoryWindow {
         } else {
             "media-playback-pause-symbolic"
         });
+        // Buffering spinner + streaming glyph (v0.0.38).
+        now.set_status(snap.buffering, snap.streaming);
         now.position
             .set_text(&fmt_position(snap.position, snap.duration));
         match snap.duration {
@@ -1379,6 +1436,76 @@ impl ConservatoryWindow {
                 now.seek.set_value(snap.position.min(d));
             }
             _ => now.seek.set_sensitive(false),
+        }
+    }
+
+    /// Toggle the bottom Now Playing drawer; when opening, fill it from the
+    /// current snapshot so it never shows stale content (v0.0.38).
+    fn toggle_now_playing(&self) {
+        let imp = self.imp();
+        let Some(panel) = imp.now_playing.get() else {
+            return;
+        };
+        if !panel.is_open()
+            && let Some(player) = imp.player.get()
+        {
+            let snap = player.snapshot();
+            self.refresh_now_playing(snap.kind, snap.track_id);
+        }
+        panel.toggle();
+    }
+
+    /// Refresh the Now Playing drawer for `(kind, id)`: read the full metadata
+    /// and project it to label/value rows (v0.0.38). A no-op while the drawer is
+    /// closed, so the queue advancing does not do needless reads.
+    fn refresh_now_playing(&self, kind: Option<MediaKind>, id: Option<i64>) {
+        let imp = self.imp();
+        let Some(panel) = imp.now_playing.get() else {
+            return;
+        };
+        if !panel.is_open() {
+            return;
+        }
+        let (Some(id), Some(pool)) = (id, imp.pool.get()) else {
+            panel.clear();
+            return;
+        };
+        let Ok(conn) = pool.open() else {
+            return;
+        };
+        use conservatory_core::db::{
+            episode_metadata, get_album, get_episode, get_show, get_track, track_metadata,
+        };
+        match kind {
+            Some(MediaKind::Episode) => {
+                let (Ok(Some(np)), Ok(Some(ep))) =
+                    (episode_metadata(&conn, id), get_episode(&conn, id))
+                else {
+                    panel.clear();
+                    return;
+                };
+                let show = get_show(&conn, ep.show_id).ok().flatten();
+                let streaming = ep.audio_path.is_none();
+                panel.set_fields(
+                    &np.title.clone(),
+                    &episode_fields(&np, &ep, show.as_ref(), streaming),
+                );
+            }
+            _ => {
+                let (Ok(Some(np)), Ok(Some(track))) =
+                    (track_metadata(&conn, id), get_track(&conn, id))
+                else {
+                    panel.clear();
+                    return;
+                };
+                let album = track
+                    .album_id
+                    .and_then(|aid| get_album(&conn, aid).ok().flatten());
+                panel.set_fields(
+                    &np.title.clone(),
+                    &track_fields(&np, &track, album.as_ref()),
+                );
+            }
         }
     }
 

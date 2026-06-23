@@ -30,3 +30,7 @@ conservatory-audiobooks = { path = "../conservatory-audiobooks", optional = true
 clap = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+# v0.0.38: a tracing subscriber so the worker / fetch / refresh tracing calls
+# surface under RUST_LOG (the headless diagnostics surface).
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -1,5 +1,26 @@
 # Patch Notes
 
+## v0.0.38
+
+Playback feedback, diagnostics, and a Now Playing drawer. The player no longer runs silently: it tells you what it is doing, the two bugs from hands-on use are fixed, you can turn on logs, and clicking the Now-bar opens a details panel.
+
+**Bug fixes:**
+- **The Now-bar no longer shows a stale song while a podcast plays.** The engine snapshot now carries the current item's media kind, so the Now-bar reads the right metadata: a playing episode shows its title and show (and the show's art, or the placeholder, never the previous track's cover). The root cause was a kind-blind snapshot that always did a track-only lookup, which returned nothing for an episode and left the old cover up. A new `episode_metadata` read resolves an episode to the same shape as a track.
+- **A podcast episode now starts on the first press, no pause-then-play nudge.** `engine.load_current` now syncs mpv's pause state to "playing" after loading. mpv inherits the prior pause state across a `loadfile`, so an item loaded after a paused one (notably the launch-resume queue, which loads paused) came up paused while the UI thought it was playing. A regression test guards it.
+
+**Feedback the player was missing:**
+- **Buffering indicator.** A streamed episode can take many seconds to start while it buffers; the Now-bar now shows a spinner during that wait (mpv `core-idle`), so the silence is explained.
+- **Streaming vs downloaded.** The Now-bar shows a streaming glyph for an undownloaded episode, and the Podcasts episode list gained a column marking each episode downloaded vs stream-only. ("Downloading" is not shown yet; there is no GUI-triggered download.)
+- **Podcast double-click plays just that episode.** Double-clicking an episode used to dump the entire visible list into the queue (the album idiom, wrong for a 180-episode feed). It now plays only the episode you clicked; the queue is still built deliberately via triage or `Ctrl+Enter`.
+
+**Diagnostics:**
+- **Logging.** Both binaries install a tracing subscriber, so the events wired through the worker, player engine, and podcast fetch/refresh actually surface. The GUI defaults to `info` and takes a `--debug` flag (raises our crates to `debug`: the player load / advance / buffering transitions); the CLI honours `RUST_LOG`. Without this, all of it was a silent no-op, which is why the app gave no output. New player-transition log lines make "what is it doing" answerable.
+
+**New surface:**
+- **Now Playing drawer.** Click the Now-bar cover/title (or press `Ctrl+I`) and a panel slides up from the bottom, the horizontal twin of the right-side queue drawer, showing the current item's full metadata: for a track, format / bitrate / sample rate / ReplayGain / path / rating / plays / album / year; for an episode, show / date / runtime / size / stream-or-local / notes. It updates as the queue advances. This is the lighter realization of the spec's Phase 11c Now Playing surface, and its content area is the intended home for the future spectrum visualizer.
+
+**Tests:** the pause-sync regression (a fresh queue plays after a pause, via a null-output engine run); `episode_metadata` resolves the show title + cover and a missing episode reads as `None`; the Now Playing field projections for a track and an episode (pure, headless); the `streaming` flag through the queue builders. Full suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green.
+
 ## v0.0.37
 
 Phase 6b-ii-c-3-c shipped: per-show podcast settings in the GUI. Select a show in the Podcasts tab, click the gear in the detail pane, and set its playback speed, Smart Speed and Voice Boost, intro/outro skip, and what happens to new episodes (inbox, queue, or archive). This completes the per-show overrides and Phase 6b-ii-c.

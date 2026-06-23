@@ -196,6 +196,16 @@ impl MpvHost {
         self.mpv.get_property::<f64>("speed").ok()
     }
 
+    /// Whether mpv's core is idle while it should be producing audio, i.e. it is
+    /// waiting on the network/cache (v0.0.38). mpv's `core-idle` is true whenever
+    /// no audio is being output, which includes a streamed item still buffering
+    /// its first packets. The engine only treats this as "buffering" when the
+    /// engine itself is not paused/ended, so a deliberately idle player does not
+    /// read as stalled. A missing property (no item loaded) reads as not idle.
+    pub fn is_buffering(&self) -> bool {
+        self.mpv.get_property::<bool>("core-idle").unwrap_or(false)
+    }
+
     /// Wait up to `timeout` seconds for the next libmpv event, mapping it to a
     /// [`HostEvent`]. The caller polls position between pumps; only the end and
     /// shutdown transitions need to be acted on, so everything else is `Idle`.

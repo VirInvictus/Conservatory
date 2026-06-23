@@ -464,6 +464,7 @@ fn plugin_list() -> String {
 }
 
 fn main() -> Result<()> {
+    init_tracing();
     match Cli::parse().command {
         Some(Command::DebugRoundtrip { db }) => debug_roundtrip(db),
         Some(Command::DebugFixture { db, scale }) => debug_fixture(db, scale),
@@ -1481,6 +1482,7 @@ fn resolve_queue_items(
                         profile: resolve_music_profile(&track, cfg),
                         album_id: track.album_id,
                         kind: MediaKind::Track,
+                        streaming: false,
                     });
                 }
             }
@@ -1491,9 +1493,10 @@ fn resolve_queue_items(
                 let Some(ep) = get_episode(&conn, episode_id).context("looking up episode")? else {
                     continue;
                 };
-                let source = match (ep.audio_path.as_deref(), ep.audio_url.as_deref()) {
-                    (Some(p), _) => root.join(p),
-                    (None, Some(url)) => PathBuf::from(url),
+                let (source, streaming) = match (ep.audio_path.as_deref(), ep.audio_url.as_deref())
+                {
+                    (Some(p), _) => (root.join(p), false),
+                    (None, Some(url)) => (PathBuf::from(url), true),
                     (None, None) => continue,
                 };
                 // Resolve the show's per-show overrides (speed) for the profile.
@@ -1504,6 +1507,7 @@ fn resolve_queue_items(
                     profile: resolve_episode_profile(settings.as_ref()),
                     album_id: None,
                     kind: MediaKind::Episode,
+                    streaming,
                 });
             }
             MediaKind::Audiobook => continue, // Phase 7
@@ -2362,6 +2366,24 @@ fn now_secs() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Install the tracing subscriber (v0.0.38). The worker / fetch / refresh code
+/// emits tracing events; without a subscriber they are silent. Headless control
+/// is `RUST_LOG` (e.g. `RUST_LOG=conservatory_podcasts=debug`); the default
+/// `warn` keeps a scriptable run quiet (only warnings/errors), so routine info
+/// never clutters stderr or interferes with the `--tsv` / `--json` stdout. Logs
+/// go to stderr.
+fn init_tracing() {
+    use tracing_subscriber::{EnvFilter, fmt};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+    fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .with_writer(std::io::stderr)
+        .compact()
+        .init();
 }
 
 fn opt<T: std::fmt::Display>(value: &Option<T>) -> String {

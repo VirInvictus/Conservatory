@@ -211,6 +211,7 @@ fn engine_plays_queue_to_end() {
                 profile: resolve_music_profile(&track, &cfg),
                 album_id: track.album_id,
                 kind: conservatory_core::db::MediaKind::Track,
+                streaming: false,
             });
         }
         (items, ids)
@@ -316,6 +317,7 @@ fn engine_plays_an_episode_to_podcast_playback_not_the_track_tables() {
         profile: conservatory_core::resolve_episode_profile(None),
         album_id: None,
         kind: MediaKind::Episode,
+        streaming: false,
     };
 
     let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
@@ -351,6 +353,61 @@ fn engine_plays_an_episode_to_podcast_playback_not_the_track_tables() {
         "episode playback must not bump a track's play_count"
     );
 
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
+/// Regression for the v0.0.38 "had to pause then play" bug: a fresh `play_queue`
+/// must start playing even when the engine was previously paused. The engine's
+/// `load_current` now syncs mpv's pause property to "playing" (loadfile inherits
+/// the prior pause state), so the new item is not stuck paused. Pre-fix the new
+/// item inherited mpv's paused state and never reached EOF (this would time out).
+#[test]
+fn engine_unpauses_a_newly_loaded_item_after_a_pause() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+
+    // A Track item over a real fixture. The track id need not exist: the EOF
+    // persistence (play-count bump / cursor) is a silent no-op for a missing row.
+    let item = || PlayableItem {
+        track_id: 1,
+        source: fixtures_dir.join("sample.mp3"),
+        profile: conservatory_core::resolve_episode_profile(None),
+        album_id: None,
+        kind: MediaKind::Track,
+        streaming: false,
+    };
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.play_queue(vec![item()], 0);
+    std::thread::sleep(Duration::from_millis(120));
+    player.toggle_pause();
+    std::thread::sleep(Duration::from_millis(80));
+    assert!(player.snapshot().paused, "the engine should now be paused");
+
+    // The regression path: a fresh queue while mpv is paused must play.
+    player.play_queue(vec![item()], 0);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if player.snapshot().ended {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a newly-loaded item never played after a pause (the pause desync)"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    player.shutdown();
     runtime.block_on(worker.shutdown_ack()).ok();
 }
 
@@ -447,6 +504,7 @@ fn engine_move_and_remove_track_the_current_index() {
                     profile: resolve_music_profile(&track, &cfg),
                     album_id: track.album_id,
                     kind: conservatory_core::db::MediaKind::Track,
+                    streaming: false,
                 }
             })
             .collect()
@@ -534,6 +592,7 @@ fn engine_append_and_resume() {
                     profile: resolve_music_profile(&track, &cfg),
                     album_id: track.album_id,
                     kind: conservatory_core::db::MediaKind::Track,
+                    streaming: false,
                 }
             })
             .collect()

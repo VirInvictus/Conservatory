@@ -21,6 +21,13 @@ pub struct NowBar {
     pub cover: gtk::Image,
     pub title: gtk::Label,
     pub artist: gtk::Label,
+    /// The cover+title cluster, a clickable handle the window wires to toggle the
+    /// Now Playing drawer (v0.0.38).
+    pub left: gtk::Box,
+    /// Spinning while a streamed item is buffering (v0.0.38).
+    pub spinner: gtk::Spinner,
+    /// Shown when the current item streams from the network (v0.0.38).
+    pub streaming_icon: gtk::Image,
     pub play_btn: gtk::Button,
     pub position: gtk::Label,
     pub seek: gtk::Scale,
@@ -57,10 +64,27 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     info.set_width_request(220);
     info.append(&title);
     info.append(&artist);
+    // Status cluster: a buffering spinner and a streaming glyph, both hidden
+    // until the snapshot says otherwise (v0.0.38).
+    let spinner = gtk::Spinner::new();
+    spinner.set_visible(false);
+    spinner.set_tooltip_text(Some("Buffering"));
+    let streaming_icon = gtk::Image::from_icon_name("network-wireless-symbolic");
+    streaming_icon.set_visible(false);
+    streaming_icon.set_tooltip_text(Some("Streaming"));
+    let status = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    status.set_valign(gtk::Align::Center);
+    status.append(&spinner);
+    status.append(&streaming_icon);
     let left = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     left.set_valign(gtk::Align::Center);
     left.append(&cover);
     left.append(&info);
+    left.append(&status);
+    // The cluster is a click handle for the Now Playing drawer; show a pointer so
+    // it reads as interactive (the window adds the GestureClick).
+    left.set_cursor_from_name(Some("pointer"));
+    left.set_tooltip_text(Some("Now Playing details"));
     root.set_start_widget(Some(&left));
 
     // Centre: prev / play-pause / next.
@@ -128,6 +152,9 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         cover,
         title,
         artist,
+        left,
+        spinner,
+        streaming_icon,
         play_btn,
         position,
         seek,
@@ -153,6 +180,18 @@ impl NowBar {
         self.seek.set_sensitive(false);
         self.seek.set_value(0.0);
         self.set_cover(None);
+        self.set_status(false, false);
+    }
+
+    /// Show/hide the buffering spinner and the streaming glyph (v0.0.38).
+    pub fn set_status(&self, buffering: bool, streaming: bool) {
+        self.spinner.set_visible(buffering);
+        if buffering {
+            self.spinner.start();
+        } else {
+            self.spinner.stop();
+        }
+        self.streaming_icon.set_visible(streaming);
     }
 
     /// Show the album cover from `path`, or the placeholder when absent.

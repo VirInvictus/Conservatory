@@ -45,18 +45,24 @@ fn load_css() {
 }
 
 fn main() -> glib::ExitCode {
+    init_tracing();
+
     let app = adw::Application::builder().application_id(APP_ID).build();
 
     app.connect_startup(|_| load_css());
 
     app.connect_activate(|app| {
-        let db = std::env::args()
-            .nth(1)
+        // Positional args are the DB path then the library root; flags (`--debug`)
+        // are skipped so they don't get read as a path.
+        let positionals: Vec<PathBuf> = std::env::args()
+            .skip(1)
+            .filter(|a| !a.starts_with('-'))
             .map(PathBuf::from)
-            .or_else(default_db_path);
+            .collect();
+        let db = positionals.first().cloned().or_else(default_db_path);
         // Optional library root (Phase 4b-ii-a): resolves relative track paths for
         // playback. Phase 10 config will source this instead of an argument.
-        let root = std::env::args().nth(2).map(PathBuf::from);
+        let root = positionals.get(1).cloned();
         let window = ui::window::ConservatoryWindow::new(app, db, root);
         window.present();
     });
@@ -65,6 +71,28 @@ fn main() -> glib::ExitCode {
     // file to "open"; the activate handler reads the real args itself.
     let argv0 = std::env::args().next().unwrap_or_default();
     app.run_with_args(&[argv0])
+}
+
+/// Install the tracing subscriber (v0.0.38). Without one, the tracing calls
+/// wired through the engine / worker / podcast fetch are silent no-ops, which is
+/// why the player appeared to "do everything silently". Defaults to `info` (warn
+/// and error always visible, normal use un-spammy); the `--debug` flag raises our
+/// own crates to `debug` (the player load / advance / buffering transitions);
+/// `RUST_LOG` overrides either. Mirrors the Atrium / Viaduct binaries.
+fn init_tracing() {
+    use tracing_subscriber::{EnvFilter, fmt};
+
+    let default = if std::env::args().any(|a| a == "--debug" || a == "-d") {
+        "info,conservatory=debug,conservatory_core=debug,conservatory_podcasts=debug"
+    } else {
+        "info"
+    };
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
+    fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .compact()
+        .init();
 }
 
 /// The default library location (XDG data dir). Browse is empty if it's absent.

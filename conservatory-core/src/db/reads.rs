@@ -354,6 +354,34 @@ pub fn track_metadata(conn: &Connection, track_id: i64) -> Result<Option<NowPlay
     .map_err(Into::into)
 }
 
+/// Resolve an episode id to the same [`NowPlaying`] shape as a track (v0.0.38),
+/// so the Now-bar can show a playing episode without a stale music title/cover.
+/// The episode title is the title, the show title stands in for the artist, and
+/// the **show**'s cover (episodes have no per-episode art) is the cover. Joins
+/// `episodes`→`shows`. `shows.cover_path` is usually `None` today (show artwork
+/// is not fetched yet), in which case the Now-bar shows its placeholder rather
+/// than the previous track's cover.
+pub fn episode_metadata(conn: &Connection, episode_id: i64) -> Result<Option<NowPlaying>> {
+    conn.query_row(
+        "SELECT e.title, e.duration, s.title AS show_title, s.cover_path AS cover_path
+         FROM episodes e
+         JOIN shows s ON s.id = e.show_id
+         WHERE e.id = ?1",
+        params![episode_id],
+        |row| {
+            Ok(NowPlaying {
+                title: row.get("title")?,
+                artist: row.get::<_, Option<String>>("show_title")?,
+                album: row.get::<_, Option<String>>("show_title")?,
+                length: row.get::<_, Option<i64>>("duration")?.map(|d| d as f64),
+                album_cover_path: row.get("cover_path")?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
 /// A unified-queue entry with the display fields the queue panel renders
 /// (Phase 4b-ii-b). `title`/`artist` come from the joined track (empty/None for
 /// a missing or non-track row; episode/book titles arrive at Phases 6/7).

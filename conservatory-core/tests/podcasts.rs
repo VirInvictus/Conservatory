@@ -71,6 +71,41 @@ async fn fresh() -> (tempfile::TempDir, WorkerHandle, ReadPool) {
 }
 
 #[tokio::test]
+async fn episode_metadata_resolves_show_title_and_cover() {
+    let (_dir, worker, pool) = fresh().await;
+    let show_id = worker
+        .get_or_create_show(sample_show(
+            "replyall",
+            "https://feeds.example.com/replyall",
+        ))
+        .await
+        .unwrap();
+    let episode_id = worker
+        .upsert_episode(sample_episode(show_id, "guid-1", "The Web", 1_000))
+        .await
+        .unwrap();
+
+    let conn = pool.open().unwrap();
+    let np = conservatory_core::db::episode_metadata(&conn, episode_id)
+        .unwrap()
+        .expect("episode metadata present");
+    // The episode title is the title; the show stands in for the artist (so the
+    // Now-bar shows the episode + show, not a stale music track). v0.0.38.
+    assert_eq!(np.title, "The Web");
+    assert_eq!(np.artist.as_deref(), Some("Reply All"));
+    assert_eq!(np.length, Some(1800.0));
+    // sample_show has no cover, so the Now-bar falls back to its placeholder
+    // rather than the previous track's cover.
+    assert_eq!(np.album_cover_path, None);
+    // A missing episode reads as None, not an error.
+    assert!(
+        conservatory_core::db::episode_metadata(&conn, 999_999)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn show_round_trip_and_idempotent_add() {
     let (_dir, worker, pool) = fresh().await;
 

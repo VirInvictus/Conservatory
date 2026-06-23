@@ -9,6 +9,7 @@ Each top-level phase is split into independently shippable sub-phases (the way t
 These run alongside every phase rather than belonging to one; called out here so they are not forgotten.
 
 - [x] CI: `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check` on Linux, green from Phase 1 on. (Workflow landed at 1a: `.github/workflows/ci.yml`.)
+- [x] **Observability:** a tracing subscriber in both binaries (v0.0.38). The crates emit `tracing` events (worker, player engine, podcast fetch/refresh); without an installed subscriber they were silent no-ops, which is why the player ran with no diagnostics. The GUI defaults to `info` and takes a `--debug` flag (raises our crates to `debug`: the player load / advance / buffering transitions); the CLI honours `RUST_LOG`. The Atrium / Viaduct pattern. New `tracing` log lines land with the subsystems they cover.
 - [ ] Memory checkpoint per phase: a `heaptrack` / `massif` note against the spec §13 budgets; features that miss budget get gated. The harness is ported from Viaduct's `mem_check` binary (synthetic corpus, reads `VmHWM` from `/proc/self/status`, reports pass/fail against the ceiling) and grows new checkpoints as subsystems land.
 - [ ] Docs kept in step (`docs/`): schema, keymap, path-template reference, genre-normalization notes, libmpv profile reference. Each lands with the sub-phase that creates its subject.
 - [ ] `ATTRIBUTIONS.md` updated as each dependency is signed off and added (spec §11), and as each ported pattern lands.
@@ -618,15 +619,17 @@ The finishing pass that brings the music surface up to the deadbeef / foobar2000
 - [ ] A **status bar** (spec §3.2 footer): the current track's format / sample-rate / channels, plus the active view's track count and total playtime (the deadbeef "N tracks, D total playtime" line). The aggregate is a cheap core read over the current facet/filter selection.
 - [ ] The **play-status glyph column** (the leftmost ♫ in the deadbeef track list): a per-row playing / paused indicator. This is the item **explicitly owed from Phase 3c** ("the per-row playing/status glyph waits for playback state, Phase 4"); Phase 4 shipped the playback state, so it is now unblocked. Driven by the engine snapshot's current item (a symbolic icon, no font assumption).
 - [ ] Tests: the aggregate-count / total-playtime read against a fixture; the glyph follows the snapshot's current index (headless logic); widgets build + manual.
+- [x] **Pulled forward at v0.0.38 (playback feedback):** the snapshot gained `kind` / `streaming` / `buffering`, so the Now-bar shows a **buffering spinner** (mpv `core-idle`) and a **streaming glyph** for an undownloaded episode, and the Podcasts episode list gained a **downloaded vs stream-only** glyph column. (The full status-bar line and the in-list play-status glyph above are still to do.)
 
 *Usable artifact:* the browse window shows the playing row at a glance and a foobar-style status line.
 
-### Phase 11c — Now Playing expanded surface
+### Phase 11c — Now Playing surface (bottom drawer)
 
-- [ ] Implement the **Now Playing surface** already promised in spec §3.6 (the "Hermitage Codex moment"): tapping the Now-bar expands to a full-bleed cover, an accent-tinted scrubber, and a queue-tail peek. For tracks it shows album context, ReplayGain state, the active EQ / DSP, and gapless status; for episodes it adds chapters, show notes, the Smart Speed indicator, and the sleep timer (the episode additions overlap Phase 6c, so this consumes what 6c builds rather than duplicating it).
+- [x] **A bottom Now Playing drawer landed at v0.0.38** (the lighter realization of the spec §3.6 surface, chosen over a full-bleed takeover): a slide-up `gtk::Revealer` above the Now-bar, the horizontal twin of the right-docked queue drawer, opened by clicking the Now-bar cover/title or `Ctrl+I`. It shows the current item's full metadata (track: format / bitrate / sample rate / ReplayGain / path / rating / plays / album / year; episode: show / date / runtime / size / source stream-or-local / notes), refreshed as the queue advances. The pure field projection is unit-tested. **The drawer's content area is the intended home for the spectrum visualizer** (the deferred item below).
+- [ ] Still to do (the richer surface): a full-bleed cover, an accent-tinted scrubber, and a queue-tail peek; track ReplayGain/EQ/DSP/gapless state and episode chapters / Smart Speed indicator / sleep timer (the episode additions overlap Phase 6c, so this consumes what 6c builds).
 - [ ] Tests: the surface state projection from the snapshot + the current item's metadata (headless); widget build + manual.
 
-*Usable artifact:* the Now-bar expands into a proper Now Playing view across both media types.
+*Usable artifact:* clicking the Now-bar (or `Ctrl+I`) slides up a Now Playing drawer with the current item's metadata, across both media types.
 
 ### Phase 11d — Transport conveniences
 
@@ -639,4 +642,4 @@ The finishing pass that brings the music surface up to the deadbeef / foobar2000
 
 ### Deferred (recorded, not built)
 
-- [ ] **Spectrum visualizer** (the deadbeef `spectrum` widget): a real-time frequency-bar analyzer. Captured here at the user's request, but **post-1.0 and optional**: it needs an audio-tap off the libmpv output (an `af` data sink or a visualizer hook) and is player-toy territory rather than core to "Calibre for audio". Built only after the parity furniture above, if at all.
+- [ ] **Spectrum visualizer** (the deadbeef `spectrum` widget): a real-time frequency-bar analyzer. Captured here at the user's request, but **post-1.0 and optional**: it needs an audio-tap off the libmpv output (an `af` data sink or a visualizer hook) and is player-toy territory rather than core to "Calibre for audio". Built only after the parity furniture above, if at all. **Its home is the v0.0.38 Now Playing drawer (11c)** (the user's intent), so it slots in there beside the metadata when built.

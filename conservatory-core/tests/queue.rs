@@ -258,19 +258,46 @@ fn engine_plays_an_episode_without_writing_the_music_cursor() {
         .unwrap();
 
     let dbdir = tempdir().unwrap();
+    let libdir = tempdir().unwrap();
+    let srcdir = tempdir().unwrap();
     let db = dbdir.path().join("library.db");
+    let root = libdir.path().to_path_buf();
     let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
 
+    // Import one fixture so a real track exists. This is load-bearing: an
+    // unguarded episode save would write the episode id into
+    // `playback_state.track_id`, which has an FK to `tracks(id)`; with no track
+    // present the FK rejects the write and silently masks the leak. With a track
+    // whose id the episode collides with, the leak actually persists, so this
+    // test catches a regression of the per-kind guard.
+    std::fs::copy(
+        fixtures_dir.join("sample.mp3"),
+        srcdir.path().join("sample.mp3"),
+    )
+    .unwrap();
     let worker = {
         let _guard = runtime.enter();
         spawn_worker(db.clone()).unwrap()
     };
     let pool = ReadPool::new(db.clone(), 3).unwrap();
+    runtime.block_on(async {
+        let opts = ImportOptions {
+            library_root: root.clone(),
+            mode: MoveMode::Copy,
+        };
+        import_folder(&worker, &pool, srcdir.path(), &opts)
+            .await
+            .unwrap();
+    });
+    let track_id = {
+        let conn = pool.open().unwrap();
+        search_rows(&conn).unwrap()[0].track_id
+    };
 
-    // An Episode-kind item over a real local file (the `track_id` field carries
-    // the episode id in real use; the engine never persists it for an episode).
+    // An Episode whose `track_id` field collides with the real track id (episode
+    // and track ids share an integer space across their separate tables).
     let item = PlayableItem {
-        track_id: 1,
+        track_id,
         source: fixtures_dir.join("sample.mp3"),
         profile: conservatory_core::resolve_episode_profile(),
         album_id: None,
@@ -290,12 +317,21 @@ fn engine_plays_an_episode_without_writing_the_music_cursor() {
     }
     player.shutdown();
 
-    // The guard: playing an episode wrote no music cursor.
     let conn = pool.open().unwrap();
-    let cursor = read_playback_state(&conn).unwrap();
+    // The `save_cursor` guard (both `flush` and the terminal `advance_after_end`):
+    // no music cursor written, even though the FK would now accept the id.
     assert!(
-        cursor.and_then(|s| s.track_id).is_none(),
+        read_playback_state(&conn)
+            .unwrap()
+            .and_then(|s| s.track_id)
+            .is_none(),
         "episode playback must not set the music playback_state cursor (6b-ii-c-1 guard)"
+    );
+    // The play-count guard (`on_item_ended`): the colliding track is not bumped.
+    assert_eq!(
+        get_track(&conn, track_id).unwrap().unwrap().play_count,
+        0,
+        "episode playback must not bump a track's play_count"
     );
 
     runtime.block_on(worker.shutdown_ack()).ok();

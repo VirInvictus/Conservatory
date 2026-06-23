@@ -927,6 +927,11 @@ pub fn episodes_for_show(conn: &Connection, show_id: i64) -> Result<Vec<EpisodeL
 
 /// All episodes in a triage bucket, across every subscription (spec §4.2):
 /// Queue ordered by queue position, Inbox/Played newest first.
+///
+/// Queue and Played can **overlap** by design (a played episode you re-queued
+/// shows in both): Queue is pure queue membership and Played is `played >= 2`,
+/// neither filters on the other. Only **Inbox** is exclusive: it is everything
+/// that is neither played nor queued. The three are not a strict partition.
 pub fn episodes_in_bucket(conn: &Connection, bucket: TriageBucket) -> Result<Vec<EpisodeListRow>> {
     // PlayedState::PlayedFully = 2; >= 2 also catches ArchivedUnlistened (3).
     let sql = match bucket {

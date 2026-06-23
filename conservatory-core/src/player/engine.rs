@@ -309,7 +309,14 @@ impl Engine {
         } else {
             self.ended = true;
             // Persist the finished item at offset 0 (the cursor for a resume).
-            if let Some(item) = self.current_item() {
+            // Tracks only (the §6b-ii-c-1 guard, matching `flush`): an episode's
+            // `track_id` field holds an *episode* id, which must never reach the
+            // music `playback_state`. So finishing an episode-tailed queue leaves
+            // the cursor on the last track; episode resume lands in the podcast
+            // `playback` table at 6b-ii-c-2.
+            if let Some(item) = self.current_item()
+                && item.kind == MediaKind::Track
+            {
                 let track_id = item.track_id;
                 self.save_cursor(track_id, 0.0, true);
             }

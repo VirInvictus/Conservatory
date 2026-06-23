@@ -1,16 +1,25 @@
-//! The Podcasts triage browse (Phase 6b-ii-a/b).
+//! The Podcasts triage browse (Phase 6b-ii-a/b/c-1).
 //!
 //! Fills the 6b-i Podcasts page (spec §3.7): a sidebar of triage buckets
 //! (Inbox / Queue / Played), subscribed shows, and tags; an episode list
 //! showing each episode's played state; and a detail pane with the show notes
-//! plus the triage actions (6b-ii-b: mark played / unplayed / archived, star).
-//! Episode playback is 6b-ii-c. The module compiles only with the `podcasts`
-//! feature.
+//! plus the triage actions. The module compiles only with the `podcasts`
+//! feature. Three flows wire together here:
 //!
-//! Reads go through the read pool (`episodes_in_bucket` / `episodes_for_show` /
-//! `episodes_for_tag`); the actions write through the single-writer worker
-//! (`set_episode_played` / `set_episode_starred`), then re-load the current
-//! source so the list's state glyph and the bucket counts refresh.
+//! - **Browse (6b-ii-a):** reads through the read pool (`episodes_in_bucket` /
+//!   `episodes_for_show` / `episodes_for_tag`), rendered into the `ColumnView`.
+//! - **Triage (6b-ii-b):** the detail-pane action bar (mark played / unplayed /
+//!   archived, star) writes through the single-writer worker
+//!   (`set_episode_played` / `set_episode_starred`), then re-loads the current
+//!   source so the list glyph and the bucket counts refresh.
+//! - **Playback (6b-ii-c-1):** double-click / Enter plays the visible list from
+//!   that row, `Ctrl+Enter` appends; episodes flow into the one unified queue
+//!   via `build_episode_queue` + the `PlayerHandle` (streamed or local). Episode
+//!   resume + per-show overrides are 6b-ii-c-2/c-3.
+//!
+//! Worker writes are dispatched with `rt.block_on(worker.*)` from the GTK main
+//! thread, the app-wide GUI-write idiom (the worker runs on a dedicated runtime
+//! thread, so this blocks only for a sub-millisecond command round-trip).
 
 use std::cell::RefCell;
 use std::path::PathBuf;

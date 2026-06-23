@@ -187,7 +187,7 @@ pub async fn import_opml(
             fetch_interval: 3600,
             auth_user: None,
             auth_pass_ref: None,
-            auto_download: true,
+            auto_download: false, // opt-in, not default (spec §5.3)
             keep_count: 0,
             priority: 0,
             folder_path: format!("{}/{}", slug::PODCASTS_DIR, show_slug),

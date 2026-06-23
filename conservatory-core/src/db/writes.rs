@@ -350,10 +350,11 @@ pub(crate) fn increment_play_count(conn: &Connection, track_id: i64, played_at: 
 
 // --- Unified queue (Phase 4b, spec §4.3). Positions stay contiguous 0..n-1;
 // every mutation is one transaction on the single writer, so there is no
-// concurrent writer to race the renumber. Phase 4b-i enqueues `track` rows only.
+// concurrent writer to race the renumber. Tracks land here at Phase 4b-i,
+// episodes at 6b-ii-c-1 (the `kind` column distinguishes them); books at Phase 7.
 
-/// Append tracks at the tail, preserving order. Each new row takes the next
-/// free position after the current maximum.
+/// Append episodes at the tail, preserving order (Phase 6b-ii-c-1). Each new row
+/// takes the next free position after the current maximum.
 pub(crate) fn enqueue_episodes(conn: &mut Connection, episode_ids: &[i64]) -> Result<()> {
     let tx = conn.transaction()?;
     let base: i64 = tx.query_row(
@@ -371,6 +372,8 @@ pub(crate) fn enqueue_episodes(conn: &mut Connection, episode_ids: &[i64]) -> Re
     Ok(())
 }
 
+/// Replace the whole queue with these episodes in order ("play these now",
+/// Phase 6b-ii-c-1).
 pub(crate) fn replace_queue_with_episodes(
     conn: &mut Connection,
     episode_ids: &[i64],
@@ -387,6 +390,8 @@ pub(crate) fn replace_queue_with_episodes(
     Ok(())
 }
 
+/// Append tracks at the tail, preserving order (Phase 4b). Each new row takes
+/// the next free position after the current maximum.
 pub(crate) fn enqueue_tracks(conn: &mut Connection, track_ids: &[i64]) -> Result<()> {
     let tx = conn.transaction()?;
     let base: i64 = tx.query_row(

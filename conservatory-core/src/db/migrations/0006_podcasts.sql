@@ -31,7 +31,7 @@ CREATE TABLE shows (
     fetch_interval    INTEGER NOT NULL DEFAULT 3600,
     auth_user         TEXT,                         -- HTTP Basic; NULL = anonymous
     auth_pass_ref     TEXT,                         -- libsecret schema name; never inline (oo7)
-    auto_download     INTEGER NOT NULL DEFAULT 1,
+    auto_download     INTEGER NOT NULL DEFAULT 0,   -- opt-in; downloads are user-chosen (spec §5.3)
     keep_count        INTEGER NOT NULL DEFAULT 0,   -- 0 = keep all
     priority          INTEGER NOT NULL DEFAULT 0,   -- Overcast-style ordering
     folder_path       TEXT NOT NULL                 -- managed; <root>/Podcasts/<slug> (spec §5.3)

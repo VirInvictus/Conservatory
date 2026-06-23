@@ -19,7 +19,8 @@ pub const PODCASTS_DIR: &str = "Podcasts";
 ///
 /// ASCII alphanumerics are kept (lowercased); every other run of characters
 /// collapses to a single `-`. Leading/trailing dashes are trimmed and the
-/// result is capped at [`MAX_SLUG_BYTES`] (on a char boundary). An input that
+/// result is capped at [`MAX_SLUG_BYTES`] (always safe, since the slug is
+/// ASCII-only: lowercase alphanumerics and `-`). An input that
 /// reduces to nothing (punctuation-only, or non-ASCII-only) yields
 /// `"untitled"`, so a folder name always exists.
 pub fn slugify(input: &str) -> String {
@@ -34,7 +35,8 @@ pub fn slugify(input: &str) -> String {
             prev_dash = true;
         }
     }
-    // Trim a trailing separator and enforce the byte cap on a char boundary.
+    // Enforce the byte cap. `out` is ASCII (1 byte per char), so popping bytes
+    // never splits a char; the trailing separator is trimmed just below.
     while out.len() > MAX_SLUG_BYTES {
         out.pop();
     }

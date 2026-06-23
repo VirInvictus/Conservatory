@@ -91,7 +91,9 @@ pub async fn add_show(
         fetch_interval: 3600,
         auth_user: None,
         auth_pass_ref: None,
-        auto_download: true,
+        // Off by default: a large subscription list would fill the disk fast;
+        // the user downloads the episodes they want (spec §5.3).
+        auto_download: false,
         keep_count: 0,
         priority: 0,
         folder_path: format!("{}/{}", slug::PODCASTS_DIR, show_slug),

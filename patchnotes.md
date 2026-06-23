@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.33
+
+A cleanup pass over the podcast subsystem: a real correctness fix, a robustness fix, and doc/comment tidying. No new features.
+
+- **Fix (the episode-id leak):** the per-kind playback persistence guard from 6b-ii-c-1 was **incomplete**. The terminal cursor write in the engine's `advance_after_end` (reached when the last queue item ends naturally) was unguarded, so finishing an episode-tailed queue wrote the episode id into the music `playback_state.track_id`. Because that column has an FK to `tracks(id)`, the write was silently dropped when no track shared the id, but in a populated library where an episode id collides with a track id, it persisted and would **resume the wrong music track** on the next launch. The terminal write now carries the same `kind == Track` guard as the tick path. The engine null-sink test was strengthened to import a real track first (so the FK is satisfiable), which makes it actually exercise the leak path rather than masking it with an empty table.
+- **Fix (429 cooldown):** a `429 Too Many Requests` with a missing or non-numeric `Retry-After` (the HTTP-date form) recorded no cooldown, so the next refresh cycle immediately re-hit the throttling host. It now falls back to a default backoff, so a throttling host is always cooled down.
+- **Default change: `auto_download` is now off.** A new subscription no longer flags itself for auto-download (the schema default and the `add` / `import-opml` paths now set it `false`). On a large subscription list, auto-downloading every episode fills the disk fast; downloads stay user-chosen (the `podcast download` verb, spec §5.3). It is a stored per-show flag with no auto-download loop wired yet, so this only sets the future default; existing subscriptions keep their value.
+- **Docs / comments:** the Podcasts GUI module doc now describes the playback path (it still said playback was unshipped); the unified-queue write block comment and the `enqueue_episodes` / `replace_queue_with_episodes` docs were corrected (a doc comment had been misattached); the `episodes_in_bucket` doc now states that Queue and Played can overlap by design (only Inbox is exclusive); and a misleading "char boundary" note in `slugify` was reworded (the slug is ASCII-only).
+- Verified the OPML round-trip on a real 72-feed Overcast export (import + export preserve every subscription and `applePodcastsID`) and a single-feed refresh (215 episodes).
+
+Known follow-ups (flagged, not done here): a few small refactors (a `Show::skeleton` constructor to dedupe the ~18-field skeleton built in three places; a shared `element_name` helper in `namespace.rs`; an `EpisodeRow → EpisodeSource` helper), and URL-decoding the download filename (kept percent-encoded for now, which is path-safe).
+
 ## v0.0.32
 
 Phase 6b-ii-c-1 shipped: podcast episodes now play. Double-click an episode in the Podcasts list and it plays through the same libmpv engine, Now-bar, and queue drawer as music, streamed if it is not downloaded, from the local file if it is. The one unified queue now genuinely interleaves tracks and episodes.

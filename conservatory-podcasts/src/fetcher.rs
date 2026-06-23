@@ -22,6 +22,11 @@ use crate::credentials::BasicAuth;
 use crate::error::{FetchError, Result};
 use crate::http;
 
+/// Backoff applied to a host that answers 429 without a numeric `Retry-After`
+/// (a missing header or the HTTP-date form). Five minutes is conservative; a
+/// host that means it usually sends a longer numeric value, which wins.
+const DEFAULT_RATE_LIMIT_COOLDOWN_SECS: i64 = 300;
+
 /// The outcome of a single conditional GET. On a 304 the body is empty and the
 /// header fields are `None` (the stored values stay authoritative); on a 2xx
 /// the caller persists `etag` / `last_modified` for the next request.
@@ -124,14 +129,20 @@ impl Fetcher {
         let status = response.status();
 
         if status == StatusCode::TOO_MANY_REQUESTS {
-            let retry_after =
-                header_str(&response, header::RETRY_AFTER).and_then(|s| s.parse::<i64>().ok());
-            if let Some(secs) = retry_after {
+            // Honour a numeric `Retry-After` (delta-seconds). A missing header or
+            // the HTTP-date form falls back to a default backoff, so a throttling
+            // host always gets a cooldown rather than being re-hit next cycle
+            // (the previous behaviour recorded none on a non-numeric value).
+            let secs = header_str(&response, header::RETRY_AFTER)
+                .and_then(|s| s.parse::<i64>().ok())
+                .filter(|s| *s >= 0)
+                .unwrap_or(DEFAULT_RATE_LIMIT_COOLDOWN_SECS);
+            {
                 let mut cooldowns = self.cooldowns.lock().await;
                 cooldowns.insert(host, Utc::now() + Duration::seconds(secs));
             }
             return Err(FetchError::RateLimited {
-                retry_after_secs: retry_after.unwrap_or(0).max(0) as u64,
+                retry_after_secs: secs as u64,
             });
         }
 

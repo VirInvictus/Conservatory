@@ -92,6 +92,30 @@ async fn rate_limit_sets_a_cooldown_that_short_circuits_the_next_fetch() {
 }
 
 #[tokio::test]
+async fn rate_limit_without_retry_after_still_applies_a_default_cooldown() {
+    let server = MockServer::start().await;
+    // A 429 with no (numeric) Retry-After: the host must still be cooled down,
+    // so the second fetch is short-circuited (expect(1) verifies one hit).
+    Mock::given(method("GET"))
+        .and(path("/feed.xml"))
+        .respond_with(ResponseTemplate::new(429))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let fetcher = Fetcher::new().unwrap();
+    let url = format!("{}/feed.xml", server.uri());
+
+    let first = fetcher.fetch(&url, None, None).await.unwrap_err();
+    assert!(
+        matches!(first, FetchError::RateLimited { retry_after_secs } if retry_after_secs > 0),
+        "a 429 without Retry-After should still report a positive cooldown, got {first:?}"
+    );
+    let second = fetcher.fetch(&url, None, None).await.unwrap_err();
+    assert!(matches!(second, FetchError::RateLimited { .. }));
+}
+
+#[tokio::test]
 async fn invalid_url_is_reported() {
     let fetcher = Fetcher::new().unwrap();
     let err = fetcher.fetch("not a url", None, None).await.unwrap_err();

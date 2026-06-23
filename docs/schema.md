@@ -164,7 +164,7 @@ CREATE TABLE shows (
     last_fetched INTEGER, last_modified TEXT, etag TEXT,             -- conditional-GET state (Phase 6a-ii)
     fetch_interval INTEGER NOT NULL DEFAULT 3600,
     auth_user TEXT, auth_pass_ref TEXT,                             -- HTTP Basic; pass is a libsecret ref (oo7)
-    auto_download INTEGER NOT NULL DEFAULT 1, keep_count INTEGER NOT NULL DEFAULT 0,
+    auto_download INTEGER NOT NULL DEFAULT 0, keep_count INTEGER NOT NULL DEFAULT 0,
     priority INTEGER NOT NULL DEFAULT 0,                            -- Overcast-style ordering
     folder_path TEXT NOT NULL                                       -- <root>/Podcasts/<slug> (spec §5.3)
 );

@@ -27,8 +27,8 @@ use gtk::glib;
 
 use conservatory_core::db::{
     FacetFilter, MediaKind, Perspective, ReadPool, WorkerHandle, facet_rows, get_tracks,
-    list_perspectives, load_queue_display, read_playback_state, spawn_worker, track_render_rows,
-    writeback_rows,
+    list_perspectives, load_queue_display, read_playback_state, show_settings_map, spawn_worker,
+    track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
@@ -659,6 +659,8 @@ impl ConservatoryWindow {
         }
         let track_ids: Vec<i64> = rows.iter().filter_map(|r| r.track_id).collect();
         let tracks = get_tracks(&conn, &track_ids).unwrap_or_default();
+        let show_ids: Vec<i64> = rows.iter().filter_map(|r| r.show_id).collect();
+        let settings = show_settings_map(&conn, &show_ids).unwrap_or_default();
         drop(conn);
 
         let mixed: Vec<MixedQueueRow> = rows
@@ -667,6 +669,7 @@ impl ConservatoryWindow {
                 kind: r.kind,
                 track_id: r.track_id,
                 episode_id: r.episode_id,
+                show_id: r.show_id,
                 audio_path: r.audio_path.clone(),
                 audio_url: r.audio_url.clone(),
             })
@@ -685,6 +688,7 @@ impl ConservatoryWindow {
             cursor_id,
             root,
             &PlaybackConfig::default(),
+            &settings,
         );
         if items.is_empty() {
             return;

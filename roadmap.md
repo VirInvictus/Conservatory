@@ -449,8 +449,26 @@ Episode playback splits again, because the per-kind persistence + resume is the 
 
 ###### Phase 6b-ii-c-3 — Per-show overrides
 
-- [ ] Per-show overrides: speed, Smart Speed, Voice Boost, skip, retention, inbox policy (`upsert_show_settings`); they are playback settings, so they ride with playback.
-- [ ] Tests: per-show override resolution.
+Split, because the six settings span playback (resolved into the profile) and management (refresh-time routing + retention), and a GUI editor: **c-3-a** is per-show playback speed, headless; **c-3-b** is inbox-policy routing + retention; **c-3-c** is the GUI per-show settings panel. Smart Speed / Voice Boost are flags carried for Phase 6c (the `af`-chain), not built here.
+
+###### Phase 6b-ii-c-3-a — Per-show playback speed (headless) ✅
+
+- [x] `MusicProfile` (the de-facto single per-item profile, spec §6.1) gains `speed` + `pitch_correction`; `resolve_episode_profile(Option<&ShowSettings>)` resolves the speed from the show's `playback_speed` (clamped to `[0.25, 4.0]`, pitch correction on), music stays at 1.0. `MpvHost::load` applies mpv `speed` + `audio-pitch-correction` (scaletempo2) before `loadfile` (1.0/off is a no-op for the track path).
+- [x] The episode-queue builders (`build_episode_queue`, `build_mixed_queue`, the CLI `resolve_queue_items`) thread each episode's show settings in: `EpisodeSource`/`MixedQueueRow`/`QueueDisplayRow` carry `show_id`, a new core `show_settings_map` batch-reads them, and the builders resolve speed per show. `EpisodeRow` exposes `show_id`.
+- [x] CLI `podcast settings <db> <show_id> [--speed N]` views or sets a show's overrides (preserving the other fields), the headless surface.
+- [x] Tests: profile speed resolution + clamp; `build_episode_queue` / `build_mixed_queue` apply per-show speed; a host integration test asserts `load` sets mpv's `speed`; music-only build green.
+
+*Usable artifact:* set a show's speed (`podcast settings ... --speed 1.5`) and its episodes play at that rate with corrected pitch, in the unified queue.
+
+###### Phase 6b-ii-c-3-b — Inbox-policy routing + retention
+
+- [ ] Apply a show's `inbox_policy` to new episodes on refresh (Inbox / AlwaysQueue / AlwaysArchive); prune downloaded episodes beyond `keep_count` (retention). These are management settings on the refresh path (`conservatory-podcasts`), not playback.
+- [ ] Tests: a new episode routes per policy; retention prunes the oldest downloads.
+
+###### Phase 6b-ii-c-3-c — GUI per-show settings panel
+
+- [ ] A per-show settings surface in the Podcasts detail pane (spec §3.7): speed, Smart Speed / Voice Boost toggles (the flags 6c consumes), skip intro/outro, inbox policy. Writes through `upsert_show_settings`.
+- [ ] Tests: build + manual (the 3b/3c GUI precedent).
 
 *Usable artifact:* podcasts play in the one queue (downloaded or streamed), resuming where you left off, with per-show speed/boost settings. (Smart Speed / Voice Boost filters are 6c.)
 

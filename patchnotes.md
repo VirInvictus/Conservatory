@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.35
+
+Phase 6b-ii-c-3-a shipped: per-show podcast playback speed. Set a show to play at 1.5x and its episodes play at that rate, with pitch held constant so faster speech still sounds natural, in the one unified queue alongside music.
+
+- **Profile carries speed (`conservatory-core`):** the per-item playback profile gains `speed` + `pitch_correction`. `resolve_episode_profile` now reads the show's `playback_speed` (clamped to a sane `[0.25, 4.0]`, pitch correction on); music resolves to native speed. `MpvHost::load` applies mpv's `speed` + `audio-pitch-correction` (the built-in scaletempo2) before loading, so 1.0 / off is a no-op for tracks (the music path is unchanged).
+- **Threaded through the queue builders:** each episode's show settings reach the profile at enqueue. `EpisodeSource` / `MixedQueueRow` / `QueueDisplayRow` carry `show_id`; a new core `show_settings_map` batch-reads the per-show overrides; `build_episode_queue`, `build_mixed_queue` (resume), and the CLI `resolve_queue_items` resolve each episode's speed from them.
+- **CLI:** `podcast settings <db> <show_id> [--speed N]` views a show's settings, or sets the playback speed (preserving the other fields). The headless surface for the feature; the in-detail-pane GUI editor is c-3-c.
+- **Tests:** profile speed resolution + clamp; the queue builders apply per-show speed (and default to 1.0 without settings); a host integration test asserts `load` leaves mpv's `speed` at the profile value; the `--no-default-features` music-only build stays green.
+- This is the first of the per-show overrides (Phase 6b-ii-c-3 split into a/b/c): **a** is speed (this); **b** is inbox-policy routing + retention pruning on refresh; **c** is the GUI settings panel. The `smart_speed` / `voice_boost` flags are stored and ride the settings, but their filters are Phase 6c (the Smart Speed / Voice Boost `af` chain).
+
+Next: Phase 6b-ii-c-3-b (inbox-policy routing + retention) or c-3-c (the GUI per-show settings panel).
+
 ## v0.0.34
 
 Phase 6b-ii-c-2 shipped: podcast episodes now resume. Close the app mid-episode and reopen it, and you pick up where you left off, to the second, downloaded or streamed, in the one unified queue alongside music. An episode's progress and played state persist on their own, so finishing or part-listening to an episode is reflected in the triage list across restarts.

@@ -132,6 +132,8 @@ fn host_plays_fixture_to_eof() {
         gapless: true,
         replaygain: ReplayGain::Off,
         crossfade_seconds: 0,
+        speed: 1.0,
+        pitch_correction: false,
     };
     host.load(audio_fixture("sample.flac").to_str().unwrap(), &profile)
         .expect("loading fixture");
@@ -152,6 +154,26 @@ fn host_plays_fixture_to_eof() {
         Some(EndReason::Eof),
         "the fixture should play through to a natural end-of-file"
     );
+}
+
+/// `load` applies the profile's speed + pitch correction to the host (Phase
+/// 6b-ii-c-3-a per-show speed): a profile with `speed = 1.5` leaves mpv's
+/// `speed` property at 1.5.
+#[test]
+fn host_load_applies_profile_speed() {
+    let Ok(mut host) = MpvHost::new_null() else {
+        return;
+    };
+    let profile = MusicProfile {
+        gapless: false,
+        replaygain: ReplayGain::Off,
+        crossfade_seconds: 0,
+        speed: 1.5,
+        pitch_correction: true,
+    };
+    host.load(audio_fixture("sample.flac").to_str().unwrap(), &profile)
+        .expect("loading fixture");
+    assert_eq!(host.speed(), Some(1.5));
 }
 
 /// The output-device list (Phase 4c-ii) is queryable and always carries mpv's

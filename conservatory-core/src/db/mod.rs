@@ -33,7 +33,7 @@ pub use reads::{
     get_episode_by_guid, get_playback, get_show, get_show_settings, get_track, get_tracks,
     library_counts, list_albums, list_all_tags, list_chapters, list_episodes_for_show,
     list_perspectives, list_shows, list_tags_for_show, load_queue, load_queue_display,
-    perspective_expression, read_playback_state, search_rows, search_track_ids, track_metadata,
-    track_render_rows, writeback_rows,
+    perspective_expression, read_playback_state, search_rows, search_track_ids, show_settings_map,
+    track_metadata, track_render_rows, writeback_rows,
 };
 pub use worker::{WorkerHandle, spawn_worker};

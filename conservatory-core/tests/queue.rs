@@ -313,7 +313,7 @@ fn engine_plays_an_episode_to_podcast_playback_not_the_track_tables() {
     let item = PlayableItem {
         track_id: episode_id,
         source: fixtures_dir.join("sample.mp3"),
-        profile: conservatory_core::resolve_episode_profile(),
+        profile: conservatory_core::resolve_episode_profile(None),
         album_id: None,
         kind: MediaKind::Episode,
     };

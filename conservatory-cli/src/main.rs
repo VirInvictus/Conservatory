@@ -11,9 +11,9 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    MediaKind, ReadPool, SearchRow, SqlParam, fts_rank, get_album, get_episode, get_track,
-    library_counts, load_queue, probe_read, read_playback_state, search_rows, search_track_ids,
-    spawn_worker, track_render_rows, writeback_rows,
+    MediaKind, ReadPool, SearchRow, SqlParam, fts_rank, get_album, get_episode, get_show_settings,
+    get_track, library_counts, load_queue, probe_read, read_playback_state, search_rows,
+    search_track_ids, spawn_worker, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
@@ -327,6 +327,18 @@ enum PodcastAction {
         /// Unstar instead of star.
         #[arg(long)]
         off: bool,
+    },
+    /// Show or set a show's per-show overrides (spec §3.7). With no flags it
+    /// prints the current settings; `--speed` sets the playback speed (Phase
+    /// 6b-ii-c-3-a). Smart Speed / Voice Boost filters are Phase 6c.
+    Settings {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The show id.
+        show_id: i64,
+        /// Set the playback speed (e.g. 1.5); omit to just view.
+        #[arg(long)]
+        speed: Option<f64>,
     },
 }
 
@@ -1469,10 +1481,12 @@ fn resolve_queue_items(
                     (None, Some(url)) => PathBuf::from(url),
                     (None, None) => continue,
                 };
+                // Resolve the show's per-show overrides (speed) for the profile.
+                let settings = get_show_settings(&conn, ep.show_id).context("show settings")?;
                 items.push(PlayableItem {
                     track_id: episode_id, // the queue item's id field carries the episode id
                     source,
-                    profile: resolve_episode_profile(),
+                    profile: resolve_episode_profile(settings.as_ref()),
                     album_id: None,
                     kind: MediaKind::Episode,
                 });
@@ -1853,6 +1867,9 @@ fn podcast(action: PodcastAction) -> Result<()> {
             episode_id,
             off,
         } => block_on(run_podcast_star(db, episode_id, off)),
+        PodcastAction::Settings { db, show_id, speed } => {
+            block_on(run_podcast_settings(db, show_id, speed))
+        }
     }
 }
 
@@ -1912,6 +1929,57 @@ async fn run_podcast_star(db: PathBuf, episode_id: i64, off: bool) -> Result<()>
         "Episode {episode_id} {}.",
         if off { "unstarred" } else { "starred" }
     );
+    Ok(())
+}
+
+#[cfg(feature = "podcasts")]
+async fn run_podcast_settings(db: PathBuf, show_id: i64, speed: Option<f64>) -> Result<()> {
+    use conservatory_core::db::{InboxPolicy, ShowSettings};
+
+    // Read current settings, or the schema defaults if the show has none, so a
+    // `--speed` set preserves the other fields (the partial-edit discipline).
+    let pool = ReadPool::new(db.clone(), 1).context("opening read pool")?;
+    let current = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_show_settings(&conn, show_id).context("reading show settings")?
+    };
+    let mut settings = current.unwrap_or(ShowSettings {
+        show_id,
+        playback_speed: 1.0,
+        smart_speed: true,
+        voice_boost: false,
+        skip_intro: 0,
+        skip_outro: 0,
+        skip_forward: None,
+        skip_back: None,
+        inbox_policy: InboxPolicy::Inbox,
+    });
+
+    match speed {
+        Some(s) => {
+            anyhow::ensure!(s > 0.0, "speed must be positive (e.g. 1.5)");
+            settings.playback_speed = s;
+            let worker = spawn_worker(db).context("spawning worker")?;
+            worker
+                .upsert_show_settings(settings)
+                .await
+                .context("saving show settings")?;
+            worker.shutdown_ack().await.context("shutdown ack")?;
+            println!("Show {show_id} playback speed set to {s}x.");
+        }
+        None => {
+            println!(
+                "Show {show_id}: speed {}x, smart_speed {}, voice_boost {}, \
+                 skip_intro {}s, skip_outro {}s, inbox_policy {}",
+                settings.playback_speed,
+                settings.smart_speed,
+                settings.voice_boost,
+                settings.skip_intro,
+                settings.skip_outro,
+                settings.inbox_policy.as_str(),
+            );
+        }
+    }
     Ok(())
 }
 

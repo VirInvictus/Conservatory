@@ -242,6 +242,10 @@ impl EpisodeRow {
         self.with(|r| r.id)
     }
 
+    pub fn show_id(&self) -> i64 {
+        self.with(|r| r.show_id)
+    }
+
     pub fn title(&self) -> String {
         self.with(|r| r.title.clone())
     }

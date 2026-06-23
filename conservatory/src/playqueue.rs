@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use conservatory_core::db::{MediaKind, Track};
+use conservatory_core::db::{MediaKind, ShowSettings, Track};
 use conservatory_core::{PlayableItem, PlaybackConfig, resolve_music_profile};
 
 /// Build the play queue and start index from the visible list.
@@ -56,6 +56,7 @@ pub fn build_play_queue(
 #[derive(Debug, Clone)]
 pub struct EpisodeSource {
     pub id: i64,
+    pub show_id: i64,
     pub audio_path: Option<String>,
     pub audio_url: Option<String>,
 }
@@ -64,12 +65,15 @@ pub struct EpisodeSource {
 /// flavour). Each episode's `source` is its downloaded file (`root` + the
 /// relative `audio_path`) when present, else the stream URL (libmpv's
 /// `loadfile` takes a URL as-is). Episodes with neither are skipped; `start`
-/// re-indexes past any skip, pointing at the activated episode (or 0).
+/// re-indexes past any skip, pointing at the activated episode (or 0). Each
+/// episode's profile resolves the per-show playback speed from `settings`
+/// (show_id → overrides; absent = the default speed), Phase 6b-ii-c-3-a.
 #[cfg(feature = "podcasts")]
 pub fn build_episode_queue(
     ordered: &[EpisodeSource],
     activated: usize,
     root: &Path,
+    settings: &HashMap<i64, ShowSettings>,
 ) -> (Vec<PlayableItem>, usize) {
     let activated_id = ordered.get(activated).map(|e| e.id);
 
@@ -84,7 +88,7 @@ pub fn build_episode_queue(
             Some(PlayableItem {
                 track_id: e.id,
                 source,
-                profile: conservatory_core::resolve_episode_profile(),
+                profile: conservatory_core::resolve_episode_profile(settings.get(&e.show_id)),
                 album_id: None,
                 kind: MediaKind::Episode,
             })
@@ -107,6 +111,7 @@ pub struct MixedQueueRow {
     pub kind: MediaKind,
     pub track_id: Option<i64>,
     pub episode_id: Option<i64>,
+    pub show_id: Option<i64>,
     pub audio_path: Option<String>,
     pub audio_url: Option<String>,
 }
@@ -114,8 +119,9 @@ pub struct MixedQueueRow {
 /// Rebuild a mixed (track + episode) play queue from the saved unified queue, in
 /// order, for launch-resume (Phase 6b-ii-c-2). Tracks resolve through `tracks`
 /// (root-joined `file_path` + music profile); episodes resolve to their
-/// downloaded file (`root` + `audio_path`) else their stream URL. Rows whose
-/// source cannot be resolved (a vanished track, a source-less episode) are
+/// downloaded file (`root` + `audio_path`) else their stream URL, with the
+/// per-show speed from `settings` (show_id → overrides, Phase 6b-ii-c-3-a). Rows
+/// whose source cannot be resolved (a vanished track, a source-less episode) are
 /// skipped. `start` re-indexes onto the item matching the saved cursor
 /// `(cursor_kind, cursor_id)`, falling back to 0 if it vanished. Pure.
 pub fn build_mixed_queue(
@@ -125,6 +131,7 @@ pub fn build_mixed_queue(
     cursor_id: Option<i64>,
     root: &Path,
     cfg: &PlaybackConfig,
+    settings: &HashMap<i64, ShowSettings>,
 ) -> (Vec<PlayableItem>, usize) {
     let by_id: HashMap<i64, &Track> = tracks.iter().map(|t| (t.id, t)).collect();
     let mut items = Vec::new();
@@ -151,10 +158,11 @@ pub fn build_mixed_queue(
                     (None, Some(url)) => std::path::PathBuf::from(url),
                     (None, None) => continue,
                 };
+                let show_settings = row.show_id.and_then(|sid| settings.get(&sid));
                 items.push(PlayableItem {
                     track_id: episode_id,
                     source,
-                    profile: conservatory_core::resolve_episode_profile(),
+                    profile: conservatory_core::resolve_episode_profile(show_settings),
                     album_id: None,
                     kind: MediaKind::Episode,
                 });
@@ -344,18 +352,39 @@ mod tests {
             kind: MediaKind::Track,
             track_id: Some(id),
             episode_id: None,
+            show_id: None,
             audio_path: None,
             audio_url: None,
         }
     }
 
-    fn episode_row(id: i64, audio_path: Option<&str>, audio_url: Option<&str>) -> MixedQueueRow {
+    fn episode_row(
+        id: i64,
+        show_id: i64,
+        audio_path: Option<&str>,
+        audio_url: Option<&str>,
+    ) -> MixedQueueRow {
         MixedQueueRow {
             kind: MediaKind::Episode,
             track_id: None,
             episode_id: Some(id),
+            show_id: Some(show_id),
             audio_path: audio_path.map(str::to_string),
             audio_url: audio_url.map(str::to_string),
+        }
+    }
+
+    fn show_settings(show_id: i64, speed: f64) -> ShowSettings {
+        ShowSettings {
+            show_id,
+            playback_speed: speed,
+            smart_speed: true,
+            voice_boost: false,
+            skip_intro: 0,
+            skip_outro: 0,
+            skip_forward: None,
+            skip_back: None,
+            inbox_policy: conservatory_core::db::InboxPolicy::Inbox,
         }
     }
 
@@ -364,9 +393,14 @@ mod tests {
         use std::path::PathBuf;
         let rows = vec![
             track_row(1),
-            episode_row(7, Some("Podcasts/s/e/a.mp3"), Some("https://cdn/a.mp3")),
+            episode_row(
+                7,
+                100,
+                Some("Podcasts/s/e/a.mp3"),
+                Some("https://cdn/a.mp3"),
+            ),
             track_row(2),
-            episode_row(8, None, Some("https://cdn/b.mp3")),
+            episode_row(8, 100, None, Some("https://cdn/b.mp3")),
         ];
         let tracks = vec![track(1, "a.flac"), track(2, "b.flac")];
         // Cursor is the streamed episode (id 8): the start re-indexes onto it.
@@ -377,6 +411,7 @@ mod tests {
             Some(8),
             Path::new("/lib"),
             &PlaybackConfig::default(),
+            &HashMap::new(),
         );
         assert_eq!(items.len(), 4);
         // Order preserved across kinds.
@@ -393,9 +428,26 @@ mod tests {
     }
 
     #[test]
+    fn mixed_queue_applies_per_show_speed() {
+        let rows = vec![episode_row(7, 100, None, Some("https://cdn/a.mp3"))];
+        let settings = HashMap::from([(100, show_settings(100, 1.5))]);
+        let (items, _) = build_mixed_queue(
+            &rows,
+            &[],
+            MediaKind::Episode,
+            Some(7),
+            Path::new("/lib"),
+            &PlaybackConfig::default(),
+            &settings,
+        );
+        assert_eq!(items[0].profile.speed, 1.5);
+        assert!(items[0].profile.pitch_correction);
+    }
+
+    #[test]
     fn mixed_queue_skips_sourceless_and_vanished_then_reindexes() {
         // Track 1 vanished (not in `tracks`); episode 9 has no source: both drop.
-        let rows = vec![track_row(1), episode_row(9, None, None), track_row(2)];
+        let rows = vec![track_row(1), episode_row(9, 100, None, None), track_row(2)];
         let tracks = vec![track(2, "b.flac")];
         let (items, start) = build_mixed_queue(
             &rows,
@@ -404,6 +456,7 @@ mod tests {
             Some(2),
             Path::new("/m"),
             &PlaybackConfig::default(),
+            &HashMap::new(),
         );
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].track_id, 2);
@@ -422,6 +475,7 @@ mod tests {
             Some(99),
             Path::new("/m"),
             &PlaybackConfig::default(),
+            &HashMap::new(),
         );
         assert_eq!(items.len(), 1);
         assert_eq!(start, 0);
@@ -436,23 +490,26 @@ mod tests {
             // Downloaded: the local file wins even with a URL present.
             EpisodeSource {
                 id: 1,
+                show_id: 100,
                 audio_path: Some("Podcasts/s/2024-01-01--e/a.mp3".to_string()),
                 audio_url: Some("https://cdn/a.mp3".to_string()),
             },
             // Not downloaded: stream the URL.
             EpisodeSource {
                 id: 2,
+                show_id: 100,
                 audio_path: None,
                 audio_url: Some("https://cdn/b.mp3".to_string()),
             },
             // Neither: skipped.
             EpisodeSource {
                 id: 3,
+                show_id: 100,
                 audio_path: None,
                 audio_url: None,
             },
         ];
-        let (items, start) = build_episode_queue(&episodes, 1, root);
+        let (items, start) = build_episode_queue(&episodes, 1, root, &HashMap::new());
         assert_eq!(items.len(), 2, "the source-less episode is skipped");
         assert_eq!(
             items[0].source,
@@ -460,6 +517,22 @@ mod tests {
         );
         assert_eq!(items[1].source, PathBuf::from("https://cdn/b.mp3"));
         assert_eq!(items[0].kind, MediaKind::Episode);
+        // Default speed without settings.
+        assert_eq!(items[0].profile.speed, 1.0);
         assert_eq!(start, 1, "activated episode id 2 is item index 1");
+    }
+
+    #[cfg(feature = "podcasts")]
+    #[test]
+    fn build_episode_queue_applies_per_show_speed() {
+        let episodes = vec![EpisodeSource {
+            id: 1,
+            show_id: 100,
+            audio_path: None,
+            audio_url: Some("https://cdn/a.mp3".to_string()),
+        }];
+        let settings = HashMap::from([(100, show_settings(100, 2.0))]);
+        let (items, _) = build_episode_queue(&episodes, 0, Path::new("/lib"), &settings);
+        assert_eq!(items[0].profile.speed, 2.0);
     }
 }

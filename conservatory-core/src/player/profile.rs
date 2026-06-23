@@ -5,11 +5,18 @@
 //! mpv properties. Keeping it pure is what lets the resolution be unit-tested
 //! headless (the CLAUDE.md rule: logic in core, the host is thin glue).
 //!
-//! Phase 4a covers the music profile only. The podcast/audiobook spoken-word
-//! profile (Smart Speed, Voice Boost) lands with the absorbed Belfry engine at
-//! Phase 6c and reuses none of this.
+//! Phase 4a covers the music profile only. Phase 6b-ii-c-3-a adds per-show
+//! playback speed for episodes (mpv `speed` + `audio-pitch-correction`); the
+//! spoken-word `af` chain (Smart Speed, Voice Boost) lands at Phase 6c.
 
-use crate::db::models::Track;
+#[cfg(test)]
+use crate::db::models::InboxPolicy;
+use crate::db::models::{ShowSettings, Track};
+
+/// Variable-speed bounds (spec §6.3, the podcast 1.2x–2x range plus headroom).
+/// mpv accepts more, but a wild stored value should not produce unusable audio.
+const MIN_SPEED: f64 = 0.25;
+const MAX_SPEED: f64 = 4.0;
 
 /// ReplayGain mode (spec §6.2). mpv applies the gain from the file's own RG
 /// tags (the same tags `lofty` read into the DB at import); we choose the mode.
@@ -58,12 +65,22 @@ impl Default for PlaybackConfig {
     }
 }
 
-/// The resolved music profile for one item, ready to apply to the libmpv host.
+/// The resolved playback profile for one item, ready to apply to the libmpv
+/// host. The single per-item profile of spec §6.1 (named `MusicProfile` for now;
+/// episodes/audiobooks fill the spoken-word fields). `speed` + `pitch_correction`
+/// drive mpv's `speed` / `audio-pitch-correction` (scaletempo2): per-show speed
+/// for episodes (Phase 6b-ii-c-3-a), native speed for music.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MusicProfile {
     pub gapless: bool,
     pub replaygain: ReplayGain,
     pub crossfade_seconds: u32,
+    /// Playback rate (1.0 = native). Episodes resolve it from the show's
+    /// `playback_speed`; music plays at 1.0.
+    pub speed: f64,
+    /// Keep pitch constant when `speed != 1.0` (mpv `audio-pitch-correction`,
+    /// scaletempo2). On for spoken word, off for music (it is a no-op at 1.0).
+    pub pitch_correction: bool,
 }
 
 /// Resolve the music profile for `track` under `cfg`.
@@ -103,17 +120,30 @@ pub fn resolve_music_profile(track: &Track, cfg: &PlaybackConfig) -> MusicProfil
         gapless: cfg.gapless,
         replaygain,
         crossfade_seconds: cfg.crossfade_seconds,
+        speed: 1.0,
+        pitch_correction: false,
     }
 }
 
-/// A basic spoken-word profile for episode playback (Phase 6b-ii-c): no
-/// ReplayGain (podcasts carry none) and no gapless (episodes are single items).
-/// The Smart Speed / Voice Boost `af` chain is Phase 6c.
-pub fn resolve_episode_profile() -> MusicProfile {
+/// A spoken-word profile for episode playback: no ReplayGain (podcasts carry
+/// none) and no gapless (episodes are single items), with per-show variable
+/// speed resolved from the show's settings (Phase 6b-ii-c-3-a). `settings` is
+/// `None` for a show with no overrides (the schema default 1.0). The stored
+/// speed is clamped to `[MIN_SPEED, MAX_SPEED]` so a bad value never yields
+/// unusable audio. Pitch correction is on so faster speech stays natural. The
+/// Smart Speed / Voice Boost `af` chain (and the `smart_speed`/`voice_boost`
+/// flags those consume) is Phase 6c.
+pub fn resolve_episode_profile(settings: Option<&ShowSettings>) -> MusicProfile {
+    let speed = settings
+        .map(|s| s.playback_speed)
+        .unwrap_or(1.0)
+        .clamp(MIN_SPEED, MAX_SPEED);
     MusicProfile {
         gapless: false,
         replaygain: ReplayGain::Off,
         crossfade_seconds: 0,
+        speed,
+        pitch_correction: true,
     }
 }
 
@@ -221,5 +251,52 @@ mod tests {
         assert_eq!(ReplayGain::Off.as_mpv(), "no");
         assert_eq!(ReplayGain::Track.as_mpv(), "track");
         assert_eq!(ReplayGain::Album.as_mpv(), "album");
+    }
+
+    #[test]
+    fn music_plays_at_native_speed() {
+        let p = resolve_music_profile(&track(), &PlaybackConfig::default());
+        assert_eq!(p.speed, 1.0);
+        assert!(!p.pitch_correction);
+    }
+
+    fn show_settings(speed: f64) -> ShowSettings {
+        ShowSettings {
+            show_id: 1,
+            playback_speed: speed,
+            smart_speed: true,
+            voice_boost: false,
+            skip_intro: 0,
+            skip_outro: 0,
+            skip_forward: None,
+            skip_back: None,
+            inbox_policy: InboxPolicy::Inbox,
+        }
+    }
+
+    #[test]
+    fn episode_speed_resolves_from_show_settings() {
+        let p = resolve_episode_profile(Some(&show_settings(1.5)));
+        assert_eq!(p.speed, 1.5);
+        assert!(p.pitch_correction, "spoken word keeps pitch correction on");
+        assert_eq!(p.replaygain, ReplayGain::Off);
+        assert!(!p.gapless);
+    }
+
+    #[test]
+    fn episode_speed_defaults_to_one_without_settings() {
+        assert_eq!(resolve_episode_profile(None).speed, 1.0);
+    }
+
+    #[test]
+    fn episode_speed_is_clamped() {
+        assert_eq!(
+            resolve_episode_profile(Some(&show_settings(99.0))).speed,
+            MAX_SPEED
+        );
+        assert_eq!(
+            resolve_episode_profile(Some(&show_settings(0.0))).speed,
+            MIN_SPEED
+        );
     }
 }

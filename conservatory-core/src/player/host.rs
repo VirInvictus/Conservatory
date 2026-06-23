@@ -93,6 +93,15 @@ impl MpvHost {
         self.mpv
             .set_property("replaygain", profile.replaygain.as_mpv())
             .map_err(|e| Error::Player(format!("setting replaygain: {e}")))?;
+        // Per-show variable speed (Phase 6b-ii-c-3-a): keep pitch constant via
+        // scaletempo2 so faster speech stays natural. 1.0 / off is a no-op for
+        // music, so the track path is unchanged.
+        self.mpv
+            .set_property("audio-pitch-correction", profile.pitch_correction)
+            .map_err(|e| Error::Player(format!("setting audio-pitch-correction: {e}")))?;
+        self.mpv
+            .set_property("speed", profile.speed)
+            .map_err(|e| Error::Player(format!("setting speed: {e}")))?;
         // libmpv2's `command` builds a single command *string* (no array form),
         // so an unescaped path with spaces would split into multiple args. mpv's
         // command parser reads a double-quoted token (with backslash escapes) as
@@ -179,6 +188,12 @@ impl MpvHost {
     /// The current item's total duration in seconds, if known.
     pub fn duration(&self) -> Option<f64> {
         self.mpv.get_property::<f64>("duration").ok()
+    }
+
+    /// The current playback rate (mpv `speed`), 1.0 = native. Set by `load` from
+    /// the item's profile (Phase 6b-ii-c-3-a per-show speed).
+    pub fn speed(&self) -> Option<f64> {
+        self.mpv.get_property::<f64>("speed").ok()
     }
 
     /// Wait up to `timeout` seconds for the next libmpv event, mapping it to a

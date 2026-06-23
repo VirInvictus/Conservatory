@@ -363,6 +363,9 @@ pub struct QueueDisplayRow {
     pub kind: MediaKind,
     pub track_id: Option<i64>,
     pub episode_id: Option<i64>,
+    /// The episode's show (Phase 6b-ii-c-3-a), so a resume can resolve the
+    /// per-show playback speed. `None` for a track row.
+    pub show_id: Option<i64>,
     pub title: String,
     pub artist: Option<String>,
     /// Episode source (Phase 6b-ii-c-2), so a resume can rebuild episode items
@@ -379,6 +382,7 @@ pub struct QueueDisplayRow {
 pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
     let mut stmt = conn.prepare(
         "SELECT q.position, q.kind, q.track_id, q.episode_id,
+                e.show_id AS show_id,
                 COALESCE(t.title, e.title) AS title,
                 COALESCE(ar.name, s.title) AS artist,
                 e.audio_path AS audio_path,
@@ -400,6 +404,7 @@ pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
             kind,
             track_id: row.get("track_id")?,
             episode_id: row.get("episode_id")?,
+            show_id: row.get("show_id")?,
             title: row.get::<_, Option<String>>("title")?.unwrap_or_default(),
             artist: row.get("artist")?,
             audio_path: row.get("audio_path")?,
@@ -823,6 +828,24 @@ pub fn get_show_settings(conn: &Connection, show_id: i64) -> Result<Option<ShowS
     )
     .optional()
     .map_err(Into::into)
+}
+
+/// Per-show overrides for many shows at once, keyed by `show_id` (Phase
+/// 6b-ii-c-3-a): the episode-queue builders look up each episode's show speed
+/// here. Shows with no stored overrides are simply absent from the map (the
+/// caller treats absence as the default profile). Distinct ids are queried one
+/// by one through the read pool; the show set per queue is small.
+pub fn show_settings_map(
+    conn: &Connection,
+    show_ids: &[i64],
+) -> Result<HashMap<i64, ShowSettings>> {
+    let mut out = HashMap::new();
+    for &id in show_ids {
+        if let Some(s) = get_show_settings(conn, id)? {
+            out.insert(id, s);
+        }
+    }
+    Ok(out)
 }
 
 /// An episode's chapters in playback order.

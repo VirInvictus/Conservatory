@@ -33,8 +33,9 @@ use gtk::glib;
 
 use conservatory_core::PlayerHandle;
 use conservatory_core::db::{
-    EpisodeListRow, PlayedState, ReadPool, TriageBucket, WorkerHandle, episodes_for_show,
-    episodes_for_tag, episodes_in_bucket, list_all_tags, list_shows,
+    EpisodeListRow, PlayedState, ReadPool, ShowSettings, TriageBucket, WorkerHandle,
+    episodes_for_show, episodes_for_tag, episodes_in_bucket, list_all_tags, list_shows,
+    show_settings_map,
 };
 
 use crate::playqueue::{EpisodeSource, build_episode_queue};
@@ -179,6 +180,7 @@ impl Inner {
                 ids.push(row.id());
                 sources.push(EpisodeSource {
                     id: row.id(),
+                    show_id: row.show_id(),
                     audio_path: row.audio_path(),
                     audio_url: row.audio_url(),
                 });
@@ -198,13 +200,28 @@ impl Inner {
         if ids.is_empty() {
             return;
         }
+        let settings = self.show_settings_for(&sources);
         let _ = self
             .rt
             .block_on(self.worker.replace_queue_with_episodes(ids));
-        let (items, start) = build_episode_queue(&sources, activated as usize, root);
+        let (items, start) = build_episode_queue(&sources, activated as usize, root, &settings);
         if !items.is_empty() {
             player.play_queue(items, start);
         }
+    }
+
+    /// Batch-read the per-show overrides for the shows in `sources` (Phase
+    /// 6b-ii-c-3-a), so the queue builder can resolve each episode's speed.
+    fn show_settings_for(
+        &self,
+        sources: &[EpisodeSource],
+    ) -> std::collections::HashMap<i64, ShowSettings> {
+        let show_ids: Vec<i64> = sources.iter().map(|e| e.show_id).collect();
+        self.pool
+            .open()
+            .ok()
+            .and_then(|conn| show_settings_map(&conn, &show_ids).ok())
+            .unwrap_or_default()
     }
 
     /// Append the selected episode to the queue tail (Ctrl+Enter).
@@ -219,10 +236,12 @@ impl Inner {
             .block_on(self.worker.enqueue_episodes(vec![row.id()]));
         let source = EpisodeSource {
             id: row.id(),
+            show_id: row.show_id(),
             audio_path: row.audio_path(),
             audio_url: row.audio_url(),
         };
-        let (items, _) = build_episode_queue(std::slice::from_ref(&source), 0, root);
+        let settings = self.show_settings_for(std::slice::from_ref(&source));
+        let (items, _) = build_episode_queue(std::slice::from_ref(&source), 0, root, &settings);
         if !items.is_empty() {
             player.append(items);
         }

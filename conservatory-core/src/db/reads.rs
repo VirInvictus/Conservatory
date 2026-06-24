@@ -10,8 +10,9 @@ use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
-    Album, Artist, Chapter, EQ_BAND_COUNT, Episode, EqPreset, EqState, InboxPolicy, MediaKind,
-    Perspective, Playback, PlayedState, QueueItem, Show, ShowSettings, Tag, Track,
+    Album, Artist, AudioState, Chapter, CompSettings, DspState, EQ_BAND_COUNT, Episode, EqPreset,
+    EqState, InboxPolicy, LevelerSettings, LimiterSettings, MediaKind, ModuleState, Perspective,
+    Playback, PlayedState, QueueItem, ResamplerQuality, Show, ShowSettings, Tag, Track,
 };
 use crate::errors::Result;
 
@@ -1102,4 +1103,51 @@ pub fn get_eq_preset(conn: &Connection, name: &str) -> Result<Option<[f64; EQ_BA
     .optional()
     .map(|opt| opt.map(|csv| EqState::parse_bands(&csv)))
     .map_err(Into::into)
+}
+
+/// The active audio configuration (Phase 5.5c): the singleton `audio_state` row.
+/// The migration seeds it, so a managed DB always has a row; a missing row
+/// (impossible post-migration) and an unrecognized stored resampler value both
+/// fall back to the defaults rather than erroring (the `get_eq_state` forgiving
+/// stance).
+pub fn get_audio_state(conn: &Connection) -> Result<AudioState> {
+    let state = conn
+        .query_row("SELECT * FROM audio_state WHERE id = 0", [], |row| {
+            let resampler_raw: String = row.get("resampler_quality")?;
+            Ok(AudioState {
+                replaygain_mode: row.get("replaygain_mode")?,
+                replaygain_preamp: row.get("replaygain_preamp")?,
+                replaygain_clip: row.get("replaygain_clip")?,
+                gapless: row.get("gapless")?,
+                dsp: DspState {
+                    comp: ModuleState {
+                        enabled: row.get("comp_enabled")?,
+                        settings: CompSettings {
+                            threshold_db: row.get("comp_threshold_db")?,
+                            ratio: row.get("comp_ratio")?,
+                            attack_ms: row.get("comp_attack_ms")?,
+                            release_ms: row.get("comp_release_ms")?,
+                        },
+                    },
+                    limiter: ModuleState {
+                        enabled: row.get("limiter_enabled")?,
+                        settings: LimiterSettings {
+                            ceiling_db: row.get("limiter_ceiling_db")?,
+                        },
+                    },
+                    leveler: ModuleState {
+                        enabled: row.get("leveler_enabled")?,
+                        settings: LevelerSettings {
+                            target_peak: row.get("leveler_target_peak")?,
+                            gausssize: row.get("leveler_gausssize")?,
+                        },
+                    },
+                },
+                output_backend: row.get("output_backend")?,
+                // Degrade an unrecognized stored value to the default.
+                resampler: resampler_raw.parse().unwrap_or(ResamplerQuality::Default),
+            })
+        })
+        .optional()?;
+    Ok(state.unwrap_or_default())
 }

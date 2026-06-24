@@ -11,7 +11,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use crate::db::{EqState, MediaKind};
+use crate::db::{DspState, EqState, MediaKind};
 use crate::player::host::AudioDevice;
 use crate::player::item::PlayableItem;
 
@@ -59,6 +59,9 @@ pub enum PlayerCommand {
         index: usize,
         gain: f64,
     },
+    /// Set the active DSP modules (Phase 5.5c); applied live when playing (a
+    /// structural rebuild), else from the next loaded item.
+    SetDsp(DspState),
     /// Halt playback and persist, but keep the engine thread alive.
     Stop,
     /// Stop and exit the engine thread (joined by [`PlayerHandle::shutdown`]).
@@ -222,6 +225,11 @@ impl PlayerHandle {
     /// Set one EQ band's gain live (Phase 5.5b-ii): the slider-drag path.
     pub fn set_eq_band(&self, index: usize, gain: f64) {
         let _ = self.tx.send(PlayerCommand::SetEqBand { index, gain });
+    }
+
+    /// Set the active DSP modules (Phase 5.5c): compressor / limiter / leveler.
+    pub fn set_dsp(&self, dsp: DspState) {
+        let _ = self.tx.send(PlayerCommand::SetDsp(dsp));
     }
 
     pub fn stop(&self) {

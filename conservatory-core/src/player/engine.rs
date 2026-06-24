@@ -272,6 +272,11 @@ impl Engine {
                 // The slider-drag path: live, gap-free, via `af-command`.
                 let _ = self.host.set_eq_band(index, gain);
             }
+            PlayerCommand::SetDsp(dsp) => {
+                // The DSP modules: applied live when playing (structural rebuild),
+                // else from the next load.
+                self.host.set_dsp(dsp);
+            }
             PlayerCommand::Stop => {
                 self.set_paused(true);
                 self.flush(StateEvent::Quit, true);

@@ -16,7 +16,7 @@ use libmpv2::events::Event;
 use libmpv2::mpv_node::MpvNode;
 use libmpv2::{EndFileReason, Mpv, mpv_end_file_reason};
 
-use crate::db::models::EqState;
+use crate::db::models::{DspState, EqState};
 use crate::errors::{Error, Result};
 use crate::player::profile::MusicProfile;
 use crate::player::state::EndReason;
@@ -50,6 +50,10 @@ pub struct MpvHost {
     /// load. Defaults to flat (no `@eq` stage); the engine updates it via
     /// [`MpvHost::set_eq`] / [`MpvHost::set_eq_band`].
     eq: EqState,
+    /// The active DSP modules (Phase 5.5c: compressor / limiter / leveler),
+    /// applied into the `af` chain on each load. Defaults to off (no dynamics
+    /// stages); the engine updates it via [`MpvHost::set_dsp`].
+    dsp: DspState,
     /// The currently-loaded item's profile (Phase 5.5b-ii), kept so the `af`
     /// chain can be rebuilt mid-playback on an EQ change. `None` when nothing is
     /// loaded (an EQ change then just updates state, applied on the next load).
@@ -92,6 +96,7 @@ impl MpvHost {
         Ok(Self {
             mpv,
             eq: EqState::flat(),
+            dsp: DspState::off(),
             current_profile: None,
         })
     }
@@ -102,6 +107,16 @@ impl MpvHost {
     /// else stored for the next [`MpvHost::load`].
     pub fn set_eq(&mut self, eq: EqState) {
         self.eq = eq;
+        let _ = self.rebuild_af();
+    }
+
+    /// Set the active DSP modules (Phase 5.5c: compressor / limiter / leveler).
+    /// Applied immediately when playing (a structural `af` rebuild — an explicit
+    /// settings change, gap-acceptable per docs/libmpv-profiles.md; DSP has no
+    /// per-slider live path like the EQ), else stored for the next
+    /// [`MpvHost::load`].
+    pub fn set_dsp(&mut self, dsp: DspState) {
+        self.dsp = dsp;
         let _ = self.rebuild_af();
     }
 
@@ -146,7 +161,7 @@ impl MpvHost {
         let Some(profile) = self.current_profile else {
             return Ok(());
         };
-        let af = crate::player::chain::build_af_chain(&profile, &self.eq);
+        let af = crate::player::chain::build_af_chain(&profile, &self.eq, &self.dsp);
         self.mpv
             .set_property("af", af.as_str())
             .map_err(|e| Error::Player(format!("rebuilding af chain: {e}")))
@@ -175,7 +190,7 @@ impl MpvHost {
         // track — the fix for mpv #8267, where the built-in `--replaygain` (now
         // dropped) sat after the chain and inherited the first track's gain. An
         // empty string clears any prior chain.
-        let af = crate::player::chain::build_af_chain(profile, &self.eq);
+        let af = crate::player::chain::build_af_chain(profile, &self.eq, &self.dsp);
         self.mpv
             .set_property("af", af.as_str())
             .map_err(|e| Error::Player(format!("setting af chain: {e}")))?;

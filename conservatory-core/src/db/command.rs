@@ -11,8 +11,8 @@
 use tokio::sync::oneshot;
 
 use crate::db::models::{
-    Album, Artist, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState,
-    Show, ShowSettings, Track,
+    Album, Artist, AudioState, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor,
+    PlayedState, Show, ShowSettings, Track,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -185,6 +185,12 @@ pub(crate) enum Command {
     /// Delete a named EQ preset.
     DeleteEqPreset {
         name: String,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Overwrite the singleton active audio configuration (Phase 5.5c).
+    SetAudioState {
+        state: AudioState,
         reply: oneshot::Sender<Result<()>>,
     },
 
@@ -389,6 +395,7 @@ impl Command {
             Self::SetEqState { .. } => "set_eq_state",
             Self::SaveEqPreset { .. } => "save_eq_preset",
             Self::DeleteEqPreset { .. } => "delete_eq_preset",
+            Self::SetAudioState { .. } => "set_audio_state",
             Self::SavePlaybackState { .. } => "save_playback_state",
             Self::IncrementPlayCount { .. } => "increment_play_count",
             Self::EnqueueTracks { .. } => "enqueue_tracks",

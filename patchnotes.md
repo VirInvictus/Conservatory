@@ -1,5 +1,18 @@
 # Patch Notes
 
+## v0.0.42
+
+Phase 5.5c-i shipped: the DSP modules, in the chain and the CLI (headless). The compressor, brick-wall limiter, and volume leveler join the `af` chain as toggleable stages; their settings persist; the output backend / resampler control and the consolidated GTK "Sound" page are the next step (5.5c-ii).
+
+- **DSP stages (`conservatory-core/src/player/dsp.rs`):** `build_af_chain` now also renders the dynamics modules after the EQ, in signal-flow order: `@comp` (`acompressor`), `@limit` (`alimiter`), `@boost` (`dynaudnorm`). Each contributes a stage only when its module is enabled (all off is the no-op chain). The limiter runs `level=disabled`, so it is a transparent peak catcher rather than a normalizer, which makes it a safe ReplayGain clip net (a positive net gain can never clip with the limiter on). User-facing dB knobs (the compressor threshold, the limiter ceiling) are converted to the ffmpeg filters' linear forms in the one place the stage is built. `dynaudnorm` is used for live leveling rather than `loudnorm`, whose accurate mode is two-pass / offline.
+- **Modules keep their settings while off.** Each module is an `enabled` flag plus its parameters, stored independently, so toggling a tuned compressor off and back on restores it rather than resetting to defaults.
+- **Persistence (migration `0009`, the `eq_state` precedent):** a singleton `audio_state` row holds the whole audio config: the playback defaults (ReplayGain mode / preamp / clip, gapless), the three DSP modules, and the output backend / resampler. The `AudioState` model round-trips through the single-writer worker; the read is forgiving (a bad stored value degrades to the default). The playback and output halves ship here but are consumed at 5.5c-ii, so that sub-phase needs no second migration.
+- **Engine:** a new `SetDsp` player command. The host holds the active DSP modules and applies them into the chain on the next load (a settings change rebuilds the chain structurally, which is fine for an explicit change; DSP has no per-slider live path like the EQ).
+- **CLI `dsp` verb:** `dsp show` (each module's state and the resolved `@comp` / `@limit` / `@boost` chain), `dsp comp on|off [--threshold --ratio --attack --release]`, `dsp limiter on|off [--ceiling]`, and `dsp leveler on|off [--target --gausssize]`. `debug-dsp` now prints the DSP breakdown, and `play` applies the persisted modules.
+- **Tests:** the stage builders (off → no stage; on → the expected lavfi string with the correct dB-to-linear conversion); the full chain order (`@rg` → `@eq` → `@comp` → `@limit` → `@boost`); the `audio_state` round-trip and the params-survive-an-off-toggle guard through the worker; the migration table-exists; and the libmpv EOF run now sets a real `@comp` / `@limit` / `@boost` chain, proving the `acompressor` / `alimiter` / `dynaudnorm` mpv syntax decodes. Full suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green. No new dependency (the filters ride the linked libmpv/ffmpeg); one schema migration.
+
+Next: Phase 5.5c-ii (the output backend / resampler control and the consolidated GTK "Sound" preferences page).
+
 ## v0.0.41
 
 Phase 5.5b-ii shipped: the equalizer is now interactive. Open the new Sound preferences (the speaker-card button in the header, or Ctrl+,), drag a band, and hear it change live; presets are a click away. This completes Phase 5.5b.

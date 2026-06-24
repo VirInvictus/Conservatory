@@ -18,8 +18,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::db::command::Command;
 use crate::db::models::{
-    Album, Artist, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState,
-    Show, ShowSettings, Track,
+    Album, Artist, AudioState, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor,
+    PlayedState, Show, ShowSettings, Track,
 };
 use crate::db::{connection, migrations, probe, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
@@ -300,6 +300,12 @@ impl WorkerHandle {
     /// Delete a named EQ preset.
     pub async fn delete_eq_preset(&self, name: String) -> Result<()> {
         self.dispatch(|reply| Command::DeleteEqPreset { name, reply })
+            .await
+    }
+
+    /// Overwrite the singleton active audio configuration (Phase 5.5c).
+    pub async fn set_audio_state(&self, state: AudioState) -> Result<()> {
+        self.dispatch(|reply| Command::SetAudioState { state, reply })
             .await
     }
 
@@ -751,6 +757,9 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::DeleteEqPreset { name, reply } => {
             let _ = reply.send(writes::delete_eq_preset(conn, &name));
+        }
+        Command::SetAudioState { state, reply } => {
+            let _ = reply.send(writes::set_audio_state(conn, &state));
         }
         Command::SavePlaybackState { cursor, reply } => {
             let _ = reply.send(writes::save_playback_state(conn, &cursor));

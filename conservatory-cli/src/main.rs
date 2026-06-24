@@ -262,6 +262,14 @@ enum Command {
         action: EqAction,
     },
 
+    /// The DSP modules (Phase 5.5c, spec §6.2): show or toggle the compressor,
+    /// brick-wall limiter, and volume leveler. Applied to playback from the next
+    /// loaded track.
+    Dsp {
+        #[command(subcommand)]
+        action: DspAction,
+    },
+
     /// Phase 3b smoke test: dump the faceted-browse panes (Genre → Album Artist
     /// → Album) with counts and the leaf track total. Read-only.
     DebugFacets {
@@ -324,6 +332,79 @@ enum EqPresetAction {
         db: PathBuf,
         /// Preset name.
         name: String,
+    },
+}
+
+/// Whether a DSP module is on or off (the `dsp` verb's required state argument).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OnOff {
+    On,
+    Off,
+}
+
+impl OnOff {
+    fn enabled(self) -> bool {
+        matches!(self, OnOff::On)
+    }
+}
+
+/// DSP-module verbs (Phase 5.5c). Each module's parameters persist while it is
+/// off, so toggling it back on restores them; the optional flags edit those
+/// parameters. Negative dB values are allowed (thresholds/ceilings).
+#[derive(Subcommand)]
+enum DspAction {
+    /// Print the active DSP modules and the resolved `af` chain. Read-only.
+    Show {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
+    /// Enable/disable the compressor (`acompressor`), optionally setting params.
+    #[command(allow_negative_numbers = true)]
+    Comp {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Turn the compressor on or off.
+        #[arg(value_enum)]
+        state: OnOff,
+        /// Threshold in dBFS (below which compression eases off).
+        #[arg(long)]
+        threshold: Option<f64>,
+        /// Compression ratio (N:1).
+        #[arg(long)]
+        ratio: Option<f64>,
+        /// Attack time in milliseconds.
+        #[arg(long)]
+        attack: Option<f64>,
+        /// Release time in milliseconds.
+        #[arg(long)]
+        release: Option<f64>,
+    },
+    /// Enable/disable the brick-wall limiter (`alimiter`), optionally setting the
+    /// ceiling.
+    #[command(allow_negative_numbers = true)]
+    Limiter {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Turn the limiter on or off.
+        #[arg(value_enum)]
+        state: OnOff,
+        /// Output ceiling in dBFS.
+        #[arg(long)]
+        ceiling: Option<f64>,
+    },
+    /// Enable/disable the volume leveler (`dynaudnorm`), optionally setting params.
+    Leveler {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Turn the leveler on or off.
+        #[arg(value_enum)]
+        state: OnOff,
+        /// Target peak (0..1).
+        #[arg(long)]
+        target: Option<f64>,
+        /// Gaussian window size (odd, 3..301; larger smooths the gain curve).
+        #[arg(long)]
+        gausssize: Option<u32>,
     },
 }
 
@@ -601,6 +682,7 @@ fn main() -> Result<()> {
         #[cfg(feature = "podcasts")]
         Some(Command::ExportOpml { db, out }) => block_on(run_export_opml(db, out)),
         Some(Command::Eq { action }) => eq(action),
+        Some(Command::Dsp { action }) => dsp(action),
         Some(Command::DebugFacets { db }) => debug_facets(db),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
@@ -813,6 +895,152 @@ async fn run_eq_preset_delete(db: PathBuf, name: String) -> Result<()> {
     Ok(())
 }
 
+fn dsp(action: DspAction) -> Result<()> {
+    match action {
+        DspAction::Show { db } => dsp_show(db),
+        DspAction::Comp {
+            db,
+            state,
+            threshold,
+            ratio,
+            attack,
+            release,
+        } => block_on(run_dsp_comp(db, state, threshold, ratio, attack, release)),
+        DspAction::Limiter { db, state, ceiling } => block_on(run_dsp_limiter(db, state, ceiling)),
+        DspAction::Leveler {
+            db,
+            state,
+            target,
+            gausssize,
+        } => block_on(run_dsp_leveler(db, state, target, gausssize)),
+    }
+}
+
+fn dsp_show(db: PathBuf) -> Result<()> {
+    use conservatory_core::db::get_audio_state;
+    use conservatory_core::player::{comp_stage, leveler_stage, limiter_stage};
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let dsp = get_audio_state(&conn).context("reading audio state")?.dsp;
+    println!(
+        "compressor: {}  (threshold={:+} dB ratio={}:1 attack={} ms release={} ms)",
+        on_off(dsp.comp.enabled),
+        dsp.comp.settings.threshold_db,
+        dsp.comp.settings.ratio,
+        dsp.comp.settings.attack_ms,
+        dsp.comp.settings.release_ms,
+    );
+    println!(
+        "limiter:    {}  (ceiling={:+} dB)",
+        on_off(dsp.limiter.enabled),
+        dsp.limiter.settings.ceiling_db,
+    );
+    println!(
+        "leveler:    {}  (target_peak={} gausssize={})",
+        on_off(dsp.leveler.enabled),
+        dsp.leveler.settings.target_peak,
+        dsp.leveler.settings.gausssize,
+    );
+    for stage in [
+        comp_stage(&dsp.comp),
+        limiter_stage(&dsp.limiter),
+        leveler_stage(&dsp.leveler),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        println!("af:         {stage}");
+    }
+    Ok(())
+}
+
+async fn run_dsp_comp(
+    db: PathBuf,
+    state: OnOff,
+    threshold: Option<f64>,
+    ratio: Option<f64>,
+    attack: Option<f64>,
+    release: Option<f64>,
+) -> Result<()> {
+    use conservatory_core::db::get_audio_state;
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let mut audio = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_audio_state(&conn).context("reading audio state")?
+    };
+    audio.dsp.comp.enabled = state.enabled();
+    if let Some(v) = threshold {
+        audio.dsp.comp.settings.threshold_db = v;
+    }
+    if let Some(v) = ratio {
+        audio.dsp.comp.settings.ratio = v;
+    }
+    if let Some(v) = attack {
+        audio.dsp.comp.settings.attack_ms = v;
+    }
+    if let Some(v) = release {
+        audio.dsp.comp.settings.release_ms = v;
+    }
+    worker
+        .set_audio_state(audio)
+        .await
+        .context("saving audio state")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Compressor {}.", on_off(state.enabled()));
+    Ok(())
+}
+
+async fn run_dsp_limiter(db: PathBuf, state: OnOff, ceiling: Option<f64>) -> Result<()> {
+    use conservatory_core::db::get_audio_state;
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let mut audio = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_audio_state(&conn).context("reading audio state")?
+    };
+    audio.dsp.limiter.enabled = state.enabled();
+    if let Some(v) = ceiling {
+        audio.dsp.limiter.settings.ceiling_db = v;
+    }
+    worker
+        .set_audio_state(audio)
+        .await
+        .context("saving audio state")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Limiter {}.", on_off(state.enabled()));
+    Ok(())
+}
+
+async fn run_dsp_leveler(
+    db: PathBuf,
+    state: OnOff,
+    target: Option<f64>,
+    gausssize: Option<u32>,
+) -> Result<()> {
+    use conservatory_core::db::get_audio_state;
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let mut audio = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_audio_state(&conn).context("reading audio state")?
+    };
+    audio.dsp.leveler.enabled = state.enabled();
+    if let Some(v) = target {
+        audio.dsp.leveler.settings.target_peak = v;
+    }
+    if let Some(v) = gausssize {
+        audio.dsp.leveler.settings.gausssize = v;
+    }
+    worker
+        .set_audio_state(audio)
+        .await
+        .context("saving audio state")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Leveler {}.", on_off(state.enabled()));
+    Ok(())
+}
+
 fn debug_dsp(db: PathBuf, track_id: Option<i64>) -> Result<()> {
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
     let conn = pool.open().context("opening pool connection")?;
@@ -833,7 +1061,10 @@ fn debug_dsp(db: PathBuf, track_id: Option<i64>) -> Result<()> {
     let cfg = PlaybackConfig::default();
     let profile = resolve_music_profile(&track, &cfg);
     let eq = conservatory_core::db::get_eq_state(&conn).context("reading EQ state")?;
-    let chain = build_af_chain(&profile, &eq);
+    let dsp = conservatory_core::db::get_audio_state(&conn)
+        .context("reading audio state")?
+        .dsp;
+    let chain = build_af_chain(&profile, &eq, &dsp);
 
     println!("track:        {} {}", track.id, track.title);
     println!(
@@ -862,11 +1093,36 @@ fn debug_dsp(db: PathBuf, track_id: Option<i64>) -> Result<()> {
         "speed:        {}  pitch_correction={}",
         profile.speed, profile.pitch_correction
     );
+    println!("dsp:");
+    println!(
+        "  compressor: {}  (threshold={:+} dB ratio={}:1 attack={} ms release={} ms)",
+        on_off(dsp.comp.enabled),
+        dsp.comp.settings.threshold_db,
+        dsp.comp.settings.ratio,
+        dsp.comp.settings.attack_ms,
+        dsp.comp.settings.release_ms,
+    );
+    println!(
+        "  limiter:    {}  (ceiling={:+} dB)",
+        on_off(dsp.limiter.enabled),
+        dsp.limiter.settings.ceiling_db,
+    );
+    println!(
+        "  leveler:    {}  (target_peak={} gausssize={})",
+        on_off(dsp.leveler.enabled),
+        dsp.leveler.settings.target_peak,
+        dsp.leveler.settings.gausssize,
+    );
     println!(
         "af chain:     {}",
         if chain.is_empty() { "(empty)" } else { &chain }
     );
     Ok(())
+}
+
+/// "on" / "off" for a module-enabled flag (the `debug-dsp` / `dsp show` surface).
+fn on_off(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
 }
 
 fn debug_paths(db: PathBuf) -> Result<()> {
@@ -1840,12 +2096,15 @@ fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>) -> Result<()> {
 
     let player = conservatory_core::player::spawn(worker.clone(), runtime.handle().clone())
         .context("starting the player engine")?;
-    // Apply the persisted equalizer (Phase 5.5b) before playing, so headless
-    // playback honours the user's EQ.
-    if let Ok(conn) = pool.open()
-        && let Ok(eq) = conservatory_core::db::get_eq_state(&conn)
-    {
-        player.set_eq(eq);
+    // Apply the persisted equalizer (Phase 5.5b) and DSP modules (Phase 5.5c)
+    // before playing, so headless playback honours the user's audio settings.
+    if let Ok(conn) = pool.open() {
+        if let Ok(eq) = conservatory_core::db::get_eq_state(&conn) {
+            player.set_eq(eq);
+        }
+        if let Ok(audio) = conservatory_core::db::get_audio_state(&conn) {
+            player.set_dsp(audio.dsp);
+        }
     }
     println!("Playing {} item(s), starting at #{start}.", items.len());
     player.play_queue(items, start);

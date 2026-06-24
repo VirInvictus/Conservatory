@@ -56,10 +56,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 8,
         sql: include_str!("migrations/0008_eq.sql"),
     },
+    Migration {
+        version: 9,
+        sql: include_str!("migrations/0009_audio_state.sql"),
+    },
 ];
 
 /// The `user_version` a fully-migrated database reaches.
-pub const CURRENT_VERSION: i32 = 8;
+pub const CURRENT_VERSION: i32 = 9;
 
 /// Apply any unapplied migrations. Idempotent: running this on a
 /// fully-migrated database is a no-op.
@@ -208,6 +212,7 @@ mod tests {
             "show_tags",
             "eq_presets",
             "eq_state",
+            "audio_state",
         ] {
             assert!(table_exists(&conn, t), "missing table: {t}");
         }

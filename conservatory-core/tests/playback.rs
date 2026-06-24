@@ -7,8 +7,10 @@
 
 use std::path::PathBuf;
 
-use conservatory_core::db::EqState;
 use conservatory_core::db::fixtures::{self, FixtureScale};
+use conservatory_core::db::{
+    CompSettings, DspState, EqState, LevelerSettings, LimiterSettings, ModuleState,
+};
 use conservatory_core::db::{
     MediaKind, PlaybackCursor, ReadPool, get_track, read_playback_state, spawn_worker,
 };
@@ -129,9 +131,10 @@ fn host_plays_fixture_to_eof() {
     let Ok(mut host) = MpvHost::new_null() else {
         return;
     };
-    // A real ReplayGain head stage (Phase 5.5a) plus a non-flat equalizer (Phase
-    // 5.5b): this proves both the `@rg` and the `@eq` `af`-chain syntax are
-    // accepted by libmpv and do not break decode.
+    // A real ReplayGain head stage (Phase 5.5a), a non-flat equalizer (Phase
+    // 5.5b), and all three DSP modules (Phase 5.5c): this proves the full
+    // `@rg` → `@eq` → `@comp` → `@limit` → `@boost` `af`-chain syntax is accepted
+    // by libmpv and does not break decode.
     let profile = MusicProfile {
         gapless: true,
         replaygain_db: Some(-6.0),
@@ -142,6 +145,20 @@ fn host_plays_fixture_to_eof() {
     eq.bands[0] = 6.0; // 31 Hz +6 dB
     eq.bands[9] = -4.5; // 16 kHz -4.5 dB
     host.set_eq(eq);
+    host.set_dsp(DspState {
+        comp: ModuleState {
+            enabled: true,
+            settings: CompSettings::default(),
+        },
+        limiter: ModuleState {
+            enabled: true,
+            settings: LimiterSettings::default(),
+        },
+        leveler: ModuleState {
+            enabled: true,
+            settings: LevelerSettings::default(),
+        },
+    });
     host.load(audio_fixture("sample.flac").to_str().unwrap(), &profile)
         .expect("loading fixture");
 

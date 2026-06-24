@@ -10,20 +10,24 @@
 //!   `--replaygain` sits after the chain and inherits track 1's gain across a
 //!   gapless boundary).
 //! - `@eq`   — the graphic / parametric equalizer (Phase 5.5b).
-//! - `@comp` — compressor / brick-wall limiter (Phase 5.5c; also the ReplayGain
-//!   clip safety net when `replaygain_clip` is off).
+//! - `@comp` — the compressor (`acompressor`, Phase 5.5c).
+//! - `@limit`— the brick-wall limiter (`alimiter`, Phase 5.5c; also the
+//!   ReplayGain clip safety net when `replaygain_clip` is off).
 //! - `@boost`— the `dynaudnorm` leveler / Voice Boost (Phase 5.5c / 6c).
 //!
 //! Speed is **not** a stage: mpv auto-inserts `scaletempo2` on `--speed`
 //! (`audio-pitch-correction`), so it stays a flat property on the host.
 
-use crate::db::models::{EQ_CENTRES, EqState};
+use crate::db::models::{DspState, EQ_CENTRES, EqState};
+use crate::player::dsp::{comp_stage, leveler_stage, limiter_stage};
 use crate::player::profile::MusicProfile;
 
-/// Build the mpv `af` chain string for `profile` + the active `eq`. Returns `""`
-/// when no stages are active (which clears mpv's `af`). 5.5a added the `@rg` head
-/// stage; 5.5b adds `@eq` (the graphic equalizer); `@comp` / `@boost` join at 5.5c.
-pub fn build_af_chain(profile: &MusicProfile, eq: &EqState) -> String {
+/// Build the mpv `af` chain string for `profile` + the active `eq` + the `dsp`
+/// modules. Returns `""` when no stages are active (which clears mpv's `af`).
+/// 5.5a added the `@rg` head stage; 5.5b added `@eq` (the graphic equalizer);
+/// 5.5c adds the `@comp` / `@limit` / `@boost` dynamics stages. Stage order is
+/// signal flow: ReplayGain → EQ → compressor → limiter → leveler (spec §6.2).
+pub fn build_af_chain(profile: &MusicProfile, eq: &EqState, dsp: &DspState) -> String {
     let mut stages: Vec<String> = Vec::new();
 
     // @rg: ReplayGain as a head-of-chain volume (dB). A bridged ffmpeg `volume`
@@ -38,6 +42,12 @@ pub fn build_af_chain(profile: &MusicProfile, eq: &EqState) -> String {
     if let Some(stage) = eq_stage(eq) {
         stages.push(stage);
     }
+
+    // @comp / @limit / @boost: the dynamics modules (Phase 5.5c), each present
+    // only when its module is enabled (an off module contributes no stage).
+    stages.extend(comp_stage(&dsp.comp));
+    stages.extend(limiter_stage(&dsp.limiter));
+    stages.extend(leveler_stage(&dsp.leveler));
 
     stages.join(",")
 }
@@ -68,7 +78,8 @@ pub fn eq_band_command(index: usize, gain: f64) -> (&'static str, &'static str, 
 
 /// Format a dB value for the filter string with a minimal representation
 /// (`-6.0` → `-6`, `-6.5` → `-6.5`), so the chain string is stable and readable.
-fn fmt_db(db: f64) -> String {
+/// Shared with [`crate::player::dsp`] (the DSP stage builders, Phase 5.5c).
+pub(crate) fn fmt_db(db: f64) -> String {
     // Round to 0.01 dB to avoid float-noise like `-6.0000001` in the string.
     let rounded = (db * 100.0).round() / 100.0;
     format!("{rounded}")
@@ -77,7 +88,9 @@ fn fmt_db(db: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::models::EQ_BAND_COUNT;
+    use crate::db::models::{
+        CompSettings, EQ_BAND_COUNT, LevelerSettings, LimiterSettings, ModuleState,
+    };
 
     fn profile(replaygain_db: Option<f64>) -> MusicProfile {
         MusicProfile {
@@ -92,29 +105,33 @@ mod tests {
         EqState::flat()
     }
 
+    fn off() -> DspState {
+        DspState::off()
+    }
+
     #[test]
     fn replaygain_head_stage_is_emitted() {
         assert_eq!(
-            build_af_chain(&profile(Some(-6.0)), &flat()),
+            build_af_chain(&profile(Some(-6.0)), &flat(), &off()),
             "@rg:lavfi=[volume=-6dB]"
         );
         assert_eq!(
-            build_af_chain(&profile(Some(-6.5)), &flat()),
+            build_af_chain(&profile(Some(-6.5)), &flat(), &off()),
             "@rg:lavfi=[volume=-6.5dB]"
         );
     }
 
     #[test]
     fn no_replaygain_and_flat_eq_is_an_empty_chain() {
-        assert_eq!(build_af_chain(&profile(None), &flat()), "");
+        assert_eq!(build_af_chain(&profile(None), &flat(), &off()), "");
     }
 
     #[test]
     fn different_gains_produce_different_chains() {
         // The per-track recompute that fixes mpv #8267: each item's head volume
         // is its own, so two tracks with different gains never share a chain.
-        let a = build_af_chain(&profile(Some(-6.0)), &flat());
-        let b = build_af_chain(&profile(Some(-3.0)), &flat());
+        let a = build_af_chain(&profile(Some(-6.0)), &flat(), &off());
+        let b = build_af_chain(&profile(Some(-3.0)), &flat(), &off());
         assert_ne!(a, b);
         assert_eq!(b, "@rg:lavfi=[volume=-3dB]");
     }
@@ -123,7 +140,7 @@ mod tests {
     fn float_noise_is_rounded_out() {
         // -6.9 + 0.1 style arithmetic should not leak a long decimal.
         assert_eq!(
-            build_af_chain(&profile(Some(-6.9 + 0.1)), &flat()),
+            build_af_chain(&profile(Some(-6.9 + 0.1)), &flat(), &off()),
             "@rg:lavfi=[volume=-6.8dB]"
         );
     }
@@ -162,10 +179,50 @@ mod tests {
     fn rg_and_eq_compose_in_order() {
         let mut eq = EqState::flat();
         eq.bands[4] = 3.0;
-        let chain = build_af_chain(&profile(Some(-6.0)), &eq);
+        let chain = build_af_chain(&profile(Some(-6.0)), &eq, &off());
         // @rg precedes @eq (signal-flow order).
         let rg = chain.find("@rg").unwrap();
         let e = chain.find("@eq").unwrap();
         assert!(rg < e, "ReplayGain head stage precedes the EQ");
+    }
+
+    #[test]
+    fn full_chain_is_in_signal_flow_order() {
+        // @rg → @eq → @comp → @limit → @boost (spec §6.2).
+        let mut eq = EqState::flat();
+        eq.bands[4] = 3.0;
+        let dsp = DspState {
+            comp: ModuleState {
+                enabled: true,
+                settings: CompSettings::default(),
+            },
+            limiter: ModuleState {
+                enabled: true,
+                settings: LimiterSettings::default(),
+            },
+            leveler: ModuleState {
+                enabled: true,
+                settings: LevelerSettings::default(),
+            },
+        };
+        let chain = build_af_chain(&profile(Some(-6.0)), &eq, &dsp);
+        let positions: Vec<usize> = ["@rg", "@eq", "@comp", "@limit", "@boost"]
+            .iter()
+            .map(|label| {
+                chain
+                    .find(label)
+                    .unwrap_or_else(|| panic!("{label} missing from {chain}"))
+            })
+            .collect();
+        assert!(
+            positions.windows(2).all(|w| w[0] < w[1]),
+            "stages out of order: {chain}"
+        );
+    }
+
+    #[test]
+    fn disabled_dsp_adds_nothing_to_the_chain() {
+        let chain = build_af_chain(&profile(Some(-6.0)), &flat(), &off());
+        assert_eq!(chain, "@rg:lavfi=[volume=-6dB]");
     }
 }

@@ -7,8 +7,8 @@
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
-    Album, Artist, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState,
-    Show, ShowSettings, Track,
+    Album, Artist, AudioState, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor,
+    PlayedState, Show, ShowSettings, Track,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -342,6 +342,43 @@ pub(crate) fn save_eq_preset(
 /// CLI/UI guards against deleting it, but the write itself is unconditional.
 pub(crate) fn delete_eq_preset(conn: &Connection, name: &str) -> Result<()> {
     conn.execute("DELETE FROM eq_presets WHERE name = ?1", params![name])?;
+    Ok(())
+}
+
+/// Overwrite the singleton active audio configuration (Phase 5.5c): the playback
+/// defaults, the DSP modules, and the output backend / resampler. Each module's
+/// settings are written unconditionally (preserved across an off toggle), gated
+/// only by its `enabled` flag.
+pub(crate) fn set_audio_state(conn: &Connection, state: &AudioState) -> Result<()> {
+    let dsp = &state.dsp;
+    conn.execute(
+        "UPDATE audio_state SET
+            replaygain_mode = ?1, replaygain_preamp = ?2, replaygain_clip = ?3, gapless = ?4,
+            comp_enabled = ?5, comp_threshold_db = ?6, comp_ratio = ?7,
+            comp_attack_ms = ?8, comp_release_ms = ?9,
+            limiter_enabled = ?10, limiter_ceiling_db = ?11,
+            leveler_enabled = ?12, leveler_target_peak = ?13, leveler_gausssize = ?14,
+            output_backend = ?15, resampler_quality = ?16
+         WHERE id = 0",
+        params![
+            state.replaygain_mode,
+            state.replaygain_preamp,
+            state.replaygain_clip,
+            state.gapless,
+            dsp.comp.enabled,
+            dsp.comp.settings.threshold_db,
+            dsp.comp.settings.ratio,
+            dsp.comp.settings.attack_ms,
+            dsp.comp.settings.release_ms,
+            dsp.limiter.enabled,
+            dsp.limiter.settings.ceiling_db,
+            dsp.leveler.enabled,
+            dsp.leveler.settings.target_peak,
+            dsp.leveler.settings.gausssize,
+            state.output_backend,
+            state.resampler.as_str(),
+        ],
+    )?;
     Ok(())
 }
 

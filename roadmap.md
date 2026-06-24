@@ -338,11 +338,22 @@ Split headless-first: **5.5b-i** lands the graphic EQ in the chain + persistence
 
 ### Phase 5.5c — DSP modules + output quality (core + GTK)
 
-- [ ] DSP modules as toggleable chain stages: compressor (`acompressor`), a brick-wall limiter, and a volume leveler (`dynaudnorm`, single-pass/live; NOT `loudnorm`, whose accurate mode is two-pass/offline-only). Each independently enabled and configured.
+Split headless-first, the 5.5b rhythm: **5.5c-i** lands the DSP modules in the chain + persistence + CLI; **5.5c-ii** adds output backend / resampler control and consolidates the GTK "Sound" page. Settled scope (spec §6.2, §16.6): a bounded, useful chain (compressor + brick-wall limiter + `dynaudnorm` leveler), not a deadbeef-class everything.
+
+#### Phase 5.5c-i — DSP modules core + persistence + CLI (headless) ✅ (v0.0.42)
+
+- [x] DSP modules as toggleable chain stages (`player/dsp.rs`, pure): compressor (`acompressor`), a brick-wall limiter (`alimiter`, `level=disabled` so it is a transparent peak catcher and the ReplayGain clip safety net), and a volume leveler (`dynaudnorm`, single-pass/live; NOT `loudnorm`, whose accurate mode is two-pass/offline-only). `build_af_chain(profile, eq, dsp)` appends `@comp` / `@limit` / `@boost` after `@eq` in signal-flow order, each present only when its module is enabled. User-facing dB knobs (compressor threshold, limiter ceiling) are converted to the filters' linear forms in the one stage builder.
+- [x] Each module is `{ enabled, settings }` (`ModuleState<T>`): the settings persist while the module is off, so toggling a tuned module back on restores its parameters. The host holds the active `DspState` and applies it on each load; a settings change does a structural `af` rebuild (an explicit settings change, gap-acceptable; DSP has no per-slider live path like the EQ). Engine `SetDsp` + `PlayerHandle::set_dsp`.
+- [x] Persisted in the singleton `audio_state` table (migration `0009`, the `eq_state` precedent): the playback defaults (ReplayGain mode / preamp / clip, gapless), the DSP modules, and the output backend / resampler — one row holding the whole audio config, so 5.5c-ii needs no second migration. `AudioState` model + `ResamplerQuality` enum, forgiving read (`get_audio_state`), worker write (`set_audio_state`). (The playback + output halves are consumed at 5.5c-ii; 5.5c-i seeds and stores them.)
+- [x] CLI: `dsp show` (modules + the resolved `@comp` / `@limit` / `@boost` chain), `dsp comp on|off [--threshold --ratio --attack --release]`, `dsp limiter on|off [--ceiling]`, `dsp leveler on|off [--target --gausssize]`; `debug-dsp` prints the DSP breakdown; `play` applies the persisted DSP.
+- [x] Tests: `dsp.rs` builders (off → no stage; on → expected lavfi string + correct dB→linear conversion); `chain.rs` full-chain order (`@rg < @eq < @comp < @limit < @boost`); `AudioState` round-trip + params-survive-an-off-toggle through the worker (`tests/audio_state.rs`); the migration table-exists; the libmpv EOF test now sets a real `@comp`/`@limit`/`@boost` chain (proves the `acompressor`/`alimiter`/`dynaudnorm` mpv syntax). Music-only build green. No new dependency.
+
+#### Phase 5.5c-ii — Output backend + resampler + the consolidated GTK Sound page
+
 - [ ] Output quality: an output **backend** picker (`--ao=pipewire|pulse|alsa|jack`) alongside the existing device picker (4c-ii); high-quality resampler knobs (`audio-resample-*`) for the unavoidable-resample case; avoid-resample by default.
-- [ ] The "Sound" page (from 5.5b) consolidates the full chain: ReplayGain (mode / preamp / clip), EQ, DSP modules, output backend / device / resampler, gapless. Defaults flow into `build_play_queue` instead of `PlaybackConfig::default()`.
-- [ ] **Deferred and recorded (not built):** exclusive/bit-perfect output (ALSA `hw:` + `--audio-exclusive`, bare-install-only, fights the Flatpak sandbox); LADSPA / raw-`af` escape hatch (needs the `org.freedesktop.LinuxAudio.Plugins` extension + ffmpeg `--enable-ladspa`); native `crossfeed` headphone module (cheap, a natural future stage).
-- [ ] Tests: module toggle round-trips into the chain; backend switch; config persistence.
+- [ ] The "Sound" page (from 5.5b) consolidates the full chain: ReplayGain (mode / preamp / clip), EQ, DSP modules, output backend / device / resampler, gapless. Defaults flow into `build_play_queue` instead of `PlaybackConfig::default()` (a startup `apply_persisted_audio` hook, the `apply_persisted_eq` precedent).
+- [ ] **Deferred and recorded (not built):** exclusive/bit-perfect output (ALSA `hw:` + `--audio-exclusive`, bare-install-only, fights the Flatpak sandbox); LADSPA / raw-`af` escape hatch (needs the `org.freedesktop.LinuxAudio.Plugins` extension + ffmpeg `--enable-ladspa`); native `crossfeed` headphone module (cheap, a natural future stage); the parametric `anequalizer`; peak-aware ReplayGain attenuation (no peak columns; the limiter is the safety net).
+- [ ] Tests: pure form mapping; backend switch; config persistence into the queue builders.
 
 *Usable artifact:* a foobar2000-style Sound/DSP preferences surface over the music engine. The music daily-driver feels complete before podcasts arrive.
 

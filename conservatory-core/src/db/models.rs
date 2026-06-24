@@ -389,6 +389,173 @@ pub struct EqPreset {
     pub bands: [f64; EQ_BAND_COUNT],
 }
 
+/// One DSP module's state (Phase 5.5c): an `enabled` flag plus its settings. The
+/// settings persist even while the module is off, so toggling a tuned module
+/// back on restores its parameters rather than resetting them; only `enabled`
+/// gates whether the module contributes an `af`-chain stage. `Copy` so the whole
+/// [`DspState`] threads through the engine like [`crate::player::MusicProfile`].
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ModuleState<T> {
+    pub enabled: bool,
+    pub settings: T,
+}
+
+/// Compressor (`acompressor`) settings (Phase 5.5c). `threshold_db` is in dBFS;
+/// the stage builder converts it to the filter's linear `threshold`. `ratio` is
+/// the N:1 compression ratio; attack/release in milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CompSettings {
+    pub threshold_db: f64,
+    pub ratio: f64,
+    pub attack_ms: f64,
+    pub release_ms: f64,
+}
+
+impl Default for CompSettings {
+    fn default() -> Self {
+        Self {
+            threshold_db: -18.0,
+            ratio: 3.0,
+            attack_ms: 20.0,
+            release_ms: 250.0,
+        }
+    }
+}
+
+/// Brick-wall limiter (`alimiter`) settings (Phase 5.5c). `ceiling_db` is the
+/// output ceiling in dBFS (converted to the filter's linear `limit`). This is
+/// also the ReplayGain clip safety net (chain.rs `@limit`): with the limiter on,
+/// a positive net gain can never push a sample over full scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LimiterSettings {
+    pub ceiling_db: f64,
+}
+
+impl Default for LimiterSettings {
+    fn default() -> Self {
+        Self { ceiling_db: -1.0 }
+    }
+}
+
+/// Volume leveler (`dynaudnorm`, single-pass/live) settings (Phase 5.5c).
+/// `target_peak` is the dynaudnorm `p` target (0..1); `gausssize` is `g` (odd,
+/// 3..301; larger windows smooth the gain curve and tame pumping). `dynaudnorm`
+/// is chosen over `loudnorm`, whose accurate mode is two-pass/offline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LevelerSettings {
+    pub target_peak: f64,
+    pub gausssize: u32,
+}
+
+impl Default for LevelerSettings {
+    fn default() -> Self {
+        Self {
+            target_peak: 0.95,
+            gausssize: 31,
+        }
+    }
+}
+
+/// The dynamics-processing modules (Phase 5.5c): optional ordered `af`-chain
+/// stages after the EQ — compressor, brick-wall limiter, volume leveler — each
+/// independently toggleable. `DspState::default()` is everything off (the no-op
+/// chain). Rendered by [`crate::player::dsp`].
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct DspState {
+    pub comp: ModuleState<CompSettings>,
+    pub limiter: ModuleState<LimiterSettings>,
+    pub leveler: ModuleState<LevelerSettings>,
+}
+
+impl DspState {
+    /// Everything off: no DSP stages (the no-op chain).
+    pub fn off() -> Self {
+        Self::default()
+    }
+
+    /// Whether no module is enabled (renders to no DSP stages).
+    pub fn is_off(&self) -> bool {
+        !self.comp.enabled && !self.limiter.enabled && !self.leveler.enabled
+    }
+}
+
+/// The high-quality-resampler knob (Phase 5.5c, spec §6.5). `Default` leaves
+/// mpv's resampler at its defaults; `High` raises the `audio-resample-*` quality
+/// for the unavoidable-resample case. Avoid-resample stays the default either way
+/// (`audio-samplerate` / `audio-format` are left unset).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResamplerQuality {
+    #[default]
+    Default,
+    High,
+}
+
+impl ResamplerQuality {
+    /// The TEXT value stored in `audio_state.resampler_quality`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResamplerQuality::Default => "default",
+            ResamplerQuality::High => "high",
+        }
+    }
+}
+
+impl fmt::Display for ResamplerQuality {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ResamplerQuality {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "default" => Ok(ResamplerQuality::Default),
+            "high" => Ok(ResamplerQuality::High),
+            other => Err(Error::InvalidEnum {
+                field: "audio_state.resampler_quality",
+                value: other.to_string(),
+            }),
+        }
+    }
+}
+
+/// The singleton active audio configuration (Phase 5.5c): the playback defaults
+/// (ReplayGain mode / preamp / clip, gapless), the DSP modules, and the output
+/// backend / resampler. Mirrors `eq_state` — one row, `get_audio_state` reads it
+/// and `set_audio_state` overwrites it. The DSP + output halves are consumed at
+/// 5.5c-i (the engine host) and 5.5c-ii (output); the playback defaults are
+/// consumed at 5.5c-ii, where the queue builders read them instead of
+/// `PlaybackConfig::default()`. `replaygain_mode` is stored as TEXT
+/// (`off` / `track` / `album`) so this struct stays db-owned (the player layer
+/// converts it to its `ReplayGain` enum).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioState {
+    pub replaygain_mode: String,
+    pub replaygain_preamp: f64,
+    pub replaygain_clip: bool,
+    pub gapless: bool,
+    pub dsp: DspState,
+    pub output_backend: String,
+    pub resampler: ResamplerQuality,
+}
+
+impl Default for AudioState {
+    fn default() -> Self {
+        // Matches `PlaybackConfig::default()` (album / preamp 0 / clip on /
+        // gapless on) plus all DSP off and the auto output backend.
+        Self {
+            replaygain_mode: "album".to_string(),
+            replaygain_preamp: 0.0,
+            replaygain_clip: true,
+            gapless: true,
+            dsp: DspState::off(),
+            output_backend: "auto".to_string(),
+            resampler: ResamplerQuality::Default,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,6 +566,26 @@ mod tests {
             assert_eq!(kind.as_str().parse::<MediaKind>().unwrap(), kind);
         }
         assert!("bogus".parse::<MediaKind>().is_err());
+    }
+
+    #[test]
+    fn resampler_quality_round_trips_and_rejects_bogus() {
+        for q in [ResamplerQuality::Default, ResamplerQuality::High] {
+            assert_eq!(q.as_str().parse::<ResamplerQuality>().unwrap(), q);
+        }
+        // The bogus case is what `get_audio_state` degrades to the default.
+        assert!("bogus".parse::<ResamplerQuality>().is_err());
+    }
+
+    #[test]
+    fn dsp_state_off_is_the_default() {
+        let dsp = DspState::off();
+        assert!(dsp.is_off());
+        assert_eq!(dsp, DspState::default());
+        // Enabling any module makes it non-off.
+        let mut on = dsp;
+        on.limiter.enabled = true;
+        assert!(!on.is_off());
     }
 
     #[test]

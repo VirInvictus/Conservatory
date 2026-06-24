@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2), and `0008` (the equalizer: `eq_presets` + `eq_state`, Phase 5.5b). The audiobook tables below are still draft (they land at Phase 7a). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
+> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2), `0008` (the equalizer: `eq_presets` + `eq_state`, Phase 5.5b), and `0009` (the audio config: `audio_state`, Phase 5.5c). The audiobook tables below are still draft (they land at Phase 7a). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
 
 ## Connection discipline
 
@@ -168,6 +168,32 @@ CREATE TABLE eq_state (
     id          INTEGER PRIMARY KEY CHECK (id = 0),  -- singleton
     preset_name TEXT,                                -- selected preset; NULL = custom
     bands       TEXT NOT NULL                        -- live band values, CSV of 10 gains, dB
+);
+```
+
+## Audio configuration (Phase 5.5c, migration `0009`, spec §6.2, §6.5)
+
+The singleton active audio config: the playback defaults (ReplayGain mode / preamp / clip, gapless), the DSP modules, and the output backend / resampler. The `eq_state` precedent (one row, `id = 0`); `get_audio_state` reads it, `set_audio_state` overwrites it. Each DSP module is an `enabled` flag plus its parameters, written unconditionally so the parameters survive an off toggle (only `enabled` gates whether the module contributes an `af`-chain stage). The compressor threshold and limiter ceiling are stored in dBFS and converted to the filters' linear forms at stage-build time. The DSP + output halves are consumed at 5.5c-i / 5.5c-ii; the playback defaults are consumed at 5.5c-ii (the queue builders read them instead of the hardcoded `PlaybackConfig::default()`). They all land in this one migration so 5.5c-ii needs no second one.
+
+```sql
+CREATE TABLE audio_state (
+    id                  INTEGER PRIMARY KEY CHECK (id = 0),  -- singleton
+    replaygain_mode     TEXT    NOT NULL,   -- 'off' | 'track' | 'album'
+    replaygain_preamp   REAL    NOT NULL,   -- dB
+    replaygain_clip     INTEGER NOT NULL,   -- bool
+    gapless             INTEGER NOT NULL,   -- bool
+    comp_enabled        INTEGER NOT NULL,   -- bool
+    comp_threshold_db   REAL    NOT NULL,
+    comp_ratio          REAL    NOT NULL,
+    comp_attack_ms      REAL    NOT NULL,
+    comp_release_ms     REAL    NOT NULL,
+    limiter_enabled     INTEGER NOT NULL,   -- bool
+    limiter_ceiling_db  REAL    NOT NULL,
+    leveler_enabled     INTEGER NOT NULL,   -- bool
+    leveler_target_peak REAL    NOT NULL,
+    leveler_gausssize   INTEGER NOT NULL,
+    output_backend      TEXT    NOT NULL,   -- 'auto' | 'pipewire' | 'pulse' | 'alsa' | 'jack'
+    resampler_quality   TEXT    NOT NULL    -- 'default' | 'high'
 );
 ```
 

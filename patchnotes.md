@@ -1,5 +1,36 @@
 # Patch Notes
 
+## v0.0.47
+
+Phase 6c-iii-a shipped: podcast chapters are now fetched and stored. A feed's
+`podcast:chapters` URL (parsed since 6a-ii, but dropped) is fetched on first sight
+of an episode, parsed, and written to the `chapters` table, so chaptered shows
+arrive with their chapter set. Headless; navigation and the Now Playing chapter
+surface are 6c-iii-b and -c.
+
+- **Chapter fetch + parse (`conservatory-podcasts/src/chapters.rs`):** `parse_chapters_json`
+  (pure) reads the Podcast Index chapters JSON (`{ "chapters": [ {startTime, title,
+  endTime, url, img}, … ] }`) into core `Chapter` rows; `fetch_chapters` is the thin
+  GET wrapper, sharing the refresh fetcher's connection pool. Tolerant: a chapter-less
+  or `{}` document is an empty set; blank optional strings become `None`; the chapter
+  image URL is kept verbatim (downloading it is deferred).
+- **Wired into refresh (`refresh.rs::apply_feed`):** when a genuinely-new episode
+  carries a chapters URL, its chapters are fetched and stored via the existing
+  `replace_chapters` worker command. Best-effort: a fetch or parse failure is logged
+  and never fails the refresh, and only new episodes fetch (a re-refresh does not
+  re-hit every URL). The storage plumbing (table, write, `list_chapters` read) already
+  existed; only the fetch + parse + wiring is new.
+- **CLI:** `podcast chapters <db> <episode_id>` lists an episode's stored chapters
+  (index, start time, title), read-only.
+- **Tests:** the JSON parser (a full document, empty / missing-array, blank strings,
+  malformed); a wiremock refresh that serves a feed plus its chapters JSON and asserts
+  the chapters land. `serde` / `serde_json` activated in the podcasts crate (both
+  already workspace dependencies). Full suite + clippy `-D warnings` + fmt + the
+  `--no-default-features` music-only build green. No new migration.
+
+Next: Phase 6c-iii-b (chapter navigation: the shared skip-to-next/prev engine
+mechanism the audiobook engine reuses at 7c).
+
 ## v0.0.46
 
 Phase 6c-ii shipped: time-saved accounting. The player now records an append-only listening session for every episode it plays, with the wall-clock time Smart Speed saved, and a CLI surfaces the running totals. Headless; the Now Playing readout is part of the 6c follow-on.

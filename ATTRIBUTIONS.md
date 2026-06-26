@@ -54,6 +54,8 @@ Recorded here as dependencies are signed off (spec §11) and added to the worksp
 | `feed-rs` | MIT | RSS / Atom / JSON Feed core parsing (`parse.rs`): channel metadata, entries, enclosures (`<enclosure>` → media objects), `itunes:duration`. Storage-agnostic; the `podcast:`/`itunes:` ordering fields it does not surface are filled by the ported namespace handler | 6a-ii-b |
 | `quick-xml` | MIT | The event reader behind the hand-rolled `podcast:`/`itunes:` namespace pass (`namespace.rs`, ported from Belfry) and the OPML import/export round-trip (`opml.rs`) | 6a-ii-b / 6a-iii-a |
 | `oo7` | MIT | HTTP Basic auth credentials in the libsecret secret service (`credentials.rs`): the password lives in the keyring, the DB stores only a lookup key. `default-features = false` + `tokio` + `native_crypto` (the default async-std runtime clashes with the workspace's tokio; pure-Rust crypto avoids system OpenSSL) | 6a-iii-b |
+| `serde` | MIT OR Apache-2.0 | `#[derive(Serialize/Deserialize)]` on the core models, and the `podcast:chapters` JSON entry structs (`conservatory-podcasts/chapters.rs`) | 1a / 6c-iii-a |
+| `serde_json` | MIT OR Apache-2.0 | Parsing the Podcast Index `podcast:chapters` JSON document into core `Chapter` rows (`conservatory-podcasts/chapters.rs`) | 6c-iii-a |
 
 External tools (shelled out, not linked): `rsgain` (BSD-2-Clause; the Phase 5c ReplayGain scanner, `replaygain.rs`. Chosen over the `ebur128` Rust crate because rsgain decodes every format itself, including Opus, which a pure-Rust decoder does not; needs bundling for the Flatpak). `flac` + `ffmpeg` are planned for the Phase 8a integrity audit.
 

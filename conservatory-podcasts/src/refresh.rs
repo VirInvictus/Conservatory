@@ -116,7 +116,16 @@ pub async fn add_show(
         })?
     };
 
-    let (new, total) = apply_feed(worker, pool, show, parsed, res.etag, res.last_modified).await?;
+    let (new, total) = apply_feed(
+        worker,
+        pool,
+        fetcher,
+        show,
+        parsed,
+        res.etag,
+        res.last_modified,
+    )
+    .await?;
     Ok((id, new, total))
 }
 
@@ -170,7 +179,16 @@ pub async fn refresh_show(
         Err(e) => return Ok(outcome(id, title, RefreshStatus::Failed(e.to_string()))),
     };
 
-    let (new, total) = apply_feed(worker, pool, show, parsed, res.etag, res.last_modified).await?;
+    let (new, total) = apply_feed(
+        worker,
+        pool,
+        fetcher,
+        show,
+        parsed,
+        res.etag,
+        res.last_modified,
+    )
+    .await?;
     Ok(outcome(id, title, RefreshStatus::Updated { new, total }))
 }
 
@@ -219,6 +237,7 @@ pub async fn refresh_all(
 async fn apply_feed(
     worker: &WorkerHandle,
     pool: &ReadPool,
+    fetcher: &Fetcher,
     mut show: Show,
     parsed: ParsedFeed,
     etag: Option<String>,
@@ -258,11 +277,16 @@ async fn apply_feed(
 
     let total = parsed.episodes.len();
     let mut new = 0;
+    let client = fetcher.client();
     for pe in parsed.episodes {
         let is_new = !existing.contains(&pe.guid);
         if is_new {
             new += 1;
         }
+        // Keep the chapters URL alongside the id: `to_episode` consumes `pe`, and
+        // the Episode model carries no chapters field (chapters live in their own
+        // table, populated separately).
+        let chapters_url = pe.chapters_url.clone();
         let episode_id = worker
             .upsert_episode(to_episode(show_id, &show_slug, pe))
             .await?;
@@ -278,6 +302,21 @@ async fn apply_feed(
                     worker
                         .set_episode_played(episode_id, PlayedState::ArchivedUnlistened, None)
                         .await?
+                }
+            }
+            // Fetch + store the episode's chapters once, on first sight (Phase
+            // 6c-iii-a). Best-effort: a fetch/parse failure is logged and never
+            // fails the refresh (chapters are an enhancement, not load-bearing).
+            // Only new episodes fetch, so a re-refresh does not re-hit every URL.
+            if let Some(url) = chapters_url {
+                match crate::chapters::fetch_chapters(&client, &url).await {
+                    Ok(chapters) if !chapters.is_empty() => {
+                        worker.replace_chapters(episode_id, chapters).await?;
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!(episode_id, url, error = %e, "refresh: chapters fetch failed");
+                    }
                 }
             }
         }

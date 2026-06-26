@@ -521,9 +521,24 @@ Two filter choices were settled against the 5.5 findings (`docs/libmpv-profiles.
 
 #### Phase 6c-iii+ — Chapters + Now Playing additions (the follow-on)
 
-- [ ] Now Playing additions for episodes: chapters, show notes, Smart Speed indicator, sleep timer.
-- [ ] **Chapter persistence + navigation.** Persist the parsed chapter set (the 6a-ii note: the `podcast:chapters` URL / ID3 CHAP are captured but not yet stored) into the `chapters` table, then a **skip-to-next / skip-to-previous-chapter** transport action (an absolute `seek` to the neighbouring `chapters.start_time`) wired to buttons in the Now Playing surface and a keybinding. This is the shared chapter-skip mechanism the audiobook engine reuses at 7c (`docs/keymap.md` + the player engine, not a podcast-only path).
-- [ ] Tests: filter-graph swap between a track and an episode mid-queue; chapter-skip lands on the neighbouring chapter boundary (forward, back, and clamped at the ends).
+Split into the chapters core (persistence then navigation) and the surfacing work:
+**a** = chapter persistence, **b** = chapter navigation (the shared engine
+mechanism 7c reuses), **c** = the Now Playing episode surface, **d** = sleep timer.
+
+##### Phase 6c-iii-a — Chapter persistence (headless + CLI) ✅ (v0.0.47)
+
+- [x] Persist the parsed chapter set (the 6a-ii note: the `podcast:chapters` URL was captured but not stored). `conservatory-podcasts/src/chapters.rs` fetches the URL and parses the Podcast Index JSON; `refresh::apply_feed` stores it for each genuinely-new episode through the existing `replace_chapters` worker command (best-effort: a fetch/parse failure is logged, never fatal). CLI `podcast chapters <ep>`. `serde`/`serde_json` activated in the podcasts crate. ID3-CHAP fallback (from a downloaded file) stays deferred to the -c fold-in.
+- [x] Tests: the JSON parser (full / empty / malformed / blank strings); a wiremock refresh that serves a feed + its chapters JSON and asserts the set lands.
+
+##### Phase 6c-iii-b — Chapter navigation (the shared engine mechanism)
+
+- [ ] A **skip-to-next / skip-to-previous-chapter** transport action (an absolute `seek` to the neighbouring `chapters.start_time`) wired to buttons in the Now-bar and a keybinding (`Ctrl+Shift+←/→`). Built generic in the core player (`ChapterMark` on `PlayableItem`, pure `current_chapter_at` / `neighbour_chapter` helpers, a `SkipChapter` command) so the audiobook engine reuses it at 7c with `book_chapters` (`docs/keymap.md` + the player engine, not a podcast-only path).
+- [ ] Tests: chapter-skip lands on the neighbouring chapter boundary (forward, back, and clamped at the ends); filter-graph swap between a track and an episode mid-queue.
+
+##### Phase 6c-iii-c/d — Now Playing surface + sleep timer
+
+- [ ] Now Playing additions for episodes: chapters (list + jump-to + current-chapter highlight), show notes (`ammonia`-sanitized), Smart Speed indicator.
+- [ ] Sleep timer (15 / 30 / 45 / 60 min, end of episode, end of queue, tap-to-extend; Belfry §3.6), the `S` keybinding.
 
 *Usable artifact:* **podcast parity reached** (at the end of the follow-on). One queue, one engine, both media types, full Smart Speed / Voice Boost. **Belfry can then retire**: update the `~/.gitrepos` project map and archive the Belfry repo (spec §16.8). (6c-i alone already makes Smart Speed / Voice Boost audible.)
 

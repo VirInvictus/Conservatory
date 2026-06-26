@@ -602,6 +602,13 @@ enum PodcastAction {
         /// Path to the SQLite database.
         db: PathBuf,
     },
+    /// List an episode's stored chapters (Phase 6c-iii). Read-only.
+    Chapters {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The episode id.
+        episode_id: i64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2574,7 +2581,35 @@ fn podcast(action: PodcastAction) -> Result<()> {
         }
         PodcastAction::DebugChain { db, episode_id } => podcast_debug_chain(db, episode_id),
         PodcastAction::Stats { db } => podcast_stats(db),
+        PodcastAction::Chapters { db, episode_id } => podcast_chapters(db, episode_id),
     }
+}
+
+/// List an episode's stored chapters (Phase 6c-iii): index, start (mm:ss), and
+/// title, read-only via the read pool. An episode with no chapters prints a note.
+#[cfg(feature = "podcasts")]
+fn podcast_chapters(db: PathBuf, episode_id: i64) -> Result<()> {
+    use conservatory_core::db::list_chapters;
+
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let chapters = list_chapters(&conn, episode_id).context("reading chapters")?;
+
+    if chapters.is_empty() {
+        println!("episode {episode_id}: no chapters");
+        return Ok(());
+    }
+    println!("episode {episode_id}: {} chapters", chapters.len());
+    for (i, ch) in chapters.iter().enumerate() {
+        let title = ch.title.as_deref().unwrap_or("(untitled)");
+        // `fmt_duration` (6c-ii) is the same M:SS / H:MM:SS clock format.
+        println!(
+            "  {:>3}  {:>8}  {title}",
+            i + 1,
+            fmt_duration(ch.start_time)
+        );
+    }
+    Ok(())
 }
 
 /// Print the listening totals (Phase 6c-ii): the append-only `listening_sessions`

@@ -23,6 +23,7 @@
 //! [`retention`] pruning of downloaded episodes beyond a show's `keep_count`.
 //! Triage browse / actions are 6b.
 
+pub mod chapters;
 pub mod credentials;
 pub mod download;
 pub mod error;
@@ -35,6 +36,7 @@ pub mod refresh;
 pub mod retention;
 pub mod slug;
 
+pub use chapters::{fetch_chapters, parse_chapters_json};
 pub use credentials::{BasicAuth, CredentialStore};
 pub use download::download_episode;
 pub use error::{FetchError, Result};

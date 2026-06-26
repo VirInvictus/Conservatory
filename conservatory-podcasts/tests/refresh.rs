@@ -12,8 +12,8 @@
 
 use conservatory_core::db::{
     InboxPolicy, PlayedState, ReadPool, ShowSettings, TriageBucket, WorkerHandle,
-    episodes_in_bucket, get_episode_by_guid, get_playback, list_episodes_for_show, list_shows,
-    spawn_worker,
+    episodes_in_bucket, get_episode_by_guid, get_playback, list_chapters, list_episodes_for_show,
+    list_shows, spawn_worker,
 };
 use conservatory_podcasts::{Fetcher, RefreshStatus, add_show, refresh_all, refresh_show};
 use tempfile::tempdir;
@@ -291,6 +291,73 @@ async fn default_inbox_policy_leaves_new_episode_in_inbox() {
         .map(|r| r.id)
         .collect();
     assert!(inbox.contains(&ep3), "the new episode lands in Inbox");
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+/// A new episode whose feed carries a `<podcast:chapters url=…>` has its chapter
+/// JSON fetched and stored on `add` (Phase 6c-iii-a). The feed and the chapters
+/// JSON are both served by the mock server, so the URL is rewritten to point at
+/// it; `list_chapters` then returns the parsed set.
+#[tokio::test]
+async fn refresh_fetches_and_stores_podcast_chapters() {
+    let (_dir, worker, pool) = fresh();
+    let server = MockServer::start().await;
+
+    let chapters_url = format!("{}/ep1-chapters.json", server.uri());
+    // A minimal one-item feed pointing its chapters URL at the mock server.
+    let feed = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>Chaptered Cast</title>
+    <description>Has chapters.</description>
+    <item>
+      <title>Episode One</title>
+      <guid isPermaLink="false">ep-1</guid>
+      <pubDate>Tue, 05 Mar 2024 09:00:00 GMT</pubDate>
+      <enclosure url="https://cdn.example.com/ep1.mp3" length="1000000" type="audio/mpeg"/>
+      <podcast:chapters url="{chapters_url}" type="application/json+chapters"/>
+      <description>The first episode.</description>
+    </item>
+  </channel>
+</rss>"#
+    );
+    let chapters_json = r#"{
+        "version": "1.2.0",
+        "chapters": [
+            { "startTime": 0, "title": "Cold open" },
+            { "startTime": 95.5, "title": "Interview", "endTime": 1800 }
+        ]
+    }"#;
+
+    Mock::given(method("GET"))
+        .and(path("/feed.xml"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(feed))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/ep1-chapters.json"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(chapters_json))
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/feed.xml", server.uri());
+    let fetcher = Fetcher::new().unwrap();
+    let (show_id, new, _total) = add_show(&worker, &pool, &fetcher, &url).await.unwrap();
+    assert_eq!(new, 1);
+
+    let conn = pool.open().unwrap();
+    let ep = get_episode_by_guid(&conn, show_id, "ep-1")
+        .unwrap()
+        .unwrap();
+    let chapters = list_chapters(&conn, ep.id).unwrap();
+    assert_eq!(chapters.len(), 2, "both chapters were fetched and stored");
+    assert_eq!(chapters[0].start_time, 0.0);
+    assert_eq!(chapters[0].title.as_deref(), Some("Cold open"));
+    assert_eq!(chapters[1].start_time, 95.5);
+    assert_eq!(chapters[1].end_time, Some(1800.0));
 
     worker.shutdown_ack().await.unwrap();
 }

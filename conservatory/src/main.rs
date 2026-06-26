@@ -30,6 +30,8 @@ columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height
 .queue-row { padding: 4px 8px; }
 .queue-row.playing { background: alpha(@accent_color, 0.16); }
 .queue-list { border-left: 1px solid alpha(currentColor, 0.12); }
+.chapter-row { padding: 3px 6px; }
+.chapter-row.current-chapter { background: alpha(@accent_color, 0.16); font-weight: bold; }
 ";
 
 fn load_css() {

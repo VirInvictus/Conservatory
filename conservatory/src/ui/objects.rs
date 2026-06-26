@@ -254,7 +254,7 @@ impl EpisodeRow {
         self.with(|r| r.show_title.clone())
     }
 
-    /// Show notes (raw feed text; the `ammonia` sanitize is deferred).
+    /// Show notes (cleaned to plain text at ingest by `sanitize_notes`, 6c-iii-c).
     pub fn description(&self) -> String {
         self.with(|r| r.description.clone().unwrap_or_default())
     }

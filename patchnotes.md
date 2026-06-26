@@ -1,5 +1,18 @@
 # Patch Notes
 
+## v0.0.49
+
+Phase 6c-iii-c shipped: the Now Playing drawer is now a real episode surface. Open it on a podcast and you get a clickable chapter list that highlights the chapter you are in and follows the playhead, a Smart Speed line whose saved time ticks up as you listen, and show notes cleaned to readable text. This is the last of the surfacing work before the sleep timer (6c-iii-d) and Belfry's retirement.
+
+- **Show notes cleaned at ingest (`conservatory-podcasts/src/notes.rs`):** feed descriptions are HTML; they are now run through `ammonia` to plain readable text when an episode is stored, so the triage pane, the Now Playing drawer, and the CLI all read clean notes with no per-render cost. `ammonia` does the load-bearing work (it drops `<script>` / `<style>` bodies and copes with malformed markup); a small pass turns paragraph breaks into newlines and decodes the structural entities. Existing episodes clean on their next refresh.
+- **Smart Speed reaches the UI:** the player snapshot now carries `smart_speed_active` (the current item's profile flag) and `smart_speed_saved` (the live saved seconds from the open listening session). The drawer shows a "Smart Speed · saved m:ss" line for a smart-speed show, with the full figure in a tooltip; it is hidden for music and shows without it.
+- **Chapter list (`now_playing_panel.rs`):** the drawer grows a "Chapters" list for a chaptered episode. Each row is the start time plus the title (or "Chapter N" when untitled); clicking a row seeks to it; the playing chapter is highlighted and re-highlights as the playhead crosses a boundary. A track or chapter-less episode hides the section. The current-chapter highlight and the Smart Speed line update from the same 250 ms poll that drives the Now-bar, so the per-tick cost is a class toggle, not a rebuild.
+- **Tests:** the `sanitize_notes` cases (tag stripping, entity decoding, paragraph breaks, dropped `<script>` bodies, malformed HTML, blank-line collapse); an engine assertion that the snapshot reports Smart Speed active for an episode whose profile has it on. Full suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green. No new migration; `ammonia` (workspace-approved, spec §11) activated in the podcasts crate.
+
+Manual-launch check still owed (display-bound): open the drawer on a chaptered, smart-speed show and confirm the chapter list highlights and seeks, the saved time ticks up, and a track hides both.
+
+Next: Phase 6c-iii-d (the sleep timer), then podcast parity is complete and Belfry retires.
+
 ## v0.0.48
 
 Phase 6c-iii-b shipped: chapter navigation. Episodes with chapters can now be skipped chapter by chapter, from the Now-bar or the keyboard, and the engine swaps cleanly between a music track's filter chain and an episode's spoken-word profile mid-queue. The mechanism is built generic in the core player so the audiobook engine reuses it at Phase 7.

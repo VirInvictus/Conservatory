@@ -2137,6 +2137,15 @@ impl ConservatoryWindow {
         now.set_status(snap.buffering, snap.streaming);
         // Chapter-skip buttons appear only for an item with chapters (6c-iii-b).
         now.set_chapter_nav_visible(snap.chapter_count > 0);
+        // Live drawer extras (6c-iii-c): the current-chapter highlight follows the
+        // playhead and the Smart Speed saved time ticks up. Cheap no-ops when the
+        // drawer is closed or there is nothing to show.
+        if let Some(panel) = imp.now_playing.get()
+            && panel.is_open()
+        {
+            panel.set_current_chapter(snap.current_chapter);
+            panel.set_smart_speed(snap.smart_speed_active, snap.smart_speed_saved);
+        }
         now.position
             .set_text(&fmt_position(snap.position, snap.duration));
         match snap.duration {
@@ -2184,7 +2193,8 @@ impl ConservatoryWindow {
             return;
         };
         use conservatory_core::db::{
-            episode_metadata, get_album, get_episode, get_show, get_track, track_metadata,
+            episode_metadata, get_album, get_episode, get_show, get_track, list_chapters,
+            track_metadata,
         };
         match kind {
             Some(MediaKind::Episode) => {
@@ -2200,6 +2210,13 @@ impl ConservatoryWindow {
                     &np.title.clone(),
                     &episode_fields(&np, &ep, show.as_ref(), streaming),
                 );
+                // The clickable chapter list tracks the playing episode (6c-iii-c);
+                // the current-chapter highlight + Smart Speed line tick from the
+                // per-poll snapshot in `refresh_now_bar`.
+                if let Some(player) = imp.player.get() {
+                    let chapters = list_chapters(&conn, id).unwrap_or_default();
+                    panel.set_chapters(&chapters, player);
+                }
             }
             _ => {
                 let (Ok(Some(np)), Ok(Some(track))) =
@@ -2215,6 +2232,10 @@ impl ConservatoryWindow {
                     &np.title.clone(),
                     &track_fields(&np, &track, album.as_ref()),
                 );
+                // A track has no chapters: hide the section.
+                if let Some(player) = imp.player.get() {
+                    panel.set_chapters(&[], player);
+                }
             }
         }
     }

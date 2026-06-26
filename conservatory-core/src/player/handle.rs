@@ -110,6 +110,13 @@ pub struct PlayerSnapshot {
     /// The chapter the playhead is in (index into the item's marks), or `None`
     /// before the first chapter / when there are none.
     pub current_chapter: Option<usize>,
+    /// The current item's profile has Smart Speed on (Phase 6c-iii-c): drives the
+    /// Now Playing "Smart Speed" indicator. `false` for music / shows without it.
+    pub smart_speed_active: bool,
+    /// Seconds saved so far in the current listening session by Smart Speed +
+    /// speed-up (`SessionAccumulator::smart_speed_saved`); `0.0` when no session
+    /// is open. Shown live in the indicator's label / tooltip.
+    pub smart_speed_saved: f64,
     /// The audio output devices (queried once at engine init, spec §6.5).
     pub audio_devices: Arc<[AudioDevice]>,
     /// The selected output device id; `None` is mpv's default (`auto`).
@@ -132,6 +139,8 @@ impl Default for PlayerSnapshot {
             ended: false,
             chapter_count: 0,
             current_chapter: None,
+            smart_speed_active: false,
+            smart_speed_saved: 0.0,
             audio_devices: Arc::from([]),
             audio_device: None,
         }

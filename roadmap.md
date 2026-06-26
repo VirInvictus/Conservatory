@@ -535,9 +535,14 @@ mechanism 7c reuses), **c** = the Now Playing episode surface, **d** = sleep tim
 - [x] A **skip-to-next / skip-to-previous-chapter** transport action (an absolute `seek` to the neighbouring `chapters.start_time`) wired to buttons in the Now-bar and a keybinding (`Ctrl+Shift+←/→`). Built generic in the core player (`player/chapters.rs`: `ChapterMark` on `PlayableItem`, pure `current_chapter_at` / `neighbour_chapter` helpers, a `SkipChapter` command + snapshot `current_chapter`/`chapter_count`) so the audiobook engine reuses it at 7c with `book_chapters` (not a podcast-only path). The GUI attaches marks after a queue build (`attach_episode_chapters`); the Now-bar chapter buttons appear only for a chaptered item.
 - [x] Tests: the `neighbour_chapter` helpers (forward / back / clamped at the ends); an engine skip forward-to-boundary / back-to-start (paused); the filter-graph swap between a track and an episode mid-queue (both play to completion, proving the §16.9 profile switch). No new dependency, no new migration.
 
-##### Phase 6c-iii-c/d — Now Playing surface + sleep timer
+##### Phase 6c-iii-c — Now Playing episode surface ✅ (v0.0.49)
 
-- [ ] Now Playing additions for episodes: chapters (list + jump-to + current-chapter highlight), show notes (`ammonia`-sanitized), Smart Speed indicator.
+- [x] Now Playing additions for episodes: a clickable chapter list in the bottom drawer (jump-to via `seek`, current-chapter highlight that follows the playhead), `ammonia`-sanitized show notes, and a Smart Speed indicator (live saved time). Show notes are cleaned **at ingest** (`conservatory-podcasts/src/notes.rs`, HTML → plain text), so every reader benefits and the DB column is clean. The snapshot gained `smart_speed_active` / `smart_speed_saved`; the chapter highlight + Smart Speed line tick from the existing 250 ms poll (a class toggle, not a rebuild). `ammonia` activated in the podcasts crate.
+- [x] Tests: the `sanitize_notes` cases (tags / entities / paragraph breaks / dropped `<script>` / malformed / blank-line collapse); a snapshot assertion that an episode with Smart Speed on reports it active. No new migration.
+- ID3-CHAP embedded-chapter fallback (from a downloaded file, `id3`) stays deferred (a small later fold-in).
+
+##### Phase 6c-iii-d — Sleep timer
+
 - [ ] Sleep timer (15 / 30 / 45 / 60 min, end of episode, end of queue, tap-to-extend; Belfry §3.6), the `S` keybinding.
 
 *Usable artifact:* **podcast parity reached** (at the end of the follow-on). One queue, one engine, both media types, full Smart Speed / Voice Boost. **Belfry can then retire**: update the `~/.gitrepos` project map and archive the Belfry repo (spec §16.8). (6c-i alone already makes Smart Speed / Voice Boost audible.)

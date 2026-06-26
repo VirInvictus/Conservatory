@@ -646,6 +646,8 @@ impl Engine {
             ended: self.ended,
             chapter_count: current.map_or(0, |i| i.chapters.len()),
             current_chapter: current.and_then(|i| current_chapter_at(&i.chapters, position)),
+            smart_speed_active: current.is_some_and(|i| i.profile.smart_speed),
+            smart_speed_saved: self.session.as_ref().map_or(0.0, |s| s.smart_speed_saved()),
             audio_devices: self.audio_devices.clone(),
             audio_device: self.audio_device.clone(),
         };

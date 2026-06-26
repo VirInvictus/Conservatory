@@ -334,7 +334,9 @@ fn to_episode(show_id: i64, show_slug: &str, pe: ParsedEpisode) -> Episode {
         show_id,
         guid: pe.guid,
         title: pe.title,
-        description: pe.description,
+        // Clean feed HTML to readable text at ingest (Phase 6c-iii-c), so every
+        // reader (triage pane, Now Playing, CLI) gets plain notes for free.
+        description: pe.description.map(|d| crate::notes::sanitize_notes(&d)),
         pub_date: pe.pub_date,
         duration: pe.duration,
         file_size: pe.file_size,

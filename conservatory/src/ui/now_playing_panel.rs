@@ -9,18 +9,38 @@
 //! unit-tested; the window resolves the rows from the DB and hands them in, so
 //! this module builds no DB reads.
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use conservatory_core::db::{Album, Episode, NowPlaying, Show, Track};
+use conservatory_core::PlayerHandle;
+use conservatory_core::db::{Album, Chapter, Episode, NowPlaying, Show, Track};
 
 use crate::playqueue::fmt_secs;
 
-/// The drawer: the revealer to place, plus the labelled grid it fills.
+/// The drawer: the revealer to place, plus the labelled grid it fills and the
+/// episode extras (Smart Speed line + clickable chapter list, Phase 6c-iii-c).
 pub struct NowPlayingPanel {
     pub revealer: gtk::Revealer,
     title: gtk::Label,
     grid: gtk::Grid,
+    /// The "Smart Speed · saved m:ss" line; hidden unless the current item has
+    /// Smart Speed on. Updated each poll tick from the snapshot.
+    smart_speed: gtk::Label,
+    /// Heading + list wrapper, hidden when the item has no chapters.
+    chapters_box: gtk::Box,
+    chapters_list: gtk::ListBox,
+    /// Per-row chapter start seconds, indexed by row position; the row-activated
+    /// handler (wired once at build) reads this to seek. Shared so a single
+    /// handler survives list rebuilds (re-connecting would double-fire).
+    chapter_starts: Rc<RefCell<Vec<f64>>>,
+    /// The handle the chapter rows seek through; set on each `set_chapters`.
+    player: Rc<RefCell<Option<PlayerHandle>>>,
+    /// The currently-highlighted chapter row, so a tick only touches the CSS
+    /// class when the playhead crosses a boundary.
+    current_chapter: Cell<Option<usize>>,
 }
 
 /// Build the drawer (revealed off; the window appends `revealer` above the
@@ -38,6 +58,48 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
         .margin_top(4)
         .build();
 
+    // Episode extras (6c-iii-c): a Smart Speed line and a clickable chapter list,
+    // both hidden until the current item calls for them.
+    let smart_speed = gtk::Label::builder()
+        .xalign(0.0)
+        .css_classes(["accent", "caption"])
+        .margin_top(4)
+        .visible(false)
+        .build();
+
+    let chapters_heading = gtk::Label::builder()
+        .label("Chapters")
+        .xalign(0.0)
+        .css_classes(["heading"])
+        .margin_top(8)
+        .build();
+    let chapters_list = gtk::ListBox::new();
+    chapters_list.set_selection_mode(gtk::SelectionMode::None);
+    chapters_list.add_css_class("chapter-list");
+    let chapters_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    chapters_box.append(&chapters_heading);
+    chapters_box.append(&chapters_list);
+    chapters_box.set_visible(false);
+
+    let chapter_starts = Rc::new(RefCell::new(Vec::<f64>::new()));
+    let player = Rc::new(RefCell::new(None::<PlayerHandle>));
+    // Wire row-activation once: clicking a chapter seeks to its start. The starts
+    // + handle are shared cells so the handler outlives the list rebuilds.
+    chapters_list.connect_row_activated({
+        let starts = chapter_starts.clone();
+        let player = player.clone();
+        move |_list, row| {
+            let idx = row.index();
+            if idx < 0 {
+                return;
+            }
+            let start = starts.borrow().get(idx as usize).copied();
+            if let (Some(p), Some(start)) = (player.borrow().as_ref(), start) {
+                p.seek(start);
+            }
+        }
+    });
+
     let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
     column.add_css_class("background");
     column.add_css_class("now-playing-drawer");
@@ -47,6 +109,8 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
     column.set_margin_end(12);
     column.append(&title);
     column.append(&grid);
+    column.append(&smart_speed);
+    column.append(&chapters_box);
 
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -66,6 +130,12 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
         revealer,
         title,
         grid,
+        smart_speed,
+        chapters_box,
+        chapters_list,
+        chapter_starts,
+        player,
+        current_chapter: Cell::new(None),
     }
 }
 
@@ -107,9 +177,83 @@ impl NowPlayingPanel {
         }
     }
 
+    /// Rebuild the chapter list for the current item (Phase 6c-iii-c). An empty
+    /// slice hides the section (a track / chapter-less episode). `player` is the
+    /// handle a chapter click seeks through. Called on item-change, not per tick.
+    pub fn set_chapters(&self, chapters: &[Chapter], player: &PlayerHandle) {
+        self.current_chapter.set(None);
+        while let Some(child) = self.chapters_list.first_child() {
+            self.chapters_list.remove(&child);
+        }
+        *self.chapter_starts.borrow_mut() = chapters.iter().map(|c| c.start_time).collect();
+        *self.player.borrow_mut() = Some(player.clone());
+
+        if chapters.is_empty() {
+            self.chapters_box.set_visible(false);
+            return;
+        }
+        for (i, ch) in chapters.iter().enumerate() {
+            let title = match ch.title.as_deref().filter(|t| !t.is_empty()) {
+                Some(t) => t.to_string(),
+                None => format!("Chapter {}", i + 1),
+            };
+            let label = gtk::Label::builder()
+                .label(format!("{}   {title}", fmt_secs(ch.start_time)))
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .build();
+            let row = gtk::ListBoxRow::new();
+            row.set_child(Some(&label));
+            row.add_css_class("chapter-row");
+            self.chapters_list.append(&row);
+        }
+        self.chapters_box.set_visible(true);
+    }
+
+    /// Highlight the chapter the playhead is in (Phase 6c-iii-c); cheap per tick,
+    /// it only touches the CSS class when the index changes.
+    pub fn set_current_chapter(&self, idx: Option<usize>) {
+        if self.current_chapter.get() == idx {
+            return;
+        }
+        if let Some(prev) = self.current_chapter.get()
+            && let Some(row) = self.chapters_list.row_at_index(prev as i32)
+        {
+            row.remove_css_class("current-chapter");
+        }
+        if let Some(cur) = idx
+            && let Some(row) = self.chapters_list.row_at_index(cur as i32)
+        {
+            row.add_css_class("current-chapter");
+        }
+        self.current_chapter.set(idx);
+    }
+
+    /// Show / update the Smart Speed indicator (Phase 6c-iii-c). Hidden when the
+    /// current item has no Smart Speed; otherwise the saved time ticks up live.
+    pub fn set_smart_speed(&self, active: bool, saved_secs: f64) {
+        if !active {
+            self.smart_speed.set_visible(false);
+            return;
+        }
+        let saved = fmt_secs(saved_secs);
+        self.smart_speed
+            .set_text(&format!("Smart Speed · saved {saved}"));
+        self.smart_speed.set_tooltip_text(Some(&format!(
+            "Smart Speed is shortening silences; {saved} saved this session"
+        )));
+        self.smart_speed.set_visible(true);
+    }
+
     /// The idle "nothing playing" state.
     pub fn clear(&self) {
         self.set_fields("Now Playing", &[("".into(), "Nothing playing.".into())]);
+        self.smart_speed.set_visible(false);
+        self.chapters_box.set_visible(false);
+        self.current_chapter.set(None);
+        while let Some(child) = self.chapters_list.first_child() {
+            self.chapters_list.remove(&child);
+        }
     }
 }
 

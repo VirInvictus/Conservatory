@@ -56,6 +56,7 @@ Recorded here as dependencies are signed off (spec §11) and added to the worksp
 | `oo7` | MIT | HTTP Basic auth credentials in the libsecret secret service (`credentials.rs`): the password lives in the keyring, the DB stores only a lookup key. `default-features = false` + `tokio` + `native_crypto` (the default async-std runtime clashes with the workspace's tokio; pure-Rust crypto avoids system OpenSSL) | 6a-iii-b |
 | `serde` | MIT OR Apache-2.0 | `#[derive(Serialize/Deserialize)]` on the core models, and the `podcast:chapters` JSON entry structs (`conservatory-podcasts/chapters.rs`) | 1a / 6c-iii-a |
 | `serde_json` | MIT OR Apache-2.0 | Parsing the Podcast Index `podcast:chapters` JSON document into core `Chapter` rows (`conservatory-podcasts/chapters.rs`) | 6c-iii-a |
+| `ammonia` | MIT OR Apache-2.0 | Cleaning feed HTML show notes to readable plain text at ingest (`conservatory-podcasts/notes.rs`): strips all markup (and `<script>`/`<style>` bodies) robustly so the stored description is plain text for the GTK `Label`. Pulls `html5ever` / `markup5ever` (MIT/Apache-2.0) transitively | 6c-iii-c |
 
 External tools (shelled out, not linked): `rsgain` (BSD-2-Clause; the Phase 5c ReplayGain scanner, `replaygain.rs`. Chosen over the `ebur128` Rust crate because rsgain decodes every format itself, including Opus, which a pure-Rust decoder does not; needs bundling for the Flatpak). `flac` + `ffmpeg` are planned for the Phase 8a integrity audit.
 

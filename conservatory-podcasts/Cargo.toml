@@ -26,6 +26,8 @@ quick-xml = { workspace = true }
 # Phase 6c-iii-a: parse the podcast:chapters JSON document into core Chapter rows.
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Phase 6c-iii-c: clean feed HTML show notes to readable text at ingest.
+ammonia = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

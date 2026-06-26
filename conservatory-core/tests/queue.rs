@@ -742,6 +742,78 @@ fn engine_swaps_profile_between_a_track_and_an_episode() {
     runtime.block_on(worker.shutdown_ack()).ok();
 }
 
+/// The snapshot surfaces Smart Speed for the Now Playing indicator (Phase
+/// 6c-iii-c): an episode whose profile has Smart Speed on reports
+/// `smart_speed_active = true` with a non-negative live `smart_speed_saved`. The
+/// saved math is unit-tested in `player::session`; this proves the snapshot
+/// wiring (`refresh_snapshot` reads the current item's profile + open session).
+#[test]
+fn snapshot_reports_smart_speed_for_an_episode() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+
+    // A real episode row: the close-of-session insert at shutdown is FK-bound.
+    let episode_id = runtime.block_on(async {
+        let show_id = worker
+            .get_or_create_show(sample_show("replyall", "https://example.com/feed.xml"))
+            .await
+            .unwrap();
+        worker
+            .upsert_episode(sample_episode(show_id, "guid-1", "Ep One"))
+            .await
+            .unwrap()
+    });
+
+    let mut profile = conservatory_core::resolve_episode_profile(None);
+    profile.smart_speed = true;
+    let item = PlayableItem {
+        track_id: episode_id,
+        source: fixtures_dir.join("sample.mp3"),
+        profile,
+        album_id: None,
+        kind: MediaKind::Episode,
+        streaming: false,
+        chapters: [].into(),
+    };
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.play_queue(vec![item], 0);
+    player.pause();
+
+    // Loaded and paused so the 0.3 s fixture cannot end under the assertion.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let s = player.snapshot();
+        if s.paused && !s.ended && s.kind == Some(MediaKind::Episode) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "episode never loaded paused");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let snap = player.snapshot();
+    assert!(
+        snap.smart_speed_active,
+        "an episode with Smart Speed on must report it active"
+    );
+    assert!(
+        snap.smart_speed_saved >= 0.0,
+        "saved seconds are never negative"
+    );
+
+    player.shutdown();
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
 /// Minimal podcast fixtures for the engine episode test (no chrono / network).
 fn sample_show(slug: &str, feed_url: &str) -> Show {
     Show {

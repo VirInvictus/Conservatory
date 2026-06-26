@@ -833,6 +833,36 @@ pub(crate) fn complete_episode(
     Ok(())
 }
 
+/// Append one listening session (Phase 6c-ii, spec §6.3). Append-only: every
+/// session is a fresh row (no upsert), so the history and the Smart Speed
+/// time-saved totals are a running ledger; the id autoincrements. The engine
+/// writes one row per episode boundary from its `SessionAccumulator`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn insert_listening_session(
+    conn: &Connection,
+    episode_id: i64,
+    started_at: i64,
+    ended_at: i64,
+    real_seconds: f64,
+    audio_seconds: f64,
+    smart_speed_saved: f64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO listening_sessions
+            (episode_id, started_at, ended_at, real_seconds, audio_seconds, smart_speed_saved)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            episode_id,
+            started_at,
+            ended_at,
+            real_seconds,
+            audio_seconds,
+            smart_speed_saved
+        ],
+    )?;
+    Ok(())
+}
+
 /// Upsert a show's per-show overrides by `show_id` (spec §3.7).
 pub(crate) fn upsert_show_settings(conn: &Connection, settings: &ShowSettings) -> Result<()> {
     conn.execute(

@@ -331,6 +331,18 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Append one listening session (Phase 6c-ii): the engine's per-episode-boundary
+    /// time-saved record. Append-only.
+    InsertListeningSession {
+        episode_id: i64,
+        started_at: i64,
+        ended_at: i64,
+        real_seconds: f64,
+        audio_seconds: f64,
+        smart_speed_saved: f64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Upsert a show's per-show overrides.
     UpsertShowSettings {
         settings: ShowSettings,
@@ -416,6 +428,7 @@ impl Command {
             Self::SetEpisodeStarred { .. } => "set_episode_starred",
             Self::SetEpisodePosition { .. } => "set_episode_position",
             Self::CompleteEpisode { .. } => "complete_episode",
+            Self::InsertListeningSession { .. } => "insert_listening_session",
             Self::UpsertShowSettings { .. } => "upsert_show_settings",
             Self::ReplaceChapters { .. } => "replace_chapters",
             Self::GetOrCreateTag { .. } => "get_or_create_tag",

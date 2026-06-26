@@ -464,6 +464,81 @@ fn engine_applies_a_live_eq_band_change_without_stopping() {
     runtime.block_on(worker.shutdown_ack()).ok();
 }
 
+/// An episode played to EOF lands exactly one append-only `listening_sessions`
+/// row through the engine's start-on-load / close-on-boundary wiring (Phase
+/// 6c-ii). The null fast-decode has no real silence, so the saved figure is ~0
+/// here (the `saved > 0` math is covered by the `player::session` unit tests);
+/// this proves the row is written, once, with sane non-negative totals.
+#[test]
+fn engine_records_a_listening_session_for_an_episode() {
+    use conservatory_core::db::listening_totals;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let dbdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+    let pool = ReadPool::new(db.clone(), 3).unwrap();
+
+    // A real episode row: `listening_sessions.episode_id` is a NOT NULL foreign
+    // key to `episodes`, so the engine's close-of-session insert needs it to exist.
+    let episode_id = runtime.block_on(async {
+        let show_id = worker
+            .get_or_create_show(sample_show("replyall", "https://example.com/feed.xml"))
+            .await
+            .unwrap();
+        worker
+            .upsert_episode(sample_episode(show_id, "guid-1", "Ep One"))
+            .await
+            .unwrap()
+    });
+
+    let item = PlayableItem {
+        track_id: episode_id,
+        source: fixtures_dir.join("sample.mp3"),
+        profile: conservatory_core::resolve_episode_profile(None),
+        album_id: None,
+        kind: MediaKind::Episode,
+        streaming: false,
+    };
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.play_queue(vec![item], 0);
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if player.snapshot().ended {
+            break;
+        }
+        assert!(Instant::now() < deadline, "engine did not finish in time");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    player.shutdown();
+
+    let conn = pool.open().unwrap();
+    let totals = listening_totals(&conn).unwrap();
+    assert_eq!(
+        totals.sessions, 1,
+        "playing one episode to EOF should append exactly one session row"
+    );
+    assert!(totals.real_seconds >= 0.0);
+    assert!(totals.audio_seconds >= 0.0);
+    assert!(
+        totals.smart_speed_saved >= 0.0,
+        "saved is never negative; ~0 with no real silence in the fast decode"
+    );
+
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
 /// Minimal podcast fixtures for the engine episode test (no chrono / network).
 fn sample_show(slug: &str, feed_url: &str) -> Show {
     Show {

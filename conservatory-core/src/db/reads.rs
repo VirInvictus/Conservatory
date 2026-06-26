@@ -848,6 +848,37 @@ pub fn get_playback(conn: &Connection, episode_id: i64) -> Result<Option<Playbac
     .map_err(Into::into)
 }
 
+/// Aggregate listening totals across every `listening_sessions` row (Phase
+/// 6c-ii): the session count and summed real / audio / Smart-Speed-saved seconds,
+/// for the `podcast stats` surface. An empty table sums to zero (the `COALESCE`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ListeningTotals {
+    pub sessions: i64,
+    pub real_seconds: f64,
+    pub audio_seconds: f64,
+    pub smart_speed_saved: f64,
+}
+
+pub fn listening_totals(conn: &Connection) -> Result<ListeningTotals> {
+    conn.query_row(
+        "SELECT COUNT(*),
+                COALESCE(SUM(real_seconds), 0),
+                COALESCE(SUM(audio_seconds), 0),
+                COALESCE(SUM(smart_speed_saved), 0)
+         FROM listening_sessions",
+        [],
+        |r| {
+            Ok(ListeningTotals {
+                sessions: r.get(0)?,
+                real_seconds: r.get(1)?,
+                audio_seconds: r.get(2)?,
+                smart_speed_saved: r.get(3)?,
+            })
+        },
+    )
+    .map_err(Into::into)
+}
+
 /// A show's per-show overrides, or `None` if it uses the global defaults.
 pub fn get_show_settings(conn: &Connection, show_id: i64) -> Result<Option<ShowSettings>> {
     conn.query_row(

@@ -514,10 +514,10 @@ Two filter choices were settled against the 5.5 findings (`docs/libmpv-profiles.
 - [x] CLI `podcast debug-chain <ep>` dumps an episode's resolved chain; the GUI per-show dialog's "audio processing arrives later" caption is gone.
 - [x] Tests: the `spoken.rs` builders; `build_af_chain` episode-vs-music; the libmpv `ao=null` EOF run sets both flags (proves the `silenceremove` + Voice Boost mpv syntax decodes). Music-only build green. No new dependency, no new migration.
 
-#### Phase 6c-ii — Time-saved accounting (headless core + CLI)
+#### Phase 6c-ii — Time-saved accounting (headless core + CLI) ✅ (v0.0.46)
 
-- [ ] Episodes share the unified queue and the per-item profile switch prototyped in 4b; **append-only `listening_sessions` discipline**. The engine writes one session row per episode boundary; `smart_speed_saved = max(0, audio_seconds/speed − real_seconds)` (the non-linear-timeline math `silenceremove` requires), with user-seek ticks excluded. CLI `podcast stats`.
-- [ ] Tests: the accounting math (seek-excluded ticks, Smart-Speed-off ≈ 0, resume offset on long items); a `listening_sessions` append round-trip; an engine null-host run lands a session row.
+- [x] Episodes share the unified queue and the per-item profile switch prototyped in 4b; **append-only `listening_sessions` discipline**. The engine writes one session row per episode boundary (`player/session.rs`'s pure `SessionAccumulator` + the engine's start-on-load / close-on-boundary wiring); `smart_speed_saved = max(0, audio_seconds/speed − real_seconds)` (the non-linear-timeline math `silenceremove` requires, with its forward playhead jumps counted as covered audio), with user-seek ticks excluded and pauses resynced rather than accrued. `insert_listening_session` (write) + `listening_totals` (aggregate read); CLI `podcast stats`. No new migration, no new dependency.
+- [x] Tests: the accounting math (seek-excluded ticks, Smart-Speed-off ≈ 0, variable-speed nets zero, pause accrues nothing, divide-by-zero guard); a `listening_sessions` append round-trip; an engine null-host run lands exactly one session row with sane totals.
 
 #### Phase 6c-iii+ — Chapters + Now Playing additions (the follow-on)
 

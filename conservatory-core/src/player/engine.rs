@@ -24,6 +24,7 @@ use crate::errors::{Error, Result};
 use crate::player::handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 use crate::player::host::{HostEvent, MpvHost};
 use crate::player::item::PlayableItem;
+use crate::player::session::SessionAccumulator;
 use crate::player::state::{EndReason, StateDebounce, StateEvent};
 
 /// How long each `pump` blocks waiting for a libmpv event. Short, so a queued
@@ -98,6 +99,12 @@ struct Engine {
     started: Instant,
     audio_devices: std::sync::Arc<[crate::player::host::AudioDevice]>,
     audio_device: Option<String>,
+    /// The active episode's Smart Speed time-saved accumulator (Phase 6c-ii):
+    /// `Some` only while an episode plays. Closed (one `listening_sessions` row)
+    /// at each episode boundary.
+    session: Option<SessionAccumulator>,
+    /// When the session was last sampled, for the per-tick wall-clock delta.
+    session_tick: Instant,
 }
 
 impl Engine {
@@ -124,6 +131,8 @@ impl Engine {
             started: Instant::now(),
             audio_devices,
             audio_device: None,
+            session: None,
+            session_tick: Instant::now(),
         }
     }
 
@@ -155,6 +164,8 @@ impl Engine {
                 break;
             }
 
+            // Smart Speed time-saved sampling (Phase 6c-ii).
+            self.sample_session();
             // Steady-state insurance write (debounced, fire-and-forget).
             self.flush(StateEvent::Tick, false);
             self.refresh_snapshot();
@@ -162,6 +173,30 @@ impl Engine {
 
         // Terminal flush: guarantee the resume cursor lands before we exit.
         self.flush(StateEvent::Quit, true);
+        // Close an episode session still open at shutdown (a mid-episode quit
+        // still records the listening so far).
+        self.close_session();
+    }
+
+    /// Sample the active episode session once per loop: accrue real vs audio time
+    /// while playing, or just resync the playhead while paused / ended so idle
+    /// time never inflates the saved figure. `time-pos` may be unknown right after
+    /// a load; we skip the sample then (Phase 6c-ii).
+    fn sample_session(&mut self) {
+        if self.session.is_none() {
+            return;
+        }
+        let dt = self.session_tick.elapsed().as_secs_f64();
+        self.session_tick = Instant::now();
+        let pos = self.host.time_pos();
+        let idle = self.paused || self.ended;
+        if let (Some(acc), Some(pos)) = (self.session.as_mut(), pos) {
+            if idle {
+                acc.resync(pos);
+            } else {
+                acc.tick(dt, pos);
+            }
+        }
     }
 
     /// Returns `true` if the command was `Shutdown`.
@@ -172,6 +207,8 @@ impl Engine {
                 start,
                 paused,
             } => {
+                // Replacing the queue ends the current episode's session.
+                self.close_session();
                 self.queue = items;
                 if self.queue.is_empty() {
                     self.current = None;
@@ -216,7 +253,15 @@ impl Engine {
             PlayerCommand::Next => self.skip_next(),
             PlayerCommand::Previous => self.skip_previous(),
             PlayerCommand::Seek(secs) => {
-                let _ = self.host.seek_absolute(secs.max(0.0));
+                let target = secs.max(0.0);
+                let _ = self.host.seek_absolute(target);
+                // A user seek is a jump, not audio played: exclude its interval
+                // from the time-saved accounting (Phase 6c-ii). This is also the
+                // launch-resume path (the resume offset Seek after SetQueue), so
+                // the jump to the saved position is not counted as covered audio.
+                if let Some(acc) = self.session.as_mut() {
+                    acc.seek(target);
+                }
                 self.flush(StateEvent::Seek, true);
             }
             PlayerCommand::SetVolume(v) => {
@@ -240,6 +285,9 @@ impl Engine {
                     let outcome = remove_current_index(self.current, index, self.queue.len());
                     self.current = outcome.current;
                     if outcome.ended {
+                        // Removing the playing item ends its session (the reload
+                        // branch closes via `load_current`).
+                        self.close_session();
                         self.ended = true;
                         self.set_paused(false);
                         let _ = self.host.stop();
@@ -252,6 +300,7 @@ impl Engine {
                 }
             }
             PlayerCommand::ClearQueue => {
+                self.close_session();
                 self.queue.clear();
                 self.current = None;
                 self.ended = true;
@@ -288,6 +337,7 @@ impl Engine {
             PlayerCommand::Stop => {
                 self.set_paused(true);
                 self.flush(StateEvent::Quit, true);
+                self.close_session();
             }
             PlayerCommand::Shutdown => return true,
         }
@@ -309,10 +359,18 @@ impl Engine {
                         MediaKind::Audiobook => {} // Phase 7
                     }
                 }
+                // Append the listening session at the natural boundary, before
+                // advancing (Phase 6c-ii). `advance_after_end`'s `load_current`
+                // would also close it, so this is the explicit close for the
+                // last-item case, where no next load happens.
+                self.close_session();
                 self.advance_after_end();
             }
             // The current item is unplayable: skip it (no play count), don't stall.
-            EndReason::Errored => self.advance_after_end(),
+            EndReason::Errored => {
+                self.close_session();
+                self.advance_after_end();
+            }
             // Self-initiated (our own `load`/stop) or the host shutting down:
             // these are not item completions, so do nothing here.
             EndReason::Stopped | EndReason::Redirect | EndReason::Quit => {}
@@ -353,6 +411,7 @@ impl Engine {
             self.load_current();
             self.flush(StateEvent::Seek, false);
         } else {
+            self.close_session();
             self.ended = true;
             self.set_paused(true);
             self.flush(StateEvent::Quit, true);
@@ -365,6 +424,10 @@ impl Engine {
         let pos = self.host.time_pos().unwrap_or(0.0);
         if pos > PREVIOUS_RESTART_THRESHOLD || self.current.is_none_or(|i| i == 0) {
             let _ = self.host.seek_absolute(0.0);
+            // Restarting is a jump, not rewound audio: exclude it (Phase 6c-ii).
+            if let Some(acc) = self.session.as_mut() {
+                acc.seek(0.0);
+            }
         } else if let Some(i) = self.current {
             self.current = Some(i - 1);
             self.ended = false;
@@ -374,12 +437,19 @@ impl Engine {
     }
 
     fn load_current(&mut self) {
+        // Close the session for the item we are leaving before loading the next
+        // (Phase 6c-ii). Idempotent, so a boundary that already closed (EOF) is a
+        // no-op here.
+        self.close_session();
         let Some(item) = self.current.and_then(|i| self.queue.get(i)) else {
             return;
         };
         let path = item.source.to_string_lossy().into_owned();
         let profile = item.profile;
         let kind = item.kind;
+        // `track_id` carries the episode id for an episode item (the queue's
+        // per-kind id field, 6b-ii-c).
+        let episode_id = item.track_id;
         let streaming = item.streaming;
         tracing::debug!(?kind, streaming, source = %path, index = ?self.current, "player: loading item");
         if let Err(e) = self.host.load(&path, &profile) {
@@ -394,6 +464,41 @@ impl Engine {
         // again right after, in SetQueue.
         let _ = self.host.set_paused(false);
         self.paused = false;
+        // Start a Smart Speed accounting session for an episode (Phase 6c-ii).
+        // The launch-resume / explicit Seek that may follow excludes its jump to
+        // the resume offset, so the resume is not counted as covered audio.
+        if kind == MediaKind::Episode {
+            let pos = self.host.time_pos().unwrap_or(0.0);
+            self.session = Some(SessionAccumulator::new(
+                episode_id,
+                now_secs(),
+                profile.speed,
+                pos,
+            ));
+            self.session_tick = Instant::now();
+        }
+    }
+
+    /// Close the active episode session, if any, appending one append-only
+    /// `listening_sessions` row (Phase 6c-ii). Idempotent (`take`), and blocking
+    /// so the row lands before the engine moves on (the ledger discipline of the
+    /// terminal cursor write). A no-op when no episode is playing.
+    fn close_session(&mut self) {
+        let Some(acc) = self.session.take() else {
+            return;
+        };
+        let worker = self.worker.clone();
+        let episode_id = acc.episode_id;
+        let started_at = acc.started_at;
+        let ended_at = now_secs();
+        let real = acc.real_seconds();
+        let audio = acc.audio_seconds();
+        let saved = acc.smart_speed_saved();
+        self.rt.block_on(async move {
+            let _ = worker
+                .insert_listening_session(episode_id, started_at, ended_at, real, audio, saved)
+                .await;
+        });
     }
 
     fn set_paused(&mut self, paused: bool) {

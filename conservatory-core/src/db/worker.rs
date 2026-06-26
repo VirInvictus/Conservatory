@@ -479,6 +479,29 @@ impl WorkerHandle {
         .await
     }
 
+    /// Append one listening session (Phase 6c-ii): the engine's per-episode
+    /// time-saved record. Append-only.
+    pub async fn insert_listening_session(
+        &self,
+        episode_id: i64,
+        started_at: i64,
+        ended_at: i64,
+        real_seconds: f64,
+        audio_seconds: f64,
+        smart_speed_saved: f64,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::InsertListeningSession {
+            episode_id,
+            started_at,
+            ended_at,
+            real_seconds,
+            audio_seconds,
+            smart_speed_saved,
+            reply,
+        })
+        .await
+    }
+
     /// Upsert a show's per-show overrides.
     pub async fn upsert_show_settings(&self, settings: ShowSettings) -> Result<()> {
         self.dispatch(|reply| Command::UpsertShowSettings { settings, reply })
@@ -852,6 +875,25 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::complete_episode(conn, episode_id, when));
+        }
+        Command::InsertListeningSession {
+            episode_id,
+            started_at,
+            ended_at,
+            real_seconds,
+            audio_seconds,
+            smart_speed_saved,
+            reply,
+        } => {
+            let _ = reply.send(writes::insert_listening_session(
+                conn,
+                episode_id,
+                started_at,
+                ended_at,
+                real_seconds,
+                audio_seconds,
+                smart_speed_saved,
+            ));
         }
         Command::UpsertShowSettings { settings, reply } => {
             let _ = reply.send(writes::upsert_show_settings(conn, &settings));

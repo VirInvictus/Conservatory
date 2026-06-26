@@ -596,6 +596,12 @@ enum PodcastAction {
         /// The episode id.
         episode_id: i64,
     },
+    /// Show listening totals: sessions, time listened, audio covered, and the
+    /// wall-clock time Smart Speed saved (Phase 6c-ii). Read-only.
+    Stats {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2567,6 +2573,41 @@ fn podcast(action: PodcastAction) -> Result<()> {
             block_on(run_podcast_settings(db, show_id, speed))
         }
         PodcastAction::DebugChain { db, episode_id } => podcast_debug_chain(db, episode_id),
+        PodcastAction::Stats { db } => podcast_stats(db),
+    }
+}
+
+/// Print the listening totals (Phase 6c-ii): the append-only `listening_sessions`
+/// ledger summed into session count, wall-clock listen time, audio covered, and
+/// the time Smart Speed saved. Read-only.
+#[cfg(feature = "podcasts")]
+fn podcast_stats(db: PathBuf) -> Result<()> {
+    use conservatory_core::db::listening_totals;
+
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let totals = listening_totals(&conn).context("reading listening totals")?;
+
+    println!("sessions:         {}", totals.sessions);
+    println!("listened:         {}", fmt_duration(totals.real_seconds));
+    println!("audio covered:    {}", fmt_duration(totals.audio_seconds));
+    println!(
+        "smart speed saved: {}",
+        fmt_duration(totals.smart_speed_saved)
+    );
+    Ok(())
+}
+
+/// Format a duration in seconds as `H:MM:SS` (or `M:SS` under an hour), for the
+/// stats readout.
+#[cfg(feature = "podcasts")]
+fn fmt_duration(seconds: f64) -> String {
+    let total = seconds.max(0.0).round() as u64;
+    let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
     }
 }
 

@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.46
+
+Phase 6c-ii shipped: time-saved accounting. The player now records an append-only listening session for every episode it plays, with the wall-clock time Smart Speed saved, and a CLI surfaces the running totals. Headless; the Now Playing readout is part of the 6c follow-on.
+
+- **The accounting math (`conservatory-core/src/player/session.rs`, pure):** a `SessionAccumulator` samples real (wall-clock) vs audio time each engine tick and reports `smart_speed_saved = max(0, audio_seconds / speed − real_seconds)`. The subtle part is `silenceremove`'s non-linear timeline: when it drops dead air the playhead leaps forward, and those jumps are counted as covered audio (the listener got that audio for free), which is exactly what produces a positive saved figure. Variable speed alone nets to zero (at 2× the playhead advances twice as fast, so the two terms cancel); a user seek is excluded (it is a jump, not audio played); a pause accrues nothing. All five cases are unit-tested with synthetic tick sequences.
+- **Engine wiring (`player/engine.rs`):** a session starts when an episode loads, samples once per ~10 Hz loop (resyncing rather than accruing while paused or ended, so idle time never inflates it), excludes user seeks (including the launch-resume jump to the saved offset), and closes by appending one row at every episode boundary: item change, end-of-file, stop, queue clear/replace, the removal of the playing item, and a mid-episode shutdown. The write is blocking, like the resume cursor, so the ledger row is guaranteed to land.
+- **Storage:** the `listening_sessions` table (seeded back in migration `0006`, never written until now) gets its insert (`insert_listening_session`, append-only) and an aggregate read (`listening_totals`: session count + summed real / audio / saved seconds). No new migration, no new dependency.
+- **CLI:** `podcast stats <db>` prints the totals, formatted as `H:MM:SS`: sessions, time listened, audio covered, and the wall-clock Smart Speed saved.
+- **Tests:** the `session.rs` accumulator math (no-silence ≈ 0, a silence jump saves, variable-speed nets zero, a seek is excluded, a pause accrues nothing, a non-positive speed cannot divide by zero); a `listening_sessions` append round-trip through the worker (empty totals are zero, three appended sessions sum); an engine null-host run that plays an episode to EOF and lands exactly one session row with sane non-negative totals. Full suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green.
+
+Next: Phase 6c-iii+ (chapters + the Now Playing episode additions), the last of podcast parity before Belfry retires.
+
 ## v0.0.45
 
 Phase 6c-i shipped: Smart Speed and Voice Boost are real. The per-show toggles (saved since v0.0.37 but inert) now drive spoken-word stages on the shared 5.5 `af`-chain, so a show's episodes play through silence-trimming and voice-leveling. Headless; the time-saved accounting is 6c-ii.

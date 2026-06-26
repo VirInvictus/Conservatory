@@ -800,3 +800,53 @@ async fn episode_playback_persists_position_completion_and_cursor() {
 
     worker.shutdown_ack().await.unwrap();
 }
+
+/// `listening_sessions` is append-only and `listening_totals` sums it (Phase
+/// 6c-ii): an empty table reads zero, and three appended sessions sum the counts
+/// and the real / audio / saved seconds.
+#[tokio::test]
+async fn listening_sessions_append_and_total() {
+    use conservatory_core::db::listening_totals;
+
+    let (_dir, worker, pool) = fresh().await;
+    let show_id = worker
+        .get_or_create_show(sample_show(
+            "replyall",
+            "https://feeds.example.com/replyall",
+        ))
+        .await
+        .unwrap();
+    let ep = worker
+        .upsert_episode(sample_episode(show_id, "guid-1", "The Web", 1_000))
+        .await
+        .unwrap();
+
+    // Empty ledger sums to zero (the COALESCE), not an error.
+    {
+        let conn = pool.open().unwrap();
+        let t = listening_totals(&conn).unwrap();
+        assert_eq!(t.sessions, 0);
+        assert_eq!(t.real_seconds, 0.0);
+        assert_eq!(t.audio_seconds, 0.0);
+        assert_eq!(t.smart_speed_saved, 0.0);
+    }
+
+    // Three sessions: 60+120+30 real, 90+180+30 audio, 30+60+0 saved.
+    for (start, end, real, audio, saved) in [
+        (1_000, 1_060, 60.0, 90.0, 30.0),
+        (2_000, 2_120, 120.0, 180.0, 60.0),
+        (3_000, 3_030, 30.0, 30.0, 0.0),
+    ] {
+        worker
+            .insert_listening_session(ep, start, end, real, audio, saved)
+            .await
+            .unwrap();
+    }
+
+    let conn = pool.open().unwrap();
+    let t = listening_totals(&conn).unwrap();
+    assert_eq!(t.sessions, 3);
+    assert_eq!(t.real_seconds, 210.0);
+    assert_eq!(t.audio_seconds, 300.0);
+    assert_eq!(t.smart_speed_saved, 90.0);
+}

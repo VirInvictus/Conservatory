@@ -53,7 +53,7 @@ async fn eq_state_defaults_to_flat_and_round_trips() {
 async fn presets_save_load_and_delete() {
     let (_dir, worker, pool) = fresh();
 
-    // Flat is seeded.
+    // Flat plus the 16 built-ins (migration 0010) are seeded, alphabetical.
     {
         let conn = pool.open().unwrap();
         let names: Vec<_> = list_eq_presets(&conn)
@@ -61,7 +61,12 @@ async fn presets_save_load_and_delete() {
             .into_iter()
             .map(|p| p.name)
             .collect();
-        assert_eq!(names, vec!["Flat".to_string()]);
+        assert_eq!(names.len(), 17, "Flat + 16 built-ins");
+        assert!(names.contains(&"Flat".to_string()));
+        assert!(names.contains(&"Rock".to_string()));
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "list_eq_presets is alphabetical");
     }
 
     let mut bands = [0.0; 10];
@@ -75,13 +80,17 @@ async fn presets_save_load_and_delete() {
         assert_eq!(loud[0], 8.0);
         assert_eq!(loud[1], 4.0);
         assert!(get_eq_preset(&conn, "Nope").unwrap().is_none());
-        // Two presets now, alphabetical.
+        // The saved preset joins the 17 seeded ones, still alphabetical.
         let names: Vec<_> = list_eq_presets(&conn)
             .unwrap()
             .into_iter()
             .map(|p| p.name)
             .collect();
-        assert_eq!(names, vec!["Flat".to_string(), "Loud".to_string()]);
+        assert_eq!(names.len(), 18, "17 seeded + the saved Loud");
+        assert!(names.contains(&"Loud".to_string()));
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
     }
 
     // Overwrite by name.
@@ -97,6 +106,36 @@ async fn presets_save_load_and_delete() {
     {
         let conn = pool.open().unwrap();
         assert!(get_eq_preset(&conn, "Loud").unwrap().is_none());
+    }
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+#[tokio::test]
+async fn builtin_presets_seeded_with_sane_bands() {
+    let (_dir, worker, pool) = fresh();
+    let conn = pool.open().unwrap();
+
+    // A representative sample of the migration-0010 curves loads with the
+    // expected shape (the full set is the migration's responsibility).
+    let bass = get_eq_preset(&conn, "Bass Boost").unwrap().unwrap();
+    assert_eq!(bass[0], 6.0); // 31 Hz lifted
+    assert_eq!(bass[9], 0.0); // 16 kHz untouched
+
+    let treble = get_eq_preset(&conn, "Treble Boost").unwrap().unwrap();
+    assert_eq!(treble[0], 0.0);
+    assert_eq!(treble[9], 6.0);
+
+    // Spoken Word cuts rumble and lifts the speech band.
+    let spoken = get_eq_preset(&conn, "Spoken Word").unwrap().unwrap();
+    assert!(spoken[0] < 0.0, "sub-bass attenuated");
+    assert!(spoken[6] > 0.0, "2 kHz presence lifted");
+
+    // No built-in is wildly hot (headroom against octave-band stacking).
+    for p in list_eq_presets(&conn).unwrap() {
+        for g in p.bands {
+            assert!(g.abs() <= 12.0, "{} band {g} dB out of sane range", p.name);
+        }
     }
 
     worker.shutdown_ack().await.unwrap();

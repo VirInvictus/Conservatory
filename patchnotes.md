@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.0.51
+
+The equalizer ships with built-in presets. Until now the only seeded preset was Flat, so the Sound dialog's preset dropdown was empty until you built your own. Migration 0010 stocks it with 16 starter curves that appear automatically in the dropdown and the `eq preset` CLI.
+
+- **The set:** utility (Bass Boost, Bass Reducer, Treble Boost, Treble Reducer, Loudness, Vocal Boost), spoken-word (Spoken Word, Small Speakers, which matter for the podcast and audiobook tabs), and genre (Acoustic, Classical, Jazz, Rock, Pop, Electronic, Hip-Hop, Dance). Curves follow the classic iTunes/Winamp shapes, adapted to the peaking-band EQ and kept conservative (mostly within 6 dB) so octave-overlapping boosts do not stack into clipping. Your band layout (31 / 62 / 125 / 250 / 500 / 1k / 2k / 4k / 8k / 16k Hz) matches Apple's 10-band EQ, so the shapes map straight across.
+- **Respectful seeding:** the built-ins are inserted with `INSERT OR IGNORE`, a one-shot at migration time. A preset you already saved under one of these names keeps its values, and a built-in you delete does not come back on the next launch. Only Flat stays protected from deletion, as before.
+- **No code change:** the list / load / apply paths and the Sound dialog dropdown already existed; this is purely the seed migration. Tests: the built-ins load with the expected curve shapes and stay within a sane dB range; the seed-count assertions were updated. Full workspace suite + clippy `-D warnings` + fmt + the `--no-default-features` build green.
+
 ## v0.0.50
 
 Bugfix: podcast show notes were missing for feeds that leave `<description>` empty and put the real notes in `<content:encoded>` (Cortex, and others on the same setup). The parser preferred the RSS summary and only fell back to content when the summary was absent, but feed-rs reports an empty `<description/>` as `Some("")`, so the fallback never fired and a blank string was stored. On a live Cortex pull this left the 33 newest episodes with no notes.

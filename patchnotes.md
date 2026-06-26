@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.43
+
+Phase 5.5c-ii-a shipped: the output backend and resampler are finally applied to the player, with a CLI to drive them (headless). Migration `0009` seeded `output_backend` and `resampler_quality` back at 5.5c-i but nothing consumed them; this closes that gap. The consolidated GTK "Sound" page is the next step (5.5c-ii-b).
+
+- **Output backend (`conservatory-core/src/player/host.rs`):** `MpvHost::set_output_backend` sets mpv's `ao` driver and reloads the output (`ao-reload`) so an in-session switch takes effect without waiting for the next track (gap-acceptable, the `set_dsp` structural-rebuild precedent). `auto` maps to an empty `ao` (mpv's own driver autoprobe); a named backend (`pipewire` / `pulse` / `alsa` / `jack`) pins the driver. This is distinct from the device picker (`audio-device`, Phase 4c-ii): backend is the driver, device is the sink.
+- **Resampler quality:** `MpvHost::set_resampler` raises the `audio-resample-*` knobs (`filter-size`, `cutoff`) for `High` and restores mpv's defaults for `Default`, re-asserted on each load. Avoid-resample stays the default either way: `audio-samplerate` / `audio-format` are left unset, so a same-rate file is never resampled.
+- **Engine:** `SetOutputBackend` / `SetResamplerQuality` player commands + the matching `PlayerHandle` methods (the `SetDsp` shape). `PlaybackConfig::from_audio_state` maps the persisted playback defaults (ReplayGain mode / preamp / clip, gapless) into the profile resolver; it lives in `player/profile.rs` so the db layer stays free of the player's `ReplayGain` enum (the one place the stored `replaygain_mode` string becomes the enum, forgiving on an unknown value).
+- **CLI `output` verb:** `output show` (the active backend + resampler), `output backend <auto|pipewire|pulse|alsa|jack>`, and `output resampler <default|high>` (read `get_audio_state`, write through the worker, the `dsp` verb precedent). `debug-dsp` now prints the resolved backend + resampler line.
+- **Tests:** the host null-AO integration sets the backend to `null` (exercising the `ao` + `ao-reload` path hermetically, since a real driver might fail to init in CI) and toggles the resampler, and the EOF smoke run now re-asserts a `High` resampler through `load`; the `PlaybackConfig::from_audio_state` mapping (each mode plus the forgiving fallback); the CLI verbs verified end-to-end against a fixture DB. Full suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green. No new dependency, no new migration.
+
+Next: Phase 5.5c-ii-b (the consolidated GTK "Sound" preferences page).
+
 ## v0.0.42
 
 Phase 5.5c-i shipped: the DSP modules, in the chain and the CLI (headless). The compressor, brick-wall limiter, and volume leveler join the `af` chain as toggleable stages; their settings persist; the output backend / resampler control and the consolidated GTK "Sound" page are the next step (5.5c-ii).

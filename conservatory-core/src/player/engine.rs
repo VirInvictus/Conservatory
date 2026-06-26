@@ -263,6 +263,14 @@ impl Engine {
                     self.audio_device = Some(name);
                 }
             }
+            PlayerCommand::SetOutputBackend(backend) => {
+                // mpv's `ao` driver: applied live via `ao-reload` (gap-acceptable).
+                let _ = self.host.set_output_backend(&backend);
+            }
+            PlayerCommand::SetResamplerQuality(quality) => {
+                // The `audio-resample-*` knobs: applied now and from the next load.
+                let _ = self.host.set_resampler(quality);
+            }
             PlayerCommand::SetEq(eq) => {
                 // A preset switch / launch state: applied live when playing
                 // (structural rebuild), else from the next load.

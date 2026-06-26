@@ -38,6 +38,7 @@ Resolved into a **labelled `af` chain**, built once per item and tuned via `af-c
 ## Output (spec §6.5, Phase 5.5c)
 
 - **Backend** via `--ao=pipewire|pulse|alsa|jack`; **device** via the 4c-ii picker. High-quality resampler knobs (`audio-resample-*`) for the unavoidable-resample case; no resampling otherwise.
+- **Realized mapping (Phase 5.5c-ii-a).** Backend = the mpv `ao` property; `auto` is an *empty* `ao` (mpv's driver autoprobe), a named backend pins the driver. A switch sets `ao` and issues `ao-reload` so it takes effect mid-session (gap-acceptable); the backend is **not** re-set per load (that would `ao-reload` every track). Resampler: `High` raises `audio-resample-filter-size` (32) + `audio-resample-cutoff` (0.95); `Default` restores mpv's (16 / its own), re-asserted per load (cheap, defensive against an AO-reinit reset). `audio-samplerate` / `audio-format` stay unset, so a same-rate file is never resampled regardless of the quality knob. Both persist in the singleton `audio_state` row.
 - **Deferred (recorded, not built):** exclusive/bit-perfect (`--ao=alsa` `hw:` + `--audio-exclusive`) is bare-install-only and fights the Flatpak sandbox; LADSPA / raw-`af` hosting needs the `org.freedesktop.LinuxAudio.Plugins` extension + ffmpeg `--enable-ladspa`; native `crossfeed` is a cheap future headphone module.
 
 ## Podcast profile (spec §6.3, ported from Belfry §5.1–5.3)

@@ -15,7 +15,7 @@
 
 #[cfg(test)]
 use crate::db::models::InboxPolicy;
-use crate::db::models::{ShowSettings, Track};
+use crate::db::models::{AudioState, ShowSettings, Track};
 
 /// Variable-speed bounds (spec §6.3, the podcast 1.2x–2x range plus headroom).
 /// mpv accepts more, but a wild stored value should not produce unusable audio.
@@ -72,6 +72,29 @@ impl Default for PlaybackConfig {
             replaygain: ReplayGain::Album,
             replaygain_preamp: 0.0,
             replaygain_clip: true,
+        }
+    }
+}
+
+impl PlaybackConfig {
+    /// Build the playback config from the persisted [`AudioState`] singleton
+    /// (Phase 5.5c-ii). This is the player-layer half of the db/player split: the
+    /// db stores `replaygain_mode` as TEXT to stay free of this enum, and this is
+    /// the one place the string becomes a [`ReplayGain`]. An unrecognized stored
+    /// mode degrades to `Album` (the default), matching `get_audio_state`'s
+    /// forgiving read. The DSP / output halves of `AudioState` are applied
+    /// directly to the host, not through here.
+    pub fn from_audio_state(state: &AudioState) -> Self {
+        let replaygain = match state.replaygain_mode.as_str() {
+            "off" => ReplayGain::Off,
+            "track" => ReplayGain::Track,
+            _ => ReplayGain::Album,
+        };
+        Self {
+            gapless: state.gapless,
+            replaygain,
+            replaygain_preamp: state.replaygain_preamp,
+            replaygain_clip: state.replaygain_clip,
         }
     }
 }
@@ -319,6 +342,40 @@ mod tests {
         assert_eq!(
             resolve_episode_profile(Some(&show_settings(0.0))).speed,
             MIN_SPEED
+        );
+    }
+
+    #[test]
+    fn playback_config_maps_from_audio_state() {
+        // Each stored mode maps to the enum; an unknown mode degrades to Album
+        // (the forgiving read), and the scalar fields carry through verbatim.
+        let mut state = AudioState {
+            replaygain_mode: "off".to_string(),
+            replaygain_preamp: -3.0,
+            replaygain_clip: false,
+            gapless: false,
+            ..AudioState::default()
+        };
+        let cfg = PlaybackConfig::from_audio_state(&state);
+        assert_eq!(cfg.replaygain, ReplayGain::Off);
+        assert_eq!(cfg.replaygain_preamp, -3.0);
+        assert!(!cfg.replaygain_clip);
+        assert!(!cfg.gapless);
+
+        state.replaygain_mode = "track".to_string();
+        assert_eq!(
+            PlaybackConfig::from_audio_state(&state).replaygain,
+            ReplayGain::Track
+        );
+        state.replaygain_mode = "album".to_string();
+        assert_eq!(
+            PlaybackConfig::from_audio_state(&state).replaygain,
+            ReplayGain::Album
+        );
+        state.replaygain_mode = "nonsense".to_string();
+        assert_eq!(
+            PlaybackConfig::from_audio_state(&state).replaygain,
+            ReplayGain::Album
         );
     }
 }

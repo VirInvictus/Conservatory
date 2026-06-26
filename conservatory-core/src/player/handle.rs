@@ -11,6 +11,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use crate::db::models::ResamplerQuality;
 use crate::db::{DspState, EqState, MediaKind};
 use crate::player::host::AudioDevice;
 use crate::player::item::PlayableItem;
@@ -51,6 +52,12 @@ pub enum PlayerCommand {
     ClearQueue,
     /// Switch the audio output device (mpv `audio-device`).
     SetAudioDevice(String),
+    /// Switch the output backend (Phase 5.5c-ii); mpv's `ao` driver, applied live
+    /// via `ao-reload`.
+    SetOutputBackend(String),
+    /// Set the resampler quality (Phase 5.5c-ii); the `audio-resample-*` knobs,
+    /// applied immediately and from the next loaded item.
+    SetResamplerQuality(ResamplerQuality),
     /// Set the active equalizer (Phase 5.5b); applied live when playing, else
     /// from the next loaded item.
     SetEq(EqState),
@@ -215,6 +222,18 @@ impl PlayerHandle {
     /// Switch the audio output device (spec §6.5).
     pub fn set_audio_device(&self, name: impl Into<String>) {
         let _ = self.tx.send(PlayerCommand::SetAudioDevice(name.into()));
+    }
+
+    /// Switch the output backend (Phase 5.5c-ii, spec §6.5): mpv's `ao` driver.
+    pub fn set_output_backend(&self, backend: impl Into<String>) {
+        let _ = self
+            .tx
+            .send(PlayerCommand::SetOutputBackend(backend.into()));
+    }
+
+    /// Set the resampler quality (Phase 5.5c-ii, spec §6.5).
+    pub fn set_resampler_quality(&self, quality: ResamplerQuality) {
+        let _ = self.tx.send(PlayerCommand::SetResamplerQuality(quality));
     }
 
     /// Set the active equalizer (Phase 5.5b): a preset switch / launch state.

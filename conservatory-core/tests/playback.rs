@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
     CompSettings, DspState, EqState, LevelerSettings, LimiterSettings, ModuleState,
+    ResamplerQuality,
 };
 use conservatory_core::db::{
     MediaKind, PlaybackCursor, ReadPool, get_track, read_playback_state, spawn_worker,
@@ -159,6 +160,10 @@ fn host_plays_fixture_to_eof() {
             settings: LevelerSettings::default(),
         },
     });
+    // A raised resampler (Phase 5.5c-ii): `load` re-asserts the `audio-resample-*`
+    // knobs, so this proves they are accepted and don't break decode.
+    host.set_resampler(ResamplerQuality::High)
+        .expect("set resampler");
     host.load(audio_fixture("sample.flac").to_str().unwrap(), &profile)
         .expect("loading fixture");
 
@@ -212,4 +217,21 @@ fn host_lists_and_sets_audio_devices() {
         "mpv always lists the `auto` pseudo-device, got {devices:?}"
     );
     host.set_audio_device("auto").expect("set audio-device");
+}
+
+/// The output backend (mpv `ao`) and resampler (Phase 5.5c-ii) apply without
+/// erroring. `null` is used for the backend so the `ao` + `ao-reload` path is
+/// exercised hermetically (a real driver might fail to init in CI); `set_resampler`
+/// only sets properties, so it is always safe.
+#[test]
+fn host_sets_output_backend_and_resampler() {
+    let Ok(mut host) = MpvHost::new_null() else {
+        return;
+    };
+    host.set_output_backend("null")
+        .expect("set ao + ao-reload to null");
+    host.set_resampler(ResamplerQuality::High)
+        .expect("set resampler high");
+    host.set_resampler(ResamplerQuality::Default)
+        .expect("set resampler default");
 }

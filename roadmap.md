@@ -348,14 +348,22 @@ Split headless-first, the 5.5b rhythm: **5.5c-i** lands the DSP modules in the c
 - [x] CLI: `dsp show` (modules + the resolved `@comp` / `@limit` / `@boost` chain), `dsp comp on|off [--threshold --ratio --attack --release]`, `dsp limiter on|off [--ceiling]`, `dsp leveler on|off [--target --gausssize]`; `debug-dsp` prints the DSP breakdown; `play` applies the persisted DSP.
 - [x] Tests: `dsp.rs` builders (off → no stage; on → expected lavfi string + correct dB→linear conversion); `chain.rs` full-chain order (`@rg < @eq < @comp < @limit < @boost`); `AudioState` round-trip + params-survive-an-off-toggle through the worker (`tests/audio_state.rs`); the migration table-exists; the libmpv EOF test now sets a real `@comp`/`@limit`/`@boost` chain (proves the `acompressor`/`alimiter`/`dynaudnorm` mpv syntax). Music-only build green. No new dependency.
 
-#### Phase 5.5c-ii — Output backend + resampler + the consolidated GTK Sound page
+Split headless-first, the 5.5b/5.5c rhythm: **5.5c-ii-a** lands the output backend / resampler apply in the player host + the engine commands + the CLI `output` verb group (CLI-testable); **5.5c-ii-b** consumes the persisted config in the GUI and consolidates the "Sound" page.
 
-- [ ] Output quality: an output **backend** picker (`--ao=pipewire|pulse|alsa|jack`) alongside the existing device picker (4c-ii); high-quality resampler knobs (`audio-resample-*`) for the unavoidable-resample case; avoid-resample by default.
-- [ ] The "Sound" page (from 5.5b) consolidates the full chain: ReplayGain (mode / preamp / clip), EQ, DSP modules, output backend / device / resampler, gapless. Defaults flow into `build_play_queue` instead of `PlaybackConfig::default()` (a startup `apply_persisted_audio` hook, the `apply_persisted_eq` precedent).
+##### Phase 5.5c-ii-a — Output backend + resampler apply + CLI (headless) ✅ (v0.0.43)
+
+- [x] Output quality applied in the player host: the **backend** (mpv `ao`, switched live via `ao-reload`, gap-acceptable) and the high-quality **resampler** knobs (`audio-resample-filter-size` / `-cutoff`, re-asserted per load; avoid-resample stays the default, `audio-samplerate` / `audio-format` left unset). `MpvHost` holds both; the seeded-but-unused `audio_state.output_backend` / `resampler_quality` (migration `0009`) are finally consumed.
+- [x] Engine plumbing: `PlayerCommand::SetOutputBackend` / `SetResamplerQuality` + `PlayerHandle::set_output_backend` / `set_resampler_quality` (the `SetDsp` precedent). `PlaybackConfig::from_audio_state` maps the persisted playback defaults (RG mode / preamp / clip, gapless) into the resolver, kept in `player/profile.rs` so the db layer stays free of the `ReplayGain` enum.
+- [x] CLI: `output show` / `output backend <auto|pipewire|pulse|alsa|jack>` / `output resampler <default|high>` (read `get_audio_state`, write `worker.set_audio_state`, the `dsp` verb precedent); `debug-dsp` gains the backend + resampler line.
+- [x] Tests: host null-AO integration (`set_output_backend("null")` exercises the `ao` + `ao-reload` path hermetically; `set_resampler` High/Default; the EOF smoke now re-asserts a High resampler through `load`); `PlaybackConfig::from_audio_state` mapping (each mode + forgiving fallback); the CLI verbs verified end-to-end against a fixture DB. Music-only build green. No new dependency, no new migration.
+
+##### Phase 5.5c-ii-b — The consolidated GTK Sound page
+
+- [ ] The "Sound" page (from 5.5b) consolidates the full chain: ReplayGain (mode / preamp / clip), EQ, DSP modules, output backend / device / resampler, gapless. Defaults flow into `build_play_queue` instead of `PlaybackConfig::default()` (a startup `apply_persisted_audio` hook, the `apply_persisted_eq` precedent; the device picker stays in the header too).
 - [ ] **Deferred and recorded (not built):** exclusive/bit-perfect output (ALSA `hw:` + `--audio-exclusive`, bare-install-only, fights the Flatpak sandbox); LADSPA / raw-`af` escape hatch (needs the `org.freedesktop.LinuxAudio.Plugins` extension + ffmpeg `--enable-ladspa`); native `crossfeed` headphone module (cheap, a natural future stage); the parametric `anequalizer`; peak-aware ReplayGain attenuation (no peak columns; the limiter is the safety net).
 - [ ] Tests: pure form mapping; backend switch; config persistence into the queue builders.
 
-*Usable artifact:* a foobar2000-style Sound/DSP preferences surface over the music engine. The music daily-driver feels complete before podcasts arrive.
+*Usable artifact:* (5.5c-ii-a) the output backend + resampler are driven from the CLI and persist (`output backend … pipewire` / `output resampler … high`), with the playback defaults ready to flow into the queue builders; **(5.5c-ii-b)** a foobar2000-style Sound/DSP preferences surface over the music engine. The music daily-driver feels complete before podcasts arrive.
 
 ---
 

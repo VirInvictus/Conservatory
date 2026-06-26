@@ -11,9 +11,9 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    MediaKind, ReadPool, SearchRow, SqlParam, fts_rank, get_album, get_episode, get_show_settings,
-    get_track, library_counts, load_queue, probe_read, read_playback_state, search_rows,
-    search_track_ids, spawn_worker, track_render_rows, writeback_rows,
+    MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam, fts_rank, get_album, get_episode,
+    get_show_settings, get_track, library_counts, load_queue, probe_read, read_playback_state,
+    search_rows, search_track_ids, spawn_worker, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
@@ -270,6 +270,13 @@ enum Command {
         action: DspAction,
     },
 
+    /// Output settings (Phase 5.5c-ii, spec §6.5): the audio backend (mpv `ao`)
+    /// and the resampler quality. The device picker is the GUI's (Phase 4c-ii).
+    Output {
+        #[command(subcommand)]
+        action: OutputAction,
+    },
+
     /// Phase 3b smoke test: dump the faceted-browse panes (Genre → Album Artist
     /// → Album) with counts and the leaf track total. Read-only.
     DebugFacets {
@@ -406,6 +413,74 @@ enum DspAction {
         #[arg(long)]
         gausssize: Option<u32>,
     },
+}
+
+/// Output verbs (Phase 5.5c-ii). The persisted backend / resampler are consumed
+/// by the player host on the next load (and live, for the backend, via `ao-reload`
+/// in the GUI). Avoid-resample stays the default; `high` only raises quality for
+/// the unavoidable-resample case.
+#[derive(Subcommand)]
+enum OutputAction {
+    /// Print the active output backend and resampler quality. Read-only.
+    Show {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
+    /// Set the output backend (mpv `ao` driver).
+    Backend {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The backend: `auto` (mpv autoprobe) or a pinned driver.
+        #[arg(value_enum)]
+        backend: BackendArg,
+    },
+    /// Set the resampler quality.
+    Resampler {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// `default` (mpv's resampler) or `high` (raised `audio-resample-*`).
+        #[arg(value_enum)]
+        quality: ResamplerArg,
+    },
+}
+
+/// The output-backend choices (Phase 5.5c-ii). The kebab-case value is both the
+/// stored `audio_state.output_backend` and the mpv `ao` driver name.
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum BackendArg {
+    Auto,
+    Pipewire,
+    Pulse,
+    Alsa,
+    Jack,
+}
+
+impl BackendArg {
+    fn as_str(self) -> &'static str {
+        match self {
+            BackendArg::Auto => "auto",
+            BackendArg::Pipewire => "pipewire",
+            BackendArg::Pulse => "pulse",
+            BackendArg::Alsa => "alsa",
+            BackendArg::Jack => "jack",
+        }
+    }
+}
+
+/// The resampler-quality choices (Phase 5.5c-ii), mapped to core's enum.
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum ResamplerArg {
+    Default,
+    High,
+}
+
+impl ResamplerArg {
+    fn to_core(self) -> ResamplerQuality {
+        match self {
+            ResamplerArg::Default => ResamplerQuality::Default,
+            ResamplerArg::High => ResamplerQuality::High,
+        }
+    }
 }
 
 /// Podcast subscription verbs (spec §9). Gated behind the `podcasts` plugin so
@@ -683,6 +758,7 @@ fn main() -> Result<()> {
         Some(Command::ExportOpml { db, out }) => block_on(run_export_opml(db, out)),
         Some(Command::Eq { action }) => eq(action),
         Some(Command::Dsp { action }) => dsp(action),
+        Some(Command::Output { action }) => output(action),
         Some(Command::DebugFacets { db }) => debug_facets(db),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
@@ -1041,6 +1117,60 @@ async fn run_dsp_leveler(
     Ok(())
 }
 
+fn output(action: OutputAction) -> Result<()> {
+    match action {
+        OutputAction::Show { db } => output_show(db),
+        OutputAction::Backend { db, backend } => block_on(run_output_backend(db, backend)),
+        OutputAction::Resampler { db, quality } => block_on(run_output_resampler(db, quality)),
+    }
+}
+
+fn output_show(db: PathBuf) -> Result<()> {
+    use conservatory_core::db::get_audio_state;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let audio = get_audio_state(&conn).context("reading audio state")?;
+    println!("backend:   {}", audio.output_backend);
+    println!("resampler: {}", audio.resampler.as_str());
+    Ok(())
+}
+
+async fn run_output_backend(db: PathBuf, backend: BackendArg) -> Result<()> {
+    use conservatory_core::db::get_audio_state;
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let mut audio = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_audio_state(&conn).context("reading audio state")?
+    };
+    audio.output_backend = backend.as_str().to_string();
+    worker
+        .set_audio_state(audio)
+        .await
+        .context("saving audio state")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Output backend set to {}.", backend.as_str());
+    Ok(())
+}
+
+async fn run_output_resampler(db: PathBuf, quality: ResamplerArg) -> Result<()> {
+    use conservatory_core::db::get_audio_state;
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let mut audio = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_audio_state(&conn).context("reading audio state")?
+    };
+    audio.resampler = quality.to_core();
+    worker
+        .set_audio_state(audio)
+        .await
+        .context("saving audio state")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Resampler quality set to {}.", quality.to_core().as_str());
+    Ok(())
+}
+
 fn debug_dsp(db: PathBuf, track_id: Option<i64>) -> Result<()> {
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
     let conn = pool.open().context("opening pool connection")?;
@@ -1061,10 +1191,9 @@ fn debug_dsp(db: PathBuf, track_id: Option<i64>) -> Result<()> {
     let cfg = PlaybackConfig::default();
     let profile = resolve_music_profile(&track, &cfg);
     let eq = conservatory_core::db::get_eq_state(&conn).context("reading EQ state")?;
-    let dsp = conservatory_core::db::get_audio_state(&conn)
-        .context("reading audio state")?
-        .dsp;
-    let chain = build_af_chain(&profile, &eq, &dsp);
+    let audio = conservatory_core::db::get_audio_state(&conn).context("reading audio state")?;
+    let dsp = &audio.dsp;
+    let chain = build_af_chain(&profile, &eq, dsp);
 
     println!("track:        {} {}", track.id, track.title);
     println!(
@@ -1112,6 +1241,11 @@ fn debug_dsp(db: PathBuf, track_id: Option<i64>) -> Result<()> {
         on_off(dsp.leveler.enabled),
         dsp.leveler.settings.target_peak,
         dsp.leveler.settings.gausssize,
+    );
+    println!(
+        "output:       backend={}  resampler={}",
+        audio.output_backend,
+        audio.resampler.as_str(),
     );
     println!(
         "af chain:     {}",

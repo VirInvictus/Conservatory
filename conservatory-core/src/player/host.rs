@@ -16,7 +16,7 @@ use libmpv2::events::Event;
 use libmpv2::mpv_node::MpvNode;
 use libmpv2::{EndFileReason, Mpv, mpv_end_file_reason};
 
-use crate::db::models::{DspState, EqState};
+use crate::db::models::{DspState, EqState, ResamplerQuality};
 use crate::errors::{Error, Result};
 use crate::player::profile::MusicProfile;
 use crate::player::state::EndReason;
@@ -58,6 +58,15 @@ pub struct MpvHost {
     /// chain can be rebuilt mid-playback on an EQ change. `None` when nothing is
     /// loaded (an EQ change then just updates state, applied on the next load).
     current_profile: Option<MusicProfile>,
+    /// The active output backend (Phase 5.5c-ii, spec §6.5): mpv's `ao` driver,
+    /// e.g. `auto` / `pipewire` / `pulse` / `alsa` / `jack`. Defaults to `auto`
+    /// (mpv's own driver autoprobe); the engine updates it via
+    /// [`MpvHost::set_output_backend`].
+    output_backend: String,
+    /// The active resampler quality (Phase 5.5c-ii, spec §6.5). `Default` leaves
+    /// mpv's resampler alone; `High` raises the `audio-resample-*` knobs for the
+    /// unavoidable-resample case. Re-asserted on each load.
+    resampler: ResamplerQuality,
 }
 
 impl MpvHost {
@@ -98,6 +107,8 @@ impl MpvHost {
             eq: EqState::flat(),
             dsp: DspState::off(),
             current_profile: None,
+            output_backend: "auto".to_string(),
+            resampler: ResamplerQuality::Default,
         })
     }
 
@@ -185,6 +196,11 @@ impl MpvHost {
         self.mpv
             .set_property("speed", profile.speed)
             .map_err(|e| Error::Player(format!("setting speed: {e}")))?;
+        // Re-assert the resampler quality (Phase 5.5c-ii): cheap, defensive (an AO
+        // reinit could in principle reset `audio-resample-*`), and gap-free. The
+        // output backend is deliberately NOT re-asserted here: it needs `ao-reload`,
+        // which would click the audio on every track.
+        let _ = self.set_resampler(self.resampler);
         // The labelled `af` chain (Phase 5.5a): built fresh from this item's
         // profile, so ReplayGain (the `@rg` head `volume`) is recomputed per
         // track — the fix for mpv #8267, where the built-in `--replaygain` (now
@@ -265,6 +281,43 @@ impl MpvHost {
         self.mpv
             .set_property("audio-device", name)
             .map_err(|e| Error::Player(format!("setting audio-device: {e}")))
+    }
+
+    /// Switch the output **backend** (Phase 5.5c-ii, spec §6.5): mpv's `ao` driver,
+    /// distinct from the device (`audio-device`, the 4c-ii picker). `auto` maps to
+    /// an empty `ao` (mpv's own driver autoprobe); a named backend pins the driver.
+    /// The change is applied immediately by reloading the audio output (`ao-reload`,
+    /// gap-acceptable, the `set_dsp` structural-rebuild precedent), so an in-session
+    /// switch takes effect without waiting for the next item.
+    pub fn set_output_backend(&mut self, backend: &str) -> Result<()> {
+        self.output_backend = backend.to_string();
+        // mpv has no `auto` driver name; the autoprobe is an empty list.
+        let ao = if backend == "auto" { "" } else { backend };
+        self.mpv
+            .set_property("ao", ao)
+            .map_err(|e| Error::Player(format!("setting ao: {e}")))?;
+        self.mpv
+            .command("ao-reload", &[])
+            .map_err(|e| Error::Player(format!("ao-reload: {e}")))
+    }
+
+    /// Set the resampler quality (Phase 5.5c-ii, spec §6.5). `High` raises the
+    /// `audio-resample-*` knobs for the unavoidable-resample case; `Default`
+    /// restores mpv's defaults so a toggle-back reverts. Avoid-resample stays the
+    /// default either way (`audio-samplerate` / `audio-format` are left unset, so a
+    /// same-rate file is untouched). `filter-size` is the authoritative integer
+    /// knob; `cutoff` is best-effort (its accepted range varies by libswresample).
+    pub fn set_resampler(&mut self, quality: ResamplerQuality) -> Result<()> {
+        self.resampler = quality;
+        let (filter_size, cutoff) = match quality {
+            ResamplerQuality::High => (32, 0.95),
+            ResamplerQuality::Default => (16, 0.0),
+        };
+        self.mpv
+            .set_property("audio-resample-filter-size", filter_size)
+            .map_err(|e| Error::Player(format!("setting audio-resample-filter-size: {e}")))?;
+        let _ = self.mpv.set_property("audio-resample-cutoff", cutoff);
+        Ok(())
     }
 
     /// Seek to an absolute offset in seconds (the resume path, spec §6.4).

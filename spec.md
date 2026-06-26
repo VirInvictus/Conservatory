@@ -197,7 +197,7 @@ Calibre's editor surface, music-shaped. Multi-select in any list, then edit fiel
 
 ### 3.6 Now Playing and the Queue
 
-The unified queue (§6.1) is the spine. The Now-bar persists across Music and Podcasts; tapping it expands to a Now Playing surface (the Hermitage Codex moment: full-bleed cover, accent-tinted scrubber, queue tail peek). For episodes the surface adds chapters, show notes, Smart Speed indicator, and sleep timer (Belfry §3.6). For tracks it shows album context, ReplayGain state, the active EQ / DSP, and gapless status. The queue view itself is a single list that interleaves tracks and episodes, drag-reorderable, each row badged with its kind.
+The unified queue (§6.1) is the spine. The Now-bar persists across Music and Podcasts; tapping it expands to a Now Playing surface (the Hermitage Codex moment: full-bleed cover, accent-tinted scrubber, queue tail peek). For episodes the surface adds chapters, show notes, and a Smart Speed indicator. For tracks it shows album context, ReplayGain state, the active EQ / DSP, and gapless status. The **sleep timer** (Belfry §3.6: 15 / 30 / 45 / 60 min, end of item, end of queue, tap-to-extend) is available for any playing item, not episodes alone (falling asleep to an album is a real use case and the engine is media-agnostic); it lives on the Now-bar as a menu, the boundary label following the playing kind ("End of track" / "End of episode" / "End of book"). The queue view itself is a single list that interleaves tracks and episodes, drag-reorderable, each row badged with its kind.
 
 ### 3.7 Podcasts Tab
 

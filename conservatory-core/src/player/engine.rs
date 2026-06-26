@@ -26,6 +26,7 @@ use crate::player::handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 use crate::player::host::{HostEvent, MpvHost};
 use crate::player::item::PlayableItem;
 use crate::player::session::SessionAccumulator;
+use crate::player::sleep::{SleepClock, SleepMode};
 use crate::player::state::{EndReason, StateDebounce, StateEvent};
 
 /// How long each `pump` blocks waiting for a libmpv event. Short, so a queued
@@ -106,6 +107,11 @@ struct Engine {
     session: Option<SessionAccumulator>,
     /// When the session was last sampled, for the per-tick wall-clock delta.
     session_tick: Instant,
+    /// The armed sleep timer (Phase 6c-iii-d), or `None` when unset. Ticked each
+    /// loop turn; the boundary modes are enforced at the EOF / advance points.
+    sleep: Option<SleepClock>,
+    /// When the sleep clock was last ticked, for its wall-clock delta.
+    sleep_tick: Instant,
 }
 
 impl Engine {
@@ -134,6 +140,8 @@ impl Engine {
             audio_device: None,
             session: None,
             session_tick: Instant::now(),
+            sleep: None,
+            sleep_tick: Instant::now(),
         }
     }
 
@@ -167,6 +175,9 @@ impl Engine {
 
             // Smart Speed time-saved sampling (Phase 6c-ii).
             self.sample_session();
+            // Sleep-timer countdown (Phase 6c-iii-d): pause when a duration timer
+            // elapses.
+            self.tick_sleep();
             // Steady-state insurance write (debounced, fire-and-forget).
             self.flush(StateEvent::Tick, false);
             self.refresh_snapshot();
@@ -197,6 +208,27 @@ impl Engine {
             } else {
                 acc.tick(dt, pos);
             }
+        }
+    }
+
+    /// Advance the sleep clock once per loop turn (Phase 6c-iii-d). A duration
+    /// timer counts down only while actually playing; when it elapses, pause
+    /// playback and persist (the `Pause` command's behaviour), leaving the
+    /// tap-to-extend window open for a re-arm on the next `Play`.
+    fn tick_sleep(&mut self) {
+        let dt = self.sleep_tick.elapsed().as_secs_f64();
+        self.sleep_tick = Instant::now();
+        let playing = !self.paused && !self.ended;
+        let fired = self.sleep.as_mut().is_some_and(|c| c.tick(dt, playing));
+        if fired {
+            self.set_paused(true);
+            self.flush(StateEvent::Pause, true);
+            self.refresh_snapshot();
+        } else if self.sleep.as_ref().is_some_and(|c| c.spent()) {
+            // The tap-to-extend window lapsed without a resume: the timer is done,
+            // so disarm it (the UI returns to "no timer" rather than lingering).
+            self.sleep = None;
+            self.refresh_snapshot();
         }
     }
 
@@ -239,7 +271,10 @@ impl Engine {
                     self.flush(StateEvent::Seek, false);
                 }
             }
-            PlayerCommand::Play => self.set_paused(false),
+            PlayerCommand::Play => {
+                self.set_paused(false);
+                self.sleep_on_play();
+            }
             PlayerCommand::Pause => {
                 self.set_paused(true);
                 self.flush(StateEvent::Pause, true);
@@ -249,6 +284,8 @@ impl Engine {
                 self.set_paused(paused);
                 if paused {
                     self.flush(StateEvent::Pause, true);
+                } else {
+                    self.sleep_on_play();
                 }
             }
             PlayerCommand::Next => self.skip_next(),
@@ -336,6 +373,13 @@ impl Engine {
                 // else from the next load.
                 self.host.set_dsp(dsp);
             }
+            PlayerCommand::SetSleepTimer(mode) => {
+                // Arm a fresh clock (or cancel). Reset the tick baseline so the
+                // first countdown sample is a small delta, not the gap since the
+                // last timer.
+                self.sleep = mode.map(SleepClock::new);
+                self.sleep_tick = Instant::now();
+            }
             PlayerCommand::Stop => {
                 self.set_paused(true);
                 self.flush(StateEvent::Quit, true);
@@ -366,7 +410,21 @@ impl Engine {
                 // would also close it, so this is the explicit close for the
                 // last-item case, where no next load happens.
                 self.close_session();
+                // Sleep timer "end of episode/track" (Phase 6c-iii-d): cue the
+                // next item but pause there, so playback stops at this boundary
+                // (the user can resume into the next item); then disarm.
+                let stop_after_item = matches!(
+                    self.sleep.as_ref().map(|c| c.mode()),
+                    Some(SleepMode::EndOfItem)
+                );
                 self.advance_after_end();
+                if stop_after_item {
+                    self.sleep = None;
+                    if !self.ended {
+                        self.set_paused(true);
+                        self.flush(StateEvent::Pause, true);
+                    }
+                }
             }
             // The current item is unplayable: skip it (no play count), don't stall.
             EndReason::Errored => {
@@ -391,6 +449,14 @@ impl Engine {
             self.flush(StateEvent::Seek, false);
         } else {
             self.ended = true;
+            // A sleep timer set to "end of queue" is satisfied here (Phase
+            // 6c-iii-d); disarm it.
+            if matches!(
+                self.sleep.as_ref().map(|c| c.mode()),
+                Some(SleepMode::EndOfQueue)
+            ) {
+                self.sleep = None;
+            }
             // Persist the finished item at offset 0 as the resume cursor. Per
             // kind (6b-ii-c-2): the cursor records `kind` + the right id, so a
             // restart reopens an episode, not just the last track. This writes
@@ -530,6 +596,15 @@ impl Engine {
         let _ = self.host.set_paused(paused);
     }
 
+    /// Tap-to-extend (Phase 6c-iii-d): on a (re)start of playback, a sleep timer
+    /// that just fired re-arms its interval instead of merely resuming. A no-op
+    /// when no timer is armed, it has not fired, or the window has lapsed.
+    fn sleep_on_play(&mut self) {
+        if let Some(clock) = self.sleep.as_mut() {
+            clock.on_play();
+        }
+    }
+
     fn current_item(&self) -> Option<&PlayableItem> {
         self.current.and_then(|i| self.queue.get(i))
     }
@@ -650,6 +725,7 @@ impl Engine {
             smart_speed_saved: self.session.as_ref().map_or(0.0, |s| s.smart_speed_saved()),
             audio_devices: self.audio_devices.clone(),
             audio_device: self.audio_device.clone(),
+            sleep: self.sleep.as_ref().map(|c| c.status()),
         };
         if let Ok(mut guard) = self.snapshot.lock() {
             *guard = snap;

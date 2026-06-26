@@ -12,7 +12,9 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use conservatory_core::PlayerHandle;
+use conservatory_core::db::MediaKind;
+use conservatory_core::player::SleepMode;
+use conservatory_core::{PlayerHandle, SleepStatus};
 
 /// The Now-bar widgets the window updates each refresh. `root` is what gets
 /// attached as the bottom bar.
@@ -36,6 +38,31 @@ pub struct NowBar {
     pub position: gtk::Label,
     pub seek: gtk::Scale,
     pub volume: gtk::ScaleButton,
+    /// Sleep-timer menu (Phase 6c-iii-d): a moon button whose menu arms a duration
+    /// or a boundary timer. Hidden until something is loaded; `S` pops it.
+    pub sleep_btn: gtk::MenuButton,
+    /// The remaining-time label inside `sleep_btn`, shown for a duration timer.
+    sleep_label: gtk::Label,
+}
+
+/// The duration presets the sleep menu offers, in minutes (Belfry §3.6).
+const SLEEP_PRESETS_MIN: [u32; 4] = [15, 30, 45, 60];
+
+/// The "end of current item" menu label, adapted to the playing media kind (the
+/// user's media-agnostic scope decision: music gets a sleep timer too). Pure.
+pub fn sleep_boundary_label(kind: Option<MediaKind>) -> &'static str {
+    match kind {
+        Some(MediaKind::Episode) => "End of episode",
+        Some(MediaKind::Audiobook) => "End of book",
+        _ => "End of track",
+    }
+}
+
+/// A countdown clock string (`M:SS`), rounding remaining seconds up so a freshly
+/// armed 15-minute timer reads `15:00`, not `14:59`. Pure.
+pub fn fmt_sleep_remaining(secs: f64) -> String {
+    let total = secs.max(0.0).ceil() as u64;
+    format!("{}:{:02}", total / 60, total % 60)
 }
 
 /// The placeholder shown when the album has no cover on disk.
@@ -134,11 +161,15 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         ],
     );
     volume.set_value(100.0);
+    // Sleep timer (Phase 6c-iii-d): a moon menu button, hidden until something is
+    // loaded. The menu reads the snapshot off the handle, so this stays DB-free.
+    let (sleep_btn, sleep_label) = build_sleep_button(player.clone());
     let right = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     right.set_valign(gtk::Align::Center);
     right.append(&position);
     right.append(&seek);
     right.append(&volume);
+    right.append(&sleep_btn);
     root.set_end_widget(Some(&right));
 
     if let Some(player) = player {
@@ -177,6 +208,8 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         position,
         seek,
         volume,
+        sleep_btn,
+        sleep_label,
     }
 }
 
@@ -186,6 +219,84 @@ fn transport_button(icon: &str, tooltip: &str) -> gtk::Button {
     btn.add_css_class("circular");
     btn.set_tooltip_text(Some(tooltip));
     btn
+}
+
+/// Build the sleep-timer menu button (Phase 6c-iii-d). The popover is rebuilt on
+/// each open from the player snapshot (the `build_output_menu_button` idiom), so
+/// the active mode is check-marked and the "end of item" row's label follows the
+/// playing media kind. Returns the button and the remaining-time label it holds.
+fn build_sleep_button(player: Option<PlayerHandle>) -> (gtk::MenuButton, gtk::Label) {
+    let icon = gtk::Image::from_icon_name("weather-clear-night-symbolic");
+    let label = gtk::Label::builder()
+        .css_classes(["numeric", "caption"])
+        .visible(false)
+        .build();
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    content.append(&icon);
+    content.append(&label);
+
+    let btn = gtk::MenuButton::new();
+    btn.add_css_class("flat");
+    btn.set_child(Some(&content));
+    btn.set_tooltip_text(Some("Sleep timer (S)"));
+    btn.set_visible(false);
+
+    btn.set_create_popup_func(move |btn| {
+        let popover = gtk::Popover::new();
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        list.set_margin_top(4);
+        list.set_margin_bottom(4);
+
+        let snap = player.as_ref().map(|p| p.snapshot());
+        let current = snap.as_ref().and_then(|s| s.sleep.map(|sl| sl.mode));
+        let kind = snap.as_ref().and_then(|s| s.kind);
+
+        // Off, the duration presets, end-of-item (kind-adapted label), end-of-queue.
+        let mut rows: Vec<(String, Option<SleepMode>)> = vec![("Off".to_string(), None)];
+        for &m in &SLEEP_PRESETS_MIN {
+            rows.push((
+                format!("{m} minutes"),
+                Some(SleepMode::After(f64::from(m) * 60.0)),
+            ));
+        }
+        rows.push((
+            sleep_boundary_label(kind).to_string(),
+            Some(SleepMode::EndOfItem),
+        ));
+        rows.push(("End of queue".to_string(), Some(SleepMode::EndOfQueue)));
+
+        for (text, mode) in rows {
+            let selected = mode == current;
+            let row = gtk::Button::new();
+            row.add_css_class("flat");
+            let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let check = gtk::Image::from_icon_name("object-select-symbolic");
+            check.set_visible(selected);
+            let lbl = gtk::Label::new(Some(&text));
+            lbl.set_xalign(0.0);
+            lbl.set_hexpand(true);
+            row_box.append(&check);
+            row_box.append(&lbl);
+            row.set_child(Some(&row_box));
+
+            let player = player.clone();
+            let pop_weak = popover.downgrade();
+            row.connect_clicked(move |_| {
+                if let Some(p) = player.as_ref() {
+                    p.set_sleep_timer(mode);
+                }
+                if let Some(pop) = pop_weak.upgrade() {
+                    pop.popdown();
+                }
+            });
+            list.append(&row);
+        }
+
+        popover.set_child(Some(&list));
+        btn.set_popover(Some(&popover));
+    });
+
+    (btn, label)
 }
 
 impl NowBar {
@@ -200,6 +311,28 @@ impl NowBar {
         self.set_cover(None);
         self.set_status(false, false);
         self.set_chapter_nav_visible(false);
+        self.sleep_btn.set_visible(false);
+        self.set_sleep(None);
+    }
+
+    /// Reflect the armed sleep timer (Phase 6c-iii-d): an active duration timer
+    /// shows its `M:SS` remaining beside an accent-tinted moon; a boundary timer
+    /// just tints the moon; no timer clears both. (The button's own visibility is
+    /// the window's call, keyed on whether anything is loaded.)
+    pub fn set_sleep(&self, status: Option<SleepStatus>) {
+        match status {
+            Some(s) => {
+                self.sleep_btn.add_css_class("accent");
+                let text = s.remaining.map(fmt_sleep_remaining).unwrap_or_default();
+                self.sleep_label.set_text(&text);
+                self.sleep_label.set_visible(!text.is_empty());
+            }
+            None => {
+                self.sleep_btn.remove_css_class("accent");
+                self.sleep_label.set_text("");
+                self.sleep_label.set_visible(false);
+            }
+        }
     }
 
     /// Show or hide the chapter-skip buttons (Phase 6c-iii-b): visible only when
@@ -226,5 +359,33 @@ impl NowBar {
             Some(p) => self.cover.set_from_file(Some(p)),
             None => self.cover.set_icon_name(Some(COVER_PLACEHOLDER)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remaining_rounds_up_to_clock() {
+        assert_eq!(fmt_sleep_remaining(900.0), "15:00");
+        assert_eq!(fmt_sleep_remaining(59.2), "1:00"); // rounds up, never 0:59
+        assert_eq!(fmt_sleep_remaining(61.0), "1:01");
+        assert_eq!(fmt_sleep_remaining(0.0), "0:00");
+        assert_eq!(fmt_sleep_remaining(-5.0), "0:00"); // clamped
+    }
+
+    #[test]
+    fn boundary_label_follows_kind() {
+        assert_eq!(
+            sleep_boundary_label(Some(MediaKind::Episode)),
+            "End of episode"
+        );
+        assert_eq!(
+            sleep_boundary_label(Some(MediaKind::Audiobook)),
+            "End of book"
+        );
+        assert_eq!(sleep_boundary_label(Some(MediaKind::Track)), "End of track");
+        assert_eq!(sleep_boundary_label(None), "End of track");
     }
 }

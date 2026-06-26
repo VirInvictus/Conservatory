@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.52
+
+Phase 6c-iii-d shipped: the sleep timer, the last piece of podcast parity. Set it to a duration or a boundary and playback pauses when you fall asleep; a fired duration timer keeps Castro's tap-to-extend trick alive. With this in, Phase 6c is complete and the absorbed Belfry podcast engine is at parity.
+
+- **The timer (`conservatory-core/src/player/sleep.rs`, pure):** a `SleepClock` the engine ticks each loop turn, in three modes. A duration timer (15 / 30 / 45 / 60 minutes, or any value from the CLI) counts down only while actually playing, so a manual pause holds it rather than letting it expire silently; when it elapses, playback pauses. "End of item" pauses cued on the next item at the current item's end instead of advancing. "End of queue" lets the queue play out and disarms when it ends. The clock is transient per-session state, exactly like Castro / Overcast, so there is no database column and no migration.
+- **Tap-to-extend (Belfry §3.6):** when a duration timer fires it opens a 30 second window; pressing play within it re-arms the same interval instead of merely resuming. Outside the window, play just resumes.
+- **Available for any playing item, not episodes alone.** Falling asleep to an album is a real use case and the engine is media-agnostic, so the timer is offered for music tracks too (a small broadening of spec §3.6, which scoped it to episodes). The menu's boundary row adapts to what is playing: "End of track", "End of episode", or "End of book".
+- **Where it lives:** a moon menu button on the Now-bar (the output-menu popover idiom), shown whenever something is loaded, with the remaining `M:SS` beside the icon for a duration timer and an accent tint while armed. The Now Playing drawer carries a "Sleep · …" line that mirrors the state and invites the tap-to-extend once a timer has fired. **`S`** pops the menu (a window-local shortcut, so the bare letter does not fire while the filter bar has focus). Headless, `conservatory-cli play <db> <root> --sleep <15|30|45|60|episode|queue>` arms it and the run exits when a duration timer elapses.
+- **Tests:** the clock's unit tests (counts down only while playing, fires at zero, tap-to-extend re-arms inside the 30 second window and refuses outside it, the boundary modes carry no countdown); an engine null-output run where a duration timer fires and pauses mid-queue then tap-extends, and an "end of item" timer pauses at the first item's boundary without ever playing the second; the GUI label helpers (`fmt_sleep_remaining` rounds the clock up, `sleep_boundary_label` follows the kind, `sleep_drawer_text`). Full workspace suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green. No new dependency, no new migration.
+
+Next: with podcast parity reached, **Belfry retires** (archive the repo, update the `~/.gitrepos` project map, spec §16.8), then Phase 7 (the Audiobooks tab) or Phase 8 (library audits).
+
 ## v0.0.51
 
 The equalizer ships with built-in presets. Until now the only seeded preset was Flat, so the Sound dialog's preset dropdown was empty until you built your own. Migration 0010 stocks it with 16 starter curves that appear automatically in the dropdown and the `eq preset` CLI.

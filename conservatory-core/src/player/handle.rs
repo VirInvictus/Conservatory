@@ -15,6 +15,7 @@ use crate::db::models::ResamplerQuality;
 use crate::db::{DspState, EqState, MediaKind};
 use crate::player::host::AudioDevice;
 use crate::player::item::PlayableItem;
+use crate::player::sleep::{SleepMode, SleepStatus};
 
 /// A command sent from a consumer to the engine thread.
 pub enum PlayerCommand {
@@ -74,6 +75,10 @@ pub enum PlayerCommand {
     /// Set the active DSP modules (Phase 5.5c); applied live when playing (a
     /// structural rebuild), else from the next loaded item.
     SetDsp(DspState),
+    /// Arm (`Some`) or cancel (`None`) the sleep timer (Phase 6c-iii-d). A duration
+    /// timer pauses after N seconds of playback; the boundary modes pause at the
+    /// end of the current item / queue.
+    SetSleepTimer(Option<SleepMode>),
     /// Halt playback and persist, but keep the engine thread alive.
     Stop,
     /// Stop and exit the engine thread (joined by [`PlayerHandle::shutdown`]).
@@ -121,6 +126,9 @@ pub struct PlayerSnapshot {
     pub audio_devices: Arc<[AudioDevice]>,
     /// The selected output device id; `None` is mpv's default (`auto`).
     pub audio_device: Option<String>,
+    /// The armed sleep timer (Phase 6c-iii-d), or `None` when no timer is set.
+    /// Drives the Now-bar sleep button label and the Now Playing "Sleep · …" line.
+    pub sleep: Option<SleepStatus>,
 }
 
 impl Default for PlayerSnapshot {
@@ -143,6 +151,7 @@ impl Default for PlayerSnapshot {
             smart_speed_saved: 0.0,
             audio_devices: Arc::from([]),
             audio_device: None,
+            sleep: None,
         }
     }
 }
@@ -277,6 +286,11 @@ impl PlayerHandle {
     /// Set the active DSP modules (Phase 5.5c): compressor / limiter / leveler.
     pub fn set_dsp(&self, dsp: DspState) {
         let _ = self.tx.send(PlayerCommand::SetDsp(dsp));
+    }
+
+    /// Arm (`Some`) or cancel (`None`) the sleep timer (Phase 6c-iii-d).
+    pub fn set_sleep_timer(&self, mode: Option<SleepMode>) {
+        let _ = self.tx.send(PlayerCommand::SetSleepTimer(mode));
     }
 
     pub fn stop(&self) {

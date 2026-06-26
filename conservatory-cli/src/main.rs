@@ -18,12 +18,12 @@ use conservatory_core::db::{
 use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
     AlbumEdit, Assignment, DEFAULT_TARGET_LUFS, Field, GenreVocab, ImportOptions, ImportReport,
-    PathTemplate, PlayableItem, PlaybackConfig, TagWrite, TrackDraft, TrackEdit, TrackFields,
-    any_path_affecting, build_af_chain, build_album_edit, build_track_edit, compute_accent,
-    find_collisions, find_cover_bytes, genres_assignment, import_folder, parse_assignment,
-    read_track, replace_in, replaygain_from_file, resolve_album, resolve_episode_profile,
-    resolve_music_profile, resync_album_covers, rsgain_available, scan_album_files,
-    sync_album_cover, write_track_tags,
+    PathTemplate, PlayableItem, PlaybackConfig, SleepMode, TagWrite, TrackDraft, TrackEdit,
+    TrackFields, any_path_affecting, build_af_chain, build_album_edit, build_track_edit,
+    compute_accent, find_collisions, find_cover_bytes, genres_assignment, import_folder,
+    parse_assignment, read_track, replace_in, replaygain_from_file, resolve_album,
+    resolve_episode_profile, resolve_music_profile, resync_album_covers, rsgain_available,
+    scan_album_files, sync_album_cover, write_track_tags,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -148,6 +148,11 @@ enum Command {
         root: PathBuf,
         /// Track id to play now. Omit to play the existing queue from the cursor.
         track_id: Option<i64>,
+        /// Arm a sleep timer (Phase 6c-iii-d): a number of minutes (e.g. `15`,
+        /// `30`), `episode`/`item` (end of the current item), or `queue` (end of
+        /// the queue). Playback pauses at the boundary; the run then exits.
+        #[arg(long)]
+        sleep: Option<String>,
     },
 
     /// Inspect and edit the unified queue (spec §4.3, Phase 4b).
@@ -746,7 +751,12 @@ fn main() -> Result<()> {
             album_id,
             value,
         }) => shelf_genre_set(db, album_id, value),
-        Some(Command::Play { db, root, track_id }) => play(db, root, track_id),
+        Some(Command::Play {
+            db,
+            root,
+            track_id,
+            sleep,
+        }) => play(db, root, track_id, sleep),
         Some(Command::Queue { action }) => queue(action),
         Some(Command::Tag { action }) => tag(action),
         Some(Command::EmbedTags {
@@ -2202,7 +2212,28 @@ fn resolve_queue_items(
     Ok(items)
 }
 
-fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>) -> Result<()> {
+/// Parse a `--sleep` spec into a [`SleepMode`]: a positive number of minutes, or
+/// `episode`/`item`/`track` (end of the current item), or `queue` (end of queue).
+fn parse_sleep_spec(spec: &str) -> Result<SleepMode> {
+    let s = spec.trim().to_ascii_lowercase();
+    match s.as_str() {
+        "episode" | "item" | "track" | "book" => Ok(SleepMode::EndOfItem),
+        "queue" => Ok(SleepMode::EndOfQueue),
+        _ => {
+            let mins: f64 = s.parse().with_context(|| {
+                format!("invalid --sleep value {spec:?} (minutes, episode, or queue)")
+            })?;
+            if mins > 0.0 {
+                Ok(SleepMode::After(mins * 60.0))
+            } else {
+                anyhow::bail!("--sleep minutes must be positive")
+            }
+        }
+    }
+}
+
+fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>, sleep: Option<String>) -> Result<()> {
+    let sleep_mode = sleep.as_deref().map(parse_sleep_spec).transpose()?;
     // Multi-thread runtime: the worker runs on a blocking thread and the player
     // engine thread `block_on`s worker writes through this handle, so it must
     // outlive the engine. Tear down in order: player -> worker -> runtime.
@@ -2280,6 +2311,10 @@ fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>) -> Result<()> {
         player.seek(start_pos);
         println!("Resuming at {start_pos:.1}s.");
     }
+    if let Some(mode) = sleep_mode {
+        player.set_sleep_timer(Some(mode));
+        println!("Sleep timer armed ({mode:?}).");
+    }
 
     // Drive the engine by polling its snapshot; print each advance until the
     // queue ends. The engine itself persists position + play counts.
@@ -2297,6 +2332,12 @@ fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>) -> Result<()> {
             last = snap.current_index;
         }
         if snap.ended {
+            break;
+        }
+        // A fired duration sleep timer paused playback: end the headless run (the
+        // GUI would keep the tap-to-extend window open, Phase 6c-iii-d).
+        if snap.sleep.is_some_and(|s| s.fired) {
+            println!("Sleep timer elapsed; playback paused.");
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(150));

@@ -15,10 +15,12 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use conservatory_core::PlayerHandle;
-use conservatory_core::db::{Album, Chapter, Episode, NowPlaying, Show, Track};
+use conservatory_core::db::{Album, Chapter, Episode, MediaKind, NowPlaying, Show, Track};
+use conservatory_core::player::SleepMode;
+use conservatory_core::{PlayerHandle, SleepStatus};
 
 use crate::playqueue::fmt_secs;
+use crate::ui::now_bar::{fmt_sleep_remaining, sleep_boundary_label};
 
 /// The drawer: the revealer to place, plus the labelled grid it fills and the
 /// episode extras (Smart Speed line + clickable chapter list, Phase 6c-iii-c).
@@ -29,6 +31,9 @@ pub struct NowPlayingPanel {
     /// The "Smart Speed · saved m:ss" line; hidden unless the current item has
     /// Smart Speed on. Updated each poll tick from the snapshot.
     smart_speed: gtk::Label,
+    /// The "Sleep · …" line; hidden unless a sleep timer is armed (Phase
+    /// 6c-iii-d). Updated each poll tick from the snapshot.
+    sleep: gtk::Label,
     /// Heading + list wrapper, hidden when the item has no chapters.
     chapters_box: gtk::Box,
     chapters_list: gtk::ListBox,
@@ -64,6 +69,12 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
         .xalign(0.0)
         .css_classes(["accent", "caption"])
         .margin_top(4)
+        .visible(false)
+        .build();
+    let sleep = gtk::Label::builder()
+        .xalign(0.0)
+        .css_classes(["accent", "caption"])
+        .margin_top(2)
         .visible(false)
         .build();
 
@@ -110,6 +121,7 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
     column.append(&title);
     column.append(&grid);
     column.append(&smart_speed);
+    column.append(&sleep);
     column.append(&chapters_box);
 
     let scroller = gtk::ScrolledWindow::builder()
@@ -131,6 +143,7 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
         title,
         grid,
         smart_speed,
+        sleep,
         chapters_box,
         chapters_list,
         chapter_starts,
@@ -245,16 +258,51 @@ impl NowPlayingPanel {
         self.smart_speed.set_visible(true);
     }
 
+    /// Show / update the sleep-timer line (Phase 6c-iii-d). Hidden when no timer is
+    /// armed; otherwise it reads the remaining time or the chosen boundary, and
+    /// invites a tap-to-extend once a duration timer has fired.
+    pub fn set_sleep(&self, status: Option<SleepStatus>, kind: Option<MediaKind>) {
+        match sleep_drawer_text(status, kind) {
+            Some(text) => {
+                self.sleep.set_text(&text);
+                self.sleep.set_visible(true);
+            }
+            None => self.sleep.set_visible(false),
+        }
+    }
+
     /// The idle "nothing playing" state.
     pub fn clear(&self) {
         self.set_fields("Now Playing", &[("".into(), "Nothing playing.".into())]);
         self.smart_speed.set_visible(false);
+        self.sleep.set_visible(false);
         self.chapters_box.set_visible(false);
         self.current_chapter.set(None);
         while let Some(child) = self.chapters_list.first_child() {
             self.chapters_list.remove(&child);
         }
     }
+}
+
+/// The "Sleep · …" drawer line for an armed timer, or `None` when none is set
+/// (Phase 6c-iii-d). A duration timer shows its remaining `M:SS` (or "tap play to
+/// extend" while the tap-to-extend window is open); a boundary timer names where
+/// it stops, the label following the playing media kind. Pure.
+pub fn sleep_drawer_text(status: Option<SleepStatus>, kind: Option<MediaKind>) -> Option<String> {
+    let s = status?;
+    let body = if s.fired {
+        "tap play to extend".to_string()
+    } else {
+        match s.remaining {
+            Some(r) => fmt_sleep_remaining(r),
+            None => match s.mode {
+                SleepMode::EndOfQueue => "until end of queue".to_string(),
+                // EndOfItem (the After case never reaches here: it has `remaining`).
+                _ => format!("until {}", sleep_boundary_label(kind).to_lowercase()),
+            },
+        }
+    };
+    Some(format!("Sleep · {body}"))
 }
 
 /// Push a non-empty `(label, value)` onto `out`; skips empty values so absent
@@ -496,5 +544,57 @@ mod tests {
         assert_eq!(map["Season/Episode"], "S2 E4");
         assert_eq!(map["Type"], "bonus");
         assert!(!map.contains_key("Notes")); // empty description skipped
+    }
+
+    fn status(mode: SleepMode, remaining: Option<f64>, fired: bool) -> SleepStatus {
+        SleepStatus {
+            mode,
+            remaining,
+            fired,
+        }
+    }
+
+    #[test]
+    fn sleep_drawer_text_cases() {
+        // No timer: no line.
+        assert_eq!(sleep_drawer_text(None, None), None);
+
+        // A duration timer shows its remaining clock.
+        assert_eq!(
+            sleep_drawer_text(
+                Some(status(SleepMode::After(900.0), Some(125.0), false)),
+                Some(MediaKind::Episode),
+            ),
+            Some("Sleep · 2:05".to_string()),
+        );
+
+        // A fired timer invites the tap-to-extend, regardless of kind.
+        assert_eq!(
+            sleep_drawer_text(Some(status(SleepMode::After(900.0), Some(0.0), true)), None,),
+            Some("Sleep · tap play to extend".to_string()),
+        );
+
+        // The boundary modes name where they stop, the label following the kind.
+        assert_eq!(
+            sleep_drawer_text(
+                Some(status(SleepMode::EndOfItem, None, false)),
+                Some(MediaKind::Episode),
+            ),
+            Some("Sleep · until end of episode".to_string()),
+        );
+        assert_eq!(
+            sleep_drawer_text(
+                Some(status(SleepMode::EndOfItem, None, false)),
+                Some(MediaKind::Track),
+            ),
+            Some("Sleep · until end of track".to_string()),
+        );
+        assert_eq!(
+            sleep_drawer_text(
+                Some(status(SleepMode::EndOfQueue, None, false)),
+                Some(MediaKind::Episode),
+            ),
+            Some("Sleep · until end of queue".to_string()),
+        );
     }
 }

@@ -1948,6 +1948,27 @@ impl ConservatoryWindow {
         }
         self.add_controller(global);
 
+        // `S` pops the Now-bar sleep-timer menu (Phase 6c-iii-d). A window-local
+        // (non-global) controller so the bare letter does not fire while the filter
+        // SearchEntry has focus: the entry consumes the keypress first.
+        let sleep_keys = gtk::ShortcutController::new();
+        let weak = self.downgrade();
+        sleep_keys.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("s"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade()
+                    && let Some(now) = win.imp().now_bar.get()
+                    && now.sleep_btn.is_visible()
+                {
+                    now.sleep_btn.popup();
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            })),
+        ));
+        self.add_controller(sleep_keys);
+
         let local = gtk::ShortcutController::new();
         for (trigger, action) in [
             ("<Alt>Up", QueueKey::MoveUp),
@@ -2137,6 +2158,10 @@ impl ConservatoryWindow {
         now.set_status(snap.buffering, snap.streaming);
         // Chapter-skip buttons appear only for an item with chapters (6c-iii-b).
         now.set_chapter_nav_visible(snap.chapter_count > 0);
+        // Sleep timer (6c-iii-d): the moon button shows whenever something is
+        // loaded (the media-agnostic scope decision); its label tracks the timer.
+        now.sleep_btn.set_visible(snap.track_id.is_some());
+        now.set_sleep(snap.sleep);
         // Live drawer extras (6c-iii-c): the current-chapter highlight follows the
         // playhead and the Smart Speed saved time ticks up. Cheap no-ops when the
         // drawer is closed or there is nothing to show.
@@ -2145,6 +2170,7 @@ impl ConservatoryWindow {
         {
             panel.set_current_chapter(snap.current_chapter);
             panel.set_smart_speed(snap.smart_speed_active, snap.smart_speed_saved);
+            panel.set_sleep(snap.sleep, snap.kind);
         }
         now.position
             .set_text(&fmt_position(snap.position, snap.duration));

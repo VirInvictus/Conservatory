@@ -20,6 +20,7 @@ pub mod host;
 pub mod item;
 pub mod profile;
 pub mod session;
+pub mod sleep;
 pub mod spoken;
 pub mod state;
 
@@ -34,5 +35,6 @@ pub use profile::{
     MusicProfile, PlaybackConfig, ReplayGain, resolve_episode_profile, resolve_music_profile,
 };
 pub use session::SessionAccumulator;
+pub use sleep::{SleepClock, SleepMode, SleepStatus};
 pub use spoken::{smart_speed_stage, voice_boost_stages};
 pub use state::{EndReason, INSURANCE_INTERVAL_MS, StateDebounce, StateEvent};

@@ -13,7 +13,7 @@
 //! `AdwViewSwitcherBar` beneath the persistent Now-bar on narrow widths. A
 //! music-only build keeps a single-page stack with no switcher chrome.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
@@ -26,10 +26,10 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 
 use conservatory_core::db::{
-    EQ_CENTRES, EqState, FacetFilter, MediaKind, Perspective, ReadPool, WorkerHandle, facet_rows,
-    get_eq_preset, get_eq_state, get_tracks, list_eq_presets, list_perspectives,
-    load_queue_display, read_playback_state, show_settings_map, spawn_worker, track_render_rows,
-    writeback_rows,
+    EQ_CENTRES, EqState, FacetFilter, MediaKind, Perspective, ReadPool, ResamplerQuality,
+    WorkerHandle, facet_rows, get_audio_state, get_eq_preset, get_eq_state, get_tracks,
+    list_eq_presets, list_perspectives, load_queue_display, read_playback_state, show_settings_map,
+    spawn_worker, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
@@ -521,6 +521,10 @@ impl ConservatoryWindow {
         // Apply the persisted equalizer so it is active from the first track
         // (Phase 5.5b-ii).
         self.apply_persisted_eq();
+        // Apply the persisted DSP / output config so they are active from the
+        // first track (Phase 5.5c-ii). The playback defaults (ReplayGain / gapless)
+        // are not pushed here: they are resolved per-queue via `playback_config`.
+        self.apply_persisted_audio();
         // Load the saved queue paused at the cursor (Phase 4b-ii-c).
         self.resume_saved_queue();
     }
@@ -535,6 +539,41 @@ impl ConservatoryWindow {
             && let Ok(eq) = get_eq_state(&conn)
         {
             player.set_eq(eq);
+        }
+    }
+
+    /// Push the persisted DSP modules + output backend / resampler into the engine
+    /// at startup (Phase 5.5c-ii). 5.5c-i stored the DSP state but the GUI never
+    /// applied it; this fixes that and adds the output half.
+    fn apply_persisted_audio(&self) {
+        let imp = self.imp();
+        let (Some(pool), Some(player)) = (imp.pool.get(), imp.player.get()) else {
+            return;
+        };
+        if let Ok(conn) = pool.open()
+            && let Ok(state) = get_audio_state(&conn)
+        {
+            player.set_dsp(state.dsp);
+            player.set_output_backend(state.output_backend);
+            player.set_resampler_quality(state.resampler);
+        }
+    }
+
+    /// The persisted playback defaults (ReplayGain mode / preamp / clip, gapless),
+    /// read fresh for each newly built queue (Phase 5.5c-ii). Falls back to the
+    /// spec §10 defaults if the read is unavailable. A change applies to the next
+    /// queue built, not retroactively to the playing one (the profile is baked per
+    /// `PlayableItem`).
+    fn playback_config(&self) -> PlaybackConfig {
+        let Some(pool) = self.imp().pool.get() else {
+            return PlaybackConfig::default();
+        };
+        if let Ok(conn) = pool.open()
+            && let Ok(state) = get_audio_state(&conn)
+        {
+            PlaybackConfig::from_audio_state(&state)
+        } else {
+            PlaybackConfig::default()
         }
     }
 
@@ -621,6 +660,10 @@ impl ConservatoryWindow {
         let dialog = adw::PreferencesDialog::new();
         dialog.set_title("Sound");
         dialog.add(&page);
+
+        // The ReplayGain / DSP / Output groups (Phase 5.5c-ii), backed by the
+        // singleton `audio_state` (separate from the EQ's own table above).
+        self.add_audio_groups(&page, &dialog);
 
         // Slider drag → live band change + mark the EQ "Custom".
         for (i, slider) in sliders.iter().enumerate() {
@@ -714,6 +757,355 @@ impl ConservatoryWindow {
         }
 
         dialog.present(Some(self));
+    }
+
+    /// Build the ReplayGain / DSP / Output groups of the Sound page (Phase
+    /// 5.5c-ii) and wire them to the singleton `audio_state` (separate from the
+    /// EQ's own table). DSP + output changes apply to the engine live; ReplayGain
+    /// / gapless changes are resolved per-queue (so they take effect on the next
+    /// built queue, not retroactively). The whole state persists on dialog close.
+    fn add_audio_groups(&self, page: &adw::PreferencesPage, dialog: &adw::PreferencesDialog) {
+        let Some(pool) = self.imp().pool.get() else {
+            return;
+        };
+        let initial = {
+            let Ok(conn) = pool.open() else { return };
+            get_audio_state(&conn).unwrap_or_default()
+        };
+        let state = Rc::new(RefCell::new(initial));
+
+        // "DSP changed → push the whole DspState to the engine" (a structural `af`
+        // rebuild, gap-acceptable; DSP has no per-slider live path like the EQ).
+        let apply_dsp: Rc<dyn Fn()> = {
+            let weak = self.downgrade();
+            let state = state.clone();
+            Rc::new(move || {
+                if let Some(win) = weak.upgrade()
+                    && let Some(player) = win.imp().player.get()
+                {
+                    player.set_dsp(state.borrow().dsp);
+                }
+            })
+        };
+
+        // --- ReplayGain ---
+        let rg_group = adw::PreferencesGroup::new();
+        rg_group.set_title("ReplayGain");
+        rg_group.set_description(Some("Volume normalization; applies to the next queue."));
+
+        let rg_mode = adw::ComboRow::new();
+        rg_mode.set_title("Mode");
+        rg_mode.set_model(Some(&gtk::StringList::new(&sound::option_labels(
+            &sound::RG_MODES,
+        ))));
+        rg_mode.set_selected(sound::option_index(
+            &sound::RG_MODES,
+            &state.borrow().replaygain_mode,
+        ));
+        {
+            let state = state.clone();
+            rg_mode.connect_selected_notify(move |row| {
+                state.borrow_mut().replaygain_mode =
+                    sound::option_value(&sound::RG_MODES, row.selected()).to_string();
+            });
+        }
+
+        let rg_preamp = adw::SpinRow::with_range(-15.0, 15.0, 0.5);
+        rg_preamp.set_title("Preamp (dB)");
+        rg_preamp.set_digits(1);
+        rg_preamp.set_value(state.borrow().replaygain_preamp);
+        {
+            let state = state.clone();
+            rg_preamp.adjustment().connect_value_changed(move |a| {
+                state.borrow_mut().replaygain_preamp = a.value();
+            });
+        }
+
+        let rg_clip = adw::SwitchRow::new();
+        rg_clip.set_title("Prevent clipping");
+        rg_clip.set_subtitle("Cap the gain at 0 dB (no peak data)");
+        rg_clip.set_active(state.borrow().replaygain_clip);
+        {
+            let state = state.clone();
+            rg_clip.connect_active_notify(move |row| {
+                state.borrow_mut().replaygain_clip = row.is_active();
+            });
+        }
+
+        for row in [
+            rg_mode.upcast_ref::<gtk::Widget>(),
+            rg_preamp.upcast_ref(),
+            rg_clip.upcast_ref(),
+        ] {
+            rg_group.add(row);
+        }
+
+        // --- Dynamics (DSP modules) ---
+        let dsp_group = adw::PreferencesGroup::new();
+        dsp_group.set_title("Dynamics");
+        dsp_group.set_description(Some("Compressor, brick-wall limiter, and volume leveler."));
+
+        // Compressor.
+        let comp = adw::ExpanderRow::new();
+        comp.set_title("Compressor");
+        comp.set_show_enable_switch(true);
+        comp.set_enable_expansion(state.borrow().dsp.comp.enabled);
+        let comp_threshold = adw::SpinRow::with_range(-60.0, 0.0, 1.0);
+        comp_threshold.set_title("Threshold (dB)");
+        comp_threshold.set_value(state.borrow().dsp.comp.settings.threshold_db);
+        let comp_ratio = adw::SpinRow::with_range(1.0, 20.0, 0.5);
+        comp_ratio.set_title("Ratio (N:1)");
+        comp_ratio.set_digits(1);
+        comp_ratio.set_value(state.borrow().dsp.comp.settings.ratio);
+        let comp_attack = adw::SpinRow::with_range(1.0, 200.0, 1.0);
+        comp_attack.set_title("Attack (ms)");
+        comp_attack.set_value(state.borrow().dsp.comp.settings.attack_ms);
+        let comp_release = adw::SpinRow::with_range(10.0, 2000.0, 10.0);
+        comp_release.set_title("Release (ms)");
+        comp_release.set_value(state.borrow().dsp.comp.settings.release_ms);
+        comp.add_row(&comp_threshold);
+        comp.add_row(&comp_ratio);
+        comp.add_row(&comp_attack);
+        comp.add_row(&comp_release);
+        {
+            let state = state.clone();
+            let apply = apply_dsp.clone();
+            comp.connect_enable_expansion_notify(move |e| {
+                state.borrow_mut().dsp.comp.enabled = e.enables_expansion();
+                apply();
+            });
+        }
+        {
+            let state = state.clone();
+            let apply = apply_dsp.clone();
+            comp_threshold.adjustment().connect_value_changed(move |a| {
+                state.borrow_mut().dsp.comp.settings.threshold_db = a.value();
+                apply();
+            });
+        }
+        {
+            let state = state.clone();
+            let apply = apply_dsp.clone();
+            comp_ratio.adjustment().connect_value_changed(move |a| {
+                state.borrow_mut().dsp.comp.settings.ratio = a.value();
+                apply();
+            });
+        }
+        {
+            let state = state.clone();
+            let apply = apply_dsp.clone();
+            comp_attack.adjustment().connect_value_changed(move |a| {
+                state.borrow_mut().dsp.comp.settings.attack_ms = a.value();
+                apply();
+            });
+        }
+        {
+            let state = state.clone();
+            let apply = apply_dsp.clone();
+            comp_release.adjustment().connect_value_changed(move |a| {
+                state.borrow_mut().dsp.comp.settings.release_ms = a.value();
+                apply();
+            });
+        }
+
+        // Limiter.
+        let limiter = adw::ExpanderRow::new();
+        limiter.set_title("Limiter");
+        limiter.set_subtitle("A transparent peak catcher / ReplayGain clip net");
+        limiter.set_show_enable_switch(true);
+        limiter.set_enable_expansion(state.borrow().dsp.limiter.enabled);
+        let limiter_ceiling = adw::SpinRow::with_range(-30.0, 0.0, 0.5);
+        limiter_ceiling.set_title("Ceiling (dB)");
+        limiter_ceiling.set_digits(1);
+        limiter_ceiling.set_value(state.borrow().dsp.limiter.settings.ceiling_db);
+        limiter.add_row(&limiter_ceiling);
+        {
+            let state = state.clone();
+            let apply = apply_dsp.clone();
+            limiter.connect_enable_expansion_notify(move |e| {
+                state.borrow_mut().dsp.limiter.enabled = e.enables_expansion();
+                apply();
+            });
+        }
+        {
+            let state = state.clone();
+            let apply = apply_dsp.clone();
+            limiter_ceiling
+                .adjustment()
+                .connect_value_changed(move |a| {
+                    state.borrow_mut().dsp.limiter.settings.ceiling_db = a.value();
+                    apply();
+                });
+        }
+
+        // Leveler.
+        let leveler = adw::ExpanderRow::new();
+        leveler.set_title("Leveler");
+        leveler.set_show_enable_switch(true);
+        leveler.set_enable_expansion(state.borrow().dsp.leveler.enabled);
+        let leveler_target = adw::SpinRow::with_range(0.0, 1.0, 0.05);
+        leveler_target.set_title("Target peak");
+        leveler_target.set_digits(2);
+        leveler_target.set_value(state.borrow().dsp.leveler.settings.target_peak);
+        let leveler_gauss = adw::SpinRow::with_range(3.0, 301.0, 2.0);
+        leveler_gauss.set_title("Window size");
+        leveler_gauss.set_value(state.borrow().dsp.leveler.settings.gausssize as f64);
+        leveler.add_row(&leveler_target);
+        leveler.add_row(&leveler_gauss);
+        {
+            let state = state.clone();
+            let apply = apply_dsp.clone();
+            leveler.connect_enable_expansion_notify(move |e| {
+                state.borrow_mut().dsp.leveler.enabled = e.enables_expansion();
+                apply();
+            });
+        }
+        {
+            let state = state.clone();
+            let apply = apply_dsp.clone();
+            leveler_target.adjustment().connect_value_changed(move |a| {
+                state.borrow_mut().dsp.leveler.settings.target_peak = a.value();
+                apply();
+            });
+        }
+        {
+            let state = state.clone();
+            let apply = apply_dsp.clone();
+            leveler_gauss.adjustment().connect_value_changed(move |a| {
+                state.borrow_mut().dsp.leveler.settings.gausssize = a.value() as u32;
+                apply();
+            });
+        }
+
+        dsp_group.add(&comp);
+        dsp_group.add(&limiter);
+        dsp_group.add(&leveler);
+
+        // --- Output ---
+        let out_group = adw::PreferencesGroup::new();
+        out_group.set_title("Output");
+
+        let backend = adw::ComboRow::new();
+        backend.set_title("Backend");
+        backend.set_model(Some(&gtk::StringList::new(&sound::option_labels(
+            &sound::BACKENDS,
+        ))));
+        backend.set_selected(sound::option_index(
+            &sound::BACKENDS,
+            &state.borrow().output_backend,
+        ));
+        {
+            let state = state.clone();
+            let weak = self.downgrade();
+            backend.connect_selected_notify(move |row| {
+                let val = sound::option_value(&sound::BACKENDS, row.selected()).to_string();
+                state.borrow_mut().output_backend = val.clone();
+                if let Some(win) = weak.upgrade()
+                    && let Some(player) = win.imp().player.get()
+                {
+                    player.set_output_backend(val);
+                }
+            });
+        }
+        out_group.add(&backend);
+
+        // Device: a second, write-through surface for the header picker (Phase
+        // 4c-ii). Listed from the engine's queried device list; skipped if the
+        // engine is unavailable.
+        if let Some(player) = self.imp().player.get() {
+            let snap = player.snapshot();
+            if !snap.audio_devices.is_empty() {
+                let names: Vec<String> =
+                    snap.audio_devices.iter().map(|d| d.name.clone()).collect();
+                let labels: Vec<String> = snap
+                    .audio_devices
+                    .iter()
+                    .map(|d| {
+                        if d.description.is_empty() {
+                            d.name.clone()
+                        } else {
+                            d.description.clone()
+                        }
+                    })
+                    .collect();
+                let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                let selected = snap
+                    .audio_device
+                    .as_deref()
+                    .and_then(|c| names.iter().position(|n| n == c))
+                    .unwrap_or(0) as u32;
+                let device = adw::ComboRow::new();
+                device.set_title("Device");
+                device.set_model(Some(&gtk::StringList::new(&label_refs)));
+                device.set_selected(selected);
+                let weak = self.downgrade();
+                device.connect_selected_notify(move |row| {
+                    if let Some(name) = names.get(row.selected() as usize)
+                        && let Some(win) = weak.upgrade()
+                        && let Some(player) = win.imp().player.get()
+                    {
+                        player.set_audio_device(name.clone());
+                    }
+                });
+                out_group.add(&device);
+            }
+        }
+
+        let resampler = adw::ComboRow::new();
+        resampler.set_title("Resampler");
+        resampler.set_model(Some(&gtk::StringList::new(&sound::option_labels(
+            &sound::RESAMPLERS,
+        ))));
+        resampler.set_selected(sound::option_index(
+            &sound::RESAMPLERS,
+            state.borrow().resampler.as_str(),
+        ));
+        {
+            let state = state.clone();
+            let weak = self.downgrade();
+            resampler.connect_selected_notify(move |row| {
+                let q: ResamplerQuality = sound::option_value(&sound::RESAMPLERS, row.selected())
+                    .parse()
+                    .unwrap_or_default();
+                state.borrow_mut().resampler = q;
+                if let Some(win) = weak.upgrade()
+                    && let Some(player) = win.imp().player.get()
+                {
+                    player.set_resampler_quality(q);
+                }
+            });
+        }
+        out_group.add(&resampler);
+
+        let gapless = adw::SwitchRow::new();
+        gapless.set_title("Gapless playback");
+        gapless.set_active(state.borrow().gapless);
+        {
+            let state = state.clone();
+            gapless.connect_active_notify(move |row| {
+                state.borrow_mut().gapless = row.is_active();
+            });
+        }
+        out_group.add(&gapless);
+
+        page.add(&rg_group);
+        page.add(&dsp_group);
+        page.add(&out_group);
+
+        // Persist the whole audio config on close (live changes applied above are
+        // saved here, the EQ slider precedent).
+        {
+            let weak = self.downgrade();
+            let state = state.clone();
+            dialog.connect_closed(move |_| {
+                if let Some(win) = weak.upgrade()
+                    && let (Some(worker), Some(rt)) =
+                        (win.imp().worker.get(), win.imp().runtime.get())
+                {
+                    let _ = rt.block_on(worker.set_audio_state(state.borrow().clone()));
+                }
+            });
+        }
     }
 
     /// Load a named preset into the sliders + the engine (Phase 5.5b-ii).
@@ -842,7 +1234,7 @@ impl ConservatoryWindow {
             pos as usize,
             &tracks,
             root,
-            &PlaybackConfig::default(),
+            &self.playback_config(),
         );
         if items.is_empty() {
             return;
@@ -1011,7 +1403,7 @@ impl ConservatoryWindow {
             cursor_kind,
             cursor_id,
             root,
-            &PlaybackConfig::default(),
+            &self.playback_config(),
             &settings,
         );
         if items.is_empty() {
@@ -1063,7 +1455,7 @@ impl ConservatoryWindow {
         let tracks = get_tracks(&conn, &ordered_ids).unwrap_or_default();
         drop(conn);
         let (items, _start) =
-            build_play_queue(&ordered_ids, 0, &tracks, root, &PlaybackConfig::default());
+            build_play_queue(&ordered_ids, 0, &tracks, root, &self.playback_config());
         if items.is_empty() {
             return;
         }

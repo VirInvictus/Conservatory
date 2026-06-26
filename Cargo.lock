@@ -530,7 +530,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory"
-version = "0.0.43"
+version = "0.0.44"
 dependencies = [
  "chrono",
  "conservatory-audiobooks",
@@ -547,11 +547,11 @@ dependencies = [
 
 [[package]]
 name = "conservatory-audiobooks"
-version = "0.0.43"
+version = "0.0.44"
 
 [[package]]
 name = "conservatory-cli"
-version = "0.0.43"
+version = "0.0.44"
 dependencies = [
  "anyhow",
  "chrono",
@@ -567,7 +567,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-core"
-version = "0.0.43"
+version = "0.0.44"
 dependencies = [
  "chrono",
  "conservatory-search",
@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-podcasts"
-version = "0.0.43"
+version = "0.0.44"
 dependencies = [
  "chrono",
  "conservatory-core",
@@ -604,7 +604,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-search"
-version = "0.0.43"
+version = "0.0.44"
 dependencies = [
  "chrono",
  "regex",

@@ -36,6 +36,41 @@ pub fn eq_slider(value: f64) -> gtk::Scale {
     scale
 }
 
+/// The ReplayGain-mode picker options (Phase 5.5c-ii): the display label paired
+/// with the stored `audio_state.replaygain_mode` value.
+pub const RG_MODES: [(&str, &str); 3] = [("Off", "off"), ("Track", "track"), ("Album", "album")];
+
+/// The output-backend picker options: the display label paired with the stored
+/// `audio_state.output_backend` / mpv `ao` value.
+pub const BACKENDS: [(&str, &str); 5] = [
+    ("Automatic", "auto"),
+    ("PipeWire", "pipewire"),
+    ("PulseAudio", "pulse"),
+    ("ALSA", "alsa"),
+    ("JACK", "jack"),
+];
+
+/// The resampler-quality picker options: the display label paired with the stored
+/// `audio_state.resampler_quality` value (mirrors `ResamplerQuality::as_str`).
+pub const RESAMPLERS: [(&str, &str); 2] = [("Default", "default"), ("High quality", "high")];
+
+/// The display labels of an option table, for a `gtk::StringList` model.
+pub fn option_labels<'a>(table: &[(&'a str, &'a str)]) -> Vec<&'a str> {
+    table.iter().map(|(label, _)| *label).collect()
+}
+
+/// The combo-row index whose stored value is `value`, or 0 (the first option) when
+/// none matches (forgiving, the `get_audio_state` stance). Pure.
+pub fn option_index(table: &[(&str, &str)], value: &str) -> u32 {
+    table.iter().position(|(_, v)| *v == value).unwrap_or(0) as u32
+}
+
+/// The stored value at a combo-row `index`, or the first option's when the index
+/// is out of range. Pure.
+pub fn option_value<'a>(table: &[(&'a str, &'a str)], index: u32) -> &'a str {
+    table.get(index as usize).map_or(table[0].1, |(_, v)| *v)
+}
+
 /// The name of the preset whose bands match `bands` (within a small epsilon), or
 /// `None` (a custom edit) when none does. Drives the preset picker's selection.
 /// Pure.
@@ -88,5 +123,32 @@ mod tests {
         let mut bands = [0.0; EQ_BAND_COUNT];
         bands[3] = 3.0;
         assert_eq!(match_preset(&bands, &presets), None);
+    }
+
+    #[test]
+    fn option_index_finds_value_and_defaults_to_zero() {
+        assert_eq!(option_index(&RG_MODES, "track"), 1);
+        assert_eq!(option_index(&BACKENDS, "alsa"), 3);
+        assert_eq!(option_index(&RESAMPLERS, "high"), 1);
+        // An unknown stored value degrades to the first option.
+        assert_eq!(option_index(&BACKENDS, "nonsense"), 0);
+    }
+
+    #[test]
+    fn option_value_round_trips_and_clamps() {
+        for table in [&RG_MODES[..], &BACKENDS[..], &RESAMPLERS[..]] {
+            for (i, (_, v)) in table.iter().enumerate() {
+                assert_eq!(option_value(table, i as u32), *v);
+                assert_eq!(option_index(table, v), i as u32);
+            }
+            // Out of range → the first option's value.
+            assert_eq!(option_value(table, 99), table[0].1);
+        }
+    }
+
+    #[test]
+    fn option_labels_lists_every_label() {
+        assert_eq!(option_labels(&RG_MODES), vec!["Off", "Track", "Album"]);
+        assert_eq!(option_labels(&RESAMPLERS), vec!["Default", "High quality"]);
     }
 }

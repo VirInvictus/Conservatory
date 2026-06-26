@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.44
+
+Phase 5.5c-ii-b shipped, completing Phase 5.5c-ii and the music audio engine: the "Sound" preferences dialog (the equalizer's home since 5.5b) now holds the whole chain, and the persisted config finally drives playback. The music daily-driver feels complete; podcasts (Phase 6) are next.
+
+- **The consolidated "Sound" page (`conservatory/src/ui/window.rs`, `ui/sound.rs`):** three new groups join the equalizer. **ReplayGain** (mode / preamp / clip-guard); **Dynamics** (the compressor / limiter / leveler, each an `adw::ExpanderRow` whose enable switch toggles the module and whose child rows tune it, the app's first use of `ExpanderRow`); **Output** (backend / device / resampler / gapless `ComboRow`s + a switch). DSP and output changes drive the engine live (DSP is a structural `af` rebuild, gap-acceptable; the backend reloads via `ao-reload`); ReplayGain / gapless changes are resolved per-queue, so they take effect on the next built queue. The whole `audio_state` persists on dialog close (the EQ slider precedent).
+- **The output device picker lives in two places now:** the header `MenuButton` (Phase 4c-ii, the quick-switch) and a write-through `ComboRow` in the Sound page's Output group, both populated from the engine's queried device list and both sending `set_audio_device`.
+- **Persisted config drives playback (`apply_persisted_audio`):** at startup the GUI pushes the stored DSP modules + output backend + resampler into the engine (which also fixes that 5.5c-i's DSP was stored but never applied in the GUI), mirroring `apply_persisted_eq`. The queue builders (`build_play_queue` / `build_mixed_queue`) now read the persisted playback defaults via `PlaybackConfig::from_audio_state` instead of `PlaybackConfig::default()`, so a saved ReplayGain mode / preamp / clip / gapless choice shapes the next queue.
+- **Deferred and recorded (unchanged from the spec, not built):** exclusive/bit-perfect output (ALSA `hw:` + `--audio-exclusive`), LADSPA / raw-`af` hosting, native `crossfeed`, the parametric `anequalizer`, peak-aware ReplayGain attenuation.
+- **Tests:** the pure picker-mapping helpers in `ui/sound.rs` (`option_index` / `option_value` / `option_labels` for the ReplayGain-mode, backend, and resampler tables, with the forgiving fallback and round-trip). The dialog widgets are verified by build + manual launch (the 3b/3c/5.5b-ii precedent). Full suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green. No new dependency, no new migration.
+
+Next: Phase 6 (podcasts) continues; the shared `af`-chain engine is now ready for the Phase 6c spoken-word presets (Smart Speed / Voice Boost).
+
 ## v0.0.43
 
 Phase 5.5c-ii-a shipped: the output backend and resampler are finally applied to the player, with a CLI to drive them (headless). Migration `0009` seeded `output_backend` and `resampler_quality` back at 5.5c-i but nothing consumed them; this closes that gap. The consolidated GTK "Sound" page is the next step (5.5c-ii-b).

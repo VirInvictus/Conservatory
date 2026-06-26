@@ -2157,6 +2157,7 @@ fn resolve_queue_items(
                         album_id: track.album_id,
                         kind: MediaKind::Track,
                         streaming: false,
+                        chapters: [].into(),
                     });
                 }
             }
@@ -2175,6 +2176,16 @@ fn resolve_queue_items(
                 };
                 // Resolve the show's per-show overrides (speed) for the profile.
                 let settings = get_show_settings(&conn, ep.show_id).context("show settings")?;
+                // Attach the episode's chapters so chapter-skip works headless too.
+                let chapters: Vec<conservatory_core::ChapterMark> =
+                    conservatory_core::db::list_chapters(&conn, episode_id)
+                        .context("looking up chapters")?
+                        .into_iter()
+                        .map(|c| conservatory_core::ChapterMark {
+                            start_time: c.start_time,
+                            title: c.title,
+                        })
+                        .collect();
                 items.push(PlayableItem {
                     track_id: episode_id, // the queue item's id field carries the episode id
                     source,
@@ -2182,6 +2193,7 @@ fn resolve_queue_items(
                     album_id: None,
                     kind: MediaKind::Episode,
                     streaming,
+                    chapters: chapters.into(),
                 });
             }
             MediaKind::Audiobook => continue, // Phase 7

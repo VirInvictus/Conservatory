@@ -29,6 +29,10 @@ pub struct NowBar {
     /// Shown when the current item streams from the network (v0.0.38).
     pub streaming_icon: gtk::Image,
     pub play_btn: gtk::Button,
+    /// Previous / next chapter (Phase 6c-iii-b): hidden unless the current item
+    /// has chapters (`chapter_count > 0`), flanking the item prev/next.
+    pub prev_chapter_btn: gtk::Button,
+    pub next_chapter_btn: gtk::Button,
     pub position: gtk::Label,
     pub seek: gtk::Scale,
     pub volume: gtk::ScaleButton,
@@ -87,15 +91,23 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     left.set_tooltip_text(Some("Now Playing details"));
     root.set_start_widget(Some(&left));
 
-    // Centre: prev / play-pause / next.
+    // Centre: [prev-chapter] prev / play-pause / next [next-chapter]. The chapter
+    // buttons flank the item transport and stay hidden unless the current item has
+    // chapters (Phase 6c-iii-b).
+    let prev_chapter_btn = transport_button("media-seek-backward-symbolic", "Previous chapter");
     let prev_btn = transport_button("media-skip-backward-symbolic", "Previous");
     let play_btn = transport_button("media-playback-start-symbolic", "Play / Pause");
     let next_btn = transport_button("media-skip-forward-symbolic", "Next");
+    let next_chapter_btn = transport_button("media-seek-forward-symbolic", "Next chapter");
+    prev_chapter_btn.set_visible(false);
+    next_chapter_btn.set_visible(false);
     let transport = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     transport.set_valign(gtk::Align::Center);
+    transport.append(&prev_chapter_btn);
     transport.append(&prev_btn);
     transport.append(&play_btn);
     transport.append(&next_btn);
+    transport.append(&next_chapter_btn);
     root.set_center_widget(Some(&transport));
 
     // Right: position label, seek slider, volume.
@@ -137,6 +149,10 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         let p = player.clone();
         next_btn.connect_clicked(move |_| p.next());
         let p = player.clone();
+        prev_chapter_btn.connect_clicked(move |_| p.skip_chapter(-1));
+        let p = player.clone();
+        next_chapter_btn.connect_clicked(move |_| p.skip_chapter(1));
+        let p = player.clone();
         seek.connect_change_value(move |_, _, value| {
             p.seek(value);
             glib::Propagation::Proceed
@@ -156,6 +172,8 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         spinner,
         streaming_icon,
         play_btn,
+        prev_chapter_btn,
+        next_chapter_btn,
         position,
         seek,
         volume,
@@ -181,6 +199,14 @@ impl NowBar {
         self.seek.set_value(0.0);
         self.set_cover(None);
         self.set_status(false, false);
+        self.set_chapter_nav_visible(false);
+    }
+
+    /// Show or hide the chapter-skip buttons (Phase 6c-iii-b): visible only when
+    /// the current item has chapters.
+    pub fn set_chapter_nav_visible(&self, visible: bool) {
+        self.prev_chapter_btn.set_visible(visible);
+        self.next_chapter_btn.set_visible(visible);
     }
 
     /// Show/hide the buffering spinner and the streaming glyph (v0.0.38).

@@ -33,6 +33,11 @@ pub enum PlayerCommand {
     TogglePause,
     Next,
     Previous,
+    /// Skip to the next (`+1`) or previous (`-1`) chapter of the current item
+    /// (Phase 6c-iii-b): an absolute seek to the neighbouring `ChapterMark`. A
+    /// no-op when the item has no chapters. The shared mechanism the audiobook
+    /// engine reuses at 7c (with `book_chapters`).
+    SkipChapter(i32),
     /// Seek to an absolute offset in seconds.
     Seek(f64),
     /// Set the output volume (0–100).
@@ -99,6 +104,12 @@ pub struct PlayerSnapshot {
     pub queue_len: usize,
     /// The queue has been played to its end (or is empty): a poller can stop.
     pub ended: bool,
+    /// The current item's chapter count (Phase 6c-iii-b); `0` for a track or a
+    /// chapter-less episode. Drives the Now-bar chapter buttons' visibility.
+    pub chapter_count: usize,
+    /// The chapter the playhead is in (index into the item's marks), or `None`
+    /// before the first chapter / when there are none.
+    pub current_chapter: Option<usize>,
     /// The audio output devices (queried once at engine init, spec §6.5).
     pub audio_devices: Arc<[AudioDevice]>,
     /// The selected output device id; `None` is mpv's default (`auto`).
@@ -119,6 +130,8 @@ impl Default for PlayerSnapshot {
             volume: 100,
             queue_len: 0,
             ended: false,
+            chapter_count: 0,
+            current_chapter: None,
             audio_devices: Arc::from([]),
             audio_device: None,
         }
@@ -194,6 +207,12 @@ impl PlayerHandle {
 
     pub fn previous(&self) {
         let _ = self.tx.send(PlayerCommand::Previous);
+    }
+
+    /// Skip to the next (`dir > 0`) or previous (`dir <= 0`) chapter of the
+    /// current item (Phase 6c-iii-b). A no-op when the item has no chapters.
+    pub fn skip_chapter(&self, dir: i32) {
+        let _ = self.tx.send(PlayerCommand::SkipChapter(dir));
     }
 
     pub fn seek(&self, secs: f64) {

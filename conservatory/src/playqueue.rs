@@ -40,6 +40,7 @@ pub fn build_play_queue(
             album_id: track.album_id,
             kind: MediaKind::Track,
             streaming: false,
+            chapters: [].into(),
         })
         .collect();
 
@@ -93,6 +94,7 @@ pub fn build_episode_queue(
                 album_id: None,
                 kind: MediaKind::Episode,
                 streaming,
+                chapters: [].into(),
             })
         })
         .collect();
@@ -150,6 +152,7 @@ pub fn build_mixed_queue(
                     album_id: track.album_id,
                     kind: MediaKind::Track,
                     streaming: false,
+                    chapters: [].into(),
                 });
             }
             MediaKind::Episode => {
@@ -170,6 +173,7 @@ pub fn build_mixed_queue(
                     album_id: None,
                     kind: MediaKind::Episode,
                     streaming,
+                    chapters: [].into(),
                 });
             }
             MediaKind::Audiobook => continue, // Phase 7
@@ -185,6 +189,30 @@ pub fn build_mixed_queue(
         .unwrap_or(0);
 
     (items, start)
+}
+
+/// Attach each episode item's stored chapter marks (Phase 6c-iii-b), read from
+/// the `chapters` table, so the engine can navigate them in-item. Tracks and
+/// chapter-less episodes keep their empty set. Called after a queue is built,
+/// before handing it to the player. Core-only (no podcast feature needed): a
+/// music-only queue simply has no episode items to touch.
+pub fn attach_episode_chapters(items: &mut [PlayableItem], pool: &conservatory_core::db::ReadPool) {
+    use conservatory_core::ChapterMark;
+    use conservatory_core::db::list_chapters;
+    let Ok(conn) = pool.open() else {
+        return;
+    };
+    for item in items.iter_mut().filter(|i| i.kind == MediaKind::Episode) {
+        let marks: Vec<ChapterMark> = list_chapters(&conn, item.track_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| ChapterMark {
+                start_time: c.start_time,
+                title: c.title,
+            })
+            .collect();
+        item.chapters = marks.into();
+    }
 }
 
 /// Which side of the drop-target row the dragged row lands on (from the cursor

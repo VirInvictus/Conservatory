@@ -9,8 +9,10 @@
 //! queue view can badge rows and so episodes/audiobooks slot in at Phases 6/7.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::db::MediaKind;
+use crate::player::chapters::ChapterMark;
 use crate::player::profile::MusicProfile;
 
 /// One queue entry, resolved to something the libmpv host can load and play.
@@ -24,4 +26,9 @@ pub struct PlayableItem {
     /// The source is a remote URL streamed over the network (an undownloaded
     /// episode), not a local file. Drives the Now-bar streaming glyph (v0.0.38).
     pub streaming: bool,
+    /// The item's chapter marks, resolved at queue-build time (Phase 6c-iii-b):
+    /// an episode's `list_chapters`, an audiobook's `book_chapters` at 7c. Empty
+    /// for tracks / chapter-less items. Drives in-item chapter-skip navigation
+    /// (the engine never reads the DB; the marks travel with the item).
+    pub chapters: Arc<[ChapterMark]>,
 }

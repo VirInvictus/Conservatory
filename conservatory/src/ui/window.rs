@@ -1397,7 +1397,7 @@ impl ConservatoryWindow {
             MediaKind::Episode => s.episode_id,
             MediaKind::Audiobook => None,
         });
-        let (items, start) = build_mixed_queue(
+        let (mut items, start) = build_mixed_queue(
             &mixed,
             &tracks,
             cursor_kind,
@@ -1406,6 +1406,7 @@ impl ConservatoryWindow {
             &self.playback_config(),
             &settings,
         );
+        crate::playqueue::attach_episode_chapters(&mut items, pool);
         if items.is_empty() {
             return;
         }
@@ -1926,6 +1927,25 @@ impl ConservatoryWindow {
                 glib::Propagation::Stop
             })),
         ));
+        // Ctrl+Shift+→/← skip to the next / previous chapter of the current item
+        // (Phase 6c-iii-b); a no-op when it has no chapters.
+        for (trigger, dir) in [
+            ("<Control><Shift>Right", 1_i32),
+            ("<Control><Shift>Left", -1_i32),
+        ] {
+            let weak = self.downgrade();
+            global.add_shortcut(gtk::Shortcut::new(
+                gtk::ShortcutTrigger::parse_string(trigger),
+                Some(gtk::CallbackAction::new(move |_, _| {
+                    if let Some(win) = weak.upgrade()
+                        && let Some(player) = win.imp().player.get()
+                    {
+                        player.skip_chapter(dir);
+                    }
+                    glib::Propagation::Stop
+                })),
+            ));
+        }
         self.add_controller(global);
 
         let local = gtk::ShortcutController::new();
@@ -2115,6 +2135,8 @@ impl ConservatoryWindow {
         });
         // Buffering spinner + streaming glyph (v0.0.38).
         now.set_status(snap.buffering, snap.streaming);
+        // Chapter-skip buttons appear only for an item with chapters (6c-iii-b).
+        now.set_chapter_nav_visible(snap.chapter_count > 0);
         now.position
             .set_text(&fmt_position(snap.position, snap.duration));
         match snap.duration {

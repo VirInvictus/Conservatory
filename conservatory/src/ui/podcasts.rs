@@ -41,7 +41,7 @@ use conservatory_core::db::{
     list_all_tags, list_shows, show_settings_map,
 };
 
-use crate::playqueue::{EpisodeSource, build_episode_queue};
+use crate::playqueue::{EpisodeSource, attach_episode_chapters, build_episode_queue};
 use crate::ui::objects::EpisodeRow;
 
 /// What the episode list is currently showing.
@@ -216,7 +216,9 @@ impl Inner {
         let _ = self
             .rt
             .block_on(self.worker.replace_queue_with_episodes(vec![source.id]));
-        let (items, start) = build_episode_queue(std::slice::from_ref(&source), 0, root, &settings);
+        let (mut items, start) =
+            build_episode_queue(std::slice::from_ref(&source), 0, root, &settings);
+        attach_episode_chapters(&mut items, &self.pool);
         if !items.is_empty() {
             player.play_queue(items, start);
         }
@@ -253,7 +255,8 @@ impl Inner {
             audio_url: row.audio_url(),
         };
         let settings = self.show_settings_for(std::slice::from_ref(&source));
-        let (items, _) = build_episode_queue(std::slice::from_ref(&source), 0, root, &settings);
+        let (mut items, _) = build_episode_queue(std::slice::from_ref(&source), 0, root, &settings);
+        attach_episode_chapters(&mut items, &self.pool);
         if !items.is_empty() {
             player.append(items);
         }

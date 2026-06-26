@@ -21,6 +21,7 @@ use tokio::runtime::Handle;
 
 use crate::db::{MediaKind, PlaybackCursor, WorkerHandle};
 use crate::errors::{Error, Result};
+use crate::player::chapters::{current_chapter_at, neighbour_chapter};
 use crate::player::handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 use crate::player::host::{HostEvent, MpvHost};
 use crate::player::item::PlayableItem;
@@ -252,6 +253,7 @@ impl Engine {
             }
             PlayerCommand::Next => self.skip_next(),
             PlayerCommand::Previous => self.skip_previous(),
+            PlayerCommand::SkipChapter(dir) => self.skip_chapter(dir),
             PlayerCommand::Seek(secs) => {
                 let target = secs.max(0.0);
                 let _ = self.host.seek_absolute(target);
@@ -436,6 +438,28 @@ impl Engine {
         self.flush(StateEvent::Seek, true);
     }
 
+    /// Skip to the neighbouring chapter of the current item (Phase 6c-iii-b): an
+    /// absolute seek to the next / previous `ChapterMark`, clamped at the ends. A
+    /// no-op when the item has no chapters or the skip would run off the end
+    /// (`neighbour_chapter` returns `None`). The shared mechanism 7c reuses.
+    fn skip_chapter(&mut self, dir: i32) {
+        let chapters = match self.current_item() {
+            Some(item) if !item.chapters.is_empty() => item.chapters.clone(),
+            _ => return,
+        };
+        let pos = self.host.time_pos().unwrap_or(0.0);
+        let Some(target) = neighbour_chapter(&chapters, pos, dir) else {
+            return;
+        };
+        let _ = self.host.seek_absolute(target);
+        // A chapter skip is a jump, not audio played: exclude it from the
+        // time-saved accounting, like a user seek (Phase 6c-ii).
+        if let Some(acc) = self.session.as_mut() {
+            acc.seek(target);
+        }
+        self.flush(StateEvent::Seek, true);
+    }
+
     fn load_current(&mut self) {
         // Close the session for the item we are leaving before loading the next
         // (Phase 6c-ii). Idempotent, so a boundary that already closed (EOF) is a
@@ -605,11 +629,12 @@ impl Engine {
 
     fn refresh_snapshot(&self) {
         let current = self.current_item();
+        let position = self.host.time_pos().unwrap_or(0.0);
         let snap = PlayerSnapshot {
             current_index: self.current,
             track_id: current.map(|i| i.track_id),
             kind: current.map(|i| i.kind),
-            position: self.host.time_pos().unwrap_or(0.0),
+            position,
             duration: self.host.duration(),
             paused: self.paused,
             streaming: current.is_some_and(|i| i.streaming),
@@ -619,6 +644,8 @@ impl Engine {
             volume: self.volume,
             queue_len: self.queue.len(),
             ended: self.ended,
+            chapter_count: current.map_or(0, |i| i.chapters.len()),
+            current_chapter: current.and_then(|i| current_chapter_at(&i.chapters, position)),
             audio_devices: self.audio_devices.clone(),
             audio_device: self.audio_device.clone(),
         };

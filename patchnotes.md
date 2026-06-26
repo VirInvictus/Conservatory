@@ -1,5 +1,19 @@
 # Patch Notes
 
+## v0.0.48
+
+Phase 6c-iii-b shipped: chapter navigation. Episodes with chapters can now be skipped chapter by chapter, from the Now-bar or the keyboard, and the engine swaps cleanly between a music track's filter chain and an episode's spoken-word profile mid-queue. The mechanism is built generic in the core player so the audiobook engine reuses it at Phase 7.
+
+- **The navigation math (`conservatory-core/src/player/chapters.rs`, pure):** a lightweight `ChapterMark` (start time + title) and two helpers, `current_chapter_at` (which chapter the playhead is in) and `neighbour_chapter` (the absolute time to seek to for a next / previous skip). Forward stops at the last chapter (a no-op past the end); back restarts the current chapter when more than three seconds in, else steps to the previous one, clamped at the first. Unit-tested for every case.
+- **The item carries its chapters:** `PlayableItem` gained a `chapters` field, resolved at queue-build time (an episode's stored chapters, an audiobook's at Phase 7), so the engine navigates them without ever reading the database. The GUI attaches them after building a queue (`attach_episode_chapters`); a music-only queue simply has none.
+- **Engine + transport:** a new `SkipChapter` command seeks to the neighbouring mark (and, like a user seek, is excluded from the Smart Speed time-saved accounting). The player snapshot now reports the current chapter and the chapter count. The Now-bar grows previous / next-chapter buttons that appear only for a chaptered item, and **`Ctrl+Shift+→` / `Ctrl+Shift+←`** skip chapters from anywhere.
+- **CLI:** the `play` verb now attaches an episode's chapters to its queue item, so chapter-skip works headless too.
+- **Tests:** the `chapters.rs` helpers; an engine run that skips forward to a chapter boundary and back to the start (paused, so the fixture cannot end under it); and the roadmap-named filter-graph swap, a queue interleaving a music track and a podcast episode that plays both to completion (proving the `af`-chain profile switch at the kind boundary, spec §16.9). Full suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green. No new dependency, no new migration.
+
+Manual-launch check still owed (display-bound): confirm the Now-bar chapter buttons appear for a chaptered episode and the keybinding jumps chapters, and that a chapter-less item hides them.
+
+Next: Phase 6c-iii-c/d (the Now Playing episode surface, then the sleep timer), the last of podcast parity before Belfry retires.
+
 ## v0.0.47
 
 Phase 6c-iii-a shipped: podcast chapters are now fetched and stored. A feed's

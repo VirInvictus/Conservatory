@@ -12,6 +12,7 @@
 //! kept in core (not the GTK binary) so the whole engine stays CLI-driveable.
 
 pub mod chain;
+pub mod chapters;
 pub mod dsp;
 pub mod engine;
 pub mod handle;
@@ -23,6 +24,7 @@ pub mod spoken;
 pub mod state;
 
 pub use chain::{build_af_chain, eq_band_command, eq_stage};
+pub use chapters::{ChapterMark, current_chapter_at, neighbour_chapter};
 pub use dsp::{comp_stage, leveler_stage, limiter_stage};
 pub use engine::{spawn, spawn_null, spawn_with};
 pub use handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};

@@ -3,8 +3,9 @@
 #
 # Imports the local testdata albums into a throwaway library under $TMPDIR,
 # subscribes to one real podcast feed, and launches the GTK app: the Music
-# browse (faceted panes, sortable track list, Ctrl+F filter bar) and the
-# Podcasts triage tab (Phase 6b). Nothing is written to the repo or your real
+# browse (faceted panes, sortable track list, Ctrl+F filter bar), the Podcasts
+# triage tab (Phase 6b), and the Now Playing drawer (Ctrl+I) with its chapter
+# list + Smart Speed indicator (Phase 6c-iii). Nothing is written to the repo or your real
 # music library (testdata is copied, not moved); the throwaway library is
 # removed when you close the window. Run it from anywhere:
 #
@@ -115,7 +116,17 @@ echo "          (Inbox / Queue / Played), shows, and tags; an episode list; and 
 echo "          detail pane. Double-click an episode to play it in the SAME queue"
 echo "          as music (streamed if not downloaded); the detail buttons mark it"
 echo "          played/archived or star it. With a show selected, the gear opens"
-echo "          its per-show settings (speed, Smart Speed, inbox policy)."
+echo "          its per-show settings (speed, Smart Speed, inbox policy). The show"
+echo "          notes are cleaned to plain text on import."
+echo "  details:  click the Now-bar cover/title (or Ctrl+I) to slide up the Now"
+echo "          Playing drawer with the current item's full metadata. For a"
+echo "          chaptered episode it also lists the chapters: click one to jump,"
+echo "          and the chapter you are in highlights and follows the playhead."
+echo "          Ctrl+Shift+-> / Ctrl+Shift+<- skip chapter to chapter (the Now-bar"
+echo "          also grows chapter buttons). Turn on Smart Speed in a show's gear"
+echo "          and the drawer shows a live 'saved' time as you listen. Chapters"
+echo "          appear for shows that publish them (Podcasting 2.0 podcast:chapters);"
+echo "          point CONSERVATORY_DEMO_FEED at such a feed to see them."
 # The library root (second arg) is what lets the player resolve the managed
 # relative track paths; without it the GUI browses but can't play (Phase 4).
 "$GUI" "$DB" "$LIB"

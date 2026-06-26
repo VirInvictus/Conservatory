@@ -499,10 +499,12 @@ async fn queue_gained_the_episode_foreign_key() {
         referenced.iter().any(|t| t == "tracks"),
         "queue should still reference tracks: {referenced:?}"
     );
-    // `books` does not exist until Phase 7, so book_id stays plain (no FK yet).
+    // `book_id` gained its FK at migration 0011 (Phase 7a-i), once `books` landed;
+    // the dedicated check lives in tests/audiobooks.rs. Here we just confirm the
+    // episode FK from 0006 did not regress that rebuild.
     assert!(
-        !referenced.iter().any(|t| t == "books"),
-        "book_id must not have an FK until Phase 7: {referenced:?}"
+        referenced.iter().any(|t| t == "books"),
+        "queue should reference books after 0011: {referenced:?}"
     );
 }
 

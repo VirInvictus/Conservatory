@@ -11,8 +11,8 @@
 use tokio::sync::oneshot;
 
 use crate::db::models::{
-    Album, Artist, AudioState, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor,
-    PlayedState, Show, ShowSettings, Track,
+    Album, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, EQ_BAND_COUNT, Episode,
+    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -369,6 +369,68 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    // --- Audiobooks (spec §4.5, Phase 7a-i) ---
+    /// Resolve an audiobook person by `sort_name`, creating on first sight.
+    GetOrCreateBookPerson {
+        name: String,
+        sort_name: String,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Resolve a series by `name`, creating on first sight.
+    GetOrCreateSeries {
+        name: String,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Insert a book, returning its new id.
+    InsertBook {
+        book: Book,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+
+    /// Link an author to a book (role-tagged m2m).
+    LinkBookAuthor {
+        book_id: i64,
+        person_id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Link a narrator to a book (role-tagged m2m).
+    LinkBookNarrator {
+        book_id: i64,
+        person_id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Replace a book's ordered chapter set.
+    ReplaceBookChapters {
+        book_id: i64,
+        chapters: Vec<BookChapter>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Upsert a book's resume row.
+    UpsertBookPlayback {
+        playback: BookPlayback,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Persist a book's absolute resume position during playback.
+    SetBookPosition {
+        book_id: i64,
+        position: f64,
+        when: Option<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Record a book played through to the end.
+    CompleteBook {
+        book_id: i64,
+        when: Option<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Ack a shutdown request. The loop exits naturally once every
     /// `WorkerHandle` clone has dropped and the channel closes.
     Shutdown { reply: oneshot::Sender<()> },
@@ -433,6 +495,15 @@ impl Command {
             Self::ReplaceChapters { .. } => "replace_chapters",
             Self::GetOrCreateTag { .. } => "get_or_create_tag",
             Self::SetShowTags { .. } => "set_show_tags",
+            Self::GetOrCreateBookPerson { .. } => "get_or_create_book_person",
+            Self::GetOrCreateSeries { .. } => "get_or_create_series",
+            Self::InsertBook { .. } => "insert_book",
+            Self::LinkBookAuthor { .. } => "link_book_author",
+            Self::LinkBookNarrator { .. } => "link_book_narrator",
+            Self::ReplaceBookChapters { .. } => "replace_book_chapters",
+            Self::UpsertBookPlayback { .. } => "upsert_book_playback",
+            Self::SetBookPosition { .. } => "set_book_position",
+            Self::CompleteBook { .. } => "complete_book",
             Self::Shutdown { .. } => "shutdown",
             #[cfg(test)]
             Self::Panic => "panic",

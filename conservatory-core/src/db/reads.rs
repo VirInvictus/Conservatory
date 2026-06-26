@@ -10,9 +10,10 @@ use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
-    Album, Artist, AudioState, Chapter, CompSettings, DspState, EQ_BAND_COUNT, Episode, EqPreset,
-    EqState, InboxPolicy, LevelerSettings, LimiterSettings, MediaKind, ModuleState, Perspective,
-    Playback, PlayedState, QueueItem, ResamplerQuality, Show, ShowSettings, Tag, Track,
+    Album, Artist, AudioState, Book, BookChapter, BookPerson, BookPlayback, Chapter, CompSettings,
+    DspState, EQ_BAND_COUNT, Episode, EqPreset, EqState, InboxPolicy, LevelerSettings,
+    LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState, QueueItem,
+    ResamplerQuality, Series, Show, ShowSettings, Tag, Track,
 };
 use crate::errors::Result;
 
@@ -1181,4 +1182,142 @@ pub fn get_audio_state(conn: &Connection) -> Result<AudioState> {
         })
         .optional()?;
     Ok(state.unwrap_or_default())
+}
+
+// --- Audiobooks (spec §4.5, Phase 7a-i) ---------------------------------------
+
+fn row_to_book(row: &rusqlite::Row<'_>) -> rusqlite::Result<Book> {
+    let accent: Option<i64> = row.get("accent_rgb")?;
+    let added_at: Option<i64> = row.get("added_at")?;
+    Ok(Book {
+        id: row.get("id")?,
+        title: row.get("title")?,
+        subtitle: row.get("subtitle")?,
+        series_id: row.get("series_id")?,
+        series_sequence: row.get("series_sequence")?,
+        year: row.get::<_, Option<i64>>("year")?.map(|v| v as i32),
+        publisher: row.get("publisher")?,
+        isbn: row.get("isbn")?,
+        asin: row.get("asin")?,
+        description: row.get("description")?,
+        language: row.get("language")?,
+        shelf_genre: row.get("shelf_genre")?,
+        cover_path: row.get("cover_path")?,
+        accent_rgb: accent.map(|v| v as u32),
+        folder_path: row.get("folder_path")?,
+        rating: row.get::<_, i64>("rating")? as u8,
+        starred: row.get("starred")?,
+        added_at: epoch_to_dt(added_at),
+    })
+}
+
+fn row_to_book_person(row: &rusqlite::Row<'_>) -> rusqlite::Result<BookPerson> {
+    Ok(BookPerson {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        sort_name: row.get("sort_name")?,
+    })
+}
+
+fn row_to_book_chapter(row: &rusqlite::Row<'_>) -> rusqlite::Result<BookChapter> {
+    Ok(BookChapter {
+        id: row.get("id")?,
+        book_id: row.get("book_id")?,
+        idx: row.get("idx")?,
+        title: row.get("title")?,
+        file_path: row.get("file_path")?,
+        file_offset: row.get("file_offset")?,
+        duration: row.get("duration")?,
+    })
+}
+
+fn row_to_book_playback(row: &rusqlite::Row<'_>) -> rusqlite::Result<BookPlayback> {
+    let last_played: Option<i64> = row.get("last_played")?;
+    Ok(BookPlayback {
+        book_id: row.get("book_id")?,
+        position: row.get("position")?,
+        finished: row.get("finished")?,
+        last_played: epoch_to_dt(last_played),
+        speed: row.get("speed")?,
+        smart_speed: row.get::<_, Option<bool>>("smart_speed")?,
+        voice_boost: row.get::<_, Option<bool>>("voice_boost")?,
+    })
+}
+
+/// One book by id.
+pub fn get_book(conn: &Connection, id: i64) -> Result<Option<Book>> {
+    conn.query_row(
+        "SELECT * FROM books WHERE id = ?1",
+        params![id],
+        row_to_book,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// All books, newest first (the shelf surface in Phase 7b reorders by progress).
+pub fn list_books(conn: &Connection) -> Result<Vec<Book>> {
+    let mut stmt = conn.prepare("SELECT * FROM books ORDER BY added_at DESC, id DESC")?;
+    let rows = stmt.query_map([], row_to_book)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// A book's authors (role-tagged link), in sort order.
+pub fn book_authors(conn: &Connection, book_id: i64) -> Result<Vec<BookPerson>> {
+    let mut stmt = conn.prepare(
+        "SELECT p.* FROM book_people p
+         JOIN book_authors ba ON ba.person_id = p.id
+         WHERE ba.book_id = ?1
+         ORDER BY p.sort_name",
+    )?;
+    let rows = stmt.query_map(params![book_id], row_to_book_person)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// A book's narrators (role-tagged link), in sort order.
+pub fn book_narrators(conn: &Connection, book_id: i64) -> Result<Vec<BookPerson>> {
+    let mut stmt = conn.prepare(
+        "SELECT p.* FROM book_people p
+         JOIN book_narrators bn ON bn.person_id = p.id
+         WHERE bn.book_id = ?1
+         ORDER BY p.sort_name",
+    )?;
+    let rows = stmt.query_map(params![book_id], row_to_book_person)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// A book's ordered chapters (spec §4.5).
+pub fn book_chapters(conn: &Connection, book_id: i64) -> Result<Vec<BookChapter>> {
+    let mut stmt = conn.prepare("SELECT * FROM book_chapters WHERE book_id = ?1 ORDER BY idx")?;
+    let rows = stmt.query_map(params![book_id], row_to_book_chapter)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// The series a book belongs to, if any.
+pub fn series_for_book(conn: &Connection, book_id: i64) -> Result<Option<Series>> {
+    conn.query_row(
+        "SELECT s.* FROM series s
+         JOIN books b ON b.series_id = s.id
+         WHERE b.id = ?1",
+        params![book_id],
+        |row| {
+            Ok(Series {
+                id: row.get("id")?,
+                name: row.get("name")?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// A book's resume row, if it has been played (spec §6.4).
+pub fn get_book_playback(conn: &Connection, book_id: i64) -> Result<Option<BookPlayback>> {
+    conn.query_row(
+        "SELECT * FROM book_playback WHERE book_id = ?1",
+        params![book_id],
+        row_to_book_playback,
+    )
+    .optional()
+    .map_err(Into::into)
 }

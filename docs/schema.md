@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2), `0008` (the equalizer: `eq_presets` + `eq_state`, Phase 5.5b), `0009` (the audio config: `audio_state`, Phase 5.5c), and `0010` (the 16 built-in EQ presets, Phase 5.5b follow-on). The audiobook tables below are still draft (they land at Phase 7a). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
+> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2), `0008` (the equalizer: `eq_presets` + `eq_state`, Phase 5.5b), `0009` (the audio config: `audio_state`, Phase 5.5c), `0010` (the 16 built-in EQ presets, Phase 5.5b follow-on), and `0011` (the audiobook tables + `book_fts` + the queue `book_id` foreign key, Phase 7a-i). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
 
 ## Connection discipline
 
@@ -77,7 +77,7 @@ CREATE TABLE genre_priority (genre TEXT PRIMARY KEY, rank INTEGER NOT NULL);
 
 ## Unified queue (Phase 4b-i, migration `0005`; episode FK at `0006`, spec §4.3)
 
-One ordered queue across all three media kinds; the bridge that makes the unified queue real. The full column set landed at `0005`, but **only `track_id` carried a foreign key then**: with `foreign_keys = ON`, SQLite refuses any INSERT/UPDATE/DELETE on a child table whose parent does not exist yet, even when the referencing column is NULL. So `episode_id`/`book_id` were plain columns until their parent tables land, at which point a table rebuild re-adds the `REFERENCES ... ON DELETE CASCADE`. **Migration `0006` rebuilt `queue` to add the `episode_id` FK now that `episodes` exists** (Phase 6a-i); `book_id` stays plain until `books` (Phase 7). The CHECK still guards the one-id-per-row invariant for the not-yet-FK'd column.
+One ordered queue across all three media kinds; the bridge that makes the unified queue real. The full column set landed at `0005`, but **only `track_id` carried a foreign key then**: with `foreign_keys = ON`, SQLite refuses any INSERT/UPDATE/DELETE on a child table whose parent does not exist yet, even when the referencing column is NULL. So `episode_id`/`book_id` were plain columns until their parent tables land, at which point a table rebuild re-adds the `REFERENCES ... ON DELETE CASCADE`. **Migration `0006` rebuilt `queue` to add the `episode_id` FK now that `episodes` exists** (Phase 6a-i); **migration `0011` did the same for `book_id` once `books` landed** (Phase 7a-i). All three id columns now carry their `REFERENCES ... ON DELETE CASCADE`; the CHECK still guards the one-id-per-row invariant.
 
 ```sql
 CREATE TABLE queue (
@@ -86,7 +86,7 @@ CREATE TABLE queue (
     kind        TEXT NOT NULL CHECK (kind IN ('track','episode','audiobook')),
     track_id    INTEGER REFERENCES tracks(id)   ON DELETE CASCADE,
     episode_id  INTEGER REFERENCES episodes(id) ON DELETE CASCADE,  -- FK added at 0006 (Phase 6a-i)
-    book_id     INTEGER,                -- FK added with `books` (Phase 7); audiobook = one entry (spec §3.8)
+    book_id     INTEGER REFERENCES books(id)    ON DELETE CASCADE,  -- FK added at 0011 (Phase 7a-i); audiobook = one entry (spec §3.8)
     CHECK ( (kind='track'     AND track_id   IS NOT NULL AND episode_id IS NULL AND book_id IS NULL)
          OR (kind='episode'   AND episode_id IS NOT NULL AND track_id   IS NULL AND book_id IS NULL)
          OR (kind='audiobook' AND book_id    IS NOT NULL AND track_id   IS NULL AND episode_id IS NULL) )
@@ -260,9 +260,11 @@ CREATE TABLE show_tags (                                           -- preserved 
 );
 ```
 
-## Audiobook tables (Phase 7, spec §4.5)
+## Audiobook tables (Phase 7a-i, migration `0011`, spec §4.5)
 
-Landed at Phase 7a, modeled on Audiobookshelf's relational shape and Cozy's Book → Chapter → file model. A book is the unit; chapters are ordered and come from embedded M4B markers or one-file-per-chapter folders; authors and narrators are distinct roles (many-to-many via `book_authors` / `book_narrators`); `series` carries a decimal `series_sequence`. Resume is a single `book_playback` row per book (the podcast `playback` analogue, never lost), holding the absolute `position`, `finished`, and per-book speed / Smart Speed / Voice Boost overrides.
+Landed at Phase 7a-i, modeled on Audiobookshelf's relational shape and Cozy's Book → Chapter → file model. A book is the unit; chapters are ordered and come from embedded M4B markers or one-file-per-chapter folders; authors and narrators are distinct roles (many-to-many via `book_authors` / `book_narrators`); `series` carries a decimal `series_sequence`. Resume is a single `book_playback` row per book (the podcast `playback` analogue, never lost), holding the absolute `position`, `finished`, and per-book speed / Smart Speed / Voice Boost overrides. `format` / `bitrate` / `sample_rate` are read per chapter file at import and total duration is derived by summing chapter durations, so none is persisted. Indexes: `idx_books_series` on `books(series_id)`, `idx_book_chapters_book` on `book_chapters(book_id, idx)`. The same migration rebuilds `queue` to add the deferred `book_id` foreign key (below).
+
+`book_fts` is unlike `episode_fts`: its `author` / `narrator` / `series` columns denormalize from the *link* tables, not the `books` row. So `books_ai`/`au`/`ad` maintain `title` + `series`, triggers on `book_authors` / `book_narrators` re-aggregate the author / narrator columns (a space-joined `group_concat`) as links change, and `book_people_au` / `series_au` propagate a rename back into the index (the `0001` `artists_au` precedent).
 
 ```sql
 CREATE TABLE book_people (              -- authors + narrators, role-tagged via the link tables
@@ -302,6 +304,6 @@ CREATE TABLE book_playback (            -- one row per book; first-class resume 
 - `track_fts` (title, artist, album)
 - `album_fts` (title, album artist)
 - `episode_fts` (title, description), `show_fts` (title, author, description) — Phase 6a-i, migration `0006`
-- `book_fts` (title, author, narrator, series) (Phase 7)
+- `book_fts` (title, author, narrator, series) — Phase 7a-i, migration `0011`; author/narrator/series denormalized from the link tables (see the audiobook section)
 
 Triggers keep them in sync on insert/update/delete. Consumed by `conservatory-search` for the bare-text path and bm25 ranking (see [`search-grammar.md`](search-grammar.md)). Not transcripts (spec §14).

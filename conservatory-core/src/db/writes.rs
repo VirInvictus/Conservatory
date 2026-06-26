@@ -7,8 +7,8 @@
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
-    Album, Artist, AudioState, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor,
-    PlayedState, Show, ShowSettings, Track,
+    Album, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, EQ_BAND_COUNT, Episode,
+    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -960,5 +960,199 @@ pub(crate) fn set_show_tags(conn: &mut Connection, show_id: i64, tags: &[String]
         )?;
     }
     tx.commit()?;
+    Ok(())
+}
+
+// --- Audiobooks (spec §4.5, Phase 7a-i) ---------------------------------------
+
+/// Resolve an audiobook person by `sort_name` (the unique key, the Calibre
+/// author_sort trick shared with [`get_or_create_artist`]), creating them on
+/// first sight. The display `name` of an existing person is left as-is. Authors
+/// and narrators share this table; the role is the link table, not the row.
+pub(crate) fn get_or_create_book_person(
+    conn: &Connection,
+    name: &str,
+    sort_name: &str,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO book_people (name, sort_name) VALUES (?1, ?2)
+         ON CONFLICT(sort_name) DO NOTHING",
+        params![name, sort_name],
+    )?;
+    let id = conn.query_row(
+        "SELECT id FROM book_people WHERE sort_name = ?1",
+        params![sort_name],
+        |r| r.get(0),
+    )?;
+    Ok(id)
+}
+
+/// Resolve a series by `name` (its unique key), creating it on first sight.
+pub(crate) fn get_or_create_series(conn: &Connection, name: &str) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO series (name) VALUES (?1) ON CONFLICT(name) DO NOTHING",
+        params![name],
+    )?;
+    let id = conn.query_row(
+        "SELECT id FROM series WHERE name = ?1",
+        params![name],
+        |r| r.get(0),
+    )?;
+    Ok(id)
+}
+
+/// Insert a book and return its id. The `books_ai` trigger seeds its `book_fts`
+/// row (title + series); the author/narrator FTS columns fill in as the links
+/// are added (`link_book_author` / `link_book_narrator`).
+pub(crate) fn insert_book(conn: &Connection, book: &Book) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO books (
+            title, subtitle, series_id, series_sequence, year, publisher, isbn,
+            asin, description, language, shelf_genre, cover_path, accent_rgb,
+            folder_path, rating, starred, added_at
+        ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
+        )",
+        params![
+            book.title,
+            book.subtitle,
+            book.series_id,
+            book.series_sequence,
+            book.year,
+            book.publisher,
+            book.isbn,
+            book.asin,
+            book.description,
+            book.language,
+            book.shelf_genre,
+            book.cover_path,
+            book.accent_rgb,
+            book.folder_path,
+            book.rating as i64,
+            book.starred,
+            book.added_at.map(|t| t.timestamp()),
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Link an author to a book (role-tagged many-to-many). Idempotent: a repeated
+/// credit is a no-op. The `book_authors_ai` trigger re-aggregates the book's
+/// `author` FTS column.
+pub(crate) fn link_book_author(conn: &Connection, book_id: i64, person_id: i64) -> Result<()> {
+    conn.execute(
+        "INSERT INTO book_authors (book_id, person_id) VALUES (?1, ?2)
+         ON CONFLICT(book_id, person_id) DO NOTHING",
+        params![book_id, person_id],
+    )?;
+    Ok(())
+}
+
+/// Link a narrator to a book (role-tagged many-to-many). Idempotent. The
+/// `book_narrators_ai` trigger re-aggregates the book's `narrator` FTS column.
+pub(crate) fn link_book_narrator(conn: &Connection, book_id: i64, person_id: i64) -> Result<()> {
+    conn.execute(
+        "INSERT INTO book_narrators (book_id, person_id) VALUES (?1, ?2)
+         ON CONFLICT(book_id, person_id) DO NOTHING",
+        params![book_id, person_id],
+    )?;
+    Ok(())
+}
+
+/// Replace a book's ordered chapter set in one transaction (the `replace_chapters`
+/// pattern). Each row addresses either a standalone per-chapter file (`file_offset`
+/// 0) or a span inside one M4B.
+pub(crate) fn replace_book_chapters(
+    conn: &mut Connection,
+    book_id: i64,
+    chapters: &[BookChapter],
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM book_chapters WHERE book_id = ?1",
+        params![book_id],
+    )?;
+    for ch in chapters {
+        tx.execute(
+            "INSERT INTO book_chapters (book_id, idx, title, file_path, file_offset, duration)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                book_id,
+                ch.idx,
+                ch.title,
+                ch.file_path,
+                ch.file_offset,
+                ch.duration,
+            ],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Upsert a book's resume row by `book_id` (spec §6.4, §4.5). The per-book
+/// `speed` / `smart_speed` / `voice_boost` overrides are `None` to inherit the
+/// global default.
+pub(crate) fn upsert_book_playback(conn: &Connection, playback: &BookPlayback) -> Result<()> {
+    conn.execute(
+        "INSERT INTO book_playback (
+            book_id, position, finished, last_played, speed, smart_speed, voice_boost
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        ON CONFLICT(book_id) DO UPDATE SET
+            position = excluded.position,
+            finished = excluded.finished,
+            last_played = excluded.last_played,
+            speed = excluded.speed,
+            smart_speed = excluded.smart_speed,
+            voice_boost = excluded.voice_boost",
+        params![
+            playback.book_id,
+            playback.position,
+            playback.finished,
+            playback.last_played.map(|t| t.timestamp()),
+            playback.speed,
+            playback.smart_speed,
+            playback.voice_boost,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Persist a book's absolute resume position during playback (spec §6.4): the
+/// engine's insurance-interval / pause / seek write. Clears `finished` (resuming
+/// a finished book un-finishes it) and stamps `last_played`, preserving the
+/// per-book overrides. Creates the row if absent. The completion write is
+/// `complete_book`, the audiobook analogue of `complete_episode`.
+pub(crate) fn set_book_position(
+    conn: &Connection,
+    book_id: i64,
+    position: f64,
+    when: Option<i64>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO book_playback (book_id, position, finished, last_played)
+         VALUES (?1, ?2, 0, ?3)
+         ON CONFLICT(book_id) DO UPDATE SET
+            position = excluded.position,
+            finished = 0,
+            last_played = excluded.last_played",
+        params![book_id, position, when],
+    )?;
+    Ok(())
+}
+
+/// Record a book played through to the end (spec §6.4): marks `finished`, stamps
+/// `last_played`, and rewinds `position` to 0, preserving the per-book overrides.
+/// Creates the row if absent.
+pub(crate) fn complete_book(conn: &Connection, book_id: i64, when: Option<i64>) -> Result<()> {
+    conn.execute(
+        "INSERT INTO book_playback (book_id, position, finished, last_played)
+         VALUES (?1, 0, 1, ?2)
+         ON CONFLICT(book_id) DO UPDATE SET
+            position = 0,
+            finished = 1,
+            last_played = excluded.last_played",
+        params![book_id, when],
+    )?;
     Ok(())
 }

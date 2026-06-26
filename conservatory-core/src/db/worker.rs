@@ -18,8 +18,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::db::command::Command;
 use crate::db::models::{
-    Album, Artist, AudioState, Chapter, EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor,
-    PlayedState, Show, ShowSettings, Track,
+    Album, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, EQ_BAND_COUNT, Episode,
+    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track,
 };
 use crate::db::{connection, migrations, probe, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
@@ -535,6 +535,103 @@ impl WorkerHandle {
         .await
     }
 
+    // --- Audiobooks (spec §4.5, Phase 7a-i) ---
+
+    /// Resolve an audiobook person by `sort_name`, creating on first sight.
+    pub async fn get_or_create_book_person(
+        &self,
+        name: impl Into<String>,
+        sort_name: impl Into<String>,
+    ) -> Result<i64> {
+        let name = name.into();
+        let sort_name = sort_name.into();
+        self.dispatch(|reply| Command::GetOrCreateBookPerson {
+            name,
+            sort_name,
+            reply,
+        })
+        .await
+    }
+
+    /// Resolve a series by `name`, creating on first sight.
+    pub async fn get_or_create_series(&self, name: impl Into<String>) -> Result<i64> {
+        let name = name.into();
+        self.dispatch(|reply| Command::GetOrCreateSeries { name, reply })
+            .await
+    }
+
+    /// Insert a book, returning its new id.
+    pub async fn insert_book(&self, book: Book) -> Result<i64> {
+        self.dispatch(|reply| Command::InsertBook { book, reply })
+            .await
+    }
+
+    /// Link an author to a book (role-tagged many-to-many).
+    pub async fn link_book_author(&self, book_id: i64, person_id: i64) -> Result<()> {
+        self.dispatch(|reply| Command::LinkBookAuthor {
+            book_id,
+            person_id,
+            reply,
+        })
+        .await
+    }
+
+    /// Link a narrator to a book (role-tagged many-to-many).
+    pub async fn link_book_narrator(&self, book_id: i64, person_id: i64) -> Result<()> {
+        self.dispatch(|reply| Command::LinkBookNarrator {
+            book_id,
+            person_id,
+            reply,
+        })
+        .await
+    }
+
+    /// Replace a book's ordered chapter set.
+    pub async fn replace_book_chapters(
+        &self,
+        book_id: i64,
+        chapters: Vec<BookChapter>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::ReplaceBookChapters {
+            book_id,
+            chapters,
+            reply,
+        })
+        .await
+    }
+
+    /// Upsert a book's resume row.
+    pub async fn upsert_book_playback(&self, playback: BookPlayback) -> Result<()> {
+        self.dispatch(|reply| Command::UpsertBookPlayback { playback, reply })
+            .await
+    }
+
+    /// Persist a book's absolute resume position during playback.
+    pub async fn set_book_position(
+        &self,
+        book_id: i64,
+        position: f64,
+        when: Option<i64>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::SetBookPosition {
+            book_id,
+            position,
+            when,
+            reply,
+        })
+        .await
+    }
+
+    /// Record a book played through to the end.
+    pub async fn complete_book(&self, book_id: i64, when: Option<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::CompleteBook {
+            book_id,
+            when,
+            reply,
+        })
+        .await
+    }
+
     /// Send a shutdown ack. The loop exits once every `WorkerHandle` clone has
     /// dropped and the channel closes; this just confirms the worker is alive.
     pub async fn shutdown_ack(&self) -> Result<()> {
@@ -914,6 +1011,58 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::set_show_tags(conn, show_id, &tags));
+        }
+        Command::GetOrCreateBookPerson {
+            name,
+            sort_name,
+            reply,
+        } => {
+            let _ = reply.send(writes::get_or_create_book_person(conn, &name, &sort_name));
+        }
+        Command::GetOrCreateSeries { name, reply } => {
+            let _ = reply.send(writes::get_or_create_series(conn, &name));
+        }
+        Command::InsertBook { book, reply } => {
+            let _ = reply.send(writes::insert_book(conn, &book));
+        }
+        Command::LinkBookAuthor {
+            book_id,
+            person_id,
+            reply,
+        } => {
+            let _ = reply.send(writes::link_book_author(conn, book_id, person_id));
+        }
+        Command::LinkBookNarrator {
+            book_id,
+            person_id,
+            reply,
+        } => {
+            let _ = reply.send(writes::link_book_narrator(conn, book_id, person_id));
+        }
+        Command::ReplaceBookChapters {
+            book_id,
+            chapters,
+            reply,
+        } => {
+            let _ = reply.send(writes::replace_book_chapters(conn, book_id, &chapters));
+        }
+        Command::UpsertBookPlayback { playback, reply } => {
+            let _ = reply.send(writes::upsert_book_playback(conn, &playback));
+        }
+        Command::SetBookPosition {
+            book_id,
+            position,
+            when,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_book_position(conn, book_id, position, when));
+        }
+        Command::CompleteBook {
+            book_id,
+            when,
+            reply,
+        } => {
+            let _ = reply.send(writes::complete_book(conn, book_id, when));
         }
         Command::Shutdown { reply } => {
             let _ = reply.send(());

@@ -330,6 +330,88 @@ pub struct Tag {
     pub name: String,
 }
 
+// --- Audiobooks (spec §4.5, Phase 7) ------------------------------------------
+//
+// Authors and narrators are distinct roles over a shared `book_people` table;
+// `series` carries a decimal sequence; a book is the unit and its ordered
+// chapters address either a standalone per-chapter file or a span inside one
+// M4B. Resume is a single row per book (the §6.4 first-class case). Schema is
+// core-owned (the §2.2 boundary rule); the `conservatory-audiobooks` plugin
+// consumes these. A music-only build compiles them but leaves the tables empty.
+
+/// An audiobook author or narrator. The role is carried by which link table
+/// (`book_authors` / `book_narrators`) references the person, not by the row.
+/// `sort_name` ("Sanderson, Brandon") drives the path and sort (the Calibre
+/// author_sort trick, as for [`Artist`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BookPerson {
+    pub id: i64,
+    pub name: String,
+    pub sort_name: String,
+}
+
+/// A book series. `series_sequence` lives on [`Book`] so one series can hold
+/// books at different decimal positions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Series {
+    pub id: i64,
+    pub name: String,
+}
+
+/// One audiobook (spec §4.5). Authors and narrators are linked separately;
+/// `series_id` / `series_sequence` are `None` for a standalone book. Format /
+/// bitrate / sample-rate are read per chapter file at import and total duration
+/// is derived by summing chapter durations, so neither is stored here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Book {
+    pub id: i64,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub series_id: Option<i64>,
+    pub series_sequence: Option<f64>, // decimal: "Book 1.5"
+    pub year: Option<i32>,
+    pub publisher: Option<String>,
+    pub isbn: Option<String>,
+    pub asin: Option<String>,
+    pub description: Option<String>,
+    pub language: Option<String>,
+    pub shelf_genre: Option<String>, // single-valued path input (spec §5.2)
+    pub cover_path: Option<String>,
+    pub accent_rgb: Option<u32>, // packed RGB, median-cut from cover (spec §7.4)
+    pub folder_path: String,     // managed; rendered from the template (spec §5.7)
+    pub rating: u8,              // 0–5
+    pub starred: bool,
+    pub added_at: Option<DateTime<Utc>>,
+}
+
+/// One ordered chapter (spec §4.5). `file_path` + `file_offset` address either a
+/// standalone per-chapter file (offset 0) or a span inside a single M4B; the
+/// engine treats both identically (spec §6.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BookChapter {
+    pub id: i64,
+    pub book_id: i64,
+    pub idx: i64, // 0-based order within the book
+    pub title: Option<String>,
+    pub file_path: String,
+    pub file_offset: f64, // seconds into file_path where this chapter starts
+    pub duration: Option<f64>,
+}
+
+/// First-class resume for a book (spec §6.4). One row per book; `position` is an
+/// absolute offset across the whole book. The per-book `speed` / `smart_speed` /
+/// `voice_boost` overrides are `None` to inherit the global default (spec §6.3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BookPlayback {
+    pub book_id: i64,
+    pub position: f64,
+    pub finished: bool,
+    pub last_played: Option<DateTime<Utc>>,
+    pub speed: Option<f64>,
+    pub smart_speed: Option<bool>,
+    pub voice_boost: Option<bool>,
+}
+
 /// Number of graphic-equalizer bands (Phase 5.5b): a 10-band ISO octave EQ.
 pub const EQ_BAND_COUNT: usize = 10;
 

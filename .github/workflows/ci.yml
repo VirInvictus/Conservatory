@@ -28,6 +28,10 @@ jobs:
       # is absent, so a missing package never fails CI.
       - name: Install rsgain (best-effort)
         run: sudo apt-get install -y rsgain || true
+      # ffmpeg/ffprobe (Phase 7a-ii): the embedded-M4B-chapter read shells
+      # ffprobe. Best-effort like rsgain; the chapter test skips when absent.
+      - name: Install ffmpeg (best-effort)
+        run: sudo apt-get install -y ffmpeg || true
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

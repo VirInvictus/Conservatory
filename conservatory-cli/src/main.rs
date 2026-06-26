@@ -288,6 +288,30 @@ enum Command {
         /// Path to the SQLite database.
         db: PathBuf,
     },
+
+    /// Audiobook tools (spec §3.8, Phase 7). Only present with the `audiobooks`
+    /// plugin (the default). `import` / `set` land at 7a-iii.
+    #[cfg(feature = "audiobooks")]
+    Audiobook {
+        #[command(subcommand)]
+        action: AudiobookAction,
+    },
+}
+
+/// Audiobook verbs. Gated behind the `audiobooks` plugin so a music-only build
+/// has no audiobook surface.
+#[cfg(feature = "audiobooks")]
+#[derive(Subcommand)]
+enum AudiobookAction {
+    /// Read a folder or a single audio file into a book draft and print it: the
+    /// resolved title / authors / narrators / series and the ordered chapter
+    /// list. Network-free, read-only, no database (Phase 7a-ii). Embedded M4B
+    /// chapters need `ffprobe` on PATH; without it a single file reads as one
+    /// whole-file chapter.
+    DebugRead {
+        /// The book folder (multi-file) or a single audio file.
+        path: PathBuf,
+    },
 }
 
 /// Equalizer verbs (Phase 5.5b).
@@ -792,6 +816,10 @@ fn main() -> Result<()> {
         Some(Command::Dsp { action }) => dsp(action),
         Some(Command::Output { action }) => output(action),
         Some(Command::DebugFacets { db }) => debug_facets(db),
+        #[cfg(feature = "audiobooks")]
+        Some(Command::Audiobook {
+            action: AudiobookAction::DebugRead { path },
+        }) => audiobook_debug_read(path),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
@@ -871,6 +899,76 @@ fn debug_tags(file: PathBuf) -> Result<()> {
             println!("accent:       #{accent:06X}");
         }
         None => println!("cover:        (none)"),
+    }
+    Ok(())
+}
+
+/// Read a folder or single file into a [`conservatory_audiobooks::BookDraft`] and
+/// print it (Phase 7a-ii). The headless artifact for the audiobook reader: no
+/// database, no move, no covers/accent (all 7a-iii).
+#[cfg(feature = "audiobooks")]
+fn audiobook_debug_read(path: PathBuf) -> Result<()> {
+    use conservatory_audiobooks::{PersonDraft, read_book};
+
+    let draft = read_book(&path).with_context(|| format!("reading book from {path:?}"))?;
+
+    let names = |ps: &[PersonDraft]| -> String {
+        if ps.is_empty() {
+            "(none)".to_string()
+        } else {
+            ps.iter()
+                .map(|p| format!("{} [{}]", p.name, p.sort_name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    };
+
+    println!("source dir:   {}", draft.source_dir.display());
+    println!("title:        {}", opt(&draft.title));
+    println!("subtitle:     {}", opt(&draft.subtitle));
+    println!("authors:      {}", names(&draft.authors));
+    println!("narrators:    {}", names(&draft.narrators));
+    let series = match (&draft.series, draft.series_sequence) {
+        (Some(s), Some(n)) => format!("{s} #{n}"),
+        (Some(s), None) => s.clone(),
+        _ => "(none)".to_string(),
+    };
+    println!("series:       {series}");
+    println!("year:         {}", opt(&draft.year));
+    println!("publisher:    {}", opt(&draft.publisher));
+    println!("isbn:         {}", opt(&draft.isbn));
+    println!("asin:         {}", opt(&draft.asin));
+    println!("language:     {}", opt(&draft.language));
+    match &draft.cover {
+        Some(bytes) => println!("cover:        {} bytes", bytes.len()),
+        None => println!("cover:        (none)"),
+    }
+    if let Some(desc) = &draft.description {
+        let head: String = desc.chars().take(160).collect();
+        let tail = if desc.chars().count() > 160 {
+            "..."
+        } else {
+            ""
+        };
+        println!("description:  {head}{tail}");
+    }
+
+    println!("chapters:     {}", draft.chapters.len());
+    for ch in &draft.chapters {
+        let title = ch.title.as_deref().unwrap_or("(untitled)");
+        let dur = ch
+            .duration
+            .map(|d| format!("{d:.0}s"))
+            .unwrap_or_else(|| "?".to_string());
+        let file = ch
+            .file_path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("?");
+        println!(
+            "  {:>3}. @{:>8.1}s  {:>6}  {}  [{}]",
+            ch.idx, ch.file_offset, dur, title, file
+        );
     }
     Ok(())
 }

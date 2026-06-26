@@ -9,5 +9,23 @@ authors.workspace = true
 
 # Compile-time plugin crate (spec §2.2): the audiobook subsystem lands here at
 # Phase 7 (sidecar/tag import, chapter resolver, book-state logic, the
-# Audiobooks CLI verbs and GTK tab). Dependency-free stub until then.
+# Audiobooks CLI verbs and GTK tab).
+#
+# Phase 7a-ii: the tag + Audiobookshelf-sidecar reader and the chapter resolver.
+# No new third-party dependency: lofty (embedded tags, the 1c read crate),
+# quick-xml (the .opf sidecar, the same crate the podcast OPML uses), serde_json
+# (the ffprobe -show_chapters JSON), and chrono. Embedded M4B chapter markers are
+# read via an `ffprobe` shell-out (the rsgain precedent, ATTRIBUTIONS.md), not a
+# Rust MP4 crate, so nothing new is linked.
 [dependencies]
+conservatory-core = { path = "../conservatory-core" }
+lofty = { workspace = true }
+quick-xml = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

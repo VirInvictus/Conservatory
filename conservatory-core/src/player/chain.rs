@@ -21,6 +21,7 @@
 use crate::db::models::{DspState, EQ_CENTRES, EqState};
 use crate::player::dsp::{comp_stage, leveler_stage, limiter_stage};
 use crate::player::profile::MusicProfile;
+use crate::player::spoken::{smart_speed_stage, voice_boost_stages};
 
 /// Build the mpv `af` chain string for `profile` + the active `eq` + the `dsp`
 /// modules. Returns `""` when no stages are active (which clears mpv's `af`).
@@ -48,6 +49,13 @@ pub fn build_af_chain(profile: &MusicProfile, eq: &EqState, dsp: &DspState) -> S
     stages.extend(comp_stage(&dsp.comp));
     stages.extend(limiter_stage(&dsp.limiter));
     stages.extend(leveler_stage(&dsp.leveler));
+
+    // @ss / @vb*: the spoken-word presets (Phase 6c), appended after the music
+    // stages. Only an episode profile sets these flags, so a music chain is
+    // unchanged. Smart Speed precedes Voice Boost so the compressor does not
+    // raise the noise floor before the silence detector runs.
+    stages.extend(smart_speed_stage(profile.smart_speed));
+    stages.extend(voice_boost_stages(profile.voice_boost));
 
     stages.join(",")
 }
@@ -98,6 +106,8 @@ mod tests {
             replaygain_db,
             speed: 1.0,
             pitch_correction: false,
+            smart_speed: false,
+            voice_boost: false,
         }
     }
 
@@ -223,6 +233,33 @@ mod tests {
     #[test]
     fn disabled_dsp_adds_nothing_to_the_chain() {
         let chain = build_af_chain(&profile(Some(-6.0)), &flat(), &off());
+        assert_eq!(chain, "@rg:lavfi=[volume=-6dB]");
+    }
+
+    #[test]
+    fn spoken_word_stages_append_after_music() {
+        // An episode profile (Phase 6c): @ss then the @vb* group, after the music
+        // stages. Smart Speed precedes Voice Boost (the compressor must not raise
+        // the noise floor before silence detection).
+        let mut p = profile(None);
+        p.smart_speed = true;
+        p.voice_boost = true;
+        let chain = build_af_chain(&p, &flat(), &off());
+        assert!(chain.contains("@ss:lavfi=[silenceremove="), "{chain}");
+        assert!(chain.contains("@vbcomp:lavfi=[acompressor="), "{chain}");
+        assert!(chain.contains("@vbnorm:lavfi=[dynaudnorm="), "{chain}");
+        let ss = chain.find("@ss").unwrap();
+        let vb = chain.find("@vbcomp").unwrap();
+        assert!(ss < vb, "Smart Speed precedes Voice Boost: {chain}");
+    }
+
+    #[test]
+    fn music_profile_emits_no_spoken_word_stages() {
+        // The no-regression guard: a music profile leaves the flags false, so the
+        // chain is exactly the 5.5 chain (no @ss / @vb).
+        let chain = build_af_chain(&profile(Some(-6.0)), &flat(), &off());
+        assert!(!chain.contains("@ss"), "{chain}");
+        assert!(!chain.contains("@vb"), "{chain}");
         assert_eq!(chain, "@rg:lavfi=[volume=-6dB]");
     }
 }

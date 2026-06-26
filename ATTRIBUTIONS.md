@@ -23,9 +23,9 @@ Conservatory borrows patterns, not code, from several projects. Where it ports t
 
 ## License: GPL-3.0-or-later
 
-Conservatory is GPL-3.0-or-later. This is forced, not chosen: the absorbed Smart Speed chain (spec §6.3) uses librubberband for pitch-preserving time-stretch, and librubberband is GPL-2.0-or-later. The combined work is therefore GPL. This is the same constraint Belfry documents.
+Conservatory is GPL-3.0-or-later. This is forced, not chosen: it flows from the GPL libraries libmpv links, not from any single filter we invoke. libmpv links a GPL ffmpeg build (the `silenceremove` / `acompressor` / `equalizer` / `dynaudnorm` / `volume` filters the playback chain rides) and librubberband (GPL-2.0-or-later) where the mpv build carries it. The combined work is therefore GPL. This is the same constraint Belfry documents.
 
-No license relaxation is possible without proposing a replacement for the rubberband dependency in the Smart Speed filter graph.
+As of Phase 6c-i Conservatory no longer invokes the `rubberband` filter itself: Smart Speed is `silenceremove` (dead-air removal) and variable speed is `scaletempo2`. The GPL obligation remains, because it is the linked stack that forces it. No license relaxation is possible without an mpv/ffmpeg build stripped of its GPL components.
 
 ## Dependency licenses
 

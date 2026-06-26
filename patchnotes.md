@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.45
+
+Phase 6c-i shipped: Smart Speed and Voice Boost are real. The per-show toggles (saved since v0.0.37 but inert) now drive spoken-word stages on the shared 5.5 `af`-chain, so a show's episodes play through silence-trimming and voice-leveling. Headless; the time-saved accounting is 6c-ii.
+
+- **Spoken-word stages (`conservatory-core/src/player/spoken.rs`, pure, sibling to `dsp.rs`):** Smart Speed is `@ss:lavfi=[silenceremove=…]` (mid-stream dead-air removal, `stop_periods=-1`, tuned to leave a natural beat); Voice Boost is a fixed three-stage preset, `@vbcomp` (a gentle `acompressor` with make-up gain) → `@vbeq` (low-cut + presence lift) → `@vbnorm` (live `dynaudnorm`, a tighter window than the music leveler). Both are presets on the existing chain, not a parallel path; `build_af_chain` appends them after the music stages, Smart Speed before Voice Boost so the compressor does not raise the noise floor before silence detection.
+- **The profile carries the flags:** `MusicProfile` gained `smart_speed` / `voice_boost`. `resolve_episode_profile` reads them from the show's settings; `resolve_music_profile` leaves them false, so the music chain is byte-for-byte unchanged (the no-regression guard). A show with no saved settings resolves both to false (the feature applies to shows you have configured; the settings dialog defaults Smart Speed on, so saving opts in).
+- **CLI:** `podcast debug-chain <db> <episode_id>` prints an episode's resolved `af` chain (its spoken-word profile composed with the persisted EQ + DSP), so the `@ss` / `@vb*` stages are inspectable headless.
+- **GUI:** the per-show settings dialog drops its "audio processing arrives later" caption; Smart Speed / Voice Boost now describe what they do.
+- **Tests:** the `spoken.rs` builders (on → the expected `silenceremove` / `acompressor` / `dynaudnorm` strings, off → none); `build_af_chain` appends the spoken stages for an episode profile and emits the unchanged chain for music; the libmpv `ao=null` EOF run now sets both flags, proving mpv accepts the `silenceremove` + Voice Boost syntax and still decodes to end. Full suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green. No new dependency, no new migration.
+
+Next: Phase 6c-ii (time-saved accounting via append-only `listening_sessions`).
+
 ## v0.0.44
 
 Phase 5.5c-ii-b shipped, completing Phase 5.5c-ii and the music audio engine: the "Sound" preferences dialog (the equalizer's home since 5.5b) now holds the whole chain, and the persisted config finally drives playback. The music daily-driver feels complete; podcasts (Phase 6) are next.

@@ -276,8 +276,8 @@ impl Inner {
 
         let group = adw::PreferencesGroup::new();
         group.set_description(Some(
-            "Smart Speed and Voice Boost are saved per show; their audio \
-             processing arrives in a later update.",
+            "Smart Speed trims dead air; Voice Boost lifts quiet, uneven speech. \
+             Both apply to this show's episodes when you play them.",
         ));
 
         // Speed bounds mirror player::profile's MIN/MAX_SPEED (the real clamp

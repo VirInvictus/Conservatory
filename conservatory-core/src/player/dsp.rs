@@ -62,14 +62,16 @@ pub fn leveler_stage(m: &ModuleState<LevelerSettings>) -> Option<String> {
 }
 
 /// Convert a dBFS value to a linear amplitude (the form `acompressor` /
-/// `alimiter` expect for their threshold / limit options).
-fn db_to_linear(db: f64) -> f64 {
+/// `alimiter` expect for their threshold / limit options). Shared with the Phase
+/// 6c spoken-word stages ([`crate::player::spoken`]).
+pub(crate) fn db_to_linear(db: f64) -> f64 {
     10f64.powf(db / 20.0)
 }
 
 /// Format a linear amplitude for the filter string: rounded to 0.0001 and
-/// trimmed of float noise, so the chain string is stable and comparable.
-fn fmt_lin(x: f64) -> String {
+/// trimmed of float noise, so the chain string is stable and comparable. Shared
+/// with the Phase 6c spoken-word stages ([`crate::player::spoken`]).
+pub(crate) fn fmt_lin(x: f64) -> String {
     let rounded = (x * 10_000.0).round() / 10_000.0;
     format!("{rounded}")
 }

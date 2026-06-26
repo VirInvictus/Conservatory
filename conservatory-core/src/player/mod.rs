@@ -18,6 +18,7 @@ pub mod handle;
 pub mod host;
 pub mod item;
 pub mod profile;
+pub mod spoken;
 pub mod state;
 
 pub use chain::{build_af_chain, eq_band_command, eq_stage};
@@ -29,4 +30,5 @@ pub use item::PlayableItem;
 pub use profile::{
     MusicProfile, PlaybackConfig, ReplayGain, resolve_episode_profile, resolve_music_profile,
 };
+pub use spoken::{smart_speed_stage, voice_boost_stages};
 pub use state::{EndReason, INSURANCE_INTERVAL_MS, StateDebounce, StateEvent};

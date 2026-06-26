@@ -504,13 +504,28 @@ Split, because the six settings span playback (resolved into the profile) and ma
 
 ### Phase 6c — Podcast playback profile + parity
 
-- [ ] Podcast profile ported from Belfry §5: Smart Speed (silence-skip via `silenceremove`) and Voice Boost (compression + EQ + loudness normalization), including time-saved session accounting. This is the librubberband-class chain that forces GPL-3-or-later (spec §15). **Built as presets on the Phase 5.5 `af`-chain engine, not a parallel hardcoded path.** Two filter choices to validate against the 5.5 findings at implementation (`docs/libmpv-profiles.md`): drive variable speed via mpv `--speed` + `audio-pitch-correction` (scaletempo2) rather than stacking `rubberband` in the chain at every speed, and use live single-pass `dynaudnorm` rather than two-pass/offline `loudnorm` for the Voice Boost leveler.
-- [ ] Episodes share the unified queue and the per-item profile switch prototyped in 4b; append-only `listening_sessions` discipline.
+Split into the audio engine (6c-i / 6c-ii, the parity-critical half, done first) and a follow-on for the surfacing work (6c-iii+). Belfry retires only when the whole of 6c lands (spec §16.8), so the follow-on is part of parity, not optional.
+
+Two filter choices were settled against the 5.5 findings (`docs/libmpv-profiles.md`): variable speed via mpv `--speed` + `audio-pitch-correction` (scaletempo2) rather than a chained `rubberband` at every speed, and live single-pass `dynaudnorm` rather than two-pass/offline `loudnorm`. Smart Speed is the `silenceremove` af-filter (spec contract). **A consequence: `rubberband` is no longer actually used**, so at 6c-i the spec §15 / ATTRIBUTIONS "GPL-3 forced by librubberband" rationale was re-confirmed and reworded: GPL-3 is forced by the **linked GPL stack** (the GPL ffmpeg build the chain filters ride, and librubberband where the mpv build carries it), not by a `rubberband` call we make. GPL-3 stands.
+
+#### Phase 6c-i — Smart Speed + Voice Boost af stages (headless core + CLI) ✅ (v0.0.45)
+
+- [x] Podcast profile ported from Belfry §5: Smart Speed (silence-skip via `silenceremove`) and Voice Boost (compression + voice EQ + live `dynaudnorm`), **built as presets on the Phase 5.5 `af`-chain engine, not a parallel hardcoded path** (`player/spoken.rs`: `smart_speed_stage` `@ss`, `voice_boost_stages` `@vbcomp`/`@vbeq`/`@vbnorm`). `MusicProfile` carries `smart_speed` / `voice_boost`; `resolve_episode_profile` sets them from the show settings (false for music, so the music chain is unchanged). `build_af_chain` appends them after the music stages, Smart Speed first.
+- [x] CLI `podcast debug-chain <ep>` dumps an episode's resolved chain; the GUI per-show dialog's "audio processing arrives later" caption is gone.
+- [x] Tests: the `spoken.rs` builders; `build_af_chain` episode-vs-music; the libmpv `ao=null` EOF run sets both flags (proves the `silenceremove` + Voice Boost mpv syntax decodes). Music-only build green. No new dependency, no new migration.
+
+#### Phase 6c-ii — Time-saved accounting (headless core + CLI)
+
+- [ ] Episodes share the unified queue and the per-item profile switch prototyped in 4b; **append-only `listening_sessions` discipline**. The engine writes one session row per episode boundary; `smart_speed_saved = max(0, audio_seconds/speed − real_seconds)` (the non-linear-timeline math `silenceremove` requires), with user-seek ticks excluded. CLI `podcast stats`.
+- [ ] Tests: the accounting math (seek-excluded ticks, Smart-Speed-off ≈ 0, resume offset on long items); a `listening_sessions` append round-trip; an engine null-host run lands a session row.
+
+#### Phase 6c-iii+ — Chapters + Now Playing additions (the follow-on)
+
 - [ ] Now Playing additions for episodes: chapters, show notes, Smart Speed indicator, sleep timer.
 - [ ] **Chapter persistence + navigation.** Persist the parsed chapter set (the 6a-ii note: the `podcast:chapters` URL / ID3 CHAP are captured but not yet stored) into the `chapters` table, then a **skip-to-next / skip-to-previous-chapter** transport action (an absolute `seek` to the neighbouring `chapters.start_time`) wired to buttons in the Now Playing surface and a keybinding. This is the shared chapter-skip mechanism the audiobook engine reuses at 7c (`docs/keymap.md` + the player engine, not a podcast-only path).
-- [ ] Tests: filter-graph swap between a track and an episode mid-queue; time-saved accounting; resume offset on long items; chapter-skip lands on the neighbouring chapter boundary (forward, back, and clamped at the ends).
+- [ ] Tests: filter-graph swap between a track and an episode mid-queue; chapter-skip lands on the neighbouring chapter boundary (forward, back, and clamped at the ends).
 
-*Usable artifact:* **podcast parity reached.** One queue, one engine, both media types, full Smart Speed / Voice Boost. **Belfry can retire**: update the `~/.gitrepos` project map and archive the Belfry repo (spec §16.8).
+*Usable artifact:* **podcast parity reached** (at the end of the follow-on). One queue, one engine, both media types, full Smart Speed / Voice Boost. **Belfry can then retire**: update the `~/.gitrepos` project map and archive the Belfry repo (spec §16.8). (6c-i alone already makes Smart Speed / Voice Boost audible.)
 
 ---
 

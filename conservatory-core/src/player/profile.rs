@@ -117,6 +117,15 @@ pub struct MusicProfile {
     /// Keep pitch constant when `speed != 1.0` (mpv `audio-pitch-correction`,
     /// scaletempo2). On for spoken word, off for music (it is a no-op at 1.0).
     pub pitch_correction: bool,
+    /// Smart Speed (Phase 6c, spoken word): remove dead air via the `@ss`
+    /// `silenceremove` stage. Always false for music; for episodes it follows the
+    /// show's `smart_speed` setting.
+    pub smart_speed: bool,
+    /// Voice Boost (Phase 6c, spoken word): the compressor + voice-band EQ +
+    /// leveler preset (the `@vb*` stages), tuned to make uneven spoken audio
+    /// intelligible. Always false for music; for episodes it follows the show's
+    /// `voice_boost` setting.
+    pub voice_boost: bool,
 }
 
 /// Resolve which stored gain (dB) ReplayGain should apply for `track` under the
@@ -151,17 +160,23 @@ pub fn resolve_music_profile(track: &Track, cfg: &PlaybackConfig) -> MusicProfil
         replaygain_db,
         speed: 1.0,
         pitch_correction: false,
+        smart_speed: false,
+        voice_boost: false,
     }
 }
 
 /// A spoken-word profile for episode playback: no ReplayGain (podcasts carry
 /// none) and no gapless (episodes are single items), with per-show variable
 /// speed resolved from the show's settings (Phase 6b-ii-c-3-a). `settings` is
-/// `None` for a show with no overrides (the schema default 1.0). The stored
-/// speed is clamped to `[MIN_SPEED, MAX_SPEED]` so a bad value never yields
-/// unusable audio. Pitch correction is on so faster speech stays natural. The
-/// Smart Speed / Voice Boost `af` stages (and the `smart_speed`/`voice_boost`
-/// flags those consume) are Phase 6c.
+/// `None` for a show with no overrides; the stored speed is clamped to
+/// `[MIN_SPEED, MAX_SPEED]` so a bad value never yields unusable audio. Pitch
+/// correction is on so faster speech stays natural.
+///
+/// Smart Speed and Voice Boost (Phase 6c) follow the show's flags, driving the
+/// `@ss` / `@vb*` spoken-word stages of the chain. A show with **no** settings
+/// row resolves both to `false` (conservative: the feature applies only to shows
+/// the user has explicitly configured; the settings dialog defaults Smart Speed
+/// on, so saving a show's settings opts it in).
 pub fn resolve_episode_profile(settings: Option<&ShowSettings>) -> MusicProfile {
     let speed = settings
         .map(|s| s.playback_speed)
@@ -172,6 +187,8 @@ pub fn resolve_episode_profile(settings: Option<&ShowSettings>) -> MusicProfile 
         replaygain_db: None,
         speed,
         pitch_correction: true,
+        smart_speed: settings.is_some_and(|s| s.smart_speed),
+        voice_boost: settings.is_some_and(|s| s.voice_boost),
     }
 }
 

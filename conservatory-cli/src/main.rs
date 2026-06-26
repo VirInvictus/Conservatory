@@ -587,6 +587,15 @@ enum PodcastAction {
         #[arg(long)]
         speed: Option<f64>,
     },
+    /// Print the resolved `af` chain for an episode (Phase 6c debug): its
+    /// spoken-word profile (Smart Speed / Voice Boost from the show settings)
+    /// composed with the persisted EQ + DSP. Read-only.
+    DebugChain {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The episode id.
+        episode_id: i64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2557,7 +2566,41 @@ fn podcast(action: PodcastAction) -> Result<()> {
         PodcastAction::Settings { db, show_id, speed } => {
             block_on(run_podcast_settings(db, show_id, speed))
         }
+        PodcastAction::DebugChain { db, episode_id } => podcast_debug_chain(db, episode_id),
     }
+}
+
+/// Print an episode's resolved `af` chain (Phase 6c): the spoken-word profile
+/// (Smart Speed / Voice Boost from the show settings) composed with the persisted
+/// EQ + DSP, exactly as `MpvHost::load` would build it. Read-only.
+#[cfg(feature = "podcasts")]
+fn podcast_debug_chain(db: PathBuf, episode_id: i64) -> Result<()> {
+    use conservatory_core::db::{get_audio_state, get_eq_state, get_show_settings};
+    use conservatory_core::resolve_episode_profile;
+
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let episode = get_episode(&conn, episode_id)
+        .context("looking up episode")?
+        .ok_or_else(|| anyhow::anyhow!("no episode with id {episode_id}"))?;
+    let settings = get_show_settings(&conn, episode.show_id).context("reading show settings")?;
+    let profile = resolve_episode_profile(settings.as_ref());
+    let eq = get_eq_state(&conn).context("reading EQ state")?;
+    let dsp = get_audio_state(&conn).context("reading audio state")?.dsp;
+    let chain = build_af_chain(&profile, &eq, &dsp);
+
+    println!("episode:     {} {}", episode.id, episode.title);
+    println!(
+        "speed:       {}  pitch_correction={}",
+        profile.speed, profile.pitch_correction
+    );
+    println!("smart_speed: {}", profile.smart_speed);
+    println!("voice_boost: {}", profile.voice_boost);
+    println!(
+        "af chain:    {}",
+        if chain.is_empty() { "(empty)" } else { &chain }
+    );
+    Ok(())
 }
 
 /// A minimal JSON string literal (quote + escape) for the hand-rolled `--json`

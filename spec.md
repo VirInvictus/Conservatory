@@ -4,7 +4,7 @@
 **Target:** GNOME 50+, GTK4 ≥ 4.16, libadwaita ≥ 1.7
 **Language:** Rust (2024 Edition)
 **Build System:** Cargo workspace (`conservatory-core` + `conservatory-search` + `conservatory-podcasts` + `conservatory-audiobooks` + `conservatory-cli` + `conservatory`) / Meson wrapper for Flatpak packaging
-**License:** GNU GPL v3.0 or later (forced by librubberband in the absorbed Smart Speed chain, the same license chain as Belfry; see §15)
+**License:** GNU GPL v3.0 or later (forced by the GPL libraries libmpv links, the same license chain as Belfry; see §15)
 
 > **Status note.** This is the design contract. The decisions below are settled enough to build against. As of v0.0.1 the workspace skeleton exists and Phase 1 (§17) is underway; the build is no longer deferred (the original deferral and its rationale are preserved in §16.1 and §17 for the record, since they are the thing to re-read if the concurrency with Atrium proves a mistake). Provisional detail (exact schema columns, CLI verbs, config keys) follows the established portfolio patterns from Atrium and Belfry and will firm up at implementation time. Genuinely open decisions are collected in §16, not scattered as silent guesses.
 
@@ -668,7 +668,7 @@ GTK4 + libadwaita pull a ~150 MB C-side floor (measured in Viaduct); the targets
 
 App ID: `org.gnome.Conservatory` (GNOME Circle) or `io.github.virinvictus.Conservatory`.
 
-**License: GPL-3.0-or-later.** Forced by librubberband (GPL-2-or-later) in the absorbed Smart Speed chain, the same constraint Belfry documents. No license relaxation without proposing a rubberband replacement. Record the full chain in `ATTRIBUTIONS.md`.
+**License: GPL-3.0-or-later.** Forced by the GPL libraries the player links, not by a call we make: libmpv links a GPL ffmpeg build (the `silenceremove` / `acompressor` / `equalizer` / `dynaudnorm` / `volume` filters the chain rides) and librubberband (GPL-2-or-later) where the build carries it. As of Phase 6c-i Conservatory no longer invokes the `rubberband` filter itself (Smart Speed is `silenceremove`, variable speed is `scaletempo2`), but the obligation flows from linking the stack, the same constraint Belfry documents. No license relaxation without an mpv/ffmpeg build stripped of its GPL components. Record the full chain in `ATTRIBUTIONS.md`.
 
 ---
 

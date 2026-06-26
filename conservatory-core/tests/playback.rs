@@ -135,12 +135,16 @@ fn host_plays_fixture_to_eof() {
     // A real ReplayGain head stage (Phase 5.5a), a non-flat equalizer (Phase
     // 5.5b), and all three DSP modules (Phase 5.5c): this proves the full
     // `@rg` → `@eq` → `@comp` → `@limit` → `@boost` `af`-chain syntax is accepted
-    // by libmpv and does not break decode.
+    // by libmpv and does not break decode. Smart Speed + Voice Boost (Phase 6c)
+    // are on too, so the run also proves the `@ss` (`silenceremove`) and `@vb*`
+    // (`acompressor` / `highpass` / `equalizer` / `dynaudnorm`) spoken-word syntax.
     let profile = MusicProfile {
         gapless: true,
         replaygain_db: Some(-6.0),
         speed: 1.0,
         pitch_correction: false,
+        smart_speed: true,
+        voice_boost: true,
     };
     let mut eq = EqState::flat();
     eq.bands[0] = 6.0; // 31 Hz +6 dB
@@ -198,6 +202,8 @@ fn host_load_applies_profile_speed() {
         replaygain_db: None,
         speed: 1.5,
         pitch_correction: true,
+        smart_speed: false,
+        voice_boost: false,
     };
     host.load(audio_fixture("sample.flac").to_str().unwrap(), &profile)
         .expect("loading fixture");

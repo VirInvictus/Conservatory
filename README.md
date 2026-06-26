@@ -30,7 +30,7 @@ Four commitments, in priority order:
 
 ## Absorbs Belfry
 
-Conservatory absorbs Brandon's podcast client, Belfry. Belfry's Phase 1 work is not discarded: its single-writer SQLite worker is the exact pattern this app needs and migrates here, and its audio engine (Smart Speed, Voice Boost) and Inbox → Queue → Played triage model become the Podcasts side. The one casualty is Belfry's filesystem-canonical design; in Conservatory, podcasts become app-managed downloads, acceptable for ephemeral episodes in a way it would not be for a curated music collection. **Belfry is not retired until Conservatory reaches podcast parity** (spec §16.8, roadmap Phase 6c).
+Conservatory absorbs Brandon's podcast client, Belfry. Belfry's Phase 1 work is not discarded: its single-writer SQLite worker is the exact pattern this app needs and migrated here, and its audio engine (Smart Speed, Voice Boost) and Inbox → Queue → Played triage model became the Podcasts side. The one casualty is Belfry's filesystem-canonical design; in Conservatory, podcasts become app-managed downloads, acceptable for ephemeral episodes in a way it would not be for a curated music collection. **Conservatory reached podcast parity at v0.0.52 (Phase 6c, the sleep timer the last piece), so Belfry is now retired** (spec §16.8): its repo is archived and the podcast subsystem lives entirely here.
 
 **Author's Note:** I'm a college student in my late thirties with no professional industry experience yet; Conservatory is one in a string of native Linux desktop apps I'm building to learn the craft and assemble a portfolio. I came from foobar2000 and Directory Opus, and I keep a large Calibre library. What Calibre does for my books, nothing does for my music. Conservatory is the manager-and-player I want to exist. I work on Fedora 44 on a ThinkPad T14s AMD Gen 6; that's the environment it'll be tested against. I welcome contributions but can only honestly support my own setup.
 
@@ -56,7 +56,7 @@ v0.0.23, Phase 5 complete. Phases 1 (data layer), 2 (import/organize), 3 (browse
 - **Phase 5c — ReplayGain scan.** `replaygain scan <db> '<expr>' --root <root> --apply` computes and writes ReplayGain (via `rsgain`, all formats incl. Opus) and refreshes the DB so playback normalizes untagged albums.
 - **Phase 5d — cover art to disk.** Import writes each album's `cover.jpg` and records it; edits/organize move it with the album; the Now-bar shows the thumbnail and MPRIS exposes `mpris:artUrl`. `set-cover <db> <album_id> <image> --root` sets a cover. **Phase 5 is complete.**
 
-Next: Phase 6 (podcasts, absorb Belfry) or the independent Phase 8 audits.
+(This Status list stops at Phase 5; Phase 5.5 (the audio engine: EQ, DSP, output quality) and Phase 6 (podcasts, absorbing Belfry) have since shipped, the latter through v0.0.52, at which point Belfry was retired. A fuller Status refresh is pending.) Next on the roadmap: Phase 7 (audiobooks) or the independent Phase 8 audits.
 
 - [`spec.md`](spec.md) — the design contract.
 - [`roadmap.md`](roadmap.md) — the phased plan, broken into independently shippable sub-phases.

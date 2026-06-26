@@ -28,7 +28,7 @@ Reference apps: **Calibre** (library-as-database, file ownership, save-to-disk t
 
 ## Belfry absorption status
 
-Conservatory absorbs Belfry. `belfry-core`'s single-writer worker migrates at Phase 1; the full podcast subsystem (fetch, Smart Speed, Voice Boost, triage, OPML) is absorbed at Phase 6. **Belfry is not retired, and the Belfry repo is not deleted, until Conservatory reaches podcast parity** (spec §16.8). The build deferral behind Atrium was lifted at v0.0.1; the retirement-at-parity rule was kept.
+Conservatory absorbed Belfry. `belfry-core`'s single-writer worker migrated at Phase 1; the full podcast subsystem (fetch, Smart Speed, Voice Boost, triage, OPML) was absorbed across Phase 6. **Podcast parity was reached at v0.0.52 (Phase 6c complete, the sleep timer being the last piece), so Belfry is now retired** (spec §16.8): the GitHub repo is archived and the `~/.gitrepos` project map updated. The local Belfry clone is kept frozen as reference, not deleted. No further Belfry work happens; the podcast story lives entirely here.
 
 ## Workspace
 

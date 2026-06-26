@@ -22,13 +22,16 @@ pub fn sanitize_notes(html: &str) -> String {
     }
 
     // Preserve block breaks as newlines before the tags are stripped, so
-    // paragraphs do not run together once ammonia removes the markup.
-    let pre = html
-        .replace("<br>", "\n")
-        .replace("<br/>", "\n")
-        .replace("<br />", "\n")
-        .replace("</p>", "\n")
-        .replace("</P>", "\n");
+    // paragraphs, headings, and list items do not run together once ammonia
+    // removes the markup (real feeds are lowercase; `</P>` is the one common
+    // capitalised straggler).
+    let mut pre = html.to_string();
+    for close in [
+        "<br>", "<br/>", "<br />", "</p>", "</P>", "</h1>", "</h2>", "</h3>", "</h4>", "</h5>",
+        "</h6>", "</li>", "</ul>", "</ol>", "</div>", "</tr>",
+    ] {
+        pre = pre.replace(close, "\n");
+    }
 
     // No allowed tags: ammonia drops every element (and `<script>`/`<style>`
     // bodies), leaving the text content. It decodes named/numeric entities to
@@ -91,6 +94,19 @@ mod tests {
     fn paragraph_breaks_become_newlines() {
         assert_eq!(sanitize_notes("<p>One</p><p>Two</p>"), "One\nTwo");
         assert_eq!(sanitize_notes("Line one<br>Line two"), "Line one\nLine two");
+    }
+
+    #[test]
+    fn breaks_headings_and_list_items() {
+        // The Cortex shape: an <h4> heading ahead of a <p> must not run together.
+        assert_eq!(
+            sanitize_notes("<h4>State of the Workflow</h4><p>Myke talks.</p>"),
+            "State of the Workflow\nMyke talks."
+        );
+        assert_eq!(
+            sanitize_notes("<ul><li>One</li><li>Two</li></ul>"),
+            "One\nTwo"
+        );
     }
 
     #[test]

@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.50
+
+Bugfix: podcast show notes were missing for feeds that leave `<description>` empty and put the real notes in `<content:encoded>` (Cortex, and others on the same setup). The parser preferred the RSS summary and only fell back to content when the summary was absent, but feed-rs reports an empty `<description/>` as `Some("")`, so the fallback never fired and a blank string was stored. On a live Cortex pull this left the 33 newest episodes with no notes.
+
+- **Parse fallback (`conservatory-podcasts/src/parse.rs`):** an empty or whitespace-only summary is now treated as absent, so the notes fall through to `<content:encoded>`; a blank result either way collapses to `None` (the ingest sanitize then no-ops). All 180 Cortex episodes now carry notes.
+- **Readability (`conservatory-podcasts/src/notes.rs`):** the ingest sanitize now also breaks headings and list items (`</h1>`–`</h6>`, `</li>`, `</ul>`, `</div>`, …) into newlines, not just `</p>` / `<br>`, so a heading no longer runs into the paragraph that follows it.
+- **Tests:** an empty-`<description>`-with-`<content:encoded>` parse case and a heading/list-break sanitize case. Full podcasts suite + clippy `-D warnings` + fmt green. No new dependency, no migration, no schema change.
+
+Note: chapters are unaffected. Cortex publishes no `podcast:chapters`, so its episodes have no chapter list (embedded ID3 chapters are a later fold-in).
+
 ## v0.0.49
 
 Phase 6c-iii-c shipped: the Now Playing drawer is now a real episode surface. Open it on a podcast and you get a clickable chapter list that highlights the chapter you are in and follows the playhead, a Smart Speed line whose saved time ticks up as you listen, and show notes cleaned to readable text. This is the last of the surfacing work before the sleep timer (6c-iii-d) and Belfry's retirement.

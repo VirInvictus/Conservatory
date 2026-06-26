@@ -9,9 +9,10 @@
 //!
 //! Episode identity is `(show_id, guid)` (spec §8); the guid here is the
 //! item-level `<podcast:guid>` when present, else feed-rs's entry id (which is
-//! the RSS `<guid>` or a hash of the first link). Show-note sanitisation
-//! (`ammonia`) and chapter storage are deferred (6a-iii / 6b); the chapters
-//! URL is captured but not yet persisted.
+//! the RSS `<guid>` or a hash of the first link). Notes are extracted raw here
+//! (the `<description>` / summary, falling back to `<content:encoded>` when it
+//! is blank); the `ammonia` sanitise and chapter fetch both happen in the
+//! refresh layer ([`crate::refresh`]), not here.
 
 use chrono::{DateTime, Utc};
 
@@ -129,10 +130,18 @@ fn map_entry(entry: feed_rs::model::Entry, ns: Option<&ItemNamespaceData>) -> Pa
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "Untitled Episode".to_string());
 
+    // Notes: the RSS <description> / Atom summary, falling back to
+    // <content:encoded> when that is absent OR blank. Cortex (and others) ship an
+    // empty <description/> with the real notes in content:encoded; feed-rs then
+    // hands us `summary = Some("")`, so a plain `summary.or(content)` keeps the
+    // empty string and stores no notes. Treat blank as absent at each step; a
+    // blank result either way collapses to None (the ingest sanitize no-ops).
     let description = entry
         .summary
         .map(|t| t.content)
-        .or_else(|| entry.content.and_then(|c| c.body));
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| entry.content.and_then(|c| c.body))
+        .filter(|s| !s.trim().is_empty());
 
     // Enclosure: feed-rs maps RSS <enclosure> (and MediaRSS content) into the
     // media objects. Take the first content that carries a URL.
@@ -240,6 +249,37 @@ mod tests {
     fn podcast_guid_overrides_rss_guid() {
         let feed = parse_feed(RSS.as_bytes()).unwrap();
         assert_eq!(feed.episodes[1].guid, "pod-guid-2");
+    }
+
+    // An empty <description/> with the real notes in <content:encoded> (the
+    // Cortex shape): the parser must fall through to content, not keep the empty
+    // string. Regression for "show notes didn't appear" on recent Cortex episodes.
+    const RSS_EMPTY_DESC_WITH_CONTENT: &str = r#"<?xml version="1.0"?>
+    <rss version="2.0"
+         xmlns:content="http://purl.org/rss/1.0/modules/content/">
+      <channel>
+        <title>Notes Show</title>
+        <link>https://example.com</link>
+        <item>
+          <title>Episode With Content</title>
+          <guid>ep-content</guid>
+          <description/>
+          <content:encoded><![CDATA[<p>The real <b>show notes</b> live here.</p>]]></content:encoded>
+          <enclosure url="https://example.com/c.mp3" length="1" type="audio/mpeg"/>
+        </item>
+      </channel>
+    </rss>"#;
+
+    #[test]
+    fn empty_description_falls_back_to_content_encoded() {
+        let feed = parse_feed(RSS_EMPTY_DESC_WITH_CONTENT.as_bytes()).unwrap();
+        let ep = &feed.episodes[0];
+        // The raw content body is taken (the ingest sanitize cleans it later); the
+        // empty <description/> must not win.
+        assert_eq!(
+            ep.description.as_deref(),
+            Some("<p>The real <b>show notes</b> live here.</p>")
+        );
     }
 
     #[test]

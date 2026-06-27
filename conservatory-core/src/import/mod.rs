@@ -253,6 +253,7 @@ pub async fn import_folder(
         ops.push(MoveOp {
             track_id: Some(track_id),
             album_id: Some(album_id),
+            book_id: None,
             src,
             dst: root.join(&rel),
             db_old: Some(src_str),

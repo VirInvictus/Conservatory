@@ -312,6 +312,45 @@ enum AudiobookAction {
         /// The book folder (multi-file) or a single audio file.
         path: PathBuf,
     },
+
+    /// Import one book (a folder or a single `.m4b`) into the library: resolve it
+    /// into rows and move its files into the managed `Audiobooks/` tree via the
+    /// journaled, undoable mover (spec §5.4, §5.7). Defaults to copy; a move/undo
+    /// conflict refuses the import (nonzero exit) with nothing written. One book
+    /// per call; a whole-`Author/*`-tree batch is a later phase.
+    Import {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The book folder (multi-file) or a single audio file.
+        source: PathBuf,
+        /// The managed library root the `Audiobooks/` tree hangs off.
+        root: PathBuf,
+        /// Consume the source files (move) instead of copying them.
+        #[arg(long)]
+        r#move: bool,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = Format::Human)]
+        format: Format,
+    },
+
+    /// Edit a book's non-path metadata: rating, starred, shelf genre. Path
+    /// affecting edits (author / series / title, which re-render and re-move the
+    /// folder) are deferred to the 7b bulk-edit surface.
+    Set {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The book id to edit.
+        book_id: i64,
+        /// Set the rating (0–5).
+        #[arg(long)]
+        rating: Option<u8>,
+        /// Set or clear the starred flag.
+        #[arg(long)]
+        starred: Option<bool>,
+        /// Set the shelf genre (the single-valued path input, spec §5.2).
+        #[arg(long)]
+        shelf_genre: Option<String>,
+    },
 }
 
 /// Equalizer verbs (Phase 5.5b).
@@ -820,6 +859,28 @@ fn main() -> Result<()> {
         Some(Command::Audiobook {
             action: AudiobookAction::DebugRead { path },
         }) => audiobook_debug_read(path),
+        #[cfg(feature = "audiobooks")]
+        Some(Command::Audiobook {
+            action:
+                AudiobookAction::Import {
+                    db,
+                    source,
+                    root,
+                    r#move,
+                    format,
+                },
+        }) => block_on(run_audiobook_import(db, source, root, r#move, format)),
+        #[cfg(feature = "audiobooks")]
+        Some(Command::Audiobook {
+            action:
+                AudiobookAction::Set {
+                    db,
+                    book_id,
+                    rating,
+                    starred,
+                    shelf_genre,
+                },
+        }) => block_on(run_audiobook_set(db, book_id, rating, starred, shelf_genre)),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
@@ -970,6 +1031,130 @@ fn audiobook_debug_read(path: PathBuf) -> Result<()> {
             ch.idx, ch.file_offset, dur, title, file
         );
     }
+    Ok(())
+}
+
+/// Import one book into the managed tree (Phase 7a-iii). Mirrors `run_import`:
+/// spawn the worker + read pool, run the journaled mover, print a report; a
+/// conflict refuses the import (nonzero exit) with nothing written.
+#[cfg(feature = "audiobooks")]
+async fn run_audiobook_import(
+    db: PathBuf,
+    source: PathBuf,
+    root: PathBuf,
+    r#move: bool,
+    format: Format,
+) -> Result<()> {
+    use conservatory_audiobooks::{BookImportOptions, import_book};
+
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    // Heal any job interrupted by a previous crash before starting a new one.
+    mover::recover(&worker, &pool).await.context("recovery")?;
+
+    let opts = BookImportOptions {
+        library_root: root,
+        mode: if r#move {
+            MoveMode::Move
+        } else {
+            MoveMode::Copy
+        },
+    };
+    let report = import_book(&worker, &pool, &source, &opts)
+        .await
+        .context("import")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+
+    print_book_import_report(&report, format);
+    if !report.conflicts.is_empty() {
+        anyhow::bail!(
+            "import refused: {} conflict(s); nothing imported",
+            report.conflicts.len()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "audiobooks")]
+fn print_book_import_report(r: &conservatory_audiobooks::BookImportReport, format: Format) {
+    let title = r.title.as_deref().unwrap_or("(untitled)");
+    let job = r.job_id.map(|j| j.to_string());
+    match format {
+        Format::Json => println!(
+            "{{\"title\":{:?},\"authors\":{},\"narrators\":{},\"chapters\":{},\"files\":{},\"book_id\":{},\"job_id\":{},\"conflicts\":{}}}",
+            title,
+            r.authors,
+            r.narrators,
+            r.chapters,
+            r.files,
+            r.book_id
+                .map(|b| b.to_string())
+                .as_deref()
+                .unwrap_or("null"),
+            job.as_deref().unwrap_or("null"),
+            r.conflicts.len(),
+        ),
+        Format::Tsv => {
+            println!("title\tauthors\tnarrators\tchapters\tfiles\tbook_id\tjob_id\tconflicts");
+            println!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                title,
+                r.authors,
+                r.narrators,
+                r.chapters,
+                r.files,
+                r.book_id.map(|b| b.to_string()).unwrap_or_default(),
+                job.as_deref().unwrap_or(""),
+                r.conflicts.len(),
+            );
+        }
+        Format::Human => match r.book_id {
+            Some(id) => println!(
+                "imported \"{title}\" (book {id}): {} chapter(s) across {} file(s), {} author(s) / {} narrator(s) (job {})",
+                r.chapters,
+                r.files,
+                r.authors,
+                r.narrators,
+                job.as_deref().unwrap_or("?"),
+            ),
+            None if !r.conflicts.is_empty() => {
+                println!(
+                    "refused: {} conflict(s); nothing imported",
+                    r.conflicts.len()
+                );
+                for c in &r.conflicts {
+                    println!("  {c:?}");
+                }
+            }
+            None => println!("nothing to import"),
+        },
+    }
+}
+
+/// Edit a book's non-path metadata (Phase 7a-iii `audiobook set`).
+#[cfg(feature = "audiobooks")]
+async fn run_audiobook_set(
+    db: PathBuf,
+    book_id: i64,
+    rating: Option<u8>,
+    starred: Option<bool>,
+    shelf_genre: Option<String>,
+) -> Result<()> {
+    if rating.is_none() && starred.is_none() && shelf_genre.is_none() {
+        anyhow::bail!("nothing to set: pass --rating, --starred, and/or --shelf-genre");
+    }
+    if let Some(r) = rating
+        && r > 5
+    {
+        anyhow::bail!("rating must be 0–5");
+    }
+    let worker = spawn_worker(db).context("spawning worker")?;
+    worker
+        .update_book(book_id, rating, starred, shelf_genre)
+        .await
+        .context("update book")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("updated book {book_id}");
     Ok(())
 }
 

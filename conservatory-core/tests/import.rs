@@ -163,6 +163,7 @@ async fn shelf_genre_set_then_organize_moves_the_album() {
             conservatory_core::MoveOp {
                 track_id: Some(row.track_id),
                 album_id: row.album_id,
+                book_id: None,
                 src: lib.root.join(&row.file_path),
                 dst: lib.root.join(&rel),
                 db_old: Some(row.file_path.clone()),

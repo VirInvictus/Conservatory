@@ -128,12 +128,15 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<i64>>,
     },
 
-    /// Mark an operation done and apply the DB path it implies (track file_path
-    /// + album folder_path), in one transaction.
+    /// Mark an operation done and apply the DB path it implies, in one
+    /// transaction: a track's file_path and album's folder_path, or a book's
+    /// chapter rows and folder_path.
     CompleteOperation {
         op_id: i64,
         track_id: Option<i64>,
         album_id: Option<i64>,
+        book_id: Option<i64>,
+        db_old_path: Option<String>,
         db_new_path: Option<String>,
         reply: oneshot::Sender<Result<()>>,
     },
@@ -143,7 +146,9 @@ pub(crate) enum Command {
         op_id: i64,
         track_id: Option<i64>,
         album_id: Option<i64>,
+        book_id: Option<i64>,
         db_old_path: Option<String>,
+        db_new_path: Option<String>,
         reply: oneshot::Sender<Result<()>>,
     },
 
@@ -431,6 +436,23 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Set a book's cover path, optionally refreshing the accent (Phase 7a-iii).
+    SetBookCoverPath {
+        book_id: i64,
+        cover_path: Option<String>,
+        accent_rgb: Option<u32>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Edit a book's non-path metadata (rating / starred / shelf genre).
+    UpdateBook {
+        book_id: i64,
+        rating: Option<u8>,
+        starred: Option<bool>,
+        shelf_genre: Option<String>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Ack a shutdown request. The loop exits naturally once every
     /// `WorkerHandle` clone has dropped and the channel closes.
     Shutdown { reply: oneshot::Sender<()> },
@@ -504,6 +526,8 @@ impl Command {
             Self::UpsertBookPlayback { .. } => "upsert_book_playback",
             Self::SetBookPosition { .. } => "set_book_position",
             Self::CompleteBook { .. } => "complete_book",
+            Self::SetBookCoverPath { .. } => "set_book_cover_path",
+            Self::UpdateBook { .. } => "update_book",
             Self::Shutdown { .. } => "shutdown",
             #[cfg(test)]
             Self::Panic => "panic",

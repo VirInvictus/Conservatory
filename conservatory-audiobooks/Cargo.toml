@@ -29,3 +29,6 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# The 7a-iii import is async (it drives the core worker + mover); the
+# end-to-end test needs a runtime. tokio is already a workspace dependency.
+tokio = { workspace = true }

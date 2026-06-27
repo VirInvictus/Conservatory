@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2), `0008` (the equalizer: `eq_presets` + `eq_state`, Phase 5.5b), `0009` (the audio config: `audio_state`, Phase 5.5c), `0010` (the 16 built-in EQ presets, Phase 5.5b follow-on), and `0011` (the audiobook tables + `book_fts` + the queue `book_id` foreign key, Phase 7a-i). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
+> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2), `0008` (the equalizer: `eq_presets` + `eq_state`, Phase 5.5b), `0009` (the audio config: `audio_state`, Phase 5.5c), `0010` (the 16 built-in EQ presets, Phase 5.5b follow-on), `0011` (the audiobook tables + `book_fts` + the queue `book_id` foreign key, Phase 7a-i), and `0012` (the move journal `book_id` column, so audiobooks move through the journaled mover, Phase 7a-iii). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
 
 ## Connection discipline
 
@@ -117,7 +117,7 @@ CREATE TABLE playback_state (
 
 Writes are debounced (the 30 s insurance interval, plus the forced pause/seek/end/quit points, spec §6.4) and go through the single writer. The **per-episode** resume position + played state live in the podcast `playback` table (the engine writes them on an episode's tick/EOF, so they survive after the queue moves on); this singleton only records the *current* item to reopen. `play_count` / `last_played` are bumped separately, only on a natural end-of-file: on `tracks` for a track, in `playback` for an episode.
 
-## Move journal (Phase 2c, spec §5.4)
+## Move journal (Phase 2c, spec §5.4; `book_id` at `0012`)
 
 The crash-safety ledger for the file mover. A job and all its operations are written **before** any file is touched, so a crash mid-move is recoverable by replaying the `pending` operations (roll-forward; see [`mover.md`](mover.md)). DB paths are stored relative to `library_root`; the journal stores absolute `src_path`/`dst_path` for direct filesystem ops.
 
@@ -132,12 +132,15 @@ CREATE TABLE move_jobs (
 CREATE TABLE move_operations (
     id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES move_jobs(id) ON DELETE CASCADE,
     seq INTEGER NOT NULL, track_id INTEGER, album_id INTEGER,
+    book_id INTEGER,                              -- added at 0012 (Phase 7a-iii); books moved like music
     src_path TEXT NOT NULL, dst_path TEXT NOT NULL,
     db_old_path TEXT, db_new_path TEXT,           -- relative DB values, for the path update + undo
     state TEXT NOT NULL                           -- 'pending' | 'done'
 );
 CREATE INDEX idx_move_ops_job ON move_operations(job_id, seq);
 ```
+
+**Migration `0012` (Phase 7a-iii)** adds the nullable `book_id` column (a clean `ALTER ... ADD COLUMN`, since `track_id`/`album_id` were always plain no-FK INTEGERs). A music op carries `track_id` + `album_id`; a book op carries `book_id` and leaves the music ids NULL. Completing a book op rewrites every `book_chapters` row of the book whose `file_path` matches the moved file (so a single M4B that backs many chapters follows the one moved file, matched by `book_id` + old path) and sets `books.folder_path`. Ops are built per unique physical file, not per chapter.
 
 ## Perspectives (Phase 3c, spec §3.4)
 

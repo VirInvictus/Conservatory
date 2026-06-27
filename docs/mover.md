@@ -38,6 +38,10 @@ A crash between (2) and (3) leaves the operation `pending` while the file is alr
 
 The DB stores paths **relative** to the library root (the library stays relocatable); the journal stores **absolute** `src_path`/`dst_path` for direct filesystem ops. `library_root` is a parameter for now (config-driven root arrives with Phase 10).
 
+## Books (Phase 7a-iii, migration `0012`)
+
+Audiobooks are owned and moved like music, so they ride the same journal. A `move_operations` row carries one of two id sets: `track_id` + `album_id` (music) **or** `book_id` (audiobooks); the rest stay NULL. Completing a music op updates `tracks.file_path` + `albums.folder_path`; completing a book op updates `books.folder_path` and rewrites every `book_chapters` row of the book whose `file_path` matches the moved file. That last detail is the reason a book op matches chapters by **(`book_id`, old path)** rather than a chapter id: a single M4B backs many chapters, so the one moved file must rewrite all of them, while a per-chapter-file book rewrites exactly its one row. Move ops are therefore built **per unique physical file**, not per chapter. Undo runs the same logic in reverse (it swaps the from/to paths). `fsops`, the conflict policy, and roll-forward recovery are all media-agnostic and unchanged.
+
 ## Out of scope (for now)
 
 Pruning directories left empty after a move/undo (harmless leftovers); the full scan → tag → resolve → render → move import pipeline and the real `import`/`organize` verbs (Phase 2d); embedded-tag write-back (Phase 5b).

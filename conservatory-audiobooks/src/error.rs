@@ -1,8 +1,9 @@
-//! Error type for the audiobook reader (Phase 7a-ii).
+//! Error type for the audiobook plugin (Phase 7a-ii reader, 7a-iii import).
 //!
 //! The reader is deliberately tolerant: a missing field is `None`, not an error.
 //! These variants cover the genuine failures (an unreadable file, a broken
-//! probe), never an absent tag or sidecar.
+//! probe), never an absent tag or sidecar. The import pipeline (7a-iii) also
+//! surfaces core worker / mover failures through [`ReadError::Core`].
 
 use thiserror::Error;
 
@@ -29,6 +30,11 @@ pub enum ReadError {
     /// `ffprobe` ran but failed, or its JSON did not parse.
     #[error("ffprobe error: {0}")]
     Ffprobe(String),
+
+    /// A core failure during import (the single-writer worker, the read pool, or
+    /// the file mover). Carries the underlying `conservatory-core` error.
+    #[error("core error: {0}")]
+    Core(#[from] conservatory_core::errors::Error),
 }
 
 pub type Result<T> = std::result::Result<T, ReadError>;

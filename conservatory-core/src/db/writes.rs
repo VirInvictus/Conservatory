@@ -1156,3 +1156,42 @@ pub(crate) fn complete_book(conn: &Connection, book_id: i64, when: Option<i64>) 
     )?;
     Ok(())
 }
+
+/// Set a book's `cover_path` (Phase 7a-iii), optionally refreshing `accent_rgb`
+/// (on a cover change; `None` keeps the existing accent). The mirror of
+/// [`set_album_cover_path`]; `cover_path` is relative to the library root.
+pub(crate) fn set_book_cover_path(
+    conn: &Connection,
+    book_id: i64,
+    cover_path: Option<&str>,
+    accent_rgb: Option<u32>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE books SET cover_path = ?2, accent_rgb = COALESCE(?3, accent_rgb) WHERE id = ?1",
+        params![book_id, cover_path, accent_rgb],
+    )?;
+    Ok(())
+}
+
+/// Edit a book's non-path metadata (Phase 7a-iii `audiobook set`): rating,
+/// starred, and shelf genre. Each argument is `None` to leave that column
+/// unchanged. Path-affecting edits (author / series / title, which re-render the
+/// folder) are deferred to the 7b bulk-edit surface, so this never touches the
+/// mover. The `shelf_genre` change does *not* re-move the book here.
+pub(crate) fn update_book(
+    conn: &Connection,
+    book_id: i64,
+    rating: Option<u8>,
+    starred: Option<bool>,
+    shelf_genre: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE books SET
+            rating = COALESCE(?2, rating),
+            starred = COALESCE(?3, starred),
+            shelf_genre = COALESCE(?4, shelf_genre)
+         WHERE id = ?1",
+        params![book_id, rating.map(|r| r as i64), starred, shelf_genre],
+    )?;
+    Ok(())
+}

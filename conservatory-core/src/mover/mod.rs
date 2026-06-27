@@ -54,6 +54,11 @@ impl MoveMode {
 pub struct MoveOp {
     pub track_id: Option<i64>,
     pub album_id: Option<i64>,
+    /// The book this moved file belongs to (spec §5.7). On completion every
+    /// `book_chapters` row of the book whose `file_path` matches the moved file
+    /// is rewritten (one file can back many chapters in a single M4B). A music op
+    /// leaves it `None`, and a book op leaves `track_id` / `album_id` `None`.
+    pub book_id: Option<i64>,
     pub src: PathBuf,
     pub dst: PathBuf,
     pub db_old: Option<String>,
@@ -89,6 +94,7 @@ pub fn organize_ops(rows: &[TrackRenderRow], root: &Path, albums: Option<&[i64]>
             MoveOp {
                 track_id: Some(row.track_id),
                 album_id: row.album_id,
+                book_id: None,
                 src: root.join(&row.file_path),
                 dst: root.join(&rel),
                 db_old: Some(row.file_path.clone()),
@@ -246,7 +252,14 @@ pub async fn undo(worker: &WorkerHandle, pool: &ReadPool, job_id: i64) -> Result
             fsops::revert(Path::new(&op.src_path), Path::new(&op.dst_path), mode)?;
         }
         worker
-            .revert_operation(op.id, op.track_id, op.album_id, op.db_old_path)
+            .revert_operation(
+                op.id,
+                op.track_id,
+                op.album_id,
+                op.book_id,
+                op.db_old_path,
+                op.db_new_path,
+            )
             .await?;
     }
     worker.set_job_state(job_id, JobState::Undone).await?;
@@ -268,7 +281,14 @@ async fn drive_job(worker: &WorkerHandle, pool: &ReadPool, job: &MoveJobRow) -> 
         }
         fsops::relocate(Path::new(&op.src_path), Path::new(&op.dst_path), mode)?;
         worker
-            .complete_operation(op.id, op.track_id, op.album_id, op.db_new_path)
+            .complete_operation(
+                op.id,
+                op.track_id,
+                op.album_id,
+                op.book_id,
+                op.db_old_path,
+                op.db_new_path,
+            )
             .await?;
     }
 

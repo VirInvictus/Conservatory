@@ -121,6 +121,7 @@ async fn organize_all(worker: &WorkerHandle, pool: &ReadPool, root: &Path) {
             MoveOp {
                 track_id: Some(row.track_id),
                 album_id: row.album_id,
+                book_id: None,
                 src: root.join(&row.file_path),
                 dst: root.join(&rel),
                 db_old: Some(row.file_path.clone()),

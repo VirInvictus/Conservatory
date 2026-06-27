@@ -69,6 +69,7 @@ fn op(root: &Path, track_id: i64, album_id: i64, old: &str, new: &str) -> MoveOp
     MoveOp {
         track_id: Some(track_id),
         album_id: Some(album_id),
+        book_id: None,
         src: root.join(old),
         dst: root.join(new),
         db_old: Some(old.to_string()),

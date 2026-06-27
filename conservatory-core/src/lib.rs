@@ -33,7 +33,10 @@ pub use edit::{
 };
 pub use import::{ImportOptions, ImportReport, import_folder};
 pub use mover::{Conflict, MoveKind, MoveMode, MoveOp, MovePlan, organize_ops, plan};
-pub use path_template::{DEFAULT_MUSIC_TEMPLATE, PathTemplate, TrackFields, find_collisions};
+pub use path_template::{
+    BookFields, DEFAULT_AUDIOBOOK_TEMPLATE, DEFAULT_MUSIC_TEMPLATE, PathTemplate, TrackFields,
+    find_collisions,
+};
 pub use player::{
     AudioDevice, ChapterMark, EndReason, HostEvent, MpvHost, MusicProfile, PlayableItem,
     PlaybackConfig, PlayerCommand, PlayerHandle, PlayerSnapshot, ReplayGain, SleepMode,

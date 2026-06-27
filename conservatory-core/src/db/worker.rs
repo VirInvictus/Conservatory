@@ -216,17 +216,22 @@ impl WorkerHandle {
     }
 
     /// Mark an operation done and apply its DB path update.
+    #[allow(clippy::too_many_arguments)]
     pub async fn complete_operation(
         &self,
         op_id: i64,
         track_id: Option<i64>,
         album_id: Option<i64>,
+        book_id: Option<i64>,
+        db_old_path: Option<String>,
         db_new_path: Option<String>,
     ) -> Result<()> {
         self.dispatch(|reply| Command::CompleteOperation {
             op_id,
             track_id,
             album_id,
+            book_id,
+            db_old_path,
             db_new_path,
             reply,
         })
@@ -234,18 +239,23 @@ impl WorkerHandle {
     }
 
     /// Revert an operation's DB path and reset it to pending (undo).
+    #[allow(clippy::too_many_arguments)]
     pub async fn revert_operation(
         &self,
         op_id: i64,
         track_id: Option<i64>,
         album_id: Option<i64>,
+        book_id: Option<i64>,
         db_old_path: Option<String>,
+        db_new_path: Option<String>,
     ) -> Result<()> {
         self.dispatch(|reply| Command::RevertOperation {
             op_id,
             track_id,
             album_id,
+            book_id,
             db_old_path,
+            db_new_path,
             reply,
         })
         .await
@@ -632,6 +642,40 @@ impl WorkerHandle {
         .await
     }
 
+    /// Set a book's cover path, optionally refreshing the accent (Phase 7a-iii).
+    pub async fn set_book_cover_path(
+        &self,
+        book_id: i64,
+        cover_path: Option<String>,
+        accent_rgb: Option<u32>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::SetBookCoverPath {
+            book_id,
+            cover_path,
+            accent_rgb,
+            reply,
+        })
+        .await
+    }
+
+    /// Edit a book's non-path metadata (rating / starred / shelf genre).
+    pub async fn update_book(
+        &self,
+        book_id: i64,
+        rating: Option<u8>,
+        starred: Option<bool>,
+        shelf_genre: Option<String>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::UpdateBook {
+            book_id,
+            rating,
+            starred,
+            shelf_genre,
+            reply,
+        })
+        .await
+    }
+
     /// Send a shutdown ack. The loop exits once every `WorkerHandle` clone has
     /// dropped and the channel closes; this just confirms the worker is alive.
     pub async fn shutdown_ack(&self) -> Result<()> {
@@ -818,6 +862,8 @@ fn handle(conn: &mut Connection, command: Command) {
             op_id,
             track_id,
             album_id,
+            book_id,
+            db_old_path,
             db_new_path,
             reply,
         } => {
@@ -826,6 +872,8 @@ fn handle(conn: &mut Connection, command: Command) {
                 op_id,
                 track_id,
                 album_id,
+                book_id,
+                db_old_path.as_deref(),
                 db_new_path.as_deref(),
             ));
         }
@@ -833,7 +881,9 @@ fn handle(conn: &mut Connection, command: Command) {
             op_id,
             track_id,
             album_id,
+            book_id,
             db_old_path,
+            db_new_path,
             reply,
         } => {
             let _ = reply.send(journal::revert_operation(
@@ -841,7 +891,9 @@ fn handle(conn: &mut Connection, command: Command) {
                 op_id,
                 track_id,
                 album_id,
+                book_id,
                 db_old_path.as_deref(),
+                db_new_path.as_deref(),
             ));
         }
         Command::SetJobState {
@@ -1063,6 +1115,34 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::complete_book(conn, book_id, when));
+        }
+        Command::SetBookCoverPath {
+            book_id,
+            cover_path,
+            accent_rgb,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_book_cover_path(
+                conn,
+                book_id,
+                cover_path.as_deref(),
+                accent_rgb,
+            ));
+        }
+        Command::UpdateBook {
+            book_id,
+            rating,
+            starred,
+            shelf_genre,
+            reply,
+        } => {
+            let _ = reply.send(writes::update_book(
+                conn,
+                book_id,
+                rating,
+                starred,
+                shelf_genre.as_deref(),
+            ));
         }
         Command::Shutdown { reply } => {
             let _ = reply.send(());

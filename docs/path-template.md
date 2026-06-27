@@ -1,6 +1,6 @@
 # Path Template Reference
 
-> **Status: implemented (music) at Phase 2a.** `conservatory-core/src/path_template.rs` renders music paths per this contract; the audiobook tokens (§5.7) land with Phase 7. This expands spec §5.1.
+> **Status: implemented (music) at Phase 2a, audiobooks at Phase 7a-iii.** `conservatory-core/src/path_template.rs` renders both music and audiobook paths per this contract (a shared `TemplateFields` trait). This expands spec §5.1.
 
 ## Implementation notes (Phase 2a)
 
@@ -64,7 +64,7 @@ rendered under the library root as:
 
 Format specs follow the `{token:spec}` shape; `{track:02}` is the only one the music default uses. The exact spec mini-language firms up at implementation; zero-padding is the minimum.
 
-## Audiobook tokens (Phase 7, spec §5.7)
+## Audiobook tokens (implemented at Phase 7a-iii, spec §5.7)
 
 Audiobooks are owned like music (the database renders the tree; the mover relocates them), but use their own template. Default:
 
@@ -74,15 +74,15 @@ Audiobooks/{author}/{series}/{series_index:02}. {title} ({year})
 
 | Token | Source | Notes |
 |---|---|---|
-| `{author}` | `book_people.sort_name` of the primary author | First credited author; multi-author books bucket under the primary. |
+| `{author}` | `book_people.sort_name` of the primary author | First credited author; multi-author books bucket under the primary. Falls back to `Unknown Author`. |
 | `{narrator}` | `book_people.sort_name` of the narrator | Available, not in the default layout. |
-| `{series}` | `series.name` | **Collapses** (whole component drops) when the book is standalone. |
-| `{series_index}` | `books.series_sequence` | Decimal-aware (`1.5`); `{series_index:02}` zero-pads the integer part. Collapses with `{series}`. |
-| `{title}` | `books.title` | |
-| `{year}` | `books.year` | |
+| `{series}` | `series.name` | Falls back to the literal **`Standalone`** when the book is in no series, so every author folder is two levels deep. |
+| `{series_index}` | `books.series_sequence` | Decimal-aware: an integral `1.0` zero-pads via `{series_index:02}` to `01`; a fractional `1.5` renders unpadded as `1.5`. Empty (its `. ` separator collapses) when the book is standalone. |
+| `{title}` | `books.title` | Falls back to `Untitled`. |
+| `{year}` | `books.year` | The `( )` group collapses when absent. |
 | `{shelf_genre}` | `books.shelf_genre` | Optional; same single-valued decoupling as music, not in the default audiobook layout. |
 
-A single-file M4B book keeps its one file inside the rendered book folder; a multi-file book keeps its per-chapter files there. Cover art is `cover.jpg` in the book folder.
+The render loop is shared with the music `TrackFields` through a small internal `TemplateFields` trait, so the collapse / sanitization rules are identical and music rendering is unchanged. A book contributes no file extension: the leaf is the book's **directory**, not a file. A single-file M4B keeps its one file inside the rendered book folder; a multi-file book keeps its per-chapter files there. Cover art is `cover.jpg` in the book folder.
 
 ## Invariants
 

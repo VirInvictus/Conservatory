@@ -21,11 +21,21 @@ use crate::errors::{Error, Result};
 pub const DEFAULT_MUSIC_TEMPLATE: &str =
     "Music/{shelf_genre}/{albumartist}/{album} ({year})/{track:02} - {title}";
 
+/// The default audiobook template (spec §5.7). A book is owned and moved like
+/// music; its chapter files sit inside the rendered **folder** (the leaf is a
+/// directory, not a file). `{series}` falls back to the literal `Standalone` so
+/// every author folder is two levels deep, and `{series_index:02}` collapses
+/// (with its trailing `. ` separator) when the book is standalone.
+pub const DEFAULT_AUDIOBOOK_TEMPLATE: &str =
+    "Audiobooks/{author}/{series}/{series_index:02}. {title} ({year})";
+
 /// Fallbacks for the structural folder levels, so a component is never empty.
 const UNKNOWN_GENRE: &str = "Unknown";
 const VARIOUS_ARTISTS: &str = "Various Artists";
 const UNKNOWN_ALBUM: &str = "Unknown Album";
 const UNTITLED: &str = "Untitled";
+const UNKNOWN_AUTHOR: &str = "Unknown Author";
+const STANDALONE: &str = "Standalone";
 
 /// Per-component byte cap (common filesystem `NAME_MAX`), applied per component,
 /// not to the whole path (docs/path-template.md "Sanitization").
@@ -50,6 +60,21 @@ pub struct TrackFields<'a> {
     pub ext: Option<&'a str>,
 }
 
+/// The DB-derived values a single audiobook contributes to its rendered folder
+/// (spec §5.7). `author` / `narrator` are already-resolved sort names; `series`
+/// is `None` for a standalone book (and renders as the literal `Standalone`).
+/// Unlike a track there is no extension: the leaf is the book's directory.
+#[derive(Debug, Default, Clone)]
+pub struct BookFields<'a> {
+    pub shelf_genre: Option<&'a str>,
+    pub author: Option<&'a str>,
+    pub narrator: Option<&'a str>,
+    pub series: Option<&'a str>,
+    pub series_index: Option<f64>,
+    pub title: Option<&'a str>,
+    pub year: Option<i32>,
+}
+
 /// The token names the template understands (`{ext}` is appended, not a token).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Field {
@@ -61,6 +86,11 @@ enum Field {
     Disc,
     Title,
     Artist,
+    // Audiobook tokens (spec §5.7).
+    Author,
+    Narrator,
+    Series,
+    SeriesIndex,
 }
 
 impl Field {
@@ -74,6 +104,10 @@ impl Field {
             "disc" => Self::Disc,
             "title" => Self::Title,
             "artist" => Self::Artist,
+            "author" => Self::Author,
+            "narrator" => Self::Narrator,
+            "series" => Self::Series,
+            "series_index" => Self::SeriesIndex,
             _ => return None,
         })
     }
@@ -117,15 +151,33 @@ impl PathTemplate {
         Self::parse(DEFAULT_MUSIC_TEMPLATE).expect("default template parses")
     }
 
+    /// The default audiobook template, parsed.
+    pub fn default_audiobook() -> Self {
+        Self::parse(DEFAULT_AUDIOBOOK_TEMPLATE).expect("default template parses")
+    }
+
     /// Render the relative target path for a track. Infallible: missing fields
     /// fall back or collapse, and components are sanitized and never empty.
     pub fn render(&self, fields: &TrackFields) -> PathBuf {
+        self.render_fields(fields)
+    }
+
+    /// Render the relative target **folder** for a book (spec §5.7). Same engine
+    /// as [`render`]; a book contributes no extension, so the leaf stays a
+    /// directory the chapter files move into.
+    pub fn render_book(&self, fields: &BookFields) -> PathBuf {
+        self.render_fields(fields)
+    }
+
+    /// The shared, media-agnostic render loop. `fields.ext()` appends the
+    /// extension to the leaf (tracks) or is `None` (book folders).
+    fn render_fields<F: TemplateFields>(&self, fields: &F) -> PathBuf {
         let last = self.components.len().saturating_sub(1);
         let mut path = PathBuf::new();
         for (i, component) in self.components.iter().enumerate() {
             let mut name = render_component(component, fields);
             if i == last
-                && let Some(ext) = fields.ext.filter(|e| !e.is_empty())
+                && let Some(ext) = fields.ext().filter(|e| !e.is_empty())
             {
                 name.push('.');
                 name.push_str(&sanitize_component(ext).to_lowercase());
@@ -133,6 +185,61 @@ impl PathTemplate {
             path.push(name);
         }
         path
+    }
+}
+
+/// The values a template renders from: one method maps a token (with its pad
+/// width) to its substituted text, another supplies the optional leaf extension.
+/// Implemented by both [`TrackFields`] and [`BookFields`] so the render loop is
+/// written once (the never-break-userspace guard: music rendering is unchanged).
+trait TemplateFields {
+    fn value(&self, field: Field, pad: usize) -> String;
+    /// The extension appended to the leaf component, if any (tracks only).
+    fn ext(&self) -> Option<&str> {
+        None
+    }
+}
+
+impl TemplateFields for TrackFields<'_> {
+    /// Structural levels fall back to a bucket so the folder is never empty;
+    /// optional pieces (year, track, disc, artist) return empty and let the
+    /// surrounding literals collapse. Audiobook-only tokens render empty.
+    fn value(&self, field: Field, pad: usize) -> String {
+        match field {
+            Field::ShelfGenre => self.shelf_genre.unwrap_or(UNKNOWN_GENRE).to_string(),
+            Field::AlbumArtist => self.albumartist.unwrap_or(VARIOUS_ARTISTS).to_string(),
+            Field::Album => self.album.unwrap_or(UNKNOWN_ALBUM).to_string(),
+            Field::Title => self.title.unwrap_or(UNTITLED).to_string(),
+            Field::Artist => self.artist.unwrap_or_default().to_string(),
+            Field::Year => self.year.map(|y| y.to_string()).unwrap_or_default(),
+            Field::Track => pad_num(self.track_no, pad),
+            Field::Disc => pad_num(self.disc_no, pad),
+            Field::Author | Field::Narrator | Field::Series | Field::SeriesIndex => String::new(),
+        }
+    }
+
+    fn ext(&self) -> Option<&str> {
+        self.ext
+    }
+}
+
+impl TemplateFields for BookFields<'_> {
+    /// `author` / `series` / `title` are structural and fall back to a bucket;
+    /// `series_index` / `year` collapse when absent. Music-only tokens render
+    /// empty.
+    fn value(&self, field: Field, pad: usize) -> String {
+        match field {
+            Field::ShelfGenre => self.shelf_genre.unwrap_or(UNKNOWN_GENRE).to_string(),
+            Field::Author => self.author.unwrap_or(UNKNOWN_AUTHOR).to_string(),
+            Field::Narrator => self.narrator.unwrap_or_default().to_string(),
+            Field::Series => self.series.unwrap_or(STANDALONE).to_string(),
+            Field::SeriesIndex => pad_index(self.series_index, pad),
+            Field::Title => self.title.unwrap_or(UNTITLED).to_string(),
+            Field::Year => self.year.map(|y| y.to_string()).unwrap_or_default(),
+            Field::AlbumArtist | Field::Album | Field::Track | Field::Disc | Field::Artist => {
+                String::new()
+            }
+        }
     }
 }
 
@@ -198,12 +305,12 @@ fn template_err(component: &str, why: &str) -> Error {
 }
 
 /// Substitute a component's tokens, collapse empty-group artifacts, and sanitize.
-fn render_component(component: &Component, fields: &TrackFields) -> String {
+fn render_component<F: TemplateFields>(component: &Component, fields: &F) -> String {
     let mut out = String::new();
     for segment in component {
         match segment {
             Segment::Literal(text) => out.push_str(text),
-            Segment::Token { field, pad } => out.push_str(&token_value(*field, *pad, fields)),
+            Segment::Token { field, pad } => out.push_str(&fields.value(*field, *pad)),
         }
     }
     let cleaned = collapse_artifacts(&out);
@@ -215,25 +322,20 @@ fn render_component(component: &Component, fields: &TrackFields) -> String {
     }
 }
 
-/// The substituted text for one token. Structural levels fall back to a bucket
-/// so the folder is never empty; optional pieces (year, track, disc, artist)
-/// return empty and let the surrounding literals collapse.
-fn token_value(field: Field, pad: usize, f: &TrackFields) -> String {
-    match field {
-        Field::ShelfGenre => f.shelf_genre.unwrap_or(UNKNOWN_GENRE).to_string(),
-        Field::AlbumArtist => f.albumartist.unwrap_or(VARIOUS_ARTISTS).to_string(),
-        Field::Album => f.album.unwrap_or(UNKNOWN_ALBUM).to_string(),
-        Field::Title => f.title.unwrap_or(UNTITLED).to_string(),
-        Field::Artist => f.artist.unwrap_or_default().to_string(),
-        Field::Year => f.year.map(|y| y.to_string()).unwrap_or_default(),
-        Field::Track => pad_num(f.track_no, pad),
-        Field::Disc => pad_num(f.disc_no, pad),
-    }
-}
-
 fn pad_num(value: Option<u32>, pad: usize) -> String {
     match value {
         Some(n) => format!("{n:0>width$}", width = pad),
+        None => String::new(),
+    }
+}
+
+/// Render a decimal series index. An integral value (`1.0`) is zero-padded like
+/// a track number (`01`); a fractional value (`1.5`) renders minimally and
+/// unpadded; an absent index is empty (its separator then collapses).
+fn pad_index(value: Option<f64>, pad: usize) -> String {
+    match value {
+        Some(n) if n.fract() == 0.0 => format!("{n:0>width$}", n = n as i64, width = pad),
+        Some(n) => format!("{n}"),
         None => String::new(),
     }
 }
@@ -520,6 +622,87 @@ mod tests {
             t.render(&f).to_string_lossy(),
             "Boards of Canada/Geogaddi/1-03 Music Is Math.flac"
         );
+    }
+
+    // --- Audiobook rendering (spec §5.7, Phase 7a-iii) ---
+
+    fn book() -> BookFields<'static> {
+        BookFields {
+            shelf_genre: Some("Fantasy"),
+            author: Some("Rothfuss, Patrick"),
+            narrator: Some("Podehl, Nick"),
+            series: Some("The Kingkiller Chronicle"),
+            series_index: Some(1.0),
+            title: Some("The Name of the Wind"),
+            year: Some(2009),
+        }
+    }
+
+    fn render_book(f: &BookFields) -> String {
+        PathTemplate::default_audiobook()
+            .render_book(f)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn book_default_template_full_render() {
+        assert_eq!(
+            render_book(&book()),
+            "Audiobooks/Rothfuss, Patrick/The Kingkiller Chronicle/01. The Name of the Wind (2009)"
+        );
+    }
+
+    #[test]
+    fn standalone_book_uses_the_standalone_folder() {
+        let mut f = book();
+        f.series = None;
+        f.series_index = None;
+        // No series: the literal `Standalone` folder, and the `{series_index}. `
+        // separator collapses, leaving the bare title.
+        assert_eq!(
+            render_book(&f),
+            "Audiobooks/Rothfuss, Patrick/Standalone/The Name of the Wind (2009)"
+        );
+    }
+
+    #[test]
+    fn book_decimal_index_renders_unpadded() {
+        let mut f = book();
+        f.series_index = Some(1.5);
+        assert_eq!(
+            render_book(&f),
+            "Audiobooks/Rothfuss, Patrick/The Kingkiller Chronicle/1.5. The Name of the Wind (2009)"
+        );
+    }
+
+    #[test]
+    fn book_missing_year_collapses_the_paren_group() {
+        let mut f = book();
+        f.year = None;
+        assert_eq!(
+            render_book(&f),
+            "Audiobooks/Rothfuss, Patrick/The Kingkiller Chronicle/01. The Name of the Wind"
+        );
+    }
+
+    #[test]
+    fn book_missing_author_falls_back() {
+        let mut f = book();
+        f.author = None;
+        f.series = None;
+        f.series_index = None;
+        assert!(render_book(&f).starts_with("Audiobooks/Unknown Author/Standalone/"));
+    }
+
+    #[test]
+    fn book_path_separators_in_values_are_replaced() {
+        let mut f = book();
+        f.author = Some("AC/DC");
+        f.title = Some("Back/Story");
+        let rendered = render_book(&f);
+        assert!(rendered.contains("/AC_DC/"), "{rendered}");
+        assert!(rendered.contains("Back_Story"), "{rendered}");
     }
 
     #[test]

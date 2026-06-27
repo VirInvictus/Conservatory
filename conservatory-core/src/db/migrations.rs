@@ -68,10 +68,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 11,
         sql: include_str!("migrations/0011_audiobooks.sql"),
     },
+    Migration {
+        version: 12,
+        sql: include_str!("migrations/0012_move_book_ops.sql"),
+    },
 ];
 
 /// The `user_version` a fully-migrated database reaches.
-pub const CURRENT_VERSION: i32 = 11;
+pub const CURRENT_VERSION: i32 = 12;
 
 /// Apply any unapplied migrations. Idempotent: running this on a
 /// fully-migrated database is a no-op.

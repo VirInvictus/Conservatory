@@ -1,0 +1,21 @@
+-- 0012_move_book_ops.sql — Phase 7a-iii (spec §5.4, §5.7, docs/mover.md).
+--
+-- The crash-safe move journal (migration 0002) was track/album-only: each
+-- `move_operations` row carried a `track_id` and an `album_id`, and completing
+-- it updated `tracks.file_path` + `albums.folder_path`. Audiobooks are owned and
+-- moved like music (spec §5.7), so the journal must address books too: a book's
+-- chapter files relocate into a rendered book folder under the same journaled,
+-- undoable, roll-forward machinery (the file mover is the headline risk; books
+-- get no second, unjournaled move path).
+--
+-- One additive nullable column, no table rebuild. `track_id` / `album_id` are
+-- plain nullable INTEGERs with no foreign key (migration 0002), so `book_id`
+-- matches that shape exactly: a book op carries it and leaves `track_id` /
+-- `album_id` NULL (and vice versa). Completing a book op then rewrites every
+-- `book_chapters` row of that book whose `file_path` matches the moved file
+-- (one chapter for a per-chapter file; *all* chapters for a single M4B that
+-- backs many) and sets `books.folder_path` (the file's parent), mirroring the
+-- album branch. The match is by (`book_id`, old path) rather than a chapter id
+-- precisely because one moved file can back many chapters. `user_version` is
+-- bumped by the runner (db/migrations.rs); this file is pure DDL.
+ALTER TABLE move_operations ADD COLUMN book_id INTEGER;

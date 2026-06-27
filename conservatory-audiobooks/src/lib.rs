@@ -27,6 +27,7 @@ pub mod chapters;
 pub mod error;
 pub mod ffprobe;
 pub mod folder;
+pub mod import;
 pub mod sidecar;
 pub mod tags;
 
@@ -34,6 +35,7 @@ use std::path::{Path, PathBuf};
 
 pub use chapters::ChapterDraft;
 pub use error::{ReadError, Result};
+pub use import::{BookImportOptions, BookImportReport, import_book};
 
 /// A person (author or narrator) with a Calibre-style sort name.
 #[derive(Debug, Clone, PartialEq, Eq)]

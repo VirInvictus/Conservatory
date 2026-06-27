@@ -85,6 +85,7 @@ pub struct MoveOpRow {
     pub seq: i64,
     pub track_id: Option<i64>,
     pub album_id: Option<i64>,
+    pub book_id: Option<i64>,
     pub src_path: String,
     pub dst_path: String,
     pub db_old_path: Option<String>,
@@ -122,13 +123,15 @@ pub(crate) fn create_job(
         let dst = op.dst.to_string_lossy();
         tx.execute(
             "INSERT INTO move_operations
-                (job_id, seq, track_id, album_id, src_path, dst_path, db_old_path, db_new_path, state)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                (job_id, seq, track_id, album_id, book_id,
+                 src_path, dst_path, db_old_path, db_new_path, state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 job_id,
                 i as i64,
                 op.track_id,
                 op.album_id,
+                op.book_id,
                 src.as_ref(),
                 dst.as_ref(),
                 op.db_old,
@@ -141,13 +144,16 @@ pub(crate) fn create_job(
     Ok(job_id)
 }
 
-/// Mark an operation `done` and apply the DB path it implies (the track's
-/// `file_path` and the album's `folder_path`), in one transaction.
+/// Mark an operation `done` and apply the DB path it implies, in one
+/// transaction: the move's `from` path is `db_old`, its `to` path is `db_new`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn complete_operation(
     conn: &mut Connection,
     op_id: i64,
     track_id: Option<i64>,
     album_id: Option<i64>,
+    book_id: Option<i64>,
+    db_old_path: Option<&str>,
     db_new_path: Option<&str>,
 ) -> Result<()> {
     let tx = conn.transaction()?;
@@ -155,56 +161,83 @@ pub(crate) fn complete_operation(
         "UPDATE move_operations SET state = ?2 WHERE id = ?1",
         params![op_id, OpState::Done.as_str()],
     )?;
-    apply_db_path(&tx, track_id, album_id, db_new_path)?;
+    apply_db_path(&tx, track_id, album_id, book_id, db_old_path, db_new_path)?;
     tx.commit()?;
     Ok(())
 }
 
 /// Restore the pre-move DB path and reset the operation to `pending` (so undo is
-/// itself replayable), in one transaction.
+/// itself replayable), in one transaction. Undo is the reverse move, so its
+/// `from` path is `db_new` and its `to` path is `db_old`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn revert_operation(
     conn: &mut Connection,
     op_id: i64,
     track_id: Option<i64>,
     album_id: Option<i64>,
+    book_id: Option<i64>,
     db_old_path: Option<&str>,
+    db_new_path: Option<&str>,
 ) -> Result<()> {
     let tx = conn.transaction()?;
     tx.execute(
         "UPDATE move_operations SET state = ?2 WHERE id = ?1",
         params![op_id, OpState::Pending.as_str()],
     )?;
-    apply_db_path(&tx, track_id, album_id, db_old_path)?;
+    apply_db_path(&tx, track_id, album_id, book_id, db_new_path, db_old_path)?;
     tx.commit()?;
     Ok(())
 }
 
-/// Point the track's `file_path` and the album's `folder_path` at `path` (the
-/// album folder is the file's parent). A `None` path leaves the rows untouched.
+/// Point the moved row's path columns at `to`: a track's `file_path` and its
+/// album's `folder_path` (the file's parent), or a book's chapter rows and its
+/// `folder_path`. The book chapters are matched by (`book_id`, `from`), so a
+/// single M4B that backs many chapters rewrites all of them in one statement
+/// while a per-chapter file rewrites exactly its one row. A `None` `to` leaves
+/// the rows untouched (the track/album branch ignores `from`).
 fn apply_db_path(
     tx: &Connection,
     track_id: Option<i64>,
     album_id: Option<i64>,
-    path: Option<&str>,
+    book_id: Option<i64>,
+    from: Option<&str>,
+    to: Option<&str>,
 ) -> Result<()> {
-    let Some(path) = path else { return Ok(()) };
+    let Some(to) = to else { return Ok(()) };
     if let Some(track_id) = track_id {
         tx.execute(
             "UPDATE tracks SET file_path = ?2 WHERE id = ?1",
-            params![track_id, path],
+            params![track_id, to],
         )?;
     }
     if let Some(album_id) = album_id {
-        let folder = Path::new(path)
-            .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
         tx.execute(
             "UPDATE albums SET folder_path = ?2 WHERE id = ?1",
-            params![album_id, folder],
+            params![album_id, parent_string(to)],
+        )?;
+    }
+    if let Some(book_id) = book_id {
+        if let Some(from) = from {
+            tx.execute(
+                "UPDATE book_chapters SET file_path = ?3 WHERE book_id = ?1 AND file_path = ?2",
+                params![book_id, from, to],
+            )?;
+        }
+        tx.execute(
+            "UPDATE books SET folder_path = ?2 WHERE id = ?1",
+            params![book_id, parent_string(to)],
         )?;
     }
     Ok(())
+}
+
+/// The parent directory of a root-relative path, as a string (the folder the
+/// album / book is recorded under). An empty string if there is no parent.
+fn parent_string(path: &str) -> String {
+    Path::new(path)
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 pub(crate) fn set_job_state(conn: &Connection, job_id: i64, state: JobState) -> Result<()> {
@@ -240,7 +273,8 @@ pub fn get_job(conn: &Connection, job_id: i64) -> Result<Option<MoveJobRow>> {
 /// A job's operations in `seq` order.
 pub fn job_operations(conn: &Connection, job_id: i64) -> Result<Vec<MoveOpRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, seq, track_id, album_id, src_path, dst_path, db_old_path, db_new_path, state
+        "SELECT id, seq, track_id, album_id, book_id,
+                src_path, dst_path, db_old_path, db_new_path, state
          FROM move_operations WHERE job_id = ?1 ORDER BY seq",
     )?;
     let rows = stmt.query_map(params![job_id], row_to_op)?;
@@ -271,6 +305,7 @@ fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<MoveOpRow>> {
             seq: row.get("seq")?,
             track_id: row.get("track_id")?,
             album_id: row.get("album_id")?,
+            book_id: row.get("book_id")?,
             src_path: row.get("src_path")?,
             dst_path: row.get("dst_path")?,
             db_old_path: row.get("db_old_path")?,

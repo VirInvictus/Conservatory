@@ -269,6 +269,8 @@ Landed at Phase 7a-i, modeled on Audiobookshelf's relational shape and Cozy's Bo
 
 `book_fts` is unlike `episode_fts`: its `author` / `narrator` / `series` columns denormalize from the *link* tables, not the `books` row. So `books_ai`/`au`/`ad` maintain `title` + `series`, triggers on `book_authors` / `book_narrators` re-aggregate the author / narrator columns (a space-joined `group_concat`) as links change, and `book_people_au` / `series_au` propagate a rename back into the index (the `0001` `artists_au` precedent).
 
+The **shelf read** `list_book_rows` (Phase 7b-i, `reads.rs`) is the audiobook `EpisodeListRow` analogue: one query returns a `BookListRow` per book with the author / narrator credits `group_concat`ed in sort order, the series name, the summed chapter duration, and the resume state `LEFT JOIN`ed from `book_playback` (COALESCEd, so an unplayed book reads as New at position 0). `BookState::derive(position, finished)` turns that into New / In progress / Finished, and `sort_shelf` orders in-progress first; both are pure and tested, so the GUI shelf and the `audiobook list` CLI share one logic.
+
 ```sql
 CREATE TABLE book_people (              -- authors + narrators, role-tagged via the link tables
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, sort_name TEXT NOT NULL, UNIQUE (sort_name)

@@ -364,3 +364,211 @@ mod episode_tests {
         assert_eq!(none.state_label(), "In progress");
     }
 }
+
+// --- Book row (audiobook shelf, Phase 7b-i) ---
+
+#[cfg(feature = "audiobooks")]
+mod book_imp {
+    use super::*;
+    use conservatory_core::db::BookListRow;
+
+    #[derive(Default)]
+    pub struct BookRow {
+        pub row: RefCell<Option<BookListRow>>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for BookRow {
+        const NAME: &'static str = "ConservatoryBookRow";
+        type Type = super::BookRow;
+    }
+
+    impl ObjectImpl for BookRow {}
+}
+
+#[cfg(feature = "audiobooks")]
+glib::wrapper! {
+    pub struct BookRow(ObjectSubclass<book_imp::BookRow>);
+}
+
+#[cfg(feature = "audiobooks")]
+impl BookRow {
+    pub fn new(row: &conservatory_core::db::BookListRow) -> Self {
+        let obj: Self = glib::Object::new();
+        obj.imp().row.replace(Some(row.clone()));
+        obj
+    }
+
+    fn with<R>(&self, f: impl FnOnce(&conservatory_core::db::BookListRow) -> R) -> R {
+        f(self.imp().row.borrow().as_ref().expect("row set"))
+    }
+
+    pub fn id(&self) -> i64 {
+        self.with(|r| r.id)
+    }
+
+    pub fn title(&self) -> String {
+        self.with(|r| r.title.clone())
+    }
+
+    pub fn subtitle(&self) -> Option<String> {
+        self.with(|r| r.subtitle.clone())
+    }
+
+    /// The denormalized author credit ("Patrick Rothfuss"), or empty.
+    pub fn author_display(&self) -> String {
+        self.with(|r| r.author_display.clone().unwrap_or_default())
+    }
+
+    pub fn narrator_display(&self) -> String {
+        self.with(|r| r.narrator_display.clone().unwrap_or_default())
+    }
+
+    /// "Series #1.5" / "Series" / empty.
+    pub fn series_text(&self) -> String {
+        self.with(|r| match (&r.series_name, r.series_sequence) {
+            (Some(s), Some(n)) => format!("{s} #{}", trim_seq(n)),
+            (Some(s), None) => s.clone(),
+            _ => String::new(),
+        })
+    }
+
+    pub fn year(&self) -> Option<i32> {
+        self.with(|r| r.year)
+    }
+
+    /// The cover file, relative to the library root, if any.
+    pub fn cover_path(&self) -> Option<String> {
+        self.with(|r| r.cover_path.clone())
+    }
+
+    /// The packed median-cut accent (`0x00RRGGBB`), if a cover gave one.
+    pub fn accent_rgb(&self) -> Option<u32> {
+        self.with(|r| r.accent_rgb)
+    }
+
+    pub fn starred(&self) -> bool {
+        self.with(|r| r.starred)
+    }
+
+    pub fn rating(&self) -> u8 {
+        self.with(|r| r.rating)
+    }
+
+    /// Progress through the book as a 0.0–1.0 fraction (finished is full).
+    pub fn progress_fraction(&self) -> f64 {
+        self.with(|r| {
+            if r.finished {
+                1.0
+            } else if r.total_duration > 0.0 {
+                (r.position / r.total_duration).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        })
+    }
+
+    /// A human label for the derived state (New / In progress / Finished).
+    pub fn state_label(&self) -> &'static str {
+        use conservatory_core::db::BookState;
+        match self.with(|r| r.state()) {
+            BookState::New => "New",
+            BookState::InProgress => "In progress",
+            BookState::Finished => "Finished",
+        }
+    }
+
+    /// A one-line meta string for the detail/grid subtitle: author, then narrator
+    /// ("Read by …"), then series, then year, the present parts joined by " · ".
+    pub fn meta_line(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        let author = self.author_display();
+        if !author.is_empty() {
+            parts.push(author);
+        }
+        let narrator = self.narrator_display();
+        if !narrator.is_empty() {
+            parts.push(format!("Read by {narrator}"));
+        }
+        let series = self.series_text();
+        if !series.is_empty() {
+            parts.push(series);
+        }
+        if let Some(y) = self.year() {
+            parts.push(y.to_string());
+        }
+        parts.join(" · ")
+    }
+}
+
+/// Render a decimal series sequence minimally: `1.0` -> `1`, `1.5` -> `1.5`.
+#[cfg(feature = "audiobooks")]
+fn trim_seq(n: f64) -> String {
+    if n.fract() == 0.0 {
+        format!("{}", n as i64)
+    } else {
+        format!("{n}")
+    }
+}
+
+#[cfg(all(test, feature = "audiobooks"))]
+mod book_tests {
+    use super::BookRow;
+    use conservatory_core::db::BookListRow;
+
+    fn row() -> BookListRow {
+        BookListRow {
+            id: 1,
+            title: "The Name of the Wind".to_string(),
+            subtitle: None,
+            author_display: Some("Patrick Rothfuss".to_string()),
+            narrator_display: Some("Nick Podehl".to_string()),
+            series_name: Some("The Kingkiller Chronicle".to_string()),
+            series_sequence: Some(1.0),
+            year: Some(2009),
+            cover_path: None,
+            accent_rgb: Some(0x3366cc),
+            rating: 5,
+            starred: false,
+            position: 0.0,
+            finished: false,
+            last_played: None,
+            total_duration: 0.0,
+        }
+    }
+
+    #[test]
+    fn progress_state_and_meta_formatting() {
+        let mut r = row();
+        // No playback, no duration: New, zero progress.
+        let n = BookRow::new(&r);
+        assert_eq!(n.state_label(), "New");
+        assert!((n.progress_fraction() - 0.0).abs() < 1e-9);
+        assert_eq!(n.series_text(), "The Kingkiller Chronicle #1");
+        assert_eq!(
+            n.meta_line(),
+            "Patrick Rothfuss · Read by Nick Podehl · The Kingkiller Chronicle #1 · 2009"
+        );
+
+        // Mid-book: in progress at 25%.
+        r.position = 300.0;
+        r.total_duration = 1200.0;
+        let p = BookRow::new(&r);
+        assert_eq!(p.state_label(), "In progress");
+        assert!((p.progress_fraction() - 0.25).abs() < 1e-9);
+
+        // Finished is full regardless of position.
+        r.finished = true;
+        r.position = 0.0;
+        let f = BookRow::new(&r);
+        assert_eq!(f.state_label(), "Finished");
+        assert!((f.progress_fraction() - 1.0).abs() < 1e-9);
+
+        // A decimal sequence keeps its fraction.
+        r.series_sequence = Some(1.5);
+        assert_eq!(
+            BookRow::new(&r).series_text(),
+            "The Kingkiller Chronicle #1.5"
+        );
+    }
+}

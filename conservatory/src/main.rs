@@ -32,6 +32,10 @@ columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height
 .queue-list { border-left: 1px solid alpha(currentColor, 0.12); }
 .chapter-row { padding: 3px 6px; }
 .chapter-row.current-chapter { background: alpha(@accent_color, 0.16); font-weight: bold; }
+.book-tile { padding: 8px; border-radius: 10px; }
+.book-tile:selected { background: alpha(@accent_color, 0.18); }
+.book-cover { border-radius: 6px; background: alpha(currentColor, 0.06); }
+.book-accent { box-shadow: inset 0 -4px 0 alpha(currentColor, 0.25); }
 ";
 
 fn load_css() {

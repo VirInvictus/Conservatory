@@ -1321,3 +1321,143 @@ pub fn get_book_playback(conn: &Connection, book_id: i64) -> Result<Option<BookP
     .optional()
     .map_err(Into::into)
 }
+
+/// A book's listening state, derived (not stored) from its `book_playback` row
+/// (spec §3.8): `New` when never started, `InProgress` once there is a position,
+/// `Finished` when played through. The shelf surfaces in-progress books first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BookState {
+    New,
+    InProgress,
+    Finished,
+}
+
+impl BookState {
+    /// Derive the state from the resume cursor: `finished` wins, then any
+    /// position means in-progress, else new (the `book_playback` analogue of the
+    /// podcast triage derivation).
+    pub fn derive(position: f64, finished: bool) -> Self {
+        if finished {
+            BookState::Finished
+        } else if position > 0.0 {
+            BookState::InProgress
+        } else {
+            BookState::New
+        }
+    }
+
+    /// The stable string name (CLI / display).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BookState::New => "new",
+            BookState::InProgress => "in_progress",
+            BookState::Finished => "finished",
+        }
+    }
+}
+
+/// One book as the shelf renders it (Phase 7b-i): the display fields plus the
+/// denormalized author/narrator credits, the series name, and the resume state
+/// joined from `book_playback` (COALESCEd, so an unplayed book reads as New at
+/// position 0). The author/narrator strings are `group_concat`ed in sort order,
+/// the same denormalization the `book_fts` triggers do (spec §4.4). One read for
+/// the whole shelf, the `EpisodeListRow` precedent (no per-book N+1).
+#[derive(Debug, Clone)]
+pub struct BookListRow {
+    pub id: i64,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub author_display: Option<String>,
+    pub narrator_display: Option<String>,
+    pub series_name: Option<String>,
+    pub series_sequence: Option<f64>,
+    pub year: Option<i32>,
+    pub cover_path: Option<String>,
+    pub accent_rgb: Option<u32>,
+    pub rating: u8,
+    pub starred: bool,
+    pub position: f64,
+    pub finished: bool,
+    pub last_played: Option<i64>, // unix seconds, for recency ordering
+    pub total_duration: f64,      // sum of chapter durations, seconds
+}
+
+impl BookListRow {
+    /// The derived listening state (spec §3.8).
+    pub fn state(&self) -> BookState {
+        BookState::derive(self.position, self.finished)
+    }
+}
+
+/// Every book as a shelf row, in a stable base order (series, then sequence, then
+/// title). The UI / [`sort_shelf`] reorders by state so in-progress books surface
+/// first; keeping the SQL order stable means the ordering rule lives in one tested
+/// place.
+pub fn list_book_rows(conn: &Connection) -> Result<Vec<BookListRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT b.id, b.title, b.subtitle, b.year, b.cover_path, b.accent_rgb,
+                b.rating, b.starred, b.series_sequence,
+                sr.name AS series_name,
+                COALESCE(bp.position, 0.0) AS position,
+                COALESCE(bp.finished, 0)   AS finished,
+                bp.last_played             AS last_played,
+                COALESCE(
+                    (SELECT SUM(c.duration) FROM book_chapters c WHERE c.book_id = b.id),
+                    0.0
+                ) AS total_duration,
+                (SELECT group_concat(name, ', ') FROM
+                    (SELECT p.name FROM book_authors ba JOIN book_people p ON p.id = ba.person_id
+                     WHERE ba.book_id = b.id ORDER BY p.sort_name)
+                ) AS author_display,
+                (SELECT group_concat(name, ', ') FROM
+                    (SELECT p.name FROM book_narrators bn JOIN book_people p ON p.id = bn.person_id
+                     WHERE bn.book_id = b.id ORDER BY p.sort_name)
+                ) AS narrator_display
+         FROM books b
+         LEFT JOIN series sr ON sr.id = b.series_id
+         LEFT JOIN book_playback bp ON bp.book_id = b.id
+         ORDER BY sr.name IS NOT NULL, sr.name, b.series_sequence, b.title",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let rating: i64 = row.get("rating")?;
+        Ok(BookListRow {
+            id: row.get("id")?,
+            title: row.get("title")?,
+            subtitle: row.get("subtitle")?,
+            author_display: row.get("author_display")?,
+            narrator_display: row.get("narrator_display")?,
+            series_name: row.get("series_name")?,
+            series_sequence: row.get("series_sequence")?,
+            year: row.get("year")?,
+            cover_path: row.get("cover_path")?,
+            accent_rgb: row.get::<_, Option<i64>>("accent_rgb")?.map(|v| v as u32),
+            rating: rating as u8,
+            starred: row.get("starred")?,
+            position: row.get("position")?,
+            finished: row.get("finished")?,
+            last_played: row.get("last_played")?,
+            total_duration: row.get("total_duration")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// Order shelf rows for display (spec §3.8): in-progress first (most recently
+/// played first), then new, then finished; ties broken by title. Pure, so the
+/// ordering rule is unit-tested independently of the read.
+pub fn sort_shelf(rows: &mut [BookListRow]) {
+    fn rank(r: &BookListRow) -> u8 {
+        match r.state() {
+            BookState::InProgress => 0,
+            BookState::New => 1,
+            BookState::Finished => 2,
+        }
+    }
+    rows.sort_by(|a, b| {
+        rank(a)
+            .cmp(&rank(b))
+            // Most recently played first within a rank (None sorts last).
+            .then_with(|| b.last_played.cmp(&a.last_played))
+            .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+    });
+}

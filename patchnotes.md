@@ -1,5 +1,18 @@
 # Patch Notes
 
+## v0.0.56
+
+Phase 7b-i: the Audiobooks tab arrives, the third media surface. The shelf is a cover grid (the app's first `GridView`, every other browse being a column table) beside a detail pane, and it is the first place the median-cut cover accent is used in the GUI. This sub-phase is read-only browse; a book becomes playable at Phase 7c, so there is no play action yet (the same browse-before-playback split podcasts took). Filtering and bulk edit follow in 7b-ii/iii.
+
+- **The shelf:** every audiobook as an accent-tinted cover tile, ordered in-progress first (then new, then finished), with the title and author beneath. Click a tile and the detail pane on the right fills with the cover, the title, an author · narrator · series · year line, a progress bar with the derived state, and the book's chapter list. A side-by-side `gtk::Paned`, matching the Podcasts and Music tabs; the cover loads from the managed `cover.jpg`, falling back to a placeholder.
+- **State derivation:** New / In progress / Finished is derived (not stored) from the `book_playback` resume row, and the shelf surfaces in-progress books first (most recently played first). The derivation and the ordering are pure, tested functions in core, so the GUI shelf and the new `audiobook list` CLI verb share one source of truth.
+- **One core read for the shelf:** `list_book_rows` returns a denormalized row per book (author and narrator credits, series, summed chapter duration, and resume state) in a single query, the podcast `EpisodeListRow` precedent, so the grid never does an N+1 of per-book lookups.
+- **CLI:** `conservatory-cli audiobook list <db>` prints the shelf rows with their derived state, the headless view of the GUI shelf (the every-surface-CLI-testable rule).
+- **Plumbing:** the multi-view chrome (the header switcher, the adaptive bottom bar, the narrow breakpoint) moved out of the podcasts attach into a shared step, so podcasts and audiobooks are now independent compile-time plugins: either one alone still gets the switcher, and a music-only build is unchanged. The shell already reserved the Alt+3 slot; the Audiobooks page is built lazily on first view.
+- **Tests:** the shelf read and ordering (denormalized credits / series / duration, and in-progress-first ordering beating alphabetical) and the `BookState` derivation in core; the tile row formatting (progress fraction, the "Author · Read by Narrator · Series · Year" line, the state label, decimal series numbers) as `BookRow` unit tests. The widget tree itself is verified by build plus manual launch (the documented GTK-view precedent). Manually checked against the two real test books (the Rothfuss series book and the Gaiman full-cast standalone) imported into a shelf. Full workspace suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build (and the audiobooks-without-podcasts build) green.
+
+Next: Phase 7b-ii, the filter bar and bucket sidebar wired to `conservatory-search` (`author:` / `narrator:` / `series:` / `is:finished`), then 7b-iii (bulk edit) and 7c (playback, chapters, resume).
+
 ## v0.0.55
 
 Phase 7a-iii closes Phase 7a: the audiobook import pipeline. The 7a-ii reader turned files into a `BookDraft`; this sub-phase resolves that draft into database rows and moves the book's files into the managed `Audiobooks/` tree through the same trust-critical, journaled file mover that owns the music library. Point the CLI at a folder or a single `.m4b` and you get an organized, database-owned audiobook with ordered chapters, headless. No new third-party dependency.

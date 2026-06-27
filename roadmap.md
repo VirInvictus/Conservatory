@@ -571,13 +571,15 @@ Split i/ii/iii like Phase 6a: **7a-i** the schema foundation (migration + models
 
 ### Phase 7b — Audiobooks tab (browse)
 
-- [ ] The Audiobooks view (spec §3.8): the third `AdwViewStack` page added to the Phase 6b-i shell (the switcher now offers all three), built lazily on `::map`. A cover-grid shelf (accent-tinted, the Hermitage unit) plus a book detail pane (chapter list, progress, author/narrator, series/sequence, per-book speed + sleep-timer controls). Cozy's layout, rebuilt over Conservatory's database.
-- [ ] State derivation: New / In progress / Finished from `book_playback`; in-progress books surface first.
-- [ ] Filter bar wired to `conservatory-search` with the audiobook fields (`author:`, `narrator:`, `series:`, `is:finished`); same grammar, no separate search mode.
-- [ ] Bulk edit (spec §3.5) across selected books; a path-affecting edit (author/series/title/year) enqueues a move via the Phase 2c mover.
+Split like Phase 6b: **7b-i** the read-only browse surface (the cover shelf + detail pane + state derivation), **7b-ii** the filter bar + bucket sidebar, **7b-iii** bulk edit.
+
+- [x] **The Audiobooks view (7b-i, v0.0.56):** the third `AdwViewStack` page added to the Phase 6b-i shell (the switcher now offers all three, Alt+3), built lazily on `::map`. A cover-grid **shelf** (`gtk::GridView`, the app's first; accent-tinted tiles, the Hermitage unit, the first `accent_rgb` use in the GUI) beside a book **detail pane** (cover, title, author/narrator · series/sequence · year, a progress bar + state, and the chapter list), a side-by-side `gtk::Paned`. The multi-view chrome split out of `attach_podcasts_view` into a shared `install_view_chrome` so podcasts and audiobooks are independent (either alone still gets the switcher). Per-book speed / sleep-timer controls are playback, so they land at 7c. Cozy's layout over Conservatory's database. New core read `list_book_rows` (denormalized author/narrator/series + progress, the `EpisodeListRow` precedent) + the `audiobook list` CLI artifact.
+- [x] **State derivation (7b-i):** New / In progress / Finished from `book_playback` (`BookState::derive`), pure and tested; `sort_shelf` surfaces in-progress books first (most recently played first).
+- [ ] Filter bar wired to `conservatory-search` with the audiobook fields (`author:`, `narrator:`, `series:`, `is:finished`); same grammar, no separate search mode. **(7b-ii)**
+- [ ] Bulk edit (spec §3.5) across selected books; a path-affecting edit (author/series/title/year) enqueues a move via the Phase 2c mover. **(7b-iii)**
 - [ ] Tests: shelf/filter model logic; book-state derivation; Perspective save/reload over books.
 
-*Usable artifact:* browse, filter, sort, and bulk-edit the audiobook library in the GUI.
+*Usable artifact (7b-i):* browse the audiobook library as a cover shelf, in-progress first, and open a book for its metadata, progress, and chapters; filter / sort / bulk-edit follow in 7b-ii/iii.
 
 ### Phase 7c — Audiobook playback (chapters + first-class resume)
 

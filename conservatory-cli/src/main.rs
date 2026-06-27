@@ -351,6 +351,18 @@ enum AudiobookAction {
         #[arg(long)]
         shelf_genre: Option<String>,
     },
+
+    /// List the audiobook shelf: every book with its denormalized author /
+    /// narrator / series, progress, and derived state (New / In progress /
+    /// Finished), ordered in-progress first (Phase 7b-i). Read-only; the headless
+    /// view of the GUI shelf.
+    List {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = Format::Human)]
+        format: Format,
+    },
 }
 
 /// Equalizer verbs (Phase 5.5b).
@@ -881,6 +893,10 @@ fn main() -> Result<()> {
                     shelf_genre,
                 },
         }) => block_on(run_audiobook_set(db, book_id, rating, starred, shelf_genre)),
+        #[cfg(feature = "audiobooks")]
+        Some(Command::Audiobook {
+            action: AudiobookAction::List { db, format },
+        }) => run_audiobook_list(db, format),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
@@ -1156,6 +1172,111 @@ async fn run_audiobook_set(
     worker.shutdown_ack().await.context("shutdown ack")?;
     println!("updated book {book_id}");
     Ok(())
+}
+
+/// Print the audiobook shelf (Phase 7b-i): the denormalized rows in shelf order
+/// (in-progress first), the headless view of the GUI shelf. Read-only.
+#[cfg(feature = "audiobooks")]
+fn run_audiobook_list(db: PathBuf, format: Format) -> Result<()> {
+    use conservatory_core::db::{list_book_rows, sort_shelf};
+
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let mut rows = list_book_rows(&conn).context("reading shelf")?;
+    sort_shelf(&mut rows);
+    print_book_rows(&rows, format);
+    Ok(())
+}
+
+#[cfg(feature = "audiobooks")]
+fn print_book_rows(rows: &[conservatory_core::db::BookListRow], format: Format) {
+    // h:mm of a duration in seconds, "-" when unknown (0).
+    let dur = |secs: f64| -> String {
+        if secs <= 0.0 {
+            return "-".to_string();
+        }
+        let total = secs as u64;
+        format!("{}:{:02}", total / 3600, (total % 3600) / 60)
+    };
+    let series = |r: &conservatory_core::db::BookListRow| match (&r.series_name, r.series_sequence)
+    {
+        (Some(s), Some(n)) => format!("{s} #{n}"),
+        (Some(s), None) => s.clone(),
+        _ => String::new(),
+    };
+
+    match format {
+        Format::Tsv => {
+            println!("id\ttitle\tauthor\tnarrator\tseries\tstate\tprogress\tduration\tstarred");
+            for r in rows {
+                let pct = progress_pct(r);
+                println!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{pct}%\t{}\t{}",
+                    r.id,
+                    r.title,
+                    r.author_display.as_deref().unwrap_or(""),
+                    r.narrator_display.as_deref().unwrap_or(""),
+                    series(r),
+                    r.state().as_str(),
+                    dur(r.total_duration),
+                    r.starred,
+                );
+            }
+        }
+        Format::Json => {
+            print!("[");
+            for (i, r) in rows.iter().enumerate() {
+                if i > 0 {
+                    print!(",");
+                }
+                print!(
+                    "{{\"id\":{},\"title\":{:?},\"author\":{:?},\"narrator\":{:?},\"series\":{:?},\"state\":{:?},\"progress\":{},\"duration\":{:.1}}}",
+                    r.id,
+                    r.title,
+                    r.author_display.as_deref().unwrap_or(""),
+                    r.narrator_display.as_deref().unwrap_or(""),
+                    series(r),
+                    r.state().as_str(),
+                    progress_pct(r),
+                    r.total_duration,
+                );
+            }
+            println!("]");
+        }
+        Format::Human => {
+            if rows.is_empty() {
+                println!("no audiobooks (import one with `audiobook import`)");
+                return;
+            }
+            for r in rows {
+                let mut line = format!("{:>4}  [{}]  {}", r.id, r.state().as_str(), r.title);
+                if let Some(a) = &r.author_display {
+                    line.push_str(&format!(" — {a}"));
+                }
+                let s = series(r);
+                if !s.is_empty() {
+                    line.push_str(&format!("  ({s})"));
+                }
+                if r.state() == conservatory_core::db::BookState::InProgress {
+                    line.push_str(&format!("  {}%", progress_pct(r)));
+                }
+                println!("{line}");
+            }
+            println!("\n{} book(s)", rows.len());
+        }
+    }
+}
+
+/// Whole-percent progress through a book (0 when the total duration is unknown).
+#[cfg(feature = "audiobooks")]
+fn progress_pct(r: &conservatory_core::db::BookListRow) -> u32 {
+    if r.finished {
+        return 100;
+    }
+    if r.total_duration <= 0.0 {
+        return 0;
+    }
+    ((r.position / r.total_duration) * 100.0).clamp(0.0, 100.0) as u32
 }
 
 fn eq(action: EqAction) -> Result<()> {

@@ -375,12 +375,17 @@ impl ConservatoryWindow {
         });
         now_bar.left.add_controller(click);
 
-        // The multi-view chrome (switcher in the header, the adaptive bottom
-        // switcher bar, the breakpoint, the Podcasts page) exists only when a
-        // second view is compiled in. A music-only build (`--no-default-features`)
-        // keeps a single-page stack with no switcher: visually unchanged.
+        // The plugin pages (lazily built) plus the shared multi-view chrome
+        // (switcher in the header, the adaptive bottom switcher bar, the
+        // breakpoint), which exists only when a second view is compiled in. A
+        // music-only build (`--no-default-features`) keeps a single-page stack
+        // with no switcher: visually unchanged.
         #[cfg(feature = "podcasts")]
-        self.attach_podcasts_view(&stack, &header, &toolbar);
+        self.attach_podcasts_view(&stack);
+        #[cfg(feature = "audiobooks")]
+        self.attach_audiobooks_view(&stack);
+        #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
+        self.install_view_chrome(&stack, &header, &toolbar);
 
         self.set_content(Some(&toolbar));
         let _ = imp.view_stack.set(stack);
@@ -1995,17 +2000,12 @@ impl ConservatoryWindow {
         list.add_controller(local);
     }
 
-    /// Build the Podcasts plugin view and the multi-view chrome (Phase 6b-i):
-    /// the header view switcher, the adaptive bottom switcher bar, the narrow
-    /// breakpoint, and the (lazily-built) Podcasts page. Compiled only with the
-    /// `podcasts` feature; 6b-ii fills the page with the triage UI.
+    /// Add the lazily-built Podcasts page to the view stack (Phase 6b-i). The
+    /// shared multi-view chrome (switcher, bottom bar, breakpoint) is built once
+    /// by [`install_view_chrome`], so this only owns the page. Compiled only with
+    /// the `podcasts` feature.
     #[cfg(feature = "podcasts")]
-    fn attach_podcasts_view(
-        &self,
-        stack: &adw::ViewStack,
-        header: &adw::HeaderBar,
-        toolbar: &adw::ToolbarView,
-    ) {
+    fn attach_podcasts_view(&self, stack: &adw::ViewStack) {
         // Lazy construction (spec §2.3): the page's child is built on its first
         // `::map`, not eagerly at startup, so switching to it is what pays for
         // it. Reads go through the pool; triage actions write through the worker
@@ -2038,7 +2038,55 @@ impl ConservatoryWindow {
             "Podcasts",
             "microphone-symbolic",
         );
+    }
 
+    /// Add the lazily-built Audiobooks page to the view stack (Phase 7b-i), the
+    /// `attach_podcasts_view` mirror. The cover shelf + detail pane are built on
+    /// first `::map`; the shared chrome is [`install_view_chrome`]'s job. Compiled
+    /// only with the `audiobooks` feature.
+    #[cfg(feature = "audiobooks")]
+    fn attach_audiobooks_view(&self, stack: &adw::ViewStack) {
+        let books_bin = adw::Bin::new();
+        let built = Cell::new(false);
+        let weak = self.downgrade();
+        books_bin.connect_map(move |bin| {
+            if built.replace(true) {
+                return;
+            }
+            if let Some(win) = weak.upgrade() {
+                let imp = win.imp();
+                if let (Some(pool), Some(worker), Some(rt)) =
+                    (imp.pool.get().cloned(), imp.worker.get(), imp.runtime.get())
+                {
+                    bin.set_child(Some(&crate::ui::audiobooks::build_audiobooks_view(
+                        pool,
+                        worker.clone(),
+                        rt.handle().clone(),
+                        imp.player.get().cloned(),
+                        imp.library_root.get().cloned(),
+                    )));
+                }
+            }
+        });
+        stack.add_titled_with_icon(
+            &books_bin,
+            Some("audiobooks"),
+            "Audiobooks",
+            "library-symbolic",
+        );
+    }
+
+    /// Build the shared multi-view chrome (Phase 6b-i): the header view switcher,
+    /// the adaptive bottom switcher bar, and the narrow breakpoint. Installed once
+    /// when *any* second view (podcasts or audiobooks) is compiled in; a music-only
+    /// build (`--no-default-features`) keeps a single-page stack with no switcher.
+    #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
+    fn install_view_chrome(
+        &self,
+        stack: &adw::ViewStack,
+        header: &adw::HeaderBar,
+        toolbar: &adw::ToolbarView,
+    ) {
         // The header switcher (libadwaita 1.4+ idiom; AdwViewSwitcherTitle is
         // deprecated and not used). `Wide` keeps the labels until the breakpoint.
         let switcher = adw::ViewSwitcher::builder()

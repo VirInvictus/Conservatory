@@ -7,8 +7,9 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 use conservatory_core::db::{
-    Book, BookChapter, BookPlayback, ReadPool, WorkerHandle, book_authors, book_chapters,
-    book_narrators, get_book, get_book_playback, list_books, series_for_book, spawn_worker,
+    Book, BookChapter, BookPlayback, BookState, ReadPool, WorkerHandle, book_authors,
+    book_chapters, book_narrators, get_book, get_book_playback, list_book_rows, list_books,
+    series_for_book, sort_shelf, spawn_worker,
 };
 use tempfile::tempdir;
 
@@ -354,6 +355,96 @@ async fn book_fts_denormalizes_author_narrator_and_series_from_links() {
     assert_eq!(fts_count("title:Kings"), 0);
 
     worker.shutdown_ack().await.unwrap();
+}
+
+#[tokio::test]
+async fn shelf_rows_denormalize_and_sort_by_state() {
+    let (_dir, worker, pool) = fresh().await;
+
+    // Book A: a series entry, author + narrator, two chapters, in progress.
+    let author = worker
+        .get_or_create_book_person("Patrick Rothfuss", "Rothfuss, Patrick")
+        .await
+        .unwrap();
+    let narrator = worker
+        .get_or_create_book_person("Nick Podehl", "Podehl, Nick")
+        .await
+        .unwrap();
+    let series = worker
+        .get_or_create_series("The Kingkiller Chronicle")
+        .await
+        .unwrap();
+    let mut a = sample_book("AAA In Progress", "Audiobooks/Rothfuss, Patrick/.../a");
+    a.series_id = Some(series);
+    a.series_sequence = Some(1.0);
+    let a_id = worker.insert_book(a).await.unwrap();
+    worker.link_book_author(a_id, author).await.unwrap();
+    worker.link_book_narrator(a_id, narrator).await.unwrap();
+    worker
+        .replace_book_chapters(
+            a_id,
+            vec![chapter(0, "One", "0.mp3"), chapter(1, "Two", "1.mp3")],
+        )
+        .await
+        .unwrap();
+    worker
+        .set_book_position(a_id, 120.0, Some(500))
+        .await
+        .unwrap();
+
+    // Book B: standalone, never started (New). Title sorts before A.
+    let b_id = worker
+        .insert_book(sample_book("AAA New", "Audiobooks/B/Standalone/b"))
+        .await
+        .unwrap();
+
+    // Book C: finished. Title sorts first of all.
+    let c_id = worker
+        .insert_book(sample_book("AAA Finished", "Audiobooks/C/Standalone/c"))
+        .await
+        .unwrap();
+    worker.complete_book(c_id, Some(600)).await.unwrap();
+
+    let conn = pool.open().unwrap();
+    let mut rows = list_book_rows(&conn).unwrap();
+    assert_eq!(rows.len(), 3);
+
+    // The in-progress book carries its denormalized credits, series, duration,
+    // and resume state in one read.
+    let a = rows.iter().find(|r| r.id == a_id).unwrap();
+    assert_eq!(a.author_display.as_deref(), Some("Patrick Rothfuss"));
+    assert_eq!(a.narrator_display.as_deref(), Some("Nick Podehl"));
+    assert_eq!(a.series_name.as_deref(), Some("The Kingkiller Chronicle"));
+    assert_eq!(a.series_sequence, Some(1.0));
+    assert!(
+        (a.total_duration - 1200.0).abs() < 1e-9,
+        "sum of chapter durations"
+    );
+    assert!((a.position - 120.0).abs() < 1e-9);
+    assert_eq!(a.state(), BookState::InProgress);
+
+    let b = rows.iter().find(|r| r.id == b_id).unwrap();
+    assert_eq!(b.state(), BookState::New);
+    assert!(b.author_display.is_none(), "no credits linked");
+    let c = rows.iter().find(|r| r.id == c_id).unwrap();
+    assert_eq!(c.state(), BookState::Finished);
+
+    // Shelf order: in-progress first, then new, then finished (state beats the
+    // alphabetical title order, which would otherwise put "Finished" first).
+    sort_shelf(&mut rows);
+    let order: Vec<i64> = rows.iter().map(|r| r.id).collect();
+    assert_eq!(order, vec![a_id, b_id, c_id], "in-progress, new, finished");
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+#[test]
+fn book_state_derives_from_position_and_finished() {
+    assert_eq!(BookState::derive(0.0, false), BookState::New);
+    assert_eq!(BookState::derive(12.5, false), BookState::InProgress);
+    assert_eq!(BookState::derive(0.0, true), BookState::Finished);
+    // Finished wins even with a position (a re-listen resets it elsewhere).
+    assert_eq!(BookState::derive(99.0, true), BookState::Finished);
 }
 
 #[tokio::test]

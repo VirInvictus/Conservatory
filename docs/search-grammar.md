@@ -2,7 +2,7 @@
 
 > **Status: implemented (music) at Phase 3a.** `conservatory-search` ships the lex → parse → AST → eval + all-or-nothing SQL-translate pipeline with bm25 + recency ranking; the CLI `search` verb is its first consumer. This document expands spec §3.4 and is the thing to read before touching the search crate.
 >
-> **As-built notes (3a):** the parser is fully **infallible** (even unbalanced parens degrade to substring text, not just unknown fields). `vl:` perspectives are **expanded at parse time** via a `PerspectiveResolver` with a cycle guard (a cycle degrades to empty + a warning, not CalibreQuarry's raise), so `eval`/`sql_translate` never see `vl:`. The in-memory fallback is **per-item** (`evaluate`), Atrium-style, not candidate-set. Bare text uses FTS `MATCH` on the SQL path and substring on the eval fallback (the one intentional matching difference; the all-or-nothing rule means only one path runs per query). `is:queued` is live as of Phase 4b-i (the unified `queue` table): the SQL path emits a `queue` subquery, the eval path reads `SearchItem.queued`. Persistent Perspective **storage** (a table + the save/load UI) is deferred to Phase 3c; podcast/audiobook fields to Phases 6/7 (they degrade to substring until then).
+> **As-built notes (3a):** the parser is fully **infallible** (even unbalanced parens degrade to substring text, not just unknown fields). `vl:` perspectives are **expanded at parse time** via a `PerspectiveResolver` with a cycle guard (a cycle degrades to empty + a warning, not CalibreQuarry's raise), so `eval`/`sql_translate` never see `vl:`. The in-memory fallback is **per-item** (`evaluate`), Atrium-style, not candidate-set. Bare text uses FTS `MATCH` on the SQL path and substring on the eval fallback (the one intentional matching difference; the all-or-nothing rule means only one path runs per query). `is:queued` is live as of Phase 4b-i (the unified `queue` table): the SQL path emits a `queue` subquery, the eval path reads `SearchItem.queued`. Persistent Perspective **storage** (a table + the save/load UI) is deferred to Phase 3c; podcast/audiobook fields to Phases 6/7 (they degrade to substring until then). The **audiobook fields landed at Phase 7b-ii** (`author:`/`narrator:`/`series:`/`is:finished`, eval-only; see Open items); podcast fields remain substring.
 
 ## The one-line design decision
 
@@ -65,9 +65,9 @@ One grammar, all three surfaces (music, podcasts, audiobooks). The filter bar ab
 | `format:` | text-multi | `format:flac` |
 | `is:played` / `is:starred` / `is:queued` | state | `is:starred AND genre:jazz` |
 | `show:` / `is:in_inbox` / `pub:` (Phase 6) | podcast | as Belfry §3.7 |
-| `author:` / `narrator:` (Phase 7) | text-multi | `author:"Brandon Sanderson"` |
-| `series:` (Phase 7) | text | `series:"The Stormlight Archive"` |
-| `is:finished` (Phase 7) | state | `author:sanderson AND is:finished false` |
+| `author:` / `narrator:` | text-multi | `author:"Brandon Sanderson"` |
+| `series:` | text | `series:"The Stormlight Archive"` |
+| `is:finished` | state | `author:sanderson AND NOT is:finished` |
 
 `genre:` vs `shelfgenre:` is the central decoupling (spec §5.2): `genre:` matches any of a track's raw multi-value tags (for facets and search); `shelfgenre:` matches the single filed-under value that drives the filesystem. They are deliberately different fields.
 
@@ -106,4 +106,4 @@ input string
 
 - Fuzzy threshold and whether `?fuzzy` is worth the in-memory-only cost on a 50k-track library (Atrium has it; Conservatory may gate it).
 - Whether the in-memory fallback adopts CalibreQuarry's candidate-set algebra wholesale or a per-item predicate like Atrium's `eval`.
-- Podcast field set firms up when the Belfry subsystem is absorbed (Phase 6); the audiobook field set (`author:`, `narrator:`, `series:`, `is:finished`) firms up at Phase 7.
+- Podcast field set firms up when the Belfry subsystem is absorbed (Phase 6). The audiobook field set (`author:`, `narrator:`, `series:`, `is:finished`) **landed at Phase 7b-ii**: the four entries joined the shared `Field`/`State`/`SearchItem`, so they are known on every surface (a book field in the music bar simply matches nothing). They are **eval-only**, never translated to the music `tracks` SQL: `field_sql`/`state_sql` return `None` for them, which forces the whole query to the in-memory path, where the audiobook shelf (small, loaded whole) is matched directly. The Audiobooks tab and the `audiobook list <db> [expr]` CLI verb are the consumers.

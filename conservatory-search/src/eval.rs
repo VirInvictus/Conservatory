@@ -11,8 +11,10 @@ use regex::Regex;
 use crate::ast::{Comparator, Expr, Field, MatchKind, State, Value};
 use crate::dates;
 
-/// The searchable projection of a track. The consumer fills this from a DB read;
-/// the crate owns it so it stays storage-agnostic and fuzzable.
+/// The searchable projection of a library item (a track or, on the audiobook
+/// shelf, a book). The consumer fills this from a DB read; the crate owns it so
+/// it stays storage-agnostic and fuzzable. The audiobook fields (`authors`,
+/// `narrators`, `series`, `finished`) are left empty for tracks.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SearchItem {
     pub title: String,
@@ -30,6 +32,11 @@ pub struct SearchItem {
     pub played: bool,
     pub starred: bool,
     pub queued: bool,
+    // Audiobook projection (spec §3.8); empty for music tracks.
+    pub authors: Vec<String>,
+    pub narrators: Vec<String>,
+    pub series: Option<String>,
+    pub finished: bool,
 }
 
 /// Evaluate `expr` against `item`. `today` resolves relative date keywords (the
@@ -54,6 +61,8 @@ fn eval(expr: &Expr, item: &SearchItem, today: NaiveDate) -> bool {
 
 /// Bare text: case-insensitive substring across the FTS-backed columns (the
 /// offline approximation of the FTS path; bare text normally takes the SQL path).
+/// Authors are included so typing a name on the audiobook shelf finds the book
+/// (empty for tracks, so music is unaffected).
 fn text_any(item: &SearchItem, needle: &str) -> bool {
     let n = needle.to_lowercase();
     let cols = [
@@ -62,6 +71,7 @@ fn text_any(item: &SearchItem, needle: &str) -> bool {
         item.album.as_deref(),
     ];
     cols.iter().flatten().any(|c| c.to_lowercase().contains(&n))
+        || item.authors.iter().any(|a| a.to_lowercase().contains(&n))
 }
 
 /// The text candidates a field exposes (multi-valued for genre).
@@ -74,6 +84,9 @@ fn candidates(item: &SearchItem, field: Field) -> Vec<&str> {
         Field::ShelfGenre => item.shelf_genre.as_deref().into_iter().collect(),
         Field::Format => item.format.as_deref().into_iter().collect(),
         Field::Genre => item.genres.iter().map(String::as_str).collect(),
+        Field::Author => item.authors.iter().map(String::as_str).collect(),
+        Field::Narrator => item.narrators.iter().map(String::as_str).collect(),
+        Field::Series => item.series.as_deref().into_iter().collect(),
         _ => Vec::new(),
     }
 }
@@ -195,6 +208,7 @@ fn state_match(item: &SearchItem, state: State) -> bool {
         State::Played => item.played,
         State::Starred => item.starred,
         State::Queued => item.queued,
+        State::Finished => item.finished,
     }
 }
 
@@ -283,6 +297,24 @@ mod tests {
             starred: false,
             queued: false,
             album_artist: Some("Boards of Canada".into()),
+            authors: Vec::new(),
+            narrators: Vec::new(),
+            series: None,
+            finished: false,
+        }
+    }
+
+    fn book() -> SearchItem {
+        SearchItem {
+            title: "The Way of Kings".into(),
+            authors: vec!["Brandon Sanderson".into()],
+            narrators: vec!["Kate Reading".into(), "Michael Kramer".into()],
+            series: Some("The Stormlight Archive".into()),
+            year: Some(2010),
+            rating: 4,
+            starred: true,
+            finished: true,
+            ..SearchItem::default()
         }
     }
 
@@ -292,6 +324,36 @@ mod tests {
 
     fn run(expr: &str) -> bool {
         evaluate(&crate::parse::parse(expr).expr, &item(), today())
+    }
+
+    fn run_book(expr: &str) -> bool {
+        evaluate(&crate::parse::parse(expr).expr, &book(), today())
+    }
+
+    #[test]
+    fn audiobook_fields() {
+        assert!(run_book("author:sanderson"));
+        assert!(run_book("author:\"Brandon Sanderson\""));
+        assert!(run_book("narrator:kramer")); // a second narrator still matches
+        assert!(run_book("series:stormlight"));
+        assert!(!run_book("author:tolkien"));
+        // is:finished mirrors the other states; negate with NOT.
+        assert!(run_book("is:finished"));
+        assert!(!run_book("NOT is:finished"));
+        // is:starred works on the shelf too; bare text scans the author.
+        assert!(run_book("is:starred"));
+        assert!(run_book("sanderson"));
+        // Composed with the shared numeric/range grammar.
+        assert!(run_book("author:sanderson AND year:2010 AND rating:>=4"));
+    }
+
+    #[test]
+    fn audiobook_fields_are_empty_for_tracks() {
+        // A track carries no author/narrator/series, so the book fields match
+        // nothing rather than erroring (the shared-grammar contract).
+        assert!(!run("author:boards"));
+        assert!(!run("is:finished"));
+        assert!(run("NOT is:finished"));
     }
 
     #[test]

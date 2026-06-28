@@ -19,7 +19,7 @@ use conservatory_search::{
 
 /// Resolves `vl:NAME` against the saved Perspectives table (Phase 3c). Opens a
 /// fresh read handle per lookup; lookups are rare (only on `vl:` in the bar).
-struct PoolResolver<'a>(&'a ReadPool);
+pub(crate) struct PoolResolver<'a>(pub(crate) &'a ReadPool);
 
 impl PerspectiveResolver for PoolResolver<'_> {
     fn expression(&self, name: &str) -> Option<String> {
@@ -95,6 +95,8 @@ fn to_item(r: &SearchRow) -> SearchItem {
         played: r.played,
         starred: r.starred,
         queued: r.queued,
+        // Music rows carry no audiobook projection (the shelf is matched in memory).
+        ..SearchItem::default()
     }
 }
 

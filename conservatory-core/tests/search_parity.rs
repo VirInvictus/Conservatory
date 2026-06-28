@@ -31,6 +31,8 @@ fn to_item(r: &SearchRow) -> SearchItem {
         played: r.played,
         starred: r.starred,
         queued: r.queued,
+        // Music rows carry no audiobook projection (the shelf is matched in memory).
+        ..SearchItem::default()
     }
 }
 

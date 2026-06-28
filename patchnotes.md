@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.57
+
+Phase 7b-ii: the Audiobooks shelf gains a filter bar. The same Calibre-style search grammar that drives the Music tab now sits above the cover shelf, with the audiobook fields wired in. This is the first non-music consumer of the shared grammar (the podcast tab never had a filter bar), so the four book fields joined the shared field set rather than forking it: one grammar, all three surfaces, as the spec intends. No new third-party dependency.
+
+- **The filter bar:** an always-on search entry above the shelf, no separate search mode (the Music-surface idiom). Type `author:sanderson`, `series:"The Stormlight Archive"`, `narrator:kramer`, or `is:finished` and the shelf narrows in place, keeping its in-progress-first order. `is:starred` and the shared numeric grammar (`rating:>=4`, `year:2010`, `duration:`) work on books too. `Ctrl+F` focuses the bar; it is scoped to the Audiobooks tab so it does not fight the window's global music `Ctrl+F`. A malformed expression tints the bar yellow rather than erroring (the forgiving parser).
+- **`is:finished`:** a new state, the same shape as `is:played` and `is:starred`. To find unfinished books, write `NOT is:finished`. (The spec table's `is:finished false` example predates the actual `is:` mechanics, where states take no value; `NOT` is the negation everywhere.)
+- **Shared grammar, eval-only for books:** `author:` / `narrator:` / `series:` / `is:finished` are now known on every surface, so a book field typed into the music bar simply matches nothing instead of being an unknown field. They never translate to the music `tracks` SQL: the translator returns "can't express this," which forces the whole query onto the in-memory path, where the audiobook shelf (small, already loaded whole) is matched directly. No SQL change, no schema change.
+- **Headless and CLI-testable:** the filter logic lives in a pure `book_query::filter_books` (unit-tested: fielded matches, `is:finished`, bare-text author search, forgiving degrade), and the `audiobook list` CLI verb gained an optional filter expression (`conservatory-cli audiobook list <db> "author:sanderson AND NOT is:finished"`), the headless twin of the shelf filter.
+- **Tests:** the grammar extension (the new fields parse, round-trip, eval correctly, and are excluded from SQL translation, keeping the music SQL path safe); the `book_query` filter model (five cases); the CLI mapping; and the existing music search-parity suite still green (the shared `SearchItem` change is additive). Full workspace suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green. The widget wiring is verified by build plus manual launch (the documented GTK-view precedent).
+
+Next: Phase 7b-iii (bulk edit across selected books, path-affecting edits through the mover), then 7c (playback, chapter navigation, and resume on the unified queue).
+
 ## v0.0.56
 
 Phase 7b-i: the Audiobooks tab arrives, the third media surface. The shelf is a cover grid (the app's first `GridView`, every other browse being a column table) beside a detail pane, and it is the first place the median-cut cover accent is used in the GUI. This sub-phase is read-only browse; a book becomes playable at Phase 7c, so there is no play action yet (the same browse-before-playback split podcasts took). Filtering and bulk edit follow in 7b-ii/iii.

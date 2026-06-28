@@ -7,8 +7,9 @@
 use std::fmt;
 
 /// A search field. Unknown field names never reach here: the parser degrades
-/// them to [`Expr::Text`] (forgiving, spec §3.4). Podcast/audiobook fields land
-/// at Phases 6/7.
+/// them to [`Expr::Text`] (forgiving, spec §3.4). The audiobook fields
+/// (`author:`/`narrator:`/`series:`) landed at Phase 7b; podcast fields are
+/// still substring-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     Artist,
@@ -23,6 +24,11 @@ pub enum Field {
     Bitrate,
     Duration,
     Format,
+    // Audiobook text fields (spec §3.8); matched in-memory only, never pushed to
+    // the music `tracks` SQL (the `books` shelf is evaluated in memory).
+    Author,
+    Narrator,
+    Series,
 }
 
 impl Field {
@@ -41,6 +47,9 @@ impl Field {
             "bitrate" => Self::Bitrate,
             "duration" => Self::Duration,
             "format" => Self::Format,
+            "author" => Self::Author,
+            "narrator" => Self::Narrator,
+            "series" => Self::Series,
             _ => return None,
         })
     }
@@ -60,6 +69,9 @@ impl Field {
             Self::Bitrate => "bitrate",
             Self::Duration => "duration",
             Self::Format => "format",
+            Self::Author => "author",
+            Self::Narrator => "narrator",
+            Self::Series => "series",
         }
     }
 
@@ -167,6 +179,9 @@ pub enum State {
     Played,
     Starred,
     Queued,
+    /// An audiobook the listener has finished (spec §3.8). Negate with
+    /// `NOT is:finished`, the same shape as every other state.
+    Finished,
 }
 
 impl State {
@@ -175,6 +190,7 @@ impl State {
             "played" => Self::Played,
             "starred" => Self::Starred,
             "queued" => Self::Queued,
+            "finished" => Self::Finished,
             _ => return None,
         })
     }
@@ -184,6 +200,7 @@ impl State {
             Self::Played => "played",
             Self::Starred => "starred",
             Self::Queued => "queued",
+            Self::Finished => "finished",
         }
     }
 }

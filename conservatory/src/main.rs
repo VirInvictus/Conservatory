@@ -10,6 +10,8 @@ use libadwaita as adw;
 use adw::prelude::*;
 use gtk::glib;
 
+#[cfg(feature = "audiobooks")]
+mod book_query;
 mod playqueue;
 mod query;
 mod ui;

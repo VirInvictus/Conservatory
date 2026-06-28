@@ -48,7 +48,7 @@ fn node(expr: &Expr, today: NaiveDate, p: &mut Vec<SqlValue>) -> Option<String> 
         Expr::Field { field, kind } => field_sql(*field, kind, p)?,
         Expr::Compare { field, comp, value } => compare_sql(*field, *comp, value, today, p)?,
         Expr::Range { field, low, high } => range_sql(*field, low, high, today, p)?,
-        Expr::State(state) => state_sql(*state),
+        Expr::State(state) => state_sql(*state)?,
         Expr::Not(inner) => format!("NOT ({})", node(inner, today, p)?),
         Expr::And(items) => join(items, "AND", today, p)?,
         Expr::Or(items) => join(items, "OR", today, p)?,
@@ -61,6 +61,13 @@ fn join(items: &[Expr], op: &str, today: NaiveDate, p: &mut Vec<SqlValue>) -> Op
 }
 
 fn field_sql(field: Field, kind: &MatchKind, p: &mut Vec<SqlValue>) -> Option<String> {
+    // Audiobook fields have no column on the music `tracks` table, so they never
+    // translate: returning None makes the whole query fall back to eval, where
+    // the book shelf is matched in memory (and a book field in the music bar
+    // simply matches nothing). See sql_translate's all-or-nothing contract.
+    if matches!(field, Field::Author | Field::Narrator | Field::Series) {
+        return None;
+    }
     match kind {
         // Regex / fuzzy can't be pushed down: bail so the whole query falls back.
         MatchKind::Regex(_) | MatchKind::Fuzzy(_) => None,
@@ -119,6 +126,8 @@ fn presence_sql(field: Field, want: bool) -> String {
         Field::Genre => {
             "EXISTS (SELECT 1 FROM track_genres tg WHERE tg.track_id = tracks.id)".to_string()
         }
+        // Audiobook fields never reach here (filtered out in `field_sql`).
+        Field::Author | Field::Narrator | Field::Series => "0=1".to_string(),
     };
     if want { has } else { format!("NOT ({has})") }
 }
@@ -225,8 +234,8 @@ fn between(col: &str, lo: SqlValue, hi: SqlValue, p: &mut Vec<SqlValue>) -> Stri
     format!("({col} >= ? AND {col} <= ?)")
 }
 
-fn state_sql(state: State) -> String {
-    match state {
+fn state_sql(state: State) -> Option<String> {
+    Some(match state {
         State::Played => "tracks.play_count > 0".into(),
         State::Starred => "tracks.starred = 1".into(),
         // Queue membership (Phase 4b): the track has a `kind='track'` entry in the
@@ -235,7 +244,10 @@ fn state_sql(state: State) -> String {
             "tracks.id IN (SELECT track_id FROM queue WHERE kind = 'track' AND track_id IS NOT NULL)"
                 .into()
         }
-    }
+        // `is:finished` is a book-only state with no `tracks` column: bail so the
+        // whole query falls back to eval (where the shelf is matched in memory).
+        State::Finished => return None,
+    })
 }
 
 fn value_sql(value: &Value) -> Option<SqlValue> {
@@ -309,6 +321,17 @@ mod tests {
         let c = tr("year:1990..2000").unwrap();
         assert!(c.sql.contains("a.year >= ? AND a.year <= ?"));
         assert_eq!(c.params, vec![SqlValue::Int(1990), SqlValue::Int(2000)]);
+    }
+
+    #[test]
+    fn audiobook_fields_do_not_translate() {
+        // Book fields and is:finished have no `tracks` column: the whole query
+        // bails to the eval path (all-or-nothing), even mixed with music nodes.
+        assert!(tr("author:sanderson").is_none());
+        assert!(tr("narrator:kramer").is_none());
+        assert!(tr("series:stormlight").is_none());
+        assert!(tr("is:finished").is_none());
+        assert!(tr("author:sanderson AND rating:>=4").is_none());
     }
 
     #[test]

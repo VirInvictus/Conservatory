@@ -17,8 +17,12 @@ use gtk::prelude::*;
 use gtk4 as gtk;
 
 use conservatory_core::PlayerHandle;
-use conservatory_core::db::{ReadPool, WorkerHandle, book_chapters, list_book_rows, sort_shelf};
+use conservatory_core::db::{
+    BookListRow, ReadPool, WorkerHandle, book_chapters, list_book_rows, sort_shelf,
+};
 
+use crate::book_query::filter_books;
+use crate::query::PoolResolver;
 use crate::ui::objects::BookRow;
 
 /// The fixed pixel size of a shelf cover tile's artwork.
@@ -40,12 +44,21 @@ pub fn build_audiobooks_view(
         .can_unselect(true)
         .build();
 
+    // The always-on filter bar (spec §3.4), the music-surface idiom: the grammar
+    // searches, there is no separate search mode. Ctrl+F focuses it (below).
+    let filter = gtk::SearchEntry::builder()
+        .placeholder_text("Filter books: author:, narrator:, series:, is:finished …")
+        .hexpand(true)
+        .build();
+
     let detail = Detail::new();
     let inner = Rc::new(Inner {
         pool,
         root,
         store,
         detail,
+        filter: filter.clone(),
+        all_rows: RefCell::new(Vec::new()),
         accent_provider: RefCell::new(None),
     });
 
@@ -66,6 +79,15 @@ pub fn build_audiobooks_view(
         });
     }
 
+    // Re-filter the shelf in memory on every keystroke. The shelf is tens of rows
+    // and the grammar evaluates in memory, so there is no debounce (the music
+    // surface coalesces because it re-queries SQLite; here a full re-filter is
+    // free). A degraded expression tints the bar yellow (`filter-warn`).
+    {
+        let inner = inner.clone();
+        filter.connect_search_changed(move |_| inner.apply_filter());
+    }
+
     let shelf_scroll = gtk::ScrolledWindow::builder()
         .child(&grid)
         .hexpand(true)
@@ -73,31 +95,70 @@ pub fn build_audiobooks_view(
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
 
+    // The filter bar sits above the shelf, in a toolbar strip (the Music-page
+    // layout); the detail pane is unaffected by it.
+    let filter_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    filter_bar.add_css_class("toolbar");
+    filter_bar.append(&filter);
+    let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    left.append(&filter_bar);
+    left.append(&shelf_scroll);
+
     inner.load();
 
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
-    paned.set_start_child(Some(&shelf_scroll));
+    paned.set_start_child(Some(&left));
     paned.set_end_child(Some(&inner.detail.root));
     paned.set_resize_start_child(true);
     paned.set_resize_end_child(false);
     paned.set_shrink_end_child(false);
     paned.set_position(640);
+
+    // Ctrl+F focuses the filter bar. Scope it to this view (Managed) so it fires
+    // when the audiobook shelf has focus, without colliding with the window's
+    // global music Ctrl+F (which still serves the Music tab).
+    install_filter_shortcut(&paned, &filter);
     paned.upcast()
 }
 
+/// Ctrl+F focuses the audiobook filter bar (spec §3.4), scoped to `view` so it
+/// only fires when focus is within the Audiobooks tab.
+fn install_filter_shortcut(view: &gtk::Paned, filter: &gtk::SearchEntry) {
+    let target = filter.downgrade();
+    let shortcut = gtk::Shortcut::new(
+        gtk::ShortcutTrigger::parse_string("<Control>f"),
+        Some(gtk::CallbackAction::new(move |_, _| {
+            if let Some(entry) = target.upgrade() {
+                entry.grab_focus();
+            }
+            gtk::glib::Propagation::Stop
+        })),
+    );
+    let controller = gtk::ShortcutController::new();
+    controller.set_scope(gtk::ShortcutScope::Managed);
+    controller.add_shortcut(shortcut);
+    view.add_controller(controller);
+}
+
 /// The view's shared state: the read pool, the library root (to resolve covers),
-/// the shelf store, the detail widgets, and the rebuildable accent CSS provider.
+/// the shelf store, the filter bar, the unfiltered shelf rows, the detail
+/// widgets, and the rebuildable accent CSS provider.
 struct Inner {
     pool: ReadPool,
     root: Option<PathBuf>,
     store: gtk::gio::ListStore,
     detail: Detail,
+    filter: gtk::SearchEntry,
+    /// The whole shelf, sorted in-progress-first; the filter narrows it into
+    /// `store` without re-reading the database.
+    all_rows: RefCell<Vec<BookListRow>>,
     accent_provider: RefCell<Option<gtk::CssProvider>>,
 }
 
 impl Inner {
-    /// (Re)load the shelf from the database, ordered in-progress first, and
-    /// register one accent CSS class per distinct cover accent.
+    /// (Re)load the shelf from the database, ordered in-progress first, register
+    /// one accent CSS class per distinct cover accent, then apply the active
+    /// filter. Accents cover the whole shelf so tints persist while filtering.
     fn load(&self) {
         let rows = {
             let Ok(conn) = self.pool.open() else { return };
@@ -106,8 +167,26 @@ impl Inner {
             rows
         };
         self.rebuild_accent_css(&rows);
+        *self.all_rows.borrow_mut() = rows;
+        self.apply_filter();
+    }
+
+    /// Narrow the cached shelf by the filter-bar grammar into `store`, preserving
+    /// the in-progress-first order, and tint the bar when the input degraded.
+    fn apply_filter(&self) {
+        let query = self.filter.text().to_string();
+        let today = chrono::Local::now().date_naive();
+        let (kept, warnings) = {
+            let rows = self.all_rows.borrow();
+            filter_books(&rows, &query, &PoolResolver(&self.pool), today)
+        };
+        if warnings.is_empty() {
+            self.filter.remove_css_class("filter-warn");
+        } else {
+            self.filter.add_css_class("filter-warn");
+        }
         self.store.remove_all();
-        for row in &rows {
+        for row in &kept {
             self.store.append(&BookRow::new(row));
         }
         self.detail.clear();

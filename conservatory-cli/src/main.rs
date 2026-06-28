@@ -359,6 +359,10 @@ enum AudiobookAction {
     List {
         /// Path to the SQLite database.
         db: PathBuf,
+        /// Optional filter expression (the §3.4 grammar, with the audiobook
+        /// fields `author:`/`narrator:`/`series:`/`is:finished`). Omitted lists
+        /// the whole shelf. Evaluated in memory, like the GUI shelf.
+        expr: Option<String>,
         /// Output format.
         #[arg(long, value_enum, default_value_t = Format::Human)]
         format: Format,
@@ -895,8 +899,8 @@ fn main() -> Result<()> {
         }) => block_on(run_audiobook_set(db, book_id, rating, starred, shelf_genre)),
         #[cfg(feature = "audiobooks")]
         Some(Command::Audiobook {
-            action: AudiobookAction::List { db, format },
-        }) => run_audiobook_list(db, format),
+            action: AudiobookAction::List { db, expr, format },
+        }) => run_audiobook_list(db, expr, format),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
@@ -1177,15 +1181,59 @@ async fn run_audiobook_set(
 /// Print the audiobook shelf (Phase 7b-i): the denormalized rows in shelf order
 /// (in-progress first), the headless view of the GUI shelf. Read-only.
 #[cfg(feature = "audiobooks")]
-fn run_audiobook_list(db: PathBuf, format: Format) -> Result<()> {
+fn run_audiobook_list(db: PathBuf, expr: Option<String>, format: Format) -> Result<()> {
     use conservatory_core::db::{list_book_rows, sort_shelf};
+    use conservatory_search::evaluate;
 
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
     let conn = pool.open().context("opening pool connection")?;
     let mut rows = list_book_rows(&conn).context("reading shelf")?;
     sort_shelf(&mut rows);
+
+    // Optional grammar filter, evaluated in memory (the audiobook fields have no
+    // music `tracks` column, so there is no SQL fast path; the shelf is small).
+    // `vl:` degrades to text, the same as the `search` verb (no resolver here).
+    if let Some(query) = expr.as_deref().filter(|q| !q.trim().is_empty()) {
+        let today = Utc::now().date_naive();
+        let parsed = parse(query);
+        for w in &parsed.warnings {
+            eprintln!("warning: {w}");
+        }
+        rows.retain(|r| evaluate(&parsed.expr, &book_search_item(r), today));
+    }
+
     print_book_rows(&rows, format);
     Ok(())
+}
+
+/// Project a shelf row into the search grammar's [`SearchItem`] (the CLI twin of
+/// the GUI `book_query::book_item`): split the comma-joined people back into the
+/// multi-valued candidates, expose runtime as `duration:`.
+#[cfg(feature = "audiobooks")]
+fn book_search_item(r: &conservatory_core::db::BookListRow) -> SearchItem {
+    let split = |d: &Option<String>| -> Vec<String> {
+        d.as_deref()
+            .map(|s| {
+                s.split(", ")
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    SearchItem {
+        title: r.title.clone(),
+        authors: split(&r.author_display),
+        narrators: split(&r.narrator_display),
+        series: r.series_name.clone(),
+        year: r.year,
+        rating: r.rating,
+        starred: r.starred,
+        finished: r.finished,
+        duration: (r.total_duration > 0.0).then_some(r.total_duration),
+        ..SearchItem::default()
+    }
 }
 
 #[cfg(feature = "audiobooks")]
@@ -2992,6 +3040,8 @@ fn to_item(r: &SearchRow) -> SearchItem {
         played: r.played,
         starred: r.starred,
         queued: r.queued,
+        // Music rows carry no audiobook projection (the shelf is matched in memory).
+        ..SearchItem::default()
     }
 }
 
@@ -3669,4 +3719,49 @@ async fn run_fixture(db: PathBuf, scale: FixtureScale) -> Result<()> {
         counts.artists, counts.albums, counts.tracks
     );
     Ok(())
+}
+
+#[cfg(all(test, feature = "audiobooks"))]
+mod audiobook_filter_tests {
+    use super::book_search_item;
+    use chrono::NaiveDate;
+    use conservatory_core::db::BookListRow;
+    use conservatory_search::{evaluate, parse};
+
+    fn row() -> BookListRow {
+        BookListRow {
+            id: 1,
+            title: "The Way of Kings".into(),
+            subtitle: None,
+            author_display: Some("Brandon Sanderson".into()),
+            narrator_display: Some("Kate Reading, Michael Kramer".into()),
+            series_name: Some("The Stormlight Archive".into()),
+            series_sequence: Some(1.0),
+            year: Some(2010),
+            cover_path: None,
+            accent_rgb: None,
+            rating: 5,
+            starred: true,
+            position: 0.0,
+            finished: true,
+            last_played: None,
+            total_duration: 3600.0,
+        }
+    }
+
+    fn matches(expr: &str) -> bool {
+        let today = NaiveDate::from_ymd_opt(2026, 6, 28).unwrap();
+        evaluate(&parse(expr).expr, &book_search_item(&row()), today)
+    }
+
+    #[test]
+    fn cli_mapping_filters_audiobook_fields() {
+        assert!(matches("author:sanderson"));
+        assert!(matches("narrator:kramer")); // second narrator, split from the join
+        assert!(matches("series:stormlight"));
+        assert!(matches("is:finished AND is:starred"));
+        assert!(matches("rating:>=4 AND year:2010"));
+        assert!(!matches("author:tolkien"));
+        assert!(!matches("NOT is:finished"));
+    }
 }

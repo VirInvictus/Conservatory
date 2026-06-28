@@ -492,6 +492,11 @@ mod tests {
             "(genre:ambient OR genre:jazz) AND rating:>=4",
             "rating:true",
             "duration:>600",
+            "author:sanderson",
+            "narrator:=\"Kate Reading\"",
+            "series:?stormlite",
+            "is:finished",
+            "author:tolkien AND NOT is:finished",
         ] {
             round_trip(input);
         }

@@ -333,14 +333,34 @@ enum AudiobookAction {
         format: Format,
     },
 
-    /// Edit a book's non-path metadata: rating, starred, shelf genre. Path
-    /// affecting edits (author / series / title, which re-render and re-move the
-    /// folder) are deferred to the 7b bulk-edit surface.
+    /// Edit a book's metadata (Phase 7b-iii). Non-path fields (rating / starred /
+    /// shelf genre / narrator) apply immediately. Path-affecting fields (title /
+    /// year / author / series / series index) re-render the folder, so they need
+    /// `--root` and re-shelve the book's files through the journaled mover; without
+    /// `--apply` the move is previewed (dry-run). Undo is `organize --undo <job>`.
     Set {
         /// Path to the SQLite database.
         db: PathBuf,
         /// The book id to edit.
         book_id: i64,
+        /// Set the title (path-affecting).
+        #[arg(long)]
+        title: Option<String>,
+        /// Set the release year (path-affecting).
+        #[arg(long)]
+        year: Option<i32>,
+        /// Replace the author(s) (path-affecting); repeat or `;`-separate names.
+        #[arg(long)]
+        author: Vec<String>,
+        /// Replace the narrator(s); repeat or `;`-separate names.
+        #[arg(long)]
+        narrator: Vec<String>,
+        /// Set the series, or `""` to clear to standalone (path-affecting).
+        #[arg(long)]
+        series: Option<String>,
+        /// Set the series index, e.g. `1` or `1.5` (path-affecting).
+        #[arg(long)]
+        series_index: Option<f64>,
         /// Set the rating (0–5).
         #[arg(long)]
         rating: Option<u8>,
@@ -350,6 +370,12 @@ enum AudiobookAction {
         /// Set the shelf genre (the single-valued path input, spec §5.2).
         #[arg(long)]
         shelf_genre: Option<String>,
+        /// Library root (required when a path-affecting field changes).
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Execute the re-shelve move (default previews it).
+        #[arg(long)]
+        apply: bool,
     },
 
     /// List the audiobook shelf: every book with its denormalized author /
@@ -892,11 +918,33 @@ fn main() -> Result<()> {
                 AudiobookAction::Set {
                     db,
                     book_id,
+                    title,
+                    year,
+                    author,
+                    narrator,
+                    series,
+                    series_index,
                     rating,
                     starred,
                     shelf_genre,
+                    root,
+                    apply,
                 },
-        }) => block_on(run_audiobook_set(db, book_id, rating, starred, shelf_genre)),
+        }) => block_on(run_audiobook_set(AudiobookSetArgs {
+            db,
+            book_id,
+            title,
+            year,
+            author,
+            narrator,
+            series,
+            series_index,
+            rating,
+            starred,
+            shelf_genre,
+            root,
+            apply,
+        })),
         #[cfg(feature = "audiobooks")]
         Some(Command::Audiobook {
             action: AudiobookAction::List { db, expr, format },
@@ -1151,30 +1199,119 @@ fn print_book_import_report(r: &conservatory_audiobooks::BookImportReport, forma
     }
 }
 
-/// Edit a book's non-path metadata (Phase 7a-iii `audiobook set`).
+/// The parsed `audiobook set` flags (grouped to keep the handler signature sane).
 #[cfg(feature = "audiobooks")]
-async fn run_audiobook_set(
+struct AudiobookSetArgs {
     db: PathBuf,
     book_id: i64,
+    title: Option<String>,
+    year: Option<i32>,
+    author: Vec<String>,
+    narrator: Vec<String>,
+    series: Option<String>,
+    series_index: Option<f64>,
     rating: Option<u8>,
     starred: Option<bool>,
     shelf_genre: Option<String>,
-) -> Result<()> {
-    if rating.is_none() && starred.is_none() && shelf_genre.is_none() {
-        anyhow::bail!("nothing to set: pass --rating, --starred, and/or --shelf-genre");
-    }
-    if let Some(r) = rating
+    root: Option<PathBuf>,
+    apply: bool,
+}
+
+/// Edit a book's metadata, re-shelving its files when a path-affecting field
+/// changes (Phase 7b-iii). Non-path edits apply immediately; a path-affecting
+/// edit needs `--root` and, without `--apply`, only previews the move.
+#[cfg(feature = "audiobooks")]
+async fn run_audiobook_set(args: AudiobookSetArgs) -> Result<()> {
+    use conservatory_audiobooks::edit::{BookEdit, SeriesEdit, split_people};
+    use conservatory_audiobooks::{apply_book_edit, apply_book_reorg};
+    use conservatory_core::db::{book_authors, get_book, series_for_book};
+    use conservatory_core::mover::MoveMode;
+
+    if let Some(r) = args.rating
         && r > 5
     {
         anyhow::bail!("rating must be 0–5");
     }
-    let worker = spawn_worker(db).context("spawning worker")?;
-    worker
-        .update_book(book_id, rating, starred, shelf_genre)
+
+    // `--author X --author Y` and `--author "X; Y"` both work (the dialog's `;`
+    // convention). An empty flag list leaves the credited set unchanged.
+    let people = |flags: &[String]| -> Option<Vec<String>> {
+        if flags.is_empty() {
+            None
+        } else {
+            Some(split_people(&flags.join("; ")))
+        }
+    };
+    // `--series ""` clears to standalone; omitted leaves it unchanged.
+    let series = match &args.series {
+        None => None,
+        Some(s) if s.trim().is_empty() => Some(SeriesEdit::Clear),
+        Some(s) => Some(SeriesEdit::Set(s.clone())),
+    };
+
+    let edit = BookEdit {
+        title: args.title.clone(),
+        year: args.year,
+        series,
+        series_index: args.series_index,
+        authors: people(&args.author),
+        narrators: people(&args.narrator),
+        shelf_genre: args.shelf_genre.clone(),
+        rating: args.rating,
+        starred: args.starred,
+    };
+    if edit.is_empty() {
+        anyhow::bail!("nothing to set: pass at least one field flag");
+    }
+
+    let path_affecting = edit.is_path_affecting();
+    if path_affecting && args.root.is_none() {
+        anyhow::bail!(
+            "a path-affecting edit (title / year / author / series / series index) needs --root"
+        );
+    }
+
+    let pool = ReadPool::new(args.db.clone(), 3).context("opening read pool")?;
+
+    // Dry-run: show the intended changes and the folder the book would move to,
+    // writing nothing (the trust model — the move is the risk).
+    if path_affecting && !args.apply {
+        let conn = pool.open().context("opening pool connection")?;
+        let book = get_book(&conn, args.book_id)
+            .context("reading book")?
+            .ok_or_else(|| anyhow::anyhow!("no book with id {}", args.book_id))?;
+        let cur_series = series_for_book(&conn, args.book_id).context("reading series")?;
+        let cur_authors = book_authors(&conn, args.book_id).context("reading authors")?;
+        let new_folder = conservatory_audiobooks::edit::rendered_folder(
+            &book,
+            cur_series.as_ref().map(|s| s.name.as_str()),
+            cur_authors.first().map(|p| p.sort_name.as_str()),
+            &edit,
+        );
+        println!("dry run (pass --apply to write and re-shelve):");
+        println!("  current folder: {}", book.folder_path);
+        println!("  new folder:     {}", new_folder.display());
+        return Ok(());
+    }
+
+    let worker = spawn_worker(args.db).context("spawning worker")?;
+    apply_book_edit(&worker, args.book_id, &edit)
         .await
-        .context("update book")?;
+        .context("applying edit")?;
+
+    if path_affecting {
+        let root = args.root.expect("checked above");
+        match apply_book_reorg(&worker, &pool, args.book_id, &root, MoveMode::Move)
+            .await
+            .context("re-shelving book")?
+        {
+            Some(job) => println!("updated book {} and re-shelved (job {job})", args.book_id),
+            None => println!("updated book {} (already in place)", args.book_id),
+        }
+    } else {
+        println!("updated book {}", args.book_id);
+    }
     worker.shutdown_ack().await.context("shutdown ack")?;
-    println!("updated book {book_id}");
     Ok(())
 }
 

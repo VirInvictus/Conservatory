@@ -1173,25 +1173,114 @@ pub(crate) fn set_book_cover_path(
     Ok(())
 }
 
-/// Edit a book's non-path metadata (Phase 7a-iii `audiobook set`): rating,
-/// starred, and shelf genre. Each argument is `None` to leave that column
-/// unchanged. Path-affecting edits (author / series / title, which re-render the
-/// folder) are deferred to the 7b bulk-edit surface, so this never touches the
-/// mover. The `shelf_genre` change does *not* re-move the book here.
+/// Edit a book's scalar metadata (Phase 7a-iii `audiobook set`, broadened at
+/// 7b-iii): title, year, series sequence, shelf genre, rating, starred. Each
+/// argument is `None` to leave that column unchanged (the `update_album` shape).
+/// The `books_au` trigger refreshes the title in `book_fts`. The path-affecting
+/// fields (title / year / series sequence) are written here, but the *move* that
+/// follows is the caller's job (the book reorganize, spec §5.7); changing the
+/// series itself is [`set_book_series`] (it can clear to standalone, which
+/// `COALESCE` cannot express).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_book(
     conn: &Connection,
     book_id: i64,
+    title: Option<&str>,
+    year: Option<i32>,
+    series_sequence: Option<f64>,
+    shelf_genre: Option<&str>,
     rating: Option<u8>,
     starred: Option<bool>,
-    shelf_genre: Option<&str>,
 ) -> Result<()> {
     conn.execute(
         "UPDATE books SET
-            rating = COALESCE(?2, rating),
-            starred = COALESCE(?3, starred),
-            shelf_genre = COALESCE(?4, shelf_genre)
+            title = COALESCE(?2, title),
+            year = COALESCE(?3, year),
+            series_sequence = COALESCE(?4, series_sequence),
+            shelf_genre = COALESCE(?5, shelf_genre),
+            rating = COALESCE(?6, rating),
+            starred = COALESCE(?7, starred)
          WHERE id = ?1",
-        params![book_id, rating.map(|r| r as i64), starred, shelf_genre],
+        params![
+            book_id,
+            title,
+            year,
+            series_sequence,
+            shelf_genre,
+            rating.map(|r| r as i64),
+            starred
+        ],
     )?;
+    Ok(())
+}
+
+/// Set or clear a book's series (Phase 7b-iii). `Some(id)` files it under that
+/// series; `None` makes it standalone, also clearing `series_sequence` (a
+/// standalone has no number). `COALESCE` cannot null a column, so the clear path
+/// is its own statement. The `books_au` trigger refreshes the `series` FTS column.
+pub(crate) fn set_book_series(
+    conn: &Connection,
+    book_id: i64,
+    series_id: Option<i64>,
+) -> Result<()> {
+    match series_id {
+        Some(id) => conn.execute(
+            "UPDATE books SET series_id = ?2 WHERE id = ?1",
+            params![book_id, id],
+        )?,
+        None => conn.execute(
+            "UPDATE books SET series_id = NULL, series_sequence = NULL WHERE id = ?1",
+            params![book_id],
+        )?,
+    };
+    Ok(())
+}
+
+/// Replace a book's author set (Phase 7b-iii): clear its `book_authors` links and
+/// re-link the given person ids. One transaction so a reader never sees a partial
+/// set; the `book_authors_ad` / `book_authors_ai` triggers re-aggregate the
+/// `author` FTS column on the delete and each insert.
+pub(crate) fn set_book_authors(
+    conn: &mut Connection,
+    book_id: i64,
+    person_ids: &[i64],
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM book_authors WHERE book_id = ?1",
+        params![book_id],
+    )?;
+    for id in person_ids {
+        tx.execute(
+            "INSERT INTO book_authors (book_id, person_id) VALUES (?1, ?2)
+             ON CONFLICT(book_id, person_id) DO NOTHING",
+            params![book_id, id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Replace a book's narrator set (Phase 7b-iii), the [`set_book_authors`] shape
+/// against `book_narrators`; the `book_narrators_*` triggers re-aggregate the
+/// `narrator` FTS column.
+pub(crate) fn set_book_narrators(
+    conn: &mut Connection,
+    book_id: i64,
+    person_ids: &[i64],
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM book_narrators WHERE book_id = ?1",
+        params![book_id],
+    )?;
+    for id in person_ids {
+        tx.execute(
+            "INSERT INTO book_narrators (book_id, person_id) VALUES (?1, ?2)
+             ON CONFLICT(book_id, person_id) DO NOTHING",
+            params![book_id, id],
+        )?;
+    }
+    tx.commit()?;
     Ok(())
 }

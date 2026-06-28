@@ -658,19 +658,57 @@ impl WorkerHandle {
         .await
     }
 
-    /// Edit a book's non-path metadata (rating / starred / shelf genre).
+    /// Edit a book's scalar metadata (title / year / series sequence / shelf genre
+    /// / rating / starred); each `None` leaves that column unchanged.
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_book(
         &self,
         book_id: i64,
+        title: Option<String>,
+        year: Option<i32>,
+        series_sequence: Option<f64>,
+        shelf_genre: Option<String>,
         rating: Option<u8>,
         starred: Option<bool>,
-        shelf_genre: Option<String>,
     ) -> Result<()> {
         self.dispatch(|reply| Command::UpdateBook {
             book_id,
+            title,
+            year,
+            series_sequence,
+            shelf_genre,
             rating,
             starred,
-            shelf_genre,
+            reply,
+        })
+        .await
+    }
+
+    /// Set (`Some`) or clear to standalone (`None`) a book's series (Phase 7b-iii).
+    pub async fn set_book_series(&self, book_id: i64, series_id: Option<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::SetBookSeries {
+            book_id,
+            series_id,
+            reply,
+        })
+        .await
+    }
+
+    /// Replace a book's credited author set (Phase 7b-iii).
+    pub async fn set_book_authors(&self, book_id: i64, person_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::SetBookAuthors {
+            book_id,
+            person_ids,
+            reply,
+        })
+        .await
+    }
+
+    /// Replace a book's credited narrator set (Phase 7b-iii).
+    pub async fn set_book_narrators(&self, book_id: i64, person_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::SetBookNarrators {
+            book_id,
+            person_ids,
             reply,
         })
         .await
@@ -1131,18 +1169,45 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::UpdateBook {
             book_id,
+            title,
+            year,
+            series_sequence,
+            shelf_genre,
             rating,
             starred,
-            shelf_genre,
             reply,
         } => {
             let _ = reply.send(writes::update_book(
                 conn,
                 book_id,
+                title.as_deref(),
+                year,
+                series_sequence,
+                shelf_genre.as_deref(),
                 rating,
                 starred,
-                shelf_genre.as_deref(),
             ));
+        }
+        Command::SetBookSeries {
+            book_id,
+            series_id,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_book_series(conn, book_id, series_id));
+        }
+        Command::SetBookAuthors {
+            book_id,
+            person_ids,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_book_authors(conn, book_id, &person_ids));
+        }
+        Command::SetBookNarrators {
+            book_id,
+            person_ids,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_book_narrators(conn, book_id, &person_ids));
         }
         Command::Shutdown { reply } => {
             let _ = reply.send(());

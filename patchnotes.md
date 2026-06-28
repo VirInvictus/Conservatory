@@ -1,5 +1,18 @@
 # Patch Notes
 
+## v0.0.58
+
+Phase 7b-iii-a: the headless half of audiobook bulk edit. You can now edit a book's metadata and, when a path-affecting field changes (author, series, series index, title, year), have its files re-shelved into the new folder through the same trust-critical, journaled mover that owns the music library. This sub-phase is the engine; the GTK multi-select dialog (7b-iii-b) is next. No new third-party dependency, no schema change.
+
+- **The book reorganize path.** Until now the only way a book's files moved was the initial import. This adds the audiobook analogue of music's `organize`: re-render the book's folder from its current (edited) database state and move the files there. The mover needed no audiobook-specific change. A move operation carrying a book id already rewrites every chapter row of that book and updates its folder, the same under a re-shelve as under an import, so a single M4B that backs many chapters still moves once and all its chapters follow. The dry-run preview, the undo journal, and crash-safe replay all apply unchanged (a move bug damages a real library; this is the headline risk).
+- **Typed, shared edit logic.** A pure `BookEdit` resolver classifies which fields are path-affecting (author, series, series index, title, year, the ones in the folder template) versus not (narrator, shelf genre, rating, starred). It is the single source the CLI and the coming GTK dialog both build their edits from, and it is unit-tested with no database.
+- **Series can be cleared to standalone.** Setting a series files the book under it; clearing the series moves the book to `Audiobooks/<author>/Standalone/…`. Blank still means "leave unchanged", so clearing is an explicit action (`--series ""` on the CLI).
+- **CLI `audiobook set` grew teeth.** It now takes `--title`, `--year`, `--author`, `--narrator`, `--series`, and `--series-index` alongside the existing rating/starred/shelf-genre. A path-affecting edit needs `--root`; without `--apply` it is a dry-run that shows the current and would-be folders and writes nothing. With `--apply` it writes the metadata and re-shelves. Undo is the existing `organize --undo <job>`.
+- **The cover follows.** When a book moves, its `cover.jpg` is carried into the new folder and the path updated (best-effort: covers re-derive and the accent already lives on the row, so a cover hiccup never fails the move).
+- **Tests.** The resolver's path-affecting matrix and value parsing; a reorganize round-trip suite against real files on disk (a multi-file book, a single-M4B book whose three chapters all follow the one moved file, undo restoring the tree and the rows, an in-place no-op, and a destination conflict being refused with nothing moved). Verified end-to-end against the committed import fixture. Full workspace suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green.
+
+Next: Phase 7b-iii-b, the GTK side — a multi-select shelf and a bulk-edit dialog (`Ctrl+E`) whose path-affecting edits re-shelve behind a move preview-and-confirm.
+
 ## v0.0.57
 
 Phase 7b-ii: the Audiobooks shelf gains a filter bar. The same Calibre-style search grammar that drives the Music tab now sits above the cover shelf, with the audiobook fields wired in. This is the first non-music consumer of the shared grammar (the podcast tab never had a filter bar), so the four book fields joined the shared field set rather than forking it: one grammar, all three surfaces, as the spec intends. No new third-party dependency.

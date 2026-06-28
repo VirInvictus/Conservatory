@@ -444,12 +444,38 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
-    /// Edit a book's non-path metadata (rating / starred / shelf genre).
+    /// Edit a book's scalar metadata (title / year / series sequence / shelf genre
+    /// / rating / starred); each `None` leaves that column unchanged (Phase 7b-iii
+    /// broadened this from the 7a-iii rating/starred/shelf set).
     UpdateBook {
         book_id: i64,
+        title: Option<String>,
+        year: Option<i32>,
+        series_sequence: Option<f64>,
+        shelf_genre: Option<String>,
         rating: Option<u8>,
         starred: Option<bool>,
-        shelf_genre: Option<String>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Set (`Some`) or clear to standalone (`None`) a book's series (Phase 7b-iii).
+    SetBookSeries {
+        book_id: i64,
+        series_id: Option<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Replace a book's credited author set (Phase 7b-iii).
+    SetBookAuthors {
+        book_id: i64,
+        person_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Replace a book's credited narrator set (Phase 7b-iii).
+    SetBookNarrators {
+        book_id: i64,
+        person_ids: Vec<i64>,
         reply: oneshot::Sender<Result<()>>,
     },
 
@@ -528,6 +554,9 @@ impl Command {
             Self::CompleteBook { .. } => "complete_book",
             Self::SetBookCoverPath { .. } => "set_book_cover_path",
             Self::UpdateBook { .. } => "update_book",
+            Self::SetBookSeries { .. } => "set_book_series",
+            Self::SetBookAuthors { .. } => "set_book_authors",
+            Self::SetBookNarrators { .. } => "set_book_narrators",
             Self::Shutdown { .. } => "shutdown",
             #[cfg(test)]
             Self::Panic => "panic",

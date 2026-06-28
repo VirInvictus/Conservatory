@@ -24,18 +24,22 @@
 //! single chapter.
 
 pub mod chapters;
+pub mod edit;
 pub mod error;
 pub mod ffprobe;
 pub mod folder;
 pub mod import;
+pub mod reorg;
 pub mod sidecar;
 pub mod tags;
 
 use std::path::{Path, PathBuf};
 
 pub use chapters::ChapterDraft;
+pub use edit::{BookEdit, SeriesEdit};
 pub use error::{ReadError, Result};
 pub use import::{BookImportOptions, BookImportReport, import_book};
+pub use reorg::{BookReorgPlan, apply_book_edit, apply_book_reorg, plan_book_reorg};
 
 /// A person (author or narrator) with a Calibre-style sort name.
 #[derive(Debug, Clone, PartialEq, Eq)]

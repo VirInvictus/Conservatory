@@ -396,6 +396,9 @@ pub struct QueueDisplayRow {
     pub kind: MediaKind,
     pub track_id: Option<i64>,
     pub episode_id: Option<i64>,
+    /// The book id for an audiobook row (Phase 7c-iii), so a resume can rebuild
+    /// the book item. `None` for a track / episode row.
+    pub book_id: Option<i64>,
     /// The episode's show (Phase 6b-ii-c-3-a), so a resume can resolve the
     /// per-show playback speed. `None` for a track row.
     pub show_id: Option<i64>,
@@ -414,10 +417,12 @@ pub struct QueueDisplayRow {
 /// artist, an episode's show. Episode audio source is carried for resume.
 pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
     let mut stmt = conn.prepare(
-        "SELECT q.position, q.kind, q.track_id, q.episode_id,
+        "SELECT q.position, q.kind, q.track_id, q.episode_id, q.book_id,
                 e.show_id AS show_id,
-                COALESCE(t.title, e.title) AS title,
-                COALESCE(ar.name, s.title) AS artist,
+                COALESCE(t.title, e.title, bk.title) AS title,
+                COALESCE(ar.name, s.title,
+                  (SELECT p.name FROM book_authors ba JOIN book_people p ON p.id = ba.person_id
+                    WHERE ba.book_id = bk.id ORDER BY p.sort_name LIMIT 1)) AS artist,
                 e.audio_path AS audio_path,
                 e.audio_url  AS audio_url
          FROM queue q
@@ -425,6 +430,7 @@ pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
          LEFT JOIN artists ar ON ar.id = t.artist_id
          LEFT JOIN episodes e ON e.id = q.episode_id
          LEFT JOIN shows s ON s.id = e.show_id
+         LEFT JOIN books bk ON bk.id = q.book_id
          ORDER BY q.position",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -437,6 +443,7 @@ pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
             kind,
             track_id: row.get("track_id")?,
             episode_id: row.get("episode_id")?,
+            book_id: row.get("book_id")?,
             show_id: row.get("show_id")?,
             title: row.get::<_, Option<String>>("title")?.unwrap_or_default(),
             artist: row.get("artist")?,
@@ -1320,6 +1327,37 @@ pub fn get_book_playback(conn: &Connection, book_id: i64) -> Result<Option<BookP
         "SELECT * FROM book_playback WHERE book_id = ?1",
         params![book_id],
         row_to_book_playback,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// The currently-playing book's metadata for the Now-bar / Now Playing surface /
+/// MPRIS (Phase 7c-iii, the audiobook analogue of [`episode_metadata`] /
+/// `track_metadata`): the title; the first author (by `sort_name`, the same
+/// folder convention) as `artist`; the series as `album`; the total duration
+/// (the sum of the chapters); and the book cover for the thumbnail / `artUrl`.
+pub fn book_metadata(conn: &Connection, book_id: i64) -> Result<Option<NowPlaying>> {
+    conn.query_row(
+        "SELECT b.title,
+                (SELECT p.name FROM book_authors ba JOIN book_people p ON p.id = ba.person_id
+                  WHERE ba.book_id = b.id ORDER BY p.sort_name LIMIT 1) AS author,
+                (SELECT s.name FROM series s WHERE s.id = b.series_id) AS series,
+                (SELECT COALESCE(SUM(c.duration), 0) FROM book_chapters c
+                  WHERE c.book_id = b.id) AS dur,
+                b.cover_path
+         FROM books b WHERE b.id = ?1",
+        params![book_id],
+        |row| {
+            let dur: f64 = row.get("dur")?;
+            Ok(NowPlaying {
+                title: row.get("title")?,
+                artist: row.get::<_, Option<String>>("author")?,
+                album: row.get::<_, Option<String>>("series")?,
+                length: (dur > 0.0).then_some(dur),
+                album_cover_path: row.get("cover_path")?,
+            })
+        },
     )
     .optional()
     .map_err(Into::into)

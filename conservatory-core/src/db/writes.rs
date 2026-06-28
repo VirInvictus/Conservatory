@@ -467,6 +467,39 @@ pub(crate) fn replace_queue_with_episodes(
     Ok(())
 }
 
+/// Append books at the queue tail, preserving order (Phase 7c-iii), the
+/// audiobook twin of `enqueue_episodes`.
+pub(crate) fn enqueue_books(conn: &mut Connection, book_ids: &[i64]) -> Result<()> {
+    let tx = conn.transaction()?;
+    let base: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM queue",
+        [],
+        |r| r.get(0),
+    )?;
+    for (offset, &book_id) in book_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO queue (position, kind, book_id) VALUES (?1, 'audiobook', ?2)",
+            params![base + offset as i64, book_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Replace the whole queue with these books in order ("play these now").
+pub(crate) fn replace_queue_with_books(conn: &mut Connection, book_ids: &[i64]) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM queue", [])?;
+    for (pos, &book_id) in book_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO queue (position, kind, book_id) VALUES (?1, 'audiobook', ?2)",
+            params![pos as i64, book_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// Append tracks at the tail, preserving order (Phase 4b). Each new row takes
 /// the next free position after the current maximum.
 pub(crate) fn enqueue_tracks(conn: &mut Connection, track_ids: &[i64]) -> Result<()> {

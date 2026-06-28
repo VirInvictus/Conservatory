@@ -238,6 +238,18 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Append books to the queue tail (Phase 7c-iii).
+    EnqueueBooks {
+        book_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Replace the whole queue with these books in order ("play these now").
+    ReplaceQueueWithBooks {
+        book_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Remove the queue entry at `position`, closing the gap.
     RemoveQueueItem {
         position: i64,
@@ -525,6 +537,8 @@ impl Command {
             Self::ReplaceQueueWithTracks { .. } => "replace_queue_with_tracks",
             Self::EnqueueEpisodes { .. } => "enqueue_episodes",
             Self::ReplaceQueueWithEpisodes { .. } => "replace_queue_with_episodes",
+            Self::EnqueueBooks { .. } => "enqueue_books",
+            Self::ReplaceQueueWithBooks { .. } => "replace_queue_with_books",
             Self::RemoveQueueItem { .. } => "remove_queue_item",
             Self::ReorderQueue { .. } => "reorder_queue",
             Self::ClearQueue { .. } => "clear_queue",

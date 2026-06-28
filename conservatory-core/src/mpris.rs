@@ -291,7 +291,7 @@ pub async fn run(handle: PlayerHandle, pool: ReadPool, root: std::path::PathBuf)
     let mut last_track = snap.track_id;
     let metadata = build_metadata(
         snap.track_id,
-        current_meta(&pool, snap.track_id).as_ref(),
+        current_meta(&pool, snap.kind, snap.track_id).as_ref(),
         &root,
     );
 
@@ -362,7 +362,7 @@ pub async fn run(handle: PlayerHandle, pool: ReadPool, root: std::path::PathBuf)
             last_track = snap.track_id;
             iface.metadata = build_metadata(
                 snap.track_id,
-                current_meta(&pool, snap.track_id).as_ref(),
+                current_meta(&pool, snap.kind, snap.track_id).as_ref(),
                 &root,
             );
             let _ = iface.metadata_changed(iface_ref.signal_emitter()).await;
@@ -387,13 +387,24 @@ pub async fn run(handle: PlayerHandle, pool: ReadPool, root: std::path::PathBuf)
     }
 }
 
-/// Resolve the current track id's metadata, swallowing read errors (the MPRIS
-/// surface should degrade, not crash).
-fn current_meta(pool: &ReadPool, track_id: Option<i64>) -> Option<crate::db::NowPlaying> {
-    let id = track_id?;
-    pool.open()
-        .ok()
-        .and_then(|conn| track_metadata(&conn, id).ok().flatten())
+/// Resolve the current item's metadata by kind (spec §6.5: MPRIS carries full
+/// metadata regardless of media type), swallowing read errors (the MPRIS surface
+/// should degrade, not crash). The snapshot's `track_id` field holds whichever
+/// id matches `kind` (track / episode / book id).
+fn current_meta(
+    pool: &ReadPool,
+    kind: Option<crate::db::MediaKind>,
+    id: Option<i64>,
+) -> Option<crate::db::NowPlaying> {
+    let id = id?;
+    let conn = pool.open().ok()?;
+    match kind {
+        Some(crate::db::MediaKind::Episode) => crate::db::episode_metadata(&conn, id),
+        Some(crate::db::MediaKind::Audiobook) => crate::db::book_metadata(&conn, id),
+        _ => track_metadata(&conn, id),
+    }
+    .ok()
+    .flatten()
 }
 
 #[cfg(test)]

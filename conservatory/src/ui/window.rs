@@ -1390,17 +1390,19 @@ impl ConservatoryWindow {
                 kind: r.kind,
                 track_id: r.track_id,
                 episode_id: r.episode_id,
+                book_id: r.book_id,
                 show_id: r.show_id,
                 audio_path: r.audio_path.clone(),
                 audio_url: r.audio_url.clone(),
             })
             .collect();
-        // The cursor's id is its track_id (track) or episode_id (episode).
+        // The cursor's id is its track_id (track), episode_id (episode), or
+        // book_id (audiobook, 7c-iii).
         let cursor_kind = saved.as_ref().map(|s| s.kind).unwrap_or(MediaKind::Track);
         let cursor_id = saved.as_ref().and_then(|s| match s.kind {
             MediaKind::Track => s.track_id,
             MediaKind::Episode => s.episode_id,
-            MediaKind::Audiobook => None,
+            MediaKind::Audiobook => s.book_id,
         });
         let (mut items, start) = build_mixed_queue(
             &mixed,
@@ -1412,6 +1414,7 @@ impl ConservatoryWindow {
             &settings,
         );
         crate::playqueue::attach_episode_chapters(&mut items, pool);
+        crate::playqueue::attach_book_chapters(&mut items, pool, root);
         if items.is_empty() {
             return;
         }
@@ -2177,6 +2180,11 @@ impl ConservatoryWindow {
                                     .ok()
                                     .flatten()
                             }
+                            Some(MediaKind::Audiobook) => {
+                                conservatory_core::db::book_metadata(&conn, id)
+                                    .ok()
+                                    .flatten()
+                            }
                             _ => conservatory_core::db::track_metadata(&conn, id)
                                 .ok()
                                 .flatten(),
@@ -2267,10 +2275,59 @@ impl ConservatoryWindow {
             return;
         };
         use conservatory_core::db::{
-            episode_metadata, get_album, get_episode, get_show, get_track, list_chapters,
-            track_metadata,
+            book_chapters, book_metadata, book_narrators, episode_metadata, get_album, get_book,
+            get_episode, get_show, get_track, list_chapters, track_metadata,
         };
         match kind {
+            Some(MediaKind::Audiobook) => {
+                let (Ok(Some(np)), Ok(Some(book))) =
+                    (book_metadata(&conn, id), get_book(&conn, id))
+                else {
+                    panel.clear();
+                    return;
+                };
+                let chapters = book_chapters(&conn, id).unwrap_or_default();
+                let narrators: Vec<String> = book_narrators(&conn, id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| p.name)
+                    .collect();
+                // A book is one file (M4B) when every chapter shares a path.
+                let single_file = chapters
+                    .first()
+                    .map(|c0| chapters.iter().all(|c| c.file_path == c0.file_path))
+                    .unwrap_or(true);
+                panel.set_fields(
+                    &np.title.clone(),
+                    &crate::ui::now_playing_panel::book_fields(
+                        &np,
+                        &book,
+                        &narrators,
+                        chapters.len(),
+                        single_file,
+                    ),
+                );
+                // The clickable chapter list speaks book-absolute time (the engine's
+                // `Seek` is absolute too): synthesize a `Chapter` per mark.
+                if let Some(player) = imp.player.get() {
+                    let plan = conservatory_core::player::plan_book(&chapters);
+                    let marks: Vec<conservatory_core::db::Chapter> = plan
+                        .marks
+                        .iter()
+                        .enumerate()
+                        .map(|(i, m)| conservatory_core::db::Chapter {
+                            id: i as i64,
+                            episode_id: 0,
+                            start_time: m.start_time,
+                            end_time: None,
+                            title: m.title.clone(),
+                            url: None,
+                            image_path: None,
+                        })
+                        .collect();
+                    panel.set_chapters(&marks, player);
+                }
+            }
             Some(MediaKind::Episode) => {
                 let (Ok(Some(np)), Ok(Some(ep))) =
                     (episode_metadata(&conn, id), get_episode(&conn, id))

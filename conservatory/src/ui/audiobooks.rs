@@ -26,7 +26,8 @@ use conservatory_audiobooks::edit::{
 use conservatory_audiobooks::{apply_book_edit, apply_book_reorg, plan_book_reorg};
 use conservatory_core::PlayerHandle;
 use conservatory_core::db::{
-    BookListRow, ReadPool, WorkerHandle, book_chapters, list_book_rows, sort_shelf,
+    BookListRow, BookPlayback, ReadPool, WorkerHandle, book_chapters, get_book_playback,
+    list_book_rows, sort_shelf,
 };
 use conservatory_core::mover::MoveMode;
 
@@ -43,7 +44,7 @@ pub fn build_audiobooks_view(
     pool: ReadPool,
     worker: WorkerHandle,
     rt: tokio::runtime::Handle,
-    _player: Option<PlayerHandle>,
+    player: Option<PlayerHandle>,
     root: Option<PathBuf>,
 ) -> gtk::Widget {
     let store = gtk::gio::ListStore::new::<BookRow>();
@@ -63,6 +64,7 @@ pub fn build_audiobooks_view(
         pool,
         worker,
         rt,
+        player,
         root,
         store,
         selection: selection.clone(),
@@ -85,6 +87,23 @@ pub fn build_audiobooks_view(
         let inner = inner.clone();
         selection.connect_selection_changed(move |_, _, _| {
             inner.show_detail(inner.first_selected().as_ref());
+        });
+    }
+
+    // Double-click / Enter plays the book (Phase 7c-iii): the activated book and
+    // the rest of the shelf below it become the queue, the deadbeef idiom.
+    {
+        let inner = inner.clone();
+        grid.connect_activate(move |_, pos| inner.play_from(pos as usize));
+    }
+
+    // The detail pane's gear opens the per-book playback settings dialog.
+    {
+        let inner = inner.clone();
+        let gear = inner.detail.settings.clone();
+        gear.connect_clicked(move |btn| {
+            let win = btn.root().and_downcast::<gtk::Window>();
+            inner.prompt_book_settings(win.as_ref());
         });
     }
 
@@ -162,6 +181,15 @@ pub fn build_audiobooks_view(
             gtk::glib::Propagation::Stop
         })),
     ));
+    // Ctrl+Enter appends the selected books to the queue tail (the podcast idiom).
+    let append_inner = inner.clone();
+    controller.add_shortcut(gtk::Shortcut::new(
+        gtk::ShortcutTrigger::parse_string("<Control>Return"),
+        Some(gtk::CallbackAction::new(move |_, _| {
+            append_inner.append_selected();
+            gtk::glib::Propagation::Stop
+        })),
+    ));
     paned.add_controller(controller);
     paned.upcast()
 }
@@ -173,6 +201,7 @@ struct Inner {
     pool: ReadPool,
     worker: WorkerHandle,
     rt: tokio::runtime::Handle,
+    player: Option<PlayerHandle>,
     root: Option<PathBuf>,
     store: gtk::gio::ListStore,
     selection: gtk::MultiSelection,
@@ -275,6 +304,131 @@ impl Inner {
             }
         };
         self.detail.show(book, cover.as_deref(), &chapters);
+    }
+
+    /// Play the shelf from the activated cover (Phase 7c-iii): the activated book
+    /// and everything below it on the current shelf become the unified queue, the
+    /// deadbeef idiom (music's "play these, start here"). A book is one queue item
+    /// spanning its files; `build_audiobook_queue` reads its chapters → segments +
+    /// per-book profile.
+    fn play_from(&self, activated: usize) {
+        let (Some(player), Some(root)) = (self.player.as_ref(), self.root.as_ref()) else {
+            return;
+        };
+        let ids: Vec<i64> = self.shelf_ids();
+        if ids.is_empty() {
+            return;
+        }
+        let _ = self
+            .rt
+            .block_on(self.worker.replace_queue_with_books(ids.clone()));
+        let (items, start) =
+            crate::playqueue::build_audiobook_queue(&self.pool, &ids, activated, root);
+        if !items.is_empty() {
+            player.play_queue(items, start);
+        }
+    }
+
+    /// Append the selected books to the queue tail (Ctrl+Enter, the podcast
+    /// `append_selected` precedent): they flow into the one unified queue.
+    fn append_selected(&self) {
+        let (Some(player), Some(root)) = (self.player.as_ref(), self.root.as_ref()) else {
+            return;
+        };
+        let ids: Vec<i64> = self.selected_books().iter().map(|b| b.id()).collect();
+        if ids.is_empty() {
+            return;
+        }
+        let _ = self.rt.block_on(self.worker.enqueue_books(ids.clone()));
+        // Build each selected book as a one-item queue, then append in order.
+        let (items, _) = crate::playqueue::build_audiobook_queue(&self.pool, &ids, 0, root);
+        if !items.is_empty() {
+            player.append(items);
+        }
+    }
+
+    /// Open the per-book playback settings dialog for the selected book (Phase
+    /// 7c-iii, the podcast `open_settings` precedent): speed, Smart Speed, Voice
+    /// Boost. On save these per-book overrides are written through
+    /// `upsert_book_playback`, preserving the resume position / finished state.
+    fn prompt_book_settings(self: &Rc<Self>, parent: Option<&gtk::Window>) {
+        let Some(book) = self.first_selected() else {
+            return;
+        };
+        let book_id = book.id();
+        let cur = self
+            .pool
+            .open()
+            .ok()
+            .and_then(|conn| get_book_playback(&conn, book_id).ok().flatten());
+
+        let group = adw::PreferencesGroup::new();
+        group.set_description(Some(
+            "Smart Speed trims dead air; Voice Boost lifts quiet, uneven narration. \
+             These apply to this book when you play it.",
+        ));
+
+        // Speed bounds mirror player::profile's MIN/MAX_SPEED; the authoritative
+        // clamp stays at resolve_book_profile, so this cap is only a guard rail.
+        let speed = adw::SpinRow::with_range(MIN_SPEED, MAX_SPEED, 0.05);
+        speed.set_title("Playback speed");
+        speed.set_digits(2);
+        speed.set_value(cur.as_ref().and_then(|p| p.speed).unwrap_or(1.0));
+
+        let smart = adw::SwitchRow::new();
+        smart.set_title("Smart Speed");
+        smart.set_active(cur.as_ref().and_then(|p| p.smart_speed).unwrap_or(false));
+
+        let voice = adw::SwitchRow::new();
+        voice.set_title("Voice Boost");
+        voice.set_active(cur.as_ref().and_then(|p| p.voice_boost).unwrap_or(false));
+
+        for row in [
+            speed.upcast_ref::<gtk::Widget>(),
+            smart.upcast_ref(),
+            voice.upcast_ref(),
+        ] {
+            group.add(row);
+        }
+
+        let dialog = adw::AlertDialog::new(Some("Playback settings"), None);
+        dialog.set_extra_child(Some(&group));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("save", "Save");
+        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("save"));
+        dialog.set_close_response("cancel");
+
+        let inner = self.clone();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "save" {
+                return;
+            }
+            // Preserve the resume position / finished / last_played; only the
+            // override columns change.
+            let playback = BookPlayback {
+                book_id,
+                position: cur.as_ref().map(|p| p.position).unwrap_or(0.0),
+                finished: cur.as_ref().map(|p| p.finished).unwrap_or(false),
+                last_played: cur.as_ref().and_then(|p| p.last_played),
+                speed: Some(speed.value()),
+                smart_speed: Some(smart.is_active()),
+                voice_boost: Some(voice.is_active()),
+            };
+            let _ = inner
+                .rt
+                .block_on(inner.worker.upsert_book_playback(playback));
+        });
+        dialog.present(parent);
+    }
+
+    /// Every book on the current shelf, in display order (the play-from queue).
+    fn shelf_ids(&self) -> Vec<i64> {
+        let n = self.store.n_items();
+        (0..n)
+            .filter_map(|i| self.store.item(i).and_downcast::<BookRow>())
+            .map(|b| b.id())
+            .collect()
     }
 
     /// Every selected book on the shelf (positions line up: the selection wraps
@@ -556,6 +710,8 @@ struct Detail {
     state: gtk::Label,
     chapters: gtk::ListBox,
     placeholder: gtk::Label,
+    /// Per-book playback settings (Phase 7c-iii): shown only with a book selected.
+    settings: gtk::Button,
 }
 
 impl Detail {
@@ -582,6 +738,14 @@ impl Detail {
             .build();
         let progress = gtk::ProgressBar::new();
         progress.set_show_text(false);
+
+        let settings = gtk::Button::builder()
+            .icon_name("emblem-system-symbolic")
+            .tooltip_text("Playback settings (speed, Smart Speed, Voice Boost)")
+            .halign(gtk::Align::Start)
+            .css_classes(["flat"])
+            .visible(false)
+            .build();
 
         let chapters = gtk::ListBox::new();
         chapters.set_selection_mode(gtk::SelectionMode::None);
@@ -610,6 +774,7 @@ impl Detail {
         root.append(&title);
         root.append(&meta);
         root.append(&state);
+        root.append(&settings);
         root.append(&progress);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         root.append(&chapters_scroll);
@@ -624,6 +789,7 @@ impl Detail {
             state,
             chapters,
             placeholder,
+            settings,
         };
         detail.clear();
         detail
@@ -635,6 +801,7 @@ impl Detail {
         self.title.set_visible(false);
         self.meta.set_visible(false);
         self.state.set_visible(false);
+        self.settings.set_visible(false);
         self.progress.set_visible(false);
         clear_list(&self.chapters);
         self.chapters.set_visible(false);
@@ -669,6 +836,7 @@ impl Detail {
             (frac * 100.0) as u32
         ));
         self.state.set_visible(true);
+        self.settings.set_visible(true);
 
         clear_list(&self.chapters);
         for ch in chapters {
@@ -677,6 +845,11 @@ impl Detail {
         self.chapters.set_visible(!chapters.is_empty());
     }
 }
+
+/// Per-book speed bounds for the settings SpinRow, mirroring `player::profile`'s
+/// `MIN_SPEED` / `MAX_SPEED` (the authoritative clamp is `resolve_book_profile`).
+const MIN_SPEED: f64 = 0.25;
+const MAX_SPEED: f64 = 4.0;
 
 /// One chapter list row: "NN. Title          m:ss".
 fn chapter_row(ch: &conservatory_core::db::BookChapter) -> gtk::Widget {

@@ -361,6 +361,18 @@ impl WorkerHandle {
             .await
     }
 
+    /// Append books to the queue tail (Phase 7c-iii).
+    pub async fn enqueue_books(&self, book_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::EnqueueBooks { book_ids, reply })
+            .await
+    }
+
+    /// Replace the whole queue with these books in order ("play these now").
+    pub async fn replace_queue_with_books(&self, book_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::ReplaceQueueWithBooks { book_ids, reply })
+            .await
+    }
+
     /// Remove the queue entry at `position`.
     pub async fn remove_queue_item(&self, position: i64) -> Result<()> {
         self.dispatch(|reply| Command::RemoveQueueItem { position, reply })
@@ -995,6 +1007,12 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::ReplaceQueueWithEpisodes { episode_ids, reply } => {
             let _ = reply.send(writes::replace_queue_with_episodes(conn, &episode_ids));
+        }
+        Command::EnqueueBooks { book_ids, reply } => {
+            let _ = reply.send(writes::enqueue_books(conn, &book_ids));
+        }
+        Command::ReplaceQueueWithBooks { book_ids, reply } => {
+            let _ = reply.send(writes::replace_queue_with_books(conn, &book_ids));
         }
         Command::RemoveQueueItem { position, reply } => {
             let _ = reply.send(writes::remove_queue_item(conn, position));

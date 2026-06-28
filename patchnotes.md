@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.62
+
+Phase 7c-iii, and with it **Phase 7 is complete**: audiobooks are now a full third media type. You can play a book from the shelf, see it on the Now Playing surfaces, control it from GNOME's media keys, and tune its playback per book. This is the last of three audiobook-playback commits; no migration, no new third-party dependency.
+
+- **Play from the shelf.** Double-click (or press Enter on) a cover and the book, plus the rest of the shelf below it, starts playing in the one unified queue alongside music and podcasts. Ctrl+Enter appends the selected books to the queue tail instead.
+- **The book on the Now Playing surfaces.** The Now-bar and the Now Playing drawer now show a book's title, author, series, duration, and cover, with a clickable chapter list that jumps anywhere in the book (across its files) and highlights the current chapter as it plays. The queue drawer shows books too, and a book left playing when you quit resumes on next launch.
+- **Media keys and the lock screen.** MPRIS now reports the right metadata for whatever is playing, books included, so GNOME's media overlay and the keyboard media keys drive a book the same as a song.
+- **Per-book playback settings.** A gear in the book's detail pane opens a small dialog for that book's speed, Smart Speed, and Voice Boost. Changing them never disturbs your saved place in the book.
+- **Tests.** A pure `book_fields` projection (the Now Playing field list) is unit-tested for author / series / format / decimal series index; the play, resume, and profile logic is covered by the 7c-i / 7c-ii engine tests. Full workspace suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green.
+
 ## v0.0.61
 
 Phase 7c-ii: a book now resumes exactly where you left off, honors its own playback settings, and skips chapters across files. This is the second of three audiobook-playback commits; the GTK surface, MPRIS, and a per-book settings dialog are 7c-iii. One database migration (0013); no new third-party dependency.

@@ -15,7 +15,7 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use conservatory_core::db::{Album, Chapter, Episode, MediaKind, NowPlaying, Show, Track};
+use conservatory_core::db::{Album, Book, Chapter, Episode, MediaKind, NowPlaying, Show, Track};
 use conservatory_core::player::SleepMode;
 use conservatory_core::{PlayerHandle, SleepStatus};
 
@@ -416,6 +416,70 @@ pub fn episode_fields(
     out
 }
 
+/// The Now Playing field projection for an audiobook (Phase 7c-iii), the book
+/// twin of [`track_fields`] / [`episode_fields`]. `np` carries the title, the
+/// first author (`artist`), the series (`album`), and the total duration;
+/// `narrators` and the chapter count / single-file flag come from the book's
+/// own reads. Empty optionals are omitted. Pure (testable without the DB).
+pub fn book_fields(
+    np: &NowPlaying,
+    book: &Book,
+    narrators: &[String],
+    chapter_count: usize,
+    single_file: bool,
+) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    push(&mut out, "Author", np.artist.clone().unwrap_or_default());
+    if !narrators.is_empty() {
+        push(&mut out, "Narrator", narrators.join(", "));
+    }
+    if let Some(series) = np.album.clone().filter(|s| !s.is_empty()) {
+        let value = match book.series_sequence {
+            Some(seq) => format!("{series} (Book {})", fmt_sequence(seq)),
+            None => series,
+        };
+        push(&mut out, "Series", value);
+    }
+    if let Some(sub) = book.subtitle.clone().filter(|s| !s.is_empty()) {
+        push(&mut out, "Subtitle", sub);
+    }
+    if let Some(y) = book.year {
+        push(&mut out, "Year", y.to_string());
+    }
+    if let Some(pub_) = book.publisher.clone().filter(|s| !s.is_empty()) {
+        push(&mut out, "Publisher", pub_);
+    }
+    if let Some(len) = np.length {
+        push(&mut out, "Duration", fmt_secs(len));
+    }
+    if chapter_count > 0 {
+        push(&mut out, "Chapters", chapter_count.to_string());
+    }
+    push(
+        &mut out,
+        "Format",
+        if single_file {
+            "Single file"
+        } else {
+            "Multi-file"
+        },
+    );
+    if let Some(desc) = book.description.clone().filter(|s| !s.is_empty()) {
+        push(&mut out, "Description", desc);
+    }
+    out
+}
+
+/// A decimal series sequence trimmed to its shortest exact form ("1" not "1.0",
+/// "1.5" kept), matching the path-template render (spec §5.7).
+fn fmt_sequence(seq: f64) -> String {
+    if seq.fract() == 0.0 {
+        format!("{}", seq as i64)
+    } else {
+        format!("{seq}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,6 +608,68 @@ mod tests {
         assert_eq!(map["Season/Episode"], "S2 E4");
         assert_eq!(map["Type"], "bonus");
         assert!(!map.contains_key("Notes")); // empty description skipped
+    }
+
+    fn book(series_seq: Option<f64>) -> Book {
+        Book {
+            id: 7,
+            title: "The Way of Kings".into(),
+            subtitle: Some("Book One".into()),
+            series_id: Some(1),
+            series_sequence: series_seq,
+            year: Some(2010),
+            publisher: Some("Macmillan Audio".into()),
+            isbn: None,
+            asin: None,
+            description: Some("Epic.".into()),
+            language: Some("en".into()),
+            shelf_genre: None,
+            cover_path: None,
+            accent_rgb: None,
+            folder_path: "Audiobooks/Brandon Sanderson/...".into(),
+            rating: 0,
+            starred: false,
+            added_at: None,
+        }
+    }
+
+    #[test]
+    fn book_fields_render_author_series_and_format() {
+        let mut np = np(
+            "The Way of Kings",
+            "Brandon Sanderson",
+            Some("The Stormlight Archive"),
+        );
+        np.length = Some(2730.0);
+        let rows = book_fields(&np, &book(Some(1.0)), &["Kate Reading".into()], 45, false);
+        let map: std::collections::HashMap<_, _> = rows.iter().cloned().collect();
+        assert_eq!(map["Author"], "Brandon Sanderson");
+        assert_eq!(map["Narrator"], "Kate Reading");
+        // The integral sequence renders without a trailing ".0".
+        assert_eq!(map["Series"], "The Stormlight Archive (Book 1)");
+        assert_eq!(map["Subtitle"], "Book One");
+        assert_eq!(map["Year"], "2010");
+        assert_eq!(map["Publisher"], "Macmillan Audio");
+        assert_eq!(map["Chapters"], "45");
+        assert_eq!(map["Format"], "Multi-file");
+        assert_eq!(map["Description"], "Epic.");
+    }
+
+    #[test]
+    fn book_fields_single_file_and_decimal_sequence() {
+        let np = np(
+            "Edgedancer",
+            "Brandon Sanderson",
+            Some("The Stormlight Archive"),
+        );
+        // A decimal sequence keeps its fraction; an M4B is a single file.
+        let rows = book_fields(&np, &book(Some(2.5)), &[], 0, true);
+        let map: std::collections::HashMap<_, _> = rows.iter().cloned().collect();
+        assert_eq!(map["Series"], "The Stormlight Archive (Book 2.5)");
+        assert_eq!(map["Format"], "Single file");
+        // No narrators / no chapters → those rows are omitted.
+        assert!(!map.contains_key("Narrator"));
+        assert!(!map.contains_key("Chapters"));
     }
 
     fn status(mode: SleepMode, remaining: Option<f64>, fired: bool) -> SleepStatus {

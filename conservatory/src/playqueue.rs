@@ -117,6 +117,7 @@ pub struct MixedQueueRow {
     pub kind: MediaKind,
     pub track_id: Option<i64>,
     pub episode_id: Option<i64>,
+    pub book_id: Option<i64>,
     pub show_id: Option<i64>,
     pub audio_path: Option<String>,
     pub audio_url: Option<String>,
@@ -180,7 +181,24 @@ pub fn build_mixed_queue(
                     segments: [].into(),
                 });
             }
-            MediaKind::Audiobook => continue, // Phase 7
+            MediaKind::Audiobook => {
+                let Some(book_id) = row.book_id else {
+                    continue;
+                };
+                // A placeholder resolved by `attach_book_chapters` (which reads
+                // the chapters → segments + source + the per-book profile). Kept
+                // out of `build_mixed_queue` so this stays pure (no pool).
+                items.push(PlayableItem {
+                    track_id: book_id,
+                    source: std::path::PathBuf::new(),
+                    profile: conservatory_core::resolve_book_profile(None),
+                    album_id: None,
+                    kind: MediaKind::Audiobook,
+                    streaming: false,
+                    chapters: [].into(),
+                    segments: [].into(),
+                });
+            }
         }
     }
 
@@ -193,6 +211,51 @@ pub fn build_mixed_queue(
         .unwrap_or(0);
 
     (items, start)
+}
+
+/// Build a play queue from a list of book ids (the deadbeef idiom, audiobook
+/// flavour, Phase 7c-iii). Each book is read into its single [`PlayableItem`]
+/// (its chapters planned into segments under `root`, its profile resolved from
+/// `book_playback`); books with no chapters are skipped. `start` re-indexes past
+/// any skip onto the activated book (or 0). Only the audiobooks plugin plays
+/// from the shelf; the music-only build never calls this (the launch-resume path
+/// uses `attach_book_chapters`, which stays compiled).
+#[cfg(feature = "audiobooks")]
+pub fn build_audiobook_queue(
+    pool: &conservatory_core::db::ReadPool,
+    ordered_ids: &[i64],
+    activated: usize,
+    root: &Path,
+) -> (Vec<PlayableItem>, usize) {
+    let Ok(conn) = pool.open() else {
+        return (Vec::new(), 0);
+    };
+    let activated_id = ordered_ids.get(activated).copied();
+    let items: Vec<PlayableItem> = ordered_ids
+        .iter()
+        .filter_map(|&id| resolve_book_item(&conn, id, root))
+        .collect();
+    let start = activated_id
+        .and_then(|id| items.iter().position(|i| i.track_id == id))
+        .unwrap_or(0);
+    (items, start)
+}
+
+/// Resolve one book id into its `PlayableItem`: read its chapters (→ segments +
+/// absolute marks + source under `root`) and its per-book playback profile.
+/// `None` when the book has no chapters / no playable file.
+fn resolve_book_item(
+    conn: &conservatory_core::db::Connection,
+    book_id: i64,
+    root: &Path,
+) -> Option<PlayableItem> {
+    use conservatory_core::db::{book_chapters, get_book_playback};
+    use conservatory_core::player::build_book_item;
+    use conservatory_core::resolve_book_profile;
+    let chapters = book_chapters(conn, book_id).ok()?;
+    let playback = get_book_playback(conn, book_id).ok().flatten();
+    let profile = resolve_book_profile(playback.as_ref());
+    build_book_item(book_id, &chapters, root, profile)
 }
 
 /// Attach each episode item's stored chapter marks (Phase 6c-iii-b), read from
@@ -216,6 +279,30 @@ pub fn attach_episode_chapters(items: &mut [PlayableItem], pool: &conservatory_c
             })
             .collect();
         item.chapters = marks.into();
+    }
+}
+
+/// Resolve the placeholder audiobook items a `build_mixed_queue` launch-resume
+/// produced (Phase 7c-iii): read each book's chapters → segments + source under
+/// `root` + absolute marks, and its per-book playback profile. The book twin of
+/// [`attach_episode_chapters`]; called after the mixed queue is built, before the
+/// player resumes. A book whose files vanished stays an empty placeholder (the
+/// engine then skips it on a load error).
+pub fn attach_book_chapters(
+    items: &mut [PlayableItem],
+    pool: &conservatory_core::db::ReadPool,
+    root: &Path,
+) {
+    let Ok(conn) = pool.open() else {
+        return;
+    };
+    for item in items.iter_mut().filter(|i| i.kind == MediaKind::Audiobook) {
+        if let Some(built) = resolve_book_item(&conn, item.track_id, root) {
+            item.source = built.source;
+            item.segments = built.segments;
+            item.chapters = built.chapters;
+            item.profile = built.profile;
+        }
     }
 }
 
@@ -389,6 +476,7 @@ mod tests {
             kind: MediaKind::Track,
             track_id: Some(id),
             episode_id: None,
+            book_id: None,
             show_id: None,
             audio_path: None,
             audio_url: None,
@@ -405,6 +493,7 @@ mod tests {
             kind: MediaKind::Episode,
             track_id: None,
             episode_id: Some(id),
+            book_id: None,
             show_id: Some(show_id),
             audio_path: audio_path.map(str::to_string),
             audio_url: audio_url.map(str::to_string),

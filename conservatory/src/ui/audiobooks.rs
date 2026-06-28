@@ -3,23 +3,32 @@
 //! shelf is the first `gtk::GridView` in the app (every other browse is a
 //! `ColumnView`) and the first use of the median-cut `accent_rgb` in the GUI.
 //!
-//! Read-only: a book becomes a `PlayableItem` only at Phase 7c, so there is no
-//! play / queue action here (the 6b-ii-a precedent, browse before playback).
-//! Reads go through the pool; the worker / runtime / player are threaded in for
-//! the later sub-phases (filter, bulk edit, playback) but unused now.
+//! Browse + filter (7b-ii) + bulk edit (7b-iii): the shelf is `MultiSelection`,
+//! and a pencil button / `Ctrl+E` opens a bulk-edit dialog over the selection;
+//! a path-affecting edit re-shelves the books through the journaled mover behind
+//! a confirm. A book becomes a `PlayableItem` only at Phase 7c, so there is still
+//! no play / queue action here. Reads go through the pool; writes and the move go
+//! through the worker (`apply_book_edit` / `apply_book_reorg`); the player is
+//! threaded in for 7c but unused now.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gtk::prelude::*;
+use adw::prelude::*;
 use gtk4 as gtk;
+use libadwaita as adw;
 
-use conservatory_core::PlayerHandle;
-use conservatory_core::db::{
-    BookListRow, ReadPool, WorkerHandle, book_chapters, list_book_rows, sort_shelf,
+use conservatory_audiobooks::edit::{
+    parse_opt_index, parse_opt_rating, parse_opt_year, split_people, BookEdit, SeriesEdit,
 };
+use conservatory_audiobooks::{apply_book_edit, apply_book_reorg, plan_book_reorg};
+use conservatory_core::db::{
+    book_chapters, list_book_rows, sort_shelf, BookListRow, ReadPool, WorkerHandle,
+};
+use conservatory_core::mover::MoveMode;
+use conservatory_core::PlayerHandle;
 
 use crate::book_query::filter_books;
 use crate::query::PoolResolver;
@@ -32,17 +41,15 @@ const COVER_SIZE: i32 = 132;
 /// `::map` wiring in `window.rs` is identical).
 pub fn build_audiobooks_view(
     pool: ReadPool,
-    _worker: WorkerHandle,
-    _rt: tokio::runtime::Handle,
+    worker: WorkerHandle,
+    rt: tokio::runtime::Handle,
     _player: Option<PlayerHandle>,
     root: Option<PathBuf>,
 ) -> gtk::Widget {
     let store = gtk::gio::ListStore::new::<BookRow>();
-    let selection = gtk::SingleSelection::builder()
-        .model(&store)
-        .autoselect(false)
-        .can_unselect(true)
-        .build();
+    // Multi-select for bulk edit (7b-iii); a plain click still selects one book,
+    // so the single-book detail browse is unchanged.
+    let selection = gtk::MultiSelection::new(Some(store.clone()));
 
     // The always-on filter bar (spec §3.4), the music-surface idiom: the grammar
     // searches, there is no separate search mode. Ctrl+F focuses it (below).
@@ -54,8 +61,11 @@ pub fn build_audiobooks_view(
     let detail = Detail::new();
     let inner = Rc::new(Inner {
         pool,
+        worker,
+        rt,
         root,
         store,
+        selection: selection.clone(),
         detail,
         filter: filter.clone(),
         all_rows: RefCell::new(Vec::new()),
@@ -69,13 +79,12 @@ pub fn build_audiobooks_view(
     grid.set_single_click_activate(false);
     grid.add_css_class("navigation-sidebar");
 
-    // Selection drives the detail pane.
+    // Selection drives the detail pane: it follows the first selected book (a
+    // plain click selects one, so this is the lone book in the common case).
     {
         let inner = inner.clone();
-        let selection = selection.clone();
-        selection.connect_selected_notify(move |sel| {
-            let book = sel.selected_item().and_downcast::<BookRow>();
-            inner.show_detail(book.as_ref());
+        selection.connect_selection_changed(move |_, _, _| {
+            inner.show_detail(inner.first_selected().as_ref());
         });
     }
 
@@ -96,10 +105,21 @@ pub fn build_audiobooks_view(
         .build();
 
     // The filter bar sits above the shelf, in a toolbar strip (the Music-page
-    // layout); the detail pane is unaffected by it.
-    let filter_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    // layout); a pencil button on the right opens the bulk-edit dialog over the
+    // current selection (also Ctrl+E). The detail pane is unaffected by it.
+    let edit_btn = gtk::Button::from_icon_name("document-edit-symbolic");
+    edit_btn.set_tooltip_text(Some("Edit selected book(s) (Ctrl+E)"));
+    edit_btn.add_css_class("flat");
+    {
+        let inner = inner.clone();
+        edit_btn.connect_clicked(move |btn| {
+            inner.prompt_bulk_edit(btn.root().and_downcast::<gtk::Window>().as_ref())
+        });
+    }
+    let filter_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     filter_bar.add_css_class("toolbar");
     filter_bar.append(&filter);
+    filter_bar.append(&edit_btn);
     let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
     left.append(&filter_bar);
     left.append(&shelf_scroll);
@@ -114,18 +134,13 @@ pub fn build_audiobooks_view(
     paned.set_shrink_end_child(false);
     paned.set_position(640);
 
-    // Ctrl+F focuses the filter bar. Scope it to this view (Managed) so it fires
-    // when the audiobook shelf has focus, without colliding with the window's
-    // global music Ctrl+F (which still serves the Music tab).
-    install_filter_shortcut(&paned, &filter);
-    paned.upcast()
-}
-
-/// Ctrl+F focuses the audiobook filter bar (spec §3.4), scoped to `view` so it
-/// only fires when focus is within the Audiobooks tab.
-fn install_filter_shortcut(view: &gtk::Paned, filter: &gtk::SearchEntry) {
+    // View-scoped shortcuts (Managed scope so they fire only when the Audiobooks
+    // tab has focus, never colliding with the window's global music shortcuts):
+    // Ctrl+F focuses the filter bar (spec §3.4), Ctrl+E opens the bulk edit.
+    let controller = gtk::ShortcutController::new();
+    controller.set_scope(gtk::ShortcutScope::Managed);
     let target = filter.downgrade();
-    let shortcut = gtk::Shortcut::new(
+    controller.add_shortcut(gtk::Shortcut::new(
         gtk::ShortcutTrigger::parse_string("<Control>f"),
         Some(gtk::CallbackAction::new(move |_, _| {
             if let Some(entry) = target.upgrade() {
@@ -133,11 +148,22 @@ fn install_filter_shortcut(view: &gtk::Paned, filter: &gtk::SearchEntry) {
             }
             gtk::glib::Propagation::Stop
         })),
-    );
-    let controller = gtk::ShortcutController::new();
-    controller.set_scope(gtk::ShortcutScope::Managed);
-    controller.add_shortcut(shortcut);
-    view.add_controller(controller);
+    ));
+    let edit_inner = inner.clone();
+    let edit_paned = paned.downgrade();
+    controller.add_shortcut(gtk::Shortcut::new(
+        gtk::ShortcutTrigger::parse_string("<Control>e"),
+        Some(gtk::CallbackAction::new(move |_, _| {
+            let win = edit_paned
+                .upgrade()
+                .and_then(|p| p.root())
+                .and_downcast::<gtk::Window>();
+            edit_inner.prompt_bulk_edit(win.as_ref());
+            gtk::glib::Propagation::Stop
+        })),
+    ));
+    paned.add_controller(controller);
+    paned.upcast()
 }
 
 /// The view's shared state: the read pool, the library root (to resolve covers),
@@ -145,8 +171,11 @@ fn install_filter_shortcut(view: &gtk::Paned, filter: &gtk::SearchEntry) {
 /// widgets, and the rebuildable accent CSS provider.
 struct Inner {
     pool: ReadPool,
+    worker: WorkerHandle,
+    rt: tokio::runtime::Handle,
     root: Option<PathBuf>,
     store: gtk::gio::ListStore,
+    selection: gtk::MultiSelection,
     detail: Detail,
     filter: gtk::SearchEntry,
     /// The whole shelf, sorted in-progress-first; the filter narrows it into
@@ -246,6 +275,199 @@ impl Inner {
             }
         };
         self.detail.show(book, cover.as_deref(), &chapters);
+    }
+
+    /// Every selected book on the shelf (positions line up: the selection wraps
+    /// the displayed store directly).
+    fn selected_books(&self) -> Vec<BookRow> {
+        let n = self.store.n_items();
+        (0..n)
+            .filter(|&i| self.selection.is_selected(i))
+            .filter_map(|i| self.store.item(i).and_downcast::<BookRow>())
+            .collect()
+    }
+
+    /// The first selected book (drives the detail pane under multi-select).
+    fn first_selected(&self) -> Option<BookRow> {
+        let n = self.store.n_items();
+        (0..n)
+            .find(|&i| self.selection.is_selected(i))
+            .and_then(|i| self.store.item(i).and_downcast::<BookRow>())
+    }
+
+    /// Open the bulk-edit dialog over the current selection (Phase 7b-iii): a
+    /// labelled-entry grid plus a "Standalone" toggle (the explicit series-clear).
+    /// Blank fields are left unchanged; a bad value rejects the whole set.
+    fn prompt_bulk_edit(self: &Rc<Self>, parent: Option<&gtk::Window>) {
+        let books = self.selected_books();
+        if books.is_empty() {
+            return;
+        }
+
+        let grid = gtk::Grid::builder()
+            .row_spacing(6)
+            .column_spacing(12)
+            .build();
+        let mut row = 0;
+        let mut add = |label: &str| -> gtk::Entry {
+            let lbl = gtk::Label::builder().label(label).xalign(1.0).build();
+            let entry = gtk::Entry::builder()
+                .placeholder_text("unchanged")
+                .hexpand(true)
+                .build();
+            grid.attach(&lbl, 0, row, 1, 1);
+            grid.attach(&entry, 1, row, 1, 1);
+            row += 1;
+            entry
+        };
+        let author = add("Author(s) (; separated)");
+        let narrator = add("Narrator(s) (; separated)");
+        let series = add("Series");
+        let series_index = add("Series index");
+        let title = add("Title");
+        let year = add("Year");
+        let shelf_genre = add("Shelf genre");
+        let rating = add("Rating (0-5)");
+        let standalone = gtk::CheckButton::with_label("Standalone (no series)");
+        grid.attach(&standalone, 1, row, 1, 1);
+
+        let dialog = adw::AlertDialog::new(
+            Some("Edit book(s)"),
+            Some(&format!(
+                "Apply to {} selected book(s). Blank fields are left unchanged.",
+                books.len()
+            )),
+        );
+        dialog.set_extra_child(Some(&grid));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("apply", "Apply");
+        dialog.set_response_appearance("apply", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("apply"));
+        dialog.set_close_response("cancel");
+
+        let this = self.clone();
+        let parent_weak = parent.map(|w| w.downgrade());
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "apply" {
+                return;
+            }
+            let nonblank = |e: &gtk::Entry| {
+                let t = e.text().to_string();
+                (!t.trim().is_empty()).then_some(t)
+            };
+            let build = || -> Result<BookEdit, String> {
+                let series_edit = if standalone.is_active() {
+                    Some(SeriesEdit::Clear)
+                } else {
+                    nonblank(&series).map(SeriesEdit::Set)
+                };
+                Ok(BookEdit {
+                    title: nonblank(&title),
+                    year: parse_opt_year(&year.text())?,
+                    series: series_edit,
+                    series_index: parse_opt_index(&series_index.text())?,
+                    authors: nonblank(&author).map(|s| split_people(&s)),
+                    narrators: nonblank(&narrator).map(|s| split_people(&s)),
+                    shelf_genre: nonblank(&shelf_genre),
+                    rating: parse_opt_rating(&rating.text())?,
+                    starred: None,
+                })
+            };
+            match build() {
+                Ok(edit) => {
+                    let parent = parent_weak.as_ref().and_then(|w| w.upgrade());
+                    this.apply_bulk_edit(&books, edit, parent.as_ref());
+                }
+                // Reject the whole set rather than apply a partly-valid edit.
+                Err(e) => eprintln!("conservatory: edit not applied: {e}"),
+            }
+        });
+        dialog.present(parent);
+    }
+
+    /// Write the edit's metadata to every selected book, then re-shelve (behind a
+    /// confirm) if a path-affecting field changed, else just reload the shelf.
+    fn apply_bulk_edit(
+        self: &Rc<Self>,
+        books: &[BookRow],
+        edit: BookEdit,
+        parent: Option<&gtk::Window>,
+    ) {
+        if edit.is_empty() {
+            return;
+        }
+        let ids: Vec<i64> = books.iter().map(|b| b.id()).collect();
+        for &id in &ids {
+            if let Err(e) = self.rt.block_on(apply_book_edit(&self.worker, id, &edit)) {
+                eprintln!("conservatory: edit failed for book {id}: {e}");
+            }
+        }
+        if edit.is_path_affecting() {
+            match self.root.clone() {
+                Some(root) => {
+                    self.confirm_and_reshelve(ids, root, parent);
+                    return;
+                }
+                None => {
+                    eprintln!("conservatory: no library root; cannot re-shelve the edited book(s)")
+                }
+            }
+        }
+        self.load();
+    }
+
+    /// Preview the aggregate move across the edited books, then re-shelve each
+    /// through the journaled mover on confirm (the music `confirm_and_move`
+    /// precedent). Always reloads the shelf when the dialog closes.
+    fn confirm_and_reshelve(
+        self: &Rc<Self>,
+        ids: Vec<i64>,
+        root: PathBuf,
+        parent: Option<&gtk::Window>,
+    ) {
+        let (mut total, mut conflicts) = (0usize, 0usize);
+        for &id in &ids {
+            if let Ok(plan) = plan_book_reorg(&self.pool, id, &root) {
+                total += plan.ops.len();
+                conflicts += plan.conflicts.len();
+            }
+        }
+        if total == 0 && conflicts == 0 {
+            self.load(); // nothing to move (e.g. an in-place edit)
+            return;
+        }
+        let body = if conflicts == 0 {
+            format!("{total} file(s) will move to match the edit.")
+        } else {
+            format!(
+                "{total} file(s) will move; {conflicts} conflict(s) will be skipped (those books stay put)."
+            )
+        };
+        let dialog = adw::AlertDialog::new(Some("Move files?"), Some(&body));
+        dialog.add_response("cancel", "Keep in place");
+        dialog.add_response("move", "Move");
+        dialog.set_response_appearance("move", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("move"));
+        dialog.set_close_response("cancel");
+
+        let this = self.clone();
+        dialog.connect_response(None, move |_, resp| {
+            if resp == "move" {
+                for &id in &ids {
+                    if let Err(e) = this.rt.block_on(apply_book_reorg(
+                        &this.worker,
+                        &this.pool,
+                        id,
+                        &root,
+                        MoveMode::Move,
+                    )) {
+                        eprintln!("conservatory: re-shelve failed for book {id}: {e}");
+                    }
+                }
+            }
+            this.load();
+        });
+        dialog.present(parent);
     }
 }
 

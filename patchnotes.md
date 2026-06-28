@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.59
+
+Phase 7b-iii-b completes Phase 7b: the Audiobooks tab gets a bulk-edit dialog, the GTK front end for the editing engine that landed in 7b-iii-a. Select one or more books on the shelf, press `Ctrl+E` (or the pencil button), edit their fields, and a path-affecting change re-shelves the files behind a preview-and-confirm. No new third-party dependency.
+
+- **The shelf is multi-select now.** A plain click still selects a single book (so the detail browse is unchanged, and the detail pane follows the first selected book), but Ctrl-click and Shift-click extend the selection for a bulk edit.
+- **The bulk-edit dialog.** A pencil button on the filter bar and `Ctrl+E` (scoped to the Audiobooks tab, so it never fights the Music tab's shortcuts) open an editor over the selection: author(s) and narrator(s) (semicolon-separated, replacing the credited set), series, series index, title, year, shelf genre, and rating, plus a "Standalone (no series)" checkbox. Blank fields are left unchanged; one bad value rejects the whole edit rather than applying it half-done (the Calibre / music-surface model).
+- **Series clearing is a checkbox.** Since blank means "unchanged", making a book standalone is the explicit "Standalone (no series)" toggle, which moves it to `Audiobooks/<author>/Standalone/…`.
+- **Path-affecting edits move files behind a confirm.** After writing the metadata, the dialog aggregates the planned moves across every edited book into a single "Move N files?" prompt; confirm and each book re-shelves through the same journaled mover (dry-run preview, undo journal, crash-safe replay) the headless half built, then the shelf reloads. A non-path edit (rating, narrator, shelf genre) just reloads, no move.
+- **Tests.** The edit and move logic is covered by the 7b-iii-a suite (the resolver units and the reorganize round-trip on real files); the dialog itself is verified by build plus manual launch, the documented GTK-view precedent. Full workspace suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green.
+
+Phase 7b is complete: the audiobook library is browsable, filterable, and editable. Next is Phase 7c, the last of Phase 7: audiobook playback on the unified queue, with chapter navigation, variable speed, the sleep timer, and first-class resume.
+
 ## v0.0.58
 
 Phase 7b-iii-a: the headless half of audiobook bulk edit. You can now edit a book's metadata and, when a path-affecting field changes (author, series, series index, title, year), have its files re-shelved into the new folder through the same trust-critical, journaled mover that owns the music library. This sub-phase is the engine; the GTK multi-select dialog (7b-iii-b) is next. No new third-party dependency, no schema change.

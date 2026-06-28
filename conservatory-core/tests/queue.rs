@@ -214,6 +214,7 @@ fn engine_plays_queue_to_end() {
                 kind: conservatory_core::db::MediaKind::Track,
                 streaming: false,
                 chapters: [].into(),
+                segments: [].into(),
             });
         }
         (items, ids)
@@ -321,6 +322,7 @@ fn engine_plays_an_episode_to_podcast_playback_not_the_track_tables() {
         kind: MediaKind::Episode,
         streaming: false,
         chapters: [].into(),
+        segments: [].into(),
     };
 
     let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
@@ -389,6 +391,7 @@ fn engine_unpauses_a_newly_loaded_item_after_a_pause() {
         kind: MediaKind::Track,
         streaming: false,
         chapters: [].into(),
+        segments: [].into(),
     };
 
     let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
@@ -441,6 +444,7 @@ fn engine_applies_a_live_eq_band_change_without_stopping() {
         kind: MediaKind::Track,
         streaming: false,
         chapters: [].into(),
+        segments: [].into(),
     };
 
     let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
@@ -514,6 +518,7 @@ fn engine_records_a_listening_session_for_an_episode() {
         kind: MediaKind::Episode,
         streaming: false,
         chapters: [].into(),
+        segments: [].into(),
     };
 
     let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
@@ -595,6 +600,7 @@ fn engine_skips_between_chapters() {
                 title: Some("Main".into()),
             },
         ]),
+        segments: [].into(),
     };
 
     let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
@@ -697,6 +703,7 @@ fn engine_swaps_profile_between_a_track_and_an_episode() {
             kind: MediaKind::Track,
             streaming: false,
             chapters: [].into(),
+            segments: [].into(),
         };
         (track.id, item)
     };
@@ -708,6 +715,7 @@ fn engine_swaps_profile_between_a_track_and_an_episode() {
         kind: MediaKind::Episode,
         streaming: false,
         chapters: [].into(),
+        segments: [].into(),
     };
 
     let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
@@ -784,6 +792,7 @@ fn snapshot_reports_smart_speed_for_an_episode() {
         kind: MediaKind::Episode,
         streaming: false,
         chapters: [].into(),
+        segments: [].into(),
     };
 
     let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
@@ -909,6 +918,7 @@ fn engine_move_and_remove_track_the_current_index() {
                     kind: conservatory_core::db::MediaKind::Track,
                     streaming: false,
                     chapters: [].into(),
+                    segments: [].into(),
                 }
             })
             .collect()
@@ -998,6 +1008,7 @@ fn engine_append_and_resume() {
                     kind: conservatory_core::db::MediaKind::Track,
                     streaming: false,
                     chapters: [].into(),
+                    segments: [].into(),
                 }
             })
             .collect()

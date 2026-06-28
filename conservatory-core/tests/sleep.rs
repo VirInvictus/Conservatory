@@ -81,6 +81,7 @@ fn harness() -> Harness {
                 kind: MediaKind::Track,
                 streaming: false,
                 chapters: [].into(),
+                segments: [].into(),
             });
         }
         (items, ids)

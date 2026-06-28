@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.60
+
+Phase 7c begins: audiobook playback. This first commit (7c-i) is the headless engine that makes a book play as one item in the unified queue. The novel piece is that a book's chapters can live in one M4B or across a folder of one-file-per-chapter, and either way the book is a single queue entry the engine plays through internally. No new third-party dependency, no schema change.
+
+- **A book is one playable item with a segment plan.** A new pure module plans a book's chapters into ordered per-file "segments", each tagged with its cumulative offset across the whole book, and lifts the chapter marks onto one absolute book timeline. That plan is what lets the engine speak a single position from 0 to the end of the book regardless of how many files back it.
+- **The engine advances file to file internally.** When one file ends, the engine loads the next file of the same book without advancing the queue, and only marks the book finished (clearing its resume position) at the last file's end. A multi-file book that reports "finished" is therefore proof every file played. An M4B is the one-file case: its chapters are seeks inside the single file, fully gapless.
+- **The gapless tradeoff, stated plainly.** Multi-file books advance with one fresh load per file, so there is a brief gap at each file boundary (a natural chapter pause); M4B books have none. True cross-file gapless is a later refinement, recorded in the roadmap.
+- **CLI `audiobook play <db> <id> --root`** plays a book headlessly through the libmpv engine, printing each chapter as it advances, with the shared `--sleep` timer. The position-persistence resume and per-book speed / Smart Speed / Voice Boost land in 7c-ii; the shelf play button, Now Playing surface, and MPRIS in 7c-iii.
+- **Tests.** The segment math is unit-tested (single-M4B, multi-file, multi-file-with-internal-chapters, missing-duration degrade, position-to-segment locate). Two integration tests drive the real engine through a null audio output: a three-file book advances through every file and completes, and a single-file book with chapter marks completes. Full workspace suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green.
+
 ## v0.0.59
 
 Phase 7b-iii-b completes Phase 7b: the Audiobooks tab gets a bulk-edit dialog, the GTK front end for the editing engine that landed in 7b-iii-a. Select one or more books on the shelf, press `Ctrl+E` (or the pencil button), edit their fields, and a path-affecting change re-shelves the files behind a preview-and-confirm. No new third-party dependency.

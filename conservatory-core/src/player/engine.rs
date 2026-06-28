@@ -112,6 +112,12 @@ struct Engine {
     sleep: Option<SleepClock>,
     /// When the sleep clock was last ticked, for its wall-clock delta.
     sleep_tick: Instant,
+    /// Which file of the current audiobook is loaded (Phase 7c): an index into
+    /// the current item's `segments`. `0` for non-books and at the head of every
+    /// freshly-loaded book; the engine bumps it as it advances file to file
+    /// within the one queue item. Used with the segment's cumulative `start` to
+    /// report a book-absolute position.
+    book_segment: usize,
 }
 
 impl Engine {
@@ -142,6 +148,7 @@ impl Engine {
             session_tick: Instant::now(),
             sleep: None,
             sleep_tick: Instant::now(),
+            book_segment: 0,
         }
     }
 
@@ -398,11 +405,19 @@ impl Engine {
             // podcast `playback` row PlayedFully + bumps its count (6b-ii-c-2).
             // `track_id` carries the episode id for an episode item.
             EndReason::Eof => {
+                // A book plays through its files as ONE queue item: a non-final
+                // file's EOF advances to the next file *internally* (no queue
+                // advance, the session stays open), and only the last file's EOF
+                // completes the book (spec §6.1). Handle that first.
+                if self.advance_book_segment() {
+                    self.refresh_snapshot();
+                    return;
+                }
                 if let Some((kind, id)) = self.current_item().map(|i| (i.kind, i.track_id)) {
                     match kind {
                         MediaKind::Track => self.block_increment_play_count(id),
                         MediaKind::Episode => self.block_complete_episode(id),
-                        MediaKind::Audiobook => {} // Phase 7
+                        MediaKind::Audiobook => self.block_complete_book(id),
                     }
                 }
                 // Append the listening session at the natural boundary, before
@@ -531,6 +546,11 @@ impl Engine {
         // (Phase 6c-ii). Idempotent, so a boundary that already closed (EOF) is a
         // no-op here.
         self.close_session();
+        // A freshly-loaded item starts at the head of its file list: `source` is
+        // the first segment for a book (Phase 7c), so loading it below loads file
+        // zero; reset the segment cursor to match. The resume path (7c-ii) seeks
+        // to a later segment after this load.
+        self.book_segment = 0;
         let Some(item) = self.current.and_then(|i| self.queue.get(i)) else {
             return;
         };
@@ -567,6 +587,49 @@ impl Engine {
             ));
             self.session_tick = Instant::now();
         }
+    }
+
+    /// On a book file's EOF: if another file follows, load it (an internal file
+    /// advance, Phase 7c) and report `true` — the caller then skips the normal
+    /// end-of-item completion, so the queue does not advance and the listening
+    /// session stays open across the file boundary. `false` for non-books and at
+    /// the book's last file (the book is finished; the caller completes it).
+    fn advance_book_segment(&mut self) -> bool {
+        let Some(item) = self.current_item() else {
+            return false;
+        };
+        if item.kind != MediaKind::Audiobook {
+            return false;
+        }
+        if self.book_segment + 1 >= item.segments.len() {
+            return false; // the last (or only) file ended → finished
+        }
+        self.book_segment += 1;
+        self.load_book_segment(self.book_segment);
+        self.flush(StateEvent::Seek, false);
+        true
+    }
+
+    /// Load the current book's `idx`-th file without touching `book_segment` (the
+    /// caller owns it) or the running session — the internal-advance counterpart
+    /// to [`Self::load_current`] (Phase 7c). Used by the file advance and, at
+    /// 7c-ii, by the resume / cross-file seek.
+    fn load_book_segment(&mut self, idx: usize) {
+        let Some(item) = self.current.and_then(|i| self.queue.get(i)) else {
+            return;
+        };
+        let Some(seg) = item.segments.get(idx) else {
+            return;
+        };
+        let path = seg.file.to_string_lossy().into_owned();
+        let profile = item.profile;
+        tracing::debug!(segment = idx, source = %path, "player: loading book file");
+        if let Err(e) = self.host.load(&path, &profile) {
+            tracing::warn!(error = %e, path, "player: book file load failed");
+        }
+        let _ = self.host.set_volume(self.volume);
+        let _ = self.host.set_paused(false);
+        self.paused = false;
     }
 
     /// Close the active episode session, if any, appending one append-only
@@ -702,15 +765,39 @@ impl Engine {
         });
     }
 
+    /// Book end-of-file (the last file): mark `book_playback` finished and clear
+    /// its resume position (Phase 7c, spec §6.4), the audiobook analogue of
+    /// `block_complete_episode`.
+    fn block_complete_book(&self, book_id: i64) {
+        let worker = self.worker.clone();
+        let when = now_secs();
+        self.rt.block_on(async move {
+            let _ = worker.complete_book(book_id, Some(when)).await;
+        });
+    }
+
     fn refresh_snapshot(&self) {
         let current = self.current_item();
-        let position = self.host.time_pos().unwrap_or(0.0);
+        // For a book, the host's per-file `time_pos` / `duration` are lifted to
+        // **book-absolute** time via the current segment's cumulative `start`
+        // (Phase 7c), so the seek slider, chapter highlight (the marks are
+        // absolute too), and resume all speak one timeline across the book's
+        // files. Tracks / episodes are a single file, so they pass through.
+        let raw = self.host.time_pos().unwrap_or(0.0);
+        let (position, duration) = match current {
+            Some(item) if item.kind == MediaKind::Audiobook && !item.segments.is_empty() => {
+                let seg = &item.segments[self.book_segment.min(item.segments.len() - 1)];
+                let total = item.segments.last().map(|s| s.start + s.duration);
+                (seg.start + raw, total)
+            }
+            _ => (raw, self.host.duration()),
+        };
         let snap = PlayerSnapshot {
             current_index: self.current,
             track_id: current.map(|i| i.track_id),
             kind: current.map(|i| i.kind),
             position,
-            duration: self.host.duration(),
+            duration,
             paused: self.paused,
             streaming: current.is_some_and(|i| i.streaming),
             // Buffering only matters while we mean to be playing: a paused or

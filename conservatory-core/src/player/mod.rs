@@ -11,6 +11,7 @@
 //! `state` are pure and unit-tested headless; `host` is the thin libmpv glue,
 //! kept in core (not the GTK binary) so the whole engine stays CLI-driveable.
 
+pub mod book;
 pub mod chain;
 pub mod chapters;
 pub mod dsp;
@@ -24,6 +25,7 @@ pub mod sleep;
 pub mod spoken;
 pub mod state;
 
+pub use book::{BookPlan, BookSegment, build_book_item, locate, plan_book};
 pub use chain::{build_af_chain, eq_band_command, eq_stage};
 pub use chapters::{ChapterMark, current_chapter_at, neighbour_chapter};
 pub use dsp::{comp_stage, leveler_stage, limiter_stage};

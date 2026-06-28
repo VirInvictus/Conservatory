@@ -21,14 +21,14 @@ use gtk4 as gtk;
 use libadwaita as adw;
 
 use conservatory_audiobooks::edit::{
-    parse_opt_index, parse_opt_rating, parse_opt_year, split_people, BookEdit, SeriesEdit,
+    BookEdit, SeriesEdit, parse_opt_index, parse_opt_rating, parse_opt_year, split_people,
 };
 use conservatory_audiobooks::{apply_book_edit, apply_book_reorg, plan_book_reorg};
+use conservatory_core::PlayerHandle;
 use conservatory_core::db::{
-    book_chapters, list_book_rows, sort_shelf, BookListRow, ReadPool, WorkerHandle,
+    BookListRow, ReadPool, WorkerHandle, book_chapters, list_book_rows, sort_shelf,
 };
 use conservatory_core::mover::MoveMode;
-use conservatory_core::PlayerHandle;
 
 use crate::book_query::filter_books;
 use crate::query::PoolResolver;

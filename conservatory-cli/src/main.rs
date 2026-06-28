@@ -378,6 +378,23 @@ enum AudiobookAction {
         apply: bool,
     },
 
+    /// Play a book through the libmpv engine as one queue item (Phase 7c): the
+    /// engine advances file to file across the book's chapters internally (no gap
+    /// for an M4B; one loadfile per file for a multi-file book) and completes the
+    /// book at the last file's EOF. Position persistence + resume land at 7c-ii.
+    Play {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The book id to play.
+        book_id: i64,
+        /// Library root the relative chapter paths hang off (as for `organize`).
+        root: PathBuf,
+        /// Arm a sleep timer (Phase 6c-iii-d): minutes (e.g. `30`), `book`/`item`
+        /// (end of the book), or `queue`. Playback pauses at the boundary.
+        #[arg(long)]
+        sleep: Option<String>,
+    },
+
     /// List the audiobook shelf: every book with its denormalized author /
     /// narrator / series, progress, and derived state (New / In progress /
     /// Finished), ordered in-progress first (Phase 7b-i). Read-only; the headless
@@ -949,6 +966,16 @@ fn main() -> Result<()> {
         Some(Command::Audiobook {
             action: AudiobookAction::List { db, expr, format },
         }) => run_audiobook_list(db, expr, format),
+        #[cfg(feature = "audiobooks")]
+        Some(Command::Audiobook {
+            action:
+                AudiobookAction::Play {
+                    db,
+                    book_id,
+                    root,
+                    sleep,
+                },
+        }) => run_audiobook_play(db, book_id, root, sleep),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
@@ -1340,6 +1367,106 @@ fn run_audiobook_list(db: PathBuf, expr: Option<String>, format: Format) -> Resu
     }
 
     print_book_rows(&rows, format);
+    Ok(())
+}
+
+/// Play one book through the libmpv engine as a single queue item (Phase 7c-i):
+/// the engine advances file to file across the book's chapters internally and
+/// completes it at the last file's EOF. A headless exercise of the segment
+/// engine; resume + per-book profile are 7c-ii. Teardown order: player -> worker
+/// -> runtime (the engine thread `block_on`s the worker).
+#[cfg(feature = "audiobooks")]
+fn run_audiobook_play(
+    db: PathBuf,
+    book_id: i64,
+    root: PathBuf,
+    sleep: Option<String>,
+) -> Result<()> {
+    use conservatory_core::db::{book_chapters, get_book};
+    use conservatory_core::player::build_book_item;
+
+    let sleep_mode = sleep.as_deref().map(parse_sleep_spec).transpose()?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .context("building runtime")?;
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).context("spawning worker")?
+    };
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+
+    let (book, chapters) = {
+        let conn = pool.open().context("opening pool connection")?;
+        let book = get_book(&conn, book_id)
+            .context("reading the book")?
+            .with_context(|| format!("no book with id {book_id}"))?;
+        let chapters = book_chapters(&conn, book_id).context("reading chapters")?;
+        (book, chapters)
+    };
+    if chapters.is_empty() {
+        anyhow::bail!("book {book_id} ({}) has no chapters to play", book.title);
+    }
+
+    // The spoken-word default profile for now (resolve_book_profile with per-book
+    // overrides lands at 7c-ii).
+    let profile = conservatory_core::resolve_episode_profile(None);
+    let item = build_book_item(book_id, &chapters, &root, profile)
+        .context("the book resolved to no playable file")?;
+    let segments = item.segments.len();
+
+    let player = conservatory_core::player::spawn(worker.clone(), runtime.handle().clone())
+        .context("starting the player engine")?;
+    if let Ok(conn) = pool.open() {
+        if let Ok(eq) = conservatory_core::db::get_eq_state(&conn) {
+            player.set_eq(eq);
+        }
+        if let Ok(audio) = conservatory_core::db::get_audio_state(&conn) {
+            player.set_dsp(audio.dsp);
+        }
+    }
+    println!(
+        "Playing \"{}\" ({segments} file(s), {} chapter(s)).",
+        book.title,
+        item.chapters.len()
+    );
+    player.play_queue(vec![item], 0);
+    if let Some(mode) = sleep_mode {
+        player.set_sleep_timer(Some(mode));
+        println!("Sleep timer armed ({mode:?}).");
+    }
+
+    // Poll the snapshot until the book finishes (or a duration sleep timer fires),
+    // printing the current chapter as it advances.
+    let mut last_chapter: Option<usize> = None;
+    loop {
+        let snap = player.snapshot();
+        if snap.current_chapter != last_chapter {
+            if let Some(ch) = snap.current_chapter {
+                println!(
+                    "  > chapter {}/{}  ({:.0}s of {:.0}s)",
+                    ch + 1,
+                    snap.chapter_count,
+                    snap.position,
+                    snap.duration.unwrap_or(0.0),
+                );
+            }
+            last_chapter = snap.current_chapter;
+        }
+        if snap.ended {
+            break;
+        }
+        if snap.sleep.is_some_and(|s| s.fired) {
+            println!("Sleep timer elapsed; playback paused.");
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+
+    player.shutdown();
+    let _ = runtime.block_on(worker.shutdown_ack());
+    println!("Done.");
     Ok(())
 }
 
@@ -2757,6 +2884,7 @@ fn resolve_queue_items(
                         kind: MediaKind::Track,
                         streaming: false,
                         chapters: [].into(),
+                        segments: [].into(),
                     });
                 }
             }
@@ -2793,6 +2921,7 @@ fn resolve_queue_items(
                     kind: MediaKind::Episode,
                     streaming,
                     chapters: chapters.into(),
+                    segments: [].into(),
                 });
             }
             MediaKind::Audiobook => continue, // Phase 7

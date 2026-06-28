@@ -41,6 +41,7 @@ pub fn build_play_queue(
             kind: MediaKind::Track,
             streaming: false,
             chapters: [].into(),
+            segments: [].into(),
         })
         .collect();
 
@@ -95,6 +96,7 @@ pub fn build_episode_queue(
                 kind: MediaKind::Episode,
                 streaming,
                 chapters: [].into(),
+                segments: [].into(),
             })
         })
         .collect();
@@ -153,6 +155,7 @@ pub fn build_mixed_queue(
                     kind: MediaKind::Track,
                     streaming: false,
                     chapters: [].into(),
+                    segments: [].into(),
                 });
             }
             MediaKind::Episode => {
@@ -174,6 +177,7 @@ pub fn build_mixed_queue(
                     kind: MediaKind::Episode,
                     streaming,
                     chapters: [].into(),
+                    segments: [].into(),
                 });
             }
             MediaKind::Audiobook => continue, // Phase 7

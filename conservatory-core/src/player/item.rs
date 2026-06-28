@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::db::MediaKind;
+use crate::player::book::BookSegment;
 use crate::player::chapters::ChapterMark;
 use crate::player::profile::MusicProfile;
 
@@ -31,4 +32,12 @@ pub struct PlayableItem {
     /// for tracks / chapter-less items. Drives in-item chapter-skip navigation
     /// (the engine never reads the DB; the marks travel with the item).
     pub chapters: Arc<[ChapterMark]>,
+    /// The ordered audio files a book plays through (Phase 7c, spec §6.1), with
+    /// each file's cumulative book offset. **Empty for tracks and episodes**,
+    /// which are a single file addressed by `source`. For an audiobook the engine
+    /// advances file to file across these *within* the one queue item (an
+    /// internal chapter/file advance, never a queue advance), and maps an
+    /// absolute book position to `(file, in-file offset)` for resume / seek /
+    /// cross-file chapter skip.
+    pub segments: Arc<[BookSegment]>,
 }

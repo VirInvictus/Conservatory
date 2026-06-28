@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.0.61
+
+Phase 7c-ii: a book now resumes exactly where you left off, honors its own playback settings, and skips chapters across files. This is the second of three audiobook-playback commits; the GTK surface, MPRIS, and a per-book settings dialog are 7c-iii. One database migration (0013); no new third-party dependency.
+
+- **One timeline across a book's files.** The engine now speaks a "book-absolute" position: it maps each file's own clock onto a single timeline that runs from the start of the book to its end. Everything that reports or uses position (the seek slider, the resume write, the chapter highlight, the time-saved accounting) now speaks that one timeline, so a multi-file book behaves like a single long item.
+- **First-class resume.** A book's absolute position is written on pause, on seek, and on the periodic insurance interval, and the transport cursor records which book was playing. `audiobook play --resume` reopens a book and seeks straight back to where you stopped, to the second; a slider seek or a chapter skip that crosses a file boundary loads the right file and lands at the right offset.
+- **Per-book playback settings.** Audiobooks share the podcast spoken-word engine (variable speed, Smart Speed, Voice Boost), now resolved from each book's own overrides rather than a show's. `audiobook settings <db> <id> --speed 1.5 --smart-speed true --voice-boost true` sets them; playback applies them.
+- **Time saved counts for books too.** The listening-session history table was rebuilt so a session can belong to a book as well as an episode (exactly one of the two), so a book's Smart Speed time-saved feeds the same `stats` totals.
+- **Migration 0013.** Adds the book cursor column and rebuilds `listening_sessions` with a nullable book/episode owner and an exactly-one check. Existing episode history is copied forward unchanged.
+- **Tests.** Six integration tests now drive the real engine over a null audio output: the resume position and cursor persist mid-book, a cross-file seek reaches the third file, the chapter readout progresses across all three files, and a completed book writes exactly one book-keyed session, plus the `resolve_book_profile` defaults/overrides/clamp units. Full workspace suite + clippy `-D warnings` + fmt + the `--no-default-features` music-only build green.
+
 ## v0.0.60
 
 Phase 7c begins: audiobook playback. This first commit (7c-i) is the headless engine that makes a book play as one item in the unified queue. The novel piece is that a book's chapters can live in one M4B or across a folder of one-file-per-chapter, and either way the book is a single queue entry the engine plays through internally. No new third-party dependency, no schema change.

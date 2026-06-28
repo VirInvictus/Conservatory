@@ -132,13 +132,14 @@ pub struct QueueItem {
 
 /// The singleton transport cursor as written (spec §6.4, Phase 6b-ii-c-2): what
 /// was last playing and where, so a restart resumes. `kind` records the media
-/// kind; `track_id` is set for a track, `episode_id` for an episode (the read
-/// side is [`crate::db::PlaybackStateRow`]).
+/// kind; `track_id` is set for a track, `episode_id` for an episode, `book_id`
+/// for an audiobook (the read side is [`crate::db::PlaybackStateRow`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlaybackCursor {
     pub kind: MediaKind,
     pub track_id: Option<i64>,
     pub episode_id: Option<i64>,
+    pub book_id: Option<i64>,
     pub position: f64,
     pub paused: bool,
     pub volume: i64,

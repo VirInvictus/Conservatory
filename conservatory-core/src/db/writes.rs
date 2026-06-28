@@ -389,12 +389,13 @@ pub(crate) fn set_audio_state(conn: &Connection, state: &AudioState) -> Result<(
 /// is a cleared cursor.
 pub(crate) fn save_playback_state(conn: &Connection, cursor: &PlaybackCursor) -> Result<()> {
     conn.execute(
-        "INSERT INTO playback_state (id, kind, track_id, episode_id, position, paused, volume, updated_at)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        "INSERT INTO playback_state (id, kind, track_id, episode_id, book_id, position, paused, volume, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(id) DO UPDATE SET
             kind = excluded.kind,
             track_id = excluded.track_id,
             episode_id = excluded.episode_id,
+            book_id = excluded.book_id,
             position = excluded.position,
             paused = excluded.paused,
             volume = excluded.volume,
@@ -403,6 +404,7 @@ pub(crate) fn save_playback_state(conn: &Connection, cursor: &PlaybackCursor) ->
             cursor.kind.as_str(),
             cursor.track_id,
             cursor.episode_id,
+            cursor.book_id,
             cursor.position,
             cursor.paused,
             cursor.volume,
@@ -840,7 +842,8 @@ pub(crate) fn complete_episode(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn insert_listening_session(
     conn: &Connection,
-    episode_id: i64,
+    episode_id: Option<i64>,
+    book_id: Option<i64>,
     started_at: i64,
     ended_at: i64,
     real_seconds: f64,
@@ -849,10 +852,11 @@ pub(crate) fn insert_listening_session(
 ) -> Result<()> {
     conn.execute(
         "INSERT INTO listening_sessions
-            (episode_id, started_at, ended_at, real_seconds, audio_seconds, smart_speed_saved)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (episode_id, book_id, started_at, ended_at, real_seconds, audio_seconds, smart_speed_saved)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             episode_id,
+            book_id,
             started_at,
             ended_at,
             real_seconds,

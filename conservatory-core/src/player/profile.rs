@@ -15,7 +15,7 @@
 
 #[cfg(test)]
 use crate::db::models::InboxPolicy;
-use crate::db::models::{AudioState, ShowSettings, Track};
+use crate::db::models::{AudioState, BookPlayback, ShowSettings, Track};
 
 /// Variable-speed bounds (spec §6.3, the podcast 1.2x–2x range plus headroom).
 /// mpv accepts more, but a wild stored value should not produce unusable audio.
@@ -189,6 +189,28 @@ pub fn resolve_episode_profile(settings: Option<&ShowSettings>) -> MusicProfile 
         pitch_correction: true,
         smart_speed: settings.is_some_and(|s| s.smart_speed),
         voice_boost: settings.is_some_and(|s| s.voice_boost),
+    }
+}
+
+/// A spoken-word profile for audiobook playback (Phase 7c-ii, spec §6.3): the
+/// audiobook analogue of [`resolve_episode_profile`]. An audiobook shares the
+/// same spoken-word chain (no ReplayGain, no gapless, pitch-corrected variable
+/// speed) resolved with the **per-book** overrides from `book_playback` instead
+/// of per-show ones. `playback` is `None` for a book with no playback row; each
+/// override column is `None` to inherit the default (speed `1.0`, Smart Speed and
+/// Voice Boost off). No new filter graph is introduced.
+pub fn resolve_book_profile(playback: Option<&BookPlayback>) -> MusicProfile {
+    let speed = playback
+        .and_then(|p| p.speed)
+        .unwrap_or(1.0)
+        .clamp(MIN_SPEED, MAX_SPEED);
+    MusicProfile {
+        gapless: false,
+        replaygain_db: None,
+        speed,
+        pitch_correction: true,
+        smart_speed: playback.and_then(|p| p.smart_speed).unwrap_or(false),
+        voice_boost: playback.and_then(|p| p.voice_boost).unwrap_or(false),
     }
 }
 
@@ -393,6 +415,50 @@ mod tests {
         assert_eq!(
             PlaybackConfig::from_audio_state(&state).replaygain,
             ReplayGain::Album
+        );
+    }
+
+    fn book_playback(speed: Option<f64>, smart: Option<bool>, voice: Option<bool>) -> BookPlayback {
+        BookPlayback {
+            book_id: 1,
+            position: 0.0,
+            finished: false,
+            last_played: None,
+            speed,
+            smart_speed: smart,
+            voice_boost: voice,
+        }
+    }
+
+    #[test]
+    fn book_profile_defaults_when_unset() {
+        // No playback row, or a row with no overrides → the conservative default:
+        // 1.0x, both spoken-word features off, pitch correction on, no ReplayGain.
+        for p in [None, Some(book_playback(None, None, None))] {
+            let prof = resolve_book_profile(p.as_ref());
+            assert_eq!(prof.speed, 1.0);
+            assert!(!prof.smart_speed);
+            assert!(!prof.voice_boost);
+            assert!(prof.pitch_correction);
+            assert!(!prof.gapless);
+            assert_eq!(prof.replaygain_db, None);
+        }
+    }
+
+    #[test]
+    fn book_profile_applies_and_clamps_overrides() {
+        let prof = resolve_book_profile(Some(&book_playback(Some(1.5), Some(true), Some(true))));
+        assert_eq!(prof.speed, 1.5);
+        assert!(prof.smart_speed);
+        assert!(prof.voice_boost);
+        // Out-of-range speeds clamp like the episode path.
+        assert_eq!(
+            resolve_book_profile(Some(&book_playback(Some(99.0), None, None))).speed,
+            MAX_SPEED
+        );
+        assert_eq!(
+            resolve_book_profile(Some(&book_playback(Some(0.0), None, None))).speed,
+            MIN_SPEED
         );
     }
 }

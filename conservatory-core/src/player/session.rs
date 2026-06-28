@@ -15,13 +15,26 @@
 //! saved figure is then how much wall-clock the covered audio would have taken at
 //! the playback speed, minus the wall-clock actually spent.
 
-/// Accumulates one episode's listening session: real (wall-clock) time, audio
-/// time covered, and the playback speed they were sampled at. Construct it when
-/// an episode loads, `tick` it during steady playback, and read
-/// [`smart_speed_saved`](Self::smart_speed_saved) when the episode ends.
+/// Which spoken-word item a session belongs to (Phase 7c-ii): an episode writes
+/// its `listening_sessions` row keyed by `episode_id`, a book by `book_id`. The
+/// math is identical; only the owner column differs at close time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionOwner {
+    Episode,
+    Book,
+}
+
+/// Accumulates one spoken-word item's listening session: real (wall-clock) time,
+/// audio time covered, and the playback speed they were sampled at. Construct it
+/// when an episode or book loads, `tick` it during steady playback, and read
+/// [`smart_speed_saved`](Self::smart_speed_saved) when the item ends.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionAccumulator {
-    pub episode_id: i64,
+    /// The owning item's id: the episode id, or the book id when `owner` is
+    /// [`SessionOwner::Book`]. (For a book the playhead the engine feeds is
+    /// book-absolute, so the math spans the book's files unchanged.)
+    pub item_id: i64,
+    pub owner: SessionOwner,
     /// Unix seconds when the session began (the engine's `now_secs()`).
     pub started_at: i64,
     speed: f64,
@@ -33,12 +46,29 @@ pub struct SessionAccumulator {
 }
 
 impl SessionAccumulator {
-    /// Start a session for `episode_id` at `start_pos` (the resume offset), sampled
-    /// against `speed` (the resolved per-show playback rate). A non-positive speed
-    /// degrades to 1.0 so the saved division can never divide by zero.
-    pub fn new(episode_id: i64, started_at: i64, speed: f64, start_pos: f64) -> Self {
+    /// Start an episode session for `item_id` at `start_pos` (the resume offset),
+    /// sampled against `speed` (the resolved per-show playback rate). A
+    /// non-positive speed degrades to 1.0 so the saved division can never divide
+    /// by zero.
+    pub fn new(item_id: i64, started_at: i64, speed: f64, start_pos: f64) -> Self {
+        Self::with_owner(item_id, SessionOwner::Episode, started_at, speed, start_pos)
+    }
+
+    /// Start a book session (Phase 7c-ii): the same accounting, keyed to a book.
+    pub fn new_book(item_id: i64, started_at: i64, speed: f64, start_pos: f64) -> Self {
+        Self::with_owner(item_id, SessionOwner::Book, started_at, speed, start_pos)
+    }
+
+    fn with_owner(
+        item_id: i64,
+        owner: SessionOwner,
+        started_at: i64,
+        speed: f64,
+        start_pos: f64,
+    ) -> Self {
         Self {
-            episode_id,
+            item_id,
+            owner,
             started_at,
             speed: if speed > 0.0 { speed } else { 1.0 },
             last_pos: start_pos.max(0.0),

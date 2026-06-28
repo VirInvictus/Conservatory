@@ -339,7 +339,8 @@ pub(crate) enum Command {
     /// Append one listening session (Phase 6c-ii): the engine's per-episode-boundary
     /// time-saved record. Append-only.
     InsertListeningSession {
-        episode_id: i64,
+        episode_id: Option<i64>,
+        book_id: Option<i64>,
         started_at: i64,
         ended_at: i64,
         real_seconds: f64,

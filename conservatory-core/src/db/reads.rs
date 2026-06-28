@@ -254,6 +254,8 @@ pub struct PlaybackStateRow {
     pub kind: MediaKind,
     pub track_id: Option<i64>,
     pub episode_id: Option<i64>,
+    /// The book the cursor points at when `kind = Audiobook` (Phase 7c-ii).
+    pub book_id: Option<i64>,
     pub position: f64,
     pub paused: bool,
     pub volume: i64,
@@ -263,7 +265,7 @@ pub struct PlaybackStateRow {
 /// Read the saved playback cursor, if any (the row with id = 1).
 pub fn read_playback_state(conn: &Connection) -> Result<Option<PlaybackStateRow>> {
     conn.query_row(
-        "SELECT kind, track_id, episode_id, position, paused, volume, updated_at
+        "SELECT kind, track_id, episode_id, book_id, position, paused, volume, updated_at
          FROM playback_state WHERE id = 1",
         [],
         |row| {
@@ -279,6 +281,7 @@ pub fn read_playback_state(conn: &Connection) -> Result<Option<PlaybackStateRow>
                 kind,
                 track_id: row.get("track_id")?,
                 episode_id: row.get("episode_id")?,
+                book_id: row.get("book_id")?,
                 position: row.get("position")?,
                 paused: row.get::<_, i64>("paused")? != 0,
                 volume: row.get("volume")?,

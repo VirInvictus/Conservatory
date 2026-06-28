@@ -784,6 +784,7 @@ async fn episode_playback_persists_position_completion_and_cursor() {
             kind: MediaKind::Episode,
             track_id: None,
             episode_id: Some(ep),
+            book_id: None,
             position: 123.0,
             paused: true,
             volume: 90,
@@ -840,7 +841,7 @@ async fn listening_sessions_append_and_total() {
         (3_000, 3_030, 30.0, 30.0, 0.0),
     ] {
         worker
-            .insert_listening_session(ep, start, end, real, audio, saved)
+            .insert_listening_session(Some(ep), None, start, end, real, audio, saved)
             .await
             .unwrap();
     }

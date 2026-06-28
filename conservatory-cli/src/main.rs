@@ -389,10 +389,33 @@ enum AudiobookAction {
         book_id: i64,
         /// Library root the relative chapter paths hang off (as for `organize`).
         root: PathBuf,
+        /// Resume at the book's saved absolute position (spec §6.4) instead of
+        /// starting from the beginning.
+        #[arg(long)]
+        resume: bool,
         /// Arm a sleep timer (Phase 6c-iii-d): minutes (e.g. `30`), `book`/`item`
         /// (end of the book), or `queue`. Playback pauses at the boundary.
         #[arg(long)]
         sleep: Option<String>,
+    },
+
+    /// Set a book's per-book playback overrides (Phase 7c-ii, spec §6.3): variable
+    /// speed, Smart Speed, Voice Boost. Omitted flags are left unchanged; the
+    /// resume position and finished state are preserved.
+    Settings {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The book id.
+        book_id: i64,
+        /// Playback speed (e.g. `1.0`, `1.5`); clamped to the spoken-word range.
+        #[arg(long)]
+        speed: Option<f64>,
+        /// Smart Speed (silence trimming) on/off.
+        #[arg(long)]
+        smart_speed: Option<bool>,
+        /// Voice Boost (compression + voice EQ + leveler) on/off.
+        #[arg(long)]
+        voice_boost: Option<bool>,
     },
 
     /// List the audiobook shelf: every book with its denormalized author /
@@ -973,9 +996,27 @@ fn main() -> Result<()> {
                     db,
                     book_id,
                     root,
+                    resume,
                     sleep,
                 },
-        }) => run_audiobook_play(db, book_id, root, sleep),
+        }) => run_audiobook_play(db, book_id, root, sleep, resume),
+        #[cfg(feature = "audiobooks")]
+        Some(Command::Audiobook {
+            action:
+                AudiobookAction::Settings {
+                    db,
+                    book_id,
+                    speed,
+                    smart_speed,
+                    voice_boost,
+                },
+        }) => block_on(run_audiobook_settings(
+            db,
+            book_id,
+            speed,
+            smart_speed,
+            voice_boost,
+        )),
         None => {
             println!("conservatory-cli {}", conservatory_core::VERSION);
             println!("plugins: {}", plugin_list());
@@ -1381,9 +1422,11 @@ fn run_audiobook_play(
     book_id: i64,
     root: PathBuf,
     sleep: Option<String>,
+    resume: bool,
 ) -> Result<()> {
-    use conservatory_core::db::{book_chapters, get_book};
+    use conservatory_core::db::{book_chapters, get_book, get_book_playback};
     use conservatory_core::player::build_book_item;
+    use conservatory_core::resolve_book_profile;
 
     let sleep_mode = sleep.as_deref().map(parse_sleep_spec).transpose()?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -1397,24 +1440,33 @@ fn run_audiobook_play(
     };
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
 
-    let (book, chapters) = {
+    let (book, chapters, playback) = {
         let conn = pool.open().context("opening pool connection")?;
         let book = get_book(&conn, book_id)
             .context("reading the book")?
             .with_context(|| format!("no book with id {book_id}"))?;
         let chapters = book_chapters(&conn, book_id).context("reading chapters")?;
-        (book, chapters)
+        let playback = get_book_playback(&conn, book_id).context("reading playback")?;
+        (book, chapters, playback)
     };
     if chapters.is_empty() {
         anyhow::bail!("book {book_id} ({}) has no chapters to play", book.title);
     }
 
-    // The spoken-word default profile for now (resolve_book_profile with per-book
-    // overrides lands at 7c-ii).
-    let profile = conservatory_core::resolve_episode_profile(None);
+    // The spoken-word profile resolved with the book's per-book overrides
+    // (speed / Smart Speed / Voice Boost), spec §6.3.
+    let profile = resolve_book_profile(playback.as_ref());
     let item = build_book_item(book_id, &chapters, &root, profile)
         .context("the book resolved to no playable file")?;
     let segments = item.segments.len();
+
+    // Resume to the absolute book position (spec §6.4) when asked, unless the
+    // book already finished.
+    let resume_pos = resume
+        .then_some(playback.as_ref())
+        .flatten()
+        .filter(|p| !p.finished && p.position > 0.0)
+        .map(|p| p.position);
 
     let player = conservatory_core::player::spawn(worker.clone(), runtime.handle().clone())
         .context("starting the player engine")?;
@@ -1432,6 +1484,10 @@ fn run_audiobook_play(
         item.chapters.len()
     );
     player.play_queue(vec![item], 0);
+    if let Some(pos) = resume_pos {
+        player.seek(pos);
+        println!("Resuming at {pos:.1}s.");
+    }
     if let Some(mode) = sleep_mode {
         player.set_sleep_timer(Some(mode));
         println!("Sleep timer armed ({mode:?}).");
@@ -1467,6 +1523,64 @@ fn run_audiobook_play(
     player.shutdown();
     let _ = runtime.block_on(worker.shutdown_ack());
     println!("Done.");
+    Ok(())
+}
+
+/// Set a book's per-book playback overrides (Phase 7c-ii). Reads the current
+/// `book_playback` row (or starts from a default), applies only the provided
+/// flags, and upserts it (preserving position / finished), then prints the
+/// resolved profile.
+#[cfg(feature = "audiobooks")]
+async fn run_audiobook_settings(
+    db: PathBuf,
+    book_id: i64,
+    speed: Option<f64>,
+    smart_speed: Option<bool>,
+    voice_boost: Option<bool>,
+) -> Result<()> {
+    use conservatory_core::db::{BookPlayback, get_book, get_book_playback};
+    use conservatory_core::resolve_book_profile;
+
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+
+    let mut pb = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_book(&conn, book_id)
+            .context("reading the book")?
+            .with_context(|| format!("no book with id {book_id}"))?;
+        get_book_playback(&conn, book_id)
+            .context("reading playback")?
+            .unwrap_or(BookPlayback {
+                book_id,
+                position: 0.0,
+                finished: false,
+                last_played: None,
+                speed: None,
+                smart_speed: None,
+                voice_boost: None,
+            })
+    };
+    if let Some(s) = speed {
+        pb.speed = Some(s);
+    }
+    if let Some(b) = smart_speed {
+        pb.smart_speed = Some(b);
+    }
+    if let Some(b) = voice_boost {
+        pb.voice_boost = Some(b);
+    }
+    worker
+        .upsert_book_playback(pb.clone())
+        .await
+        .context("saving playback overrides")?;
+
+    let profile = resolve_book_profile(Some(&pb));
+    println!(
+        "book {book_id}: speed {:.2}x, smart_speed {}, voice_boost {}",
+        profile.speed, profile.smart_speed, profile.voice_boost
+    );
+    worker.shutdown_ack().await.context("shutdown ack")?;
     Ok(())
 }
 

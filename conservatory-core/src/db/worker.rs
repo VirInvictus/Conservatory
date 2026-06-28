@@ -491,9 +491,11 @@ impl WorkerHandle {
 
     /// Append one listening session (Phase 6c-ii): the engine's per-episode
     /// time-saved record. Append-only.
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_listening_session(
         &self,
-        episode_id: i64,
+        episode_id: Option<i64>,
+        book_id: Option<i64>,
         started_at: i64,
         ended_at: i64,
         real_seconds: f64,
@@ -502,6 +504,7 @@ impl WorkerHandle {
     ) -> Result<()> {
         self.dispatch(|reply| Command::InsertListeningSession {
             episode_id,
+            book_id,
             started_at,
             ended_at,
             real_seconds,
@@ -1065,6 +1068,7 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::InsertListeningSession {
             episode_id,
+            book_id,
             started_at,
             ended_at,
             real_seconds,
@@ -1075,6 +1079,7 @@ fn handle(conn: &mut Connection, command: Command) {
             let _ = reply.send(writes::insert_listening_session(
                 conn,
                 episode_id,
+                book_id,
                 started_at,
                 ended_at,
                 real_seconds,

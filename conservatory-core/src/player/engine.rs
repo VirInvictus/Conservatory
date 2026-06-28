@@ -21,11 +21,12 @@ use tokio::runtime::Handle;
 
 use crate::db::{MediaKind, PlaybackCursor, WorkerHandle};
 use crate::errors::{Error, Result};
+use crate::player::book::locate;
 use crate::player::chapters::{current_chapter_at, neighbour_chapter};
 use crate::player::handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 use crate::player::host::{HostEvent, MpvHost};
 use crate::player::item::PlayableItem;
-use crate::player::session::SessionAccumulator;
+use crate::player::session::{SessionAccumulator, SessionOwner};
 use crate::player::sleep::{SleepClock, SleepMode};
 use crate::player::state::{EndReason, StateDebounce, StateEvent};
 
@@ -207,7 +208,8 @@ impl Engine {
         }
         let dt = self.session_tick.elapsed().as_secs_f64();
         self.session_tick = Instant::now();
-        let pos = self.host.time_pos();
+        // Book-absolute for a book, so the accounting spans its files (7c-ii).
+        let pos = self.playhead_opt();
         let idle = self.paused || self.ended;
         if let (Some(acc), Some(pos)) = (self.session.as_mut(), pos) {
             if idle {
@@ -300,7 +302,9 @@ impl Engine {
             PlayerCommand::SkipChapter(dir) => self.skip_chapter(dir),
             PlayerCommand::Seek(secs) => {
                 let target = secs.max(0.0);
-                let _ = self.host.seek_absolute(target);
+                // Book-absolute for a book: map to the right file + in-file offset
+                // (Phase 7c-ii). This is also the launch-resume path.
+                self.seek_book_absolute(target);
                 // A user seek is a jump, not audio played: exclude its interval
                 // from the time-saved accounting (Phase 6c-ii). This is also the
                 // launch-resume path (the resume offset Seek after SetQueue), so
@@ -528,11 +532,13 @@ impl Engine {
             Some(item) if !item.chapters.is_empty() => item.chapters.clone(),
             _ => return,
         };
-        let pos = self.host.time_pos().unwrap_or(0.0);
+        // Book-absolute for a book (its marks are absolute too), so a skip can
+        // cross a file boundary; `seek_book_absolute` loads the right file.
+        let pos = self.playhead();
         let Some(target) = neighbour_chapter(&chapters, pos, dir) else {
             return;
         };
-        let _ = self.host.seek_absolute(target);
+        self.seek_book_absolute(target);
         // A chapter skip is a jump, not audio played: exclude it from the
         // time-saved accounting, like a user seek (Phase 6c-ii).
         if let Some(acc) = self.session.as_mut() {
@@ -574,19 +580,27 @@ impl Engine {
         // again right after, in SetQueue.
         let _ = self.host.set_paused(false);
         self.paused = false;
-        // Start a Smart Speed accounting session for an episode (Phase 6c-ii).
-        // The launch-resume / explicit Seek that may follow excludes its jump to
-        // the resume offset, so the resume is not counted as covered audio.
-        if kind == MediaKind::Episode {
-            let pos = self.host.time_pos().unwrap_or(0.0);
-            self.session = Some(SessionAccumulator::new(
+        // Start a Smart Speed accounting session for a spoken-word item (episode
+        // or book, Phase 6c-ii / 7c-ii). The launch-resume / explicit Seek that
+        // may follow excludes its jump to the resume offset, so the resume is not
+        // counted as covered audio. `episode_id` carries the per-kind id; for a
+        // book the session spans its files (the engine feeds it book-absolute
+        // positions), opened once here and closed at the book's completion.
+        let pos = self.host.time_pos().unwrap_or(0.0);
+        let now = now_secs();
+        self.session = match kind {
+            MediaKind::Episode => {
+                Some(SessionAccumulator::new(episode_id, now, profile.speed, pos))
+            }
+            MediaKind::Audiobook => Some(SessionAccumulator::new_book(
                 episode_id,
-                now_secs(),
+                now,
                 profile.speed,
                 pos,
-            ));
-            self.session_tick = Instant::now();
-        }
+            )),
+            MediaKind::Track => None,
+        };
+        self.session_tick = Instant::now();
     }
 
     /// On a book file's EOF: if another file follows, load it (an internal file
@@ -641,7 +655,12 @@ impl Engine {
             return;
         };
         let worker = self.worker.clone();
-        let episode_id = acc.episode_id;
+        // The session row is keyed by the owning item — an episode by `episode_id`,
+        // a book by `book_id` (Phase 7c-ii); the time-saved math is identical.
+        let (episode_id, book_id) = match acc.owner {
+            SessionOwner::Episode => (Some(acc.item_id), None),
+            SessionOwner::Book => (None, Some(acc.item_id)),
+        };
         let started_at = acc.started_at;
         let ended_at = now_secs();
         let real = acc.real_seconds();
@@ -649,7 +668,9 @@ impl Engine {
         let saved = acc.smart_speed_saved();
         self.rt.block_on(async move {
             let _ = worker
-                .insert_listening_session(episode_id, started_at, ended_at, real, audio, saved)
+                .insert_listening_session(
+                    episode_id, book_id, started_at, ended_at, real, audio, saved,
+                )
                 .await;
         });
     }
@@ -689,16 +710,20 @@ impl Engine {
         let Some((kind, id)) = self.current_item().map(|i| (i.kind, i.track_id)) else {
             return;
         };
-        let position = self.host.time_pos().unwrap_or(0.0);
+        // Book-absolute for a book (Phase 7c-ii), per-file for a track/episode.
+        let position = self.playhead();
         self.save_cursor(kind, id, position, blocking);
-        // Persist the episode's in-progress position only while it is actually
-        // playing. Once the queue has `ended` the current episode already
-        // completed (`complete_episode` set PlayedFully); a terminal Quit flush
-        // re-marking it InProgress would clobber that. The synchronous write
-        // (unlike the fire-and-forget track cursor) keeps it ordered with the
-        // completion on the single writer, since both touch `playback.played`.
-        if kind == MediaKind::Episode && !self.ended {
-            self.persist_episode_position(id, position);
+        // Persist the per-item resume position only while still playing. Once the
+        // queue has `ended` the current item already completed (its terminal write
+        // set PlayedFully / finished); a Quit flush re-marking it InProgress would
+        // clobber that. The synchronous write keeps it ordered with the completion
+        // on the single writer.
+        if !self.ended {
+            match kind {
+                MediaKind::Episode => self.persist_episode_position(id, position),
+                MediaKind::Audiobook => self.persist_book_position(id, position),
+                MediaKind::Track => {}
+            }
         }
     }
 
@@ -706,15 +731,16 @@ impl Engine {
     /// (6b-ii-c-2): `track_id` is set for a track, `episode_id` for an episode
     /// (`id` carries whichever). The audiobook cursor lands at Phase 7.
     fn save_cursor(&self, kind: MediaKind, id: i64, position: f64, blocking: bool) {
-        let (track_id, episode_id) = match kind {
-            MediaKind::Track => (Some(id), None),
-            MediaKind::Episode => (None, Some(id)),
-            MediaKind::Audiobook => return,
+        let (track_id, episode_id, book_id) = match kind {
+            MediaKind::Track => (Some(id), None, None),
+            MediaKind::Episode => (None, Some(id), None),
+            MediaKind::Audiobook => (None, None, Some(id)),
         };
         let cursor = PlaybackCursor {
             kind,
             track_id,
             episode_id,
+            book_id,
             position,
             paused: self.paused,
             volume: self.volume,
@@ -745,6 +771,68 @@ impl Engine {
                 .set_episode_position(episode_id, position, Some(when))
                 .await;
         });
+    }
+
+    /// Persist a book's absolute resume position (`book_playback.position`, spec
+    /// §6.4), the audiobook analogue of `persist_episode_position`. `position` is
+    /// book-absolute (across the book's files), since the engine speaks that
+    /// timeline for a book (Phase 7c-ii). Blocking, on the insurance interval /
+    /// forced points; `set_book_position` preserves `finished` + the overrides.
+    fn persist_book_position(&self, book_id: i64, position: f64) {
+        let worker = self.worker.clone();
+        let when = now_secs();
+        self.rt.block_on(async move {
+            let _ = worker
+                .set_book_position(book_id, position, Some(when))
+                .await;
+        });
+    }
+
+    /// The current playhead in the timeline the engine speaks: **book-absolute**
+    /// for a book (the current segment's cumulative `start` plus the host's
+    /// per-file `time_pos`), the host's `time_pos` for a track / episode (Phase
+    /// 7c-ii). `None` when nothing is loaded.
+    fn playhead_opt(&self) -> Option<f64> {
+        let raw = self.host.time_pos()?;
+        Some(match self.current_item() {
+            Some(item) if item.kind == MediaKind::Audiobook && !item.segments.is_empty() => {
+                let seg = &item.segments[self.book_segment.min(item.segments.len() - 1)];
+                seg.start + raw
+            }
+            _ => raw,
+        })
+    }
+
+    /// [`Self::playhead_opt`] defaulting to `0.0` when nothing is loaded.
+    fn playhead(&self) -> f64 {
+        self.playhead_opt().unwrap_or(0.0)
+    }
+
+    /// Seek to `abs` in the current item's timeline. For a book `abs` is
+    /// book-absolute: find the segment containing it, load that file if it is not
+    /// the one playing, and seek to the in-file offset, spanning the file boundary
+    /// a multi-file book introduces (Phase 7c-ii). For a track / episode it is a
+    /// plain absolute seek.
+    fn seek_book_absolute(&mut self, abs: f64) {
+        let abs = abs.max(0.0);
+        let segments = match self.current_item() {
+            Some(item) if item.kind == MediaKind::Audiobook && !item.segments.is_empty() => {
+                item.segments.clone()
+            }
+            _ => {
+                let _ = self.host.seek_absolute(abs);
+                return;
+            }
+        };
+        let Some((idx, offset)) = locate(&segments, abs) else {
+            let _ = self.host.seek_absolute(abs);
+            return;
+        };
+        if idx != self.book_segment {
+            self.book_segment = idx;
+            self.load_book_segment(idx);
+        }
+        let _ = self.host.seek_absolute(offset);
     }
 
     fn block_increment_play_count(&self, track_id: i64) {

@@ -1670,6 +1670,13 @@ impl ConservatoryWindow {
             .and_then(|conn| load_queue_display(&conn).ok())
             .unwrap_or_default();
         panel.set_rows(&rows);
+        // Keep the Now Playing "Up next" peek in step with queue edits (Phase 11c).
+        if let Some(np) = imp.now_playing.get()
+            && np.is_open()
+            && let Ok(conn) = pool.open()
+        {
+            self.refresh_now_playing_upnext(&conn);
+        }
     }
 
     fn toggle_queue(&self) {
@@ -2651,6 +2658,7 @@ impl ConservatoryWindow {
             panel.set_current_chapter(snap.current_chapter);
             panel.set_smart_speed(snap.smart_speed_active, snap.smart_speed_saved);
             panel.set_sleep(snap.sleep, snap.kind);
+            panel.set_scrubber(snap.position, snap.duration);
         }
         now.position
             .set_text(&fmt_position(snap.position, snap.duration));
@@ -2807,6 +2815,12 @@ impl ConservatoryWindow {
                         single_file,
                     ),
                 );
+                let cover_abs = match (imp.library_root.get(), np.album_cover_path.as_deref()) {
+                    (Some(root), Some(cp)) => Some(root.join(cp)),
+                    _ => None,
+                };
+                panel.set_cover(cover_abs.as_deref(), book.accent_rgb);
+                panel.set_audio_state(None);
                 // The clickable chapter list speaks book-absolute time (the engine's
                 // `Seek` is absolute too): synthesize a `Chapter` per mark.
                 if let Some(player) = imp.player.get() {
@@ -2841,6 +2855,12 @@ impl ConservatoryWindow {
                     &np.title.clone(),
                     &episode_fields(&np, &ep, show.as_ref(), streaming),
                 );
+                let cover_abs = match (imp.library_root.get(), np.album_cover_path.as_deref()) {
+                    (Some(root), Some(cp)) => Some(root.join(cp)),
+                    _ => None,
+                };
+                panel.set_cover(cover_abs.as_deref(), None);
+                panel.set_audio_state(None);
                 // The clickable chapter list tracks the playing episode (6c-iii-c);
                 // the current-chapter highlight + Smart Speed line tick from the
                 // per-poll snapshot in `refresh_now_bar`.
@@ -2863,12 +2883,53 @@ impl ConservatoryWindow {
                     &np.title.clone(),
                     &track_fields(&np, &track, album.as_ref()),
                 );
+                // Full-bleed accent cover + the audio-engine state line (Phase 11c).
+                let cover_abs = match (imp.library_root.get(), np.album_cover_path.as_deref()) {
+                    (Some(root), Some(cp)) => Some(root.join(cp)),
+                    _ => None,
+                };
+                panel.set_cover(
+                    cover_abs.as_deref(),
+                    album.as_ref().and_then(|a| a.accent_rgb),
+                );
+                let eq = conservatory_core::db::get_eq_state(&conn)
+                    .unwrap_or_else(|_| conservatory_core::db::EqState::flat());
+                let audio = conservatory_core::db::get_audio_state(&conn).unwrap_or_default();
+                panel.set_audio_state(Some(&crate::ui::now_playing_panel::audio_state_line(
+                    &eq,
+                    &audio.dsp,
+                    audio.gapless,
+                )));
                 // A track has no chapters: hide the section.
                 if let Some(player) = imp.player.get() {
                     panel.set_chapters(&[], player);
                 }
             }
         }
+        self.refresh_now_playing_upnext(&conn);
+    }
+
+    /// The "Up next" queue-tail peek for the Now Playing drawer (Phase 11c): the
+    /// items after the playing one, hidden when it is last. Shared by all kinds.
+    fn refresh_now_playing_upnext(&self, conn: &conservatory_core::db::Connection) {
+        let imp = self.imp();
+        let Some(panel) = imp.now_playing.get() else {
+            return;
+        };
+        let rows = conservatory_core::db::load_queue_display(conn).unwrap_or_default();
+        let current = imp.player.get().and_then(|p| p.snapshot().current_index);
+        let up = crate::ui::now_playing_panel::upcoming(&rows, current, 4);
+        let upnext: Vec<crate::ui::now_playing_panel::UpNextRow> = up
+            .iter()
+            .map(|r| crate::ui::now_playing_panel::UpNextRow {
+                icon: crate::ui::now_playing_panel::kind_icon(r.kind),
+                text: match r.artist.as_deref().filter(|a| !a.is_empty()) {
+                    Some(a) => format!("{} \u{2014} {}", r.title, a),
+                    None => r.title.clone(),
+                },
+            })
+            .collect();
+        panel.set_upnext(&upnext);
     }
 
     /// The left Perspectives column: a list (Default + saved searches) over a

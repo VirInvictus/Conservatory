@@ -722,10 +722,10 @@ The finishing pass that brings the music surface up to the deadbeef / foobar2000
 ### Phase 11c — Now Playing surface (bottom drawer)
 
 - [x] **A bottom Now Playing drawer landed at v0.0.38** (the lighter realization of the spec §3.6 surface, chosen over a full-bleed takeover): a slide-up `gtk::Revealer` above the Now-bar, the horizontal twin of the right-docked queue drawer, opened by clicking the Now-bar cover/title or `Ctrl+I`. It shows the current item's full metadata (track: format / bitrate / sample rate / ReplayGain / path / rating / plays / album / year; episode: show / date / runtime / size / source stream-or-local / notes), refreshed as the queue advances. The pure field projection is unit-tested. **The drawer's content area is the intended home for the spectrum visualizer** (the deferred item below).
-- [ ] Still to do (the richer surface): a full-bleed cover, an accent-tinted scrubber, and a queue-tail peek; track ReplayGain/EQ/DSP/gapless state and episode chapters / Smart Speed indicator / sleep timer (the episode additions overlap Phase 6c, so this consumes what 6c builds).
-- [ ] Tests: the surface state projection from the snapshot + the current item's metadata (headless); widget build + manual.
+- [x] **The richer surface (v0.0.75):** a full-bleed accent-tinted cover (the larger twin of the Now-bar thumbnail, reusing the inspector accent-class technique), an accent-tinted scrubber (a draggable seek `Scale` under the title, seeking through the shared handle), a queue-tail "Up next" peek (the next items from `load_queue_display`, refreshed on track change and queue edit), and a track audio-engine state line (active EQ preset / enabled DSP modules / gapless, from the `eq_state` + `audio_state` singletons). Chapters / Smart Speed indicator / sleep timer were already wired in with Phase 6c, so they were not rebuilt here.
+- [x] Tests: the audio-engine line (`audio_state_line`) and the queue-tail slice (`upcoming`) are pure units; the cover / scrubber / up-next widgets are build + manual.
 
-*Usable artifact:* clicking the Now-bar (or `Ctrl+I`) slides up a Now Playing drawer with the current item's metadata, across both media types.
+*Usable artifact:* clicking the Now-bar (or `Ctrl+I`) slides up a Now Playing drawer with the current item's full surface: a large accent cover, a draggable scrubber, the live metadata, the audio-engine state, and a queue-tail peek, across all media types.
 
 ### Phase 11d — Transport conveniences
 

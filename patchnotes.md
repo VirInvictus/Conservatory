@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.75
+
+Phase 11c: a richer Now Playing drawer, the spec §3.6 surface filled out.
+
+- **Full-bleed cover.** The Now Playing drawer (click the playback bar, or `Ctrl+I`) now leads with a large album / show / book cover, tinted with the item's accent colour, the bigger sibling of the small playback-bar thumbnail.
+- **Accent scrubber.** An accent-tinted seek slider with a position / duration label sits under the title, draggable to seek, distinct from the playback bar's own scrubber.
+- **Up next.** A short peek at the next few items in the queue, each badged with its kind, so you can see what is coming without opening the queue drawer. It stays in step with queue edits.
+- **Audio-engine line.** For a playing track, a one-line readout of the active EQ preset, the enabled DSP modules, and the gapless state. (The drawer already showed chapters, the Smart Speed indicator, and the sleep timer, which arrived with the podcast engine.)
+- **Tests.** The audio-engine line and the queue-tail slice are pure and unit-tested; the cover, scrubber, and up-next widgets are verified by building and by hand. Full workspace suite + clippy `-D warnings` + fmt + the music-only build green. No new dependency, no schema change.
+
 ## v0.0.74
 
 Phase 11b: a status bar footer and the play-status glyph column, the next slice of the Columns UI parity pass.

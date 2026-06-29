@@ -15,11 +15,16 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use conservatory_core::db::{Album, Book, Chapter, Episode, MediaKind, NowPlaying, Show, Track};
+use std::path::Path;
+
+use conservatory_core::db::{
+    Album, Book, Chapter, DspState, Episode, EqState, MediaKind, NowPlaying, QueueDisplayRow, Show,
+    Track,
+};
 use conservatory_core::player::SleepMode;
 use conservatory_core::{PlayerHandle, SleepStatus};
 
-use crate::playqueue::fmt_secs;
+use crate::playqueue::{fmt_position, fmt_secs};
 use crate::ui::now_bar::{fmt_sleep_remaining, sleep_boundary_label};
 
 /// The drawer: the revealer to place, plus the labelled grid it fills and the
@@ -28,6 +33,23 @@ pub struct NowPlayingPanel {
     pub revealer: gtk::Revealer,
     title: gtk::Label,
     grid: gtk::Grid,
+    /// The full-bleed cover (Phase 11c), in an accent-tinted frame; the larger
+    /// twin of the Now-bar thumbnail (spec §3.6, the Hermitage Codex moment).
+    cover: gtk::Image,
+    cover_frame: gtk::Frame,
+    /// The accent-tinted scrubber + its `position / duration` label. Seeks
+    /// through the shared `player` handle on drag; updated per tick when open.
+    scrubber: gtk::Scale,
+    scrub_label: gtk::Label,
+    /// The audio-engine state line (Phase 11c): EQ preset / DSP modules / gapless
+    /// for a playing track; hidden for episodes / books.
+    audio_state: gtk::Label,
+    /// The "Up next" queue-tail peek: a heading + a short list of the next items.
+    upnext_box: gtk::Box,
+    upnext_list: gtk::Box,
+    /// The display-wide accent provider for the cover frame + scrubber, swapped
+    /// per item (the inspector technique).
+    accent_provider: RefCell<Option<gtk::CssProvider>>,
     /// The "Smart Speed · saved m:ss" line; hidden unless the current item has
     /// Smart Speed on. Updated each poll tick from the snapshot.
     smart_speed: gtk::Label,
@@ -92,8 +114,53 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
     chapters_box.append(&chapters_list);
     chapters_box.set_visible(false);
 
+    // The full-bleed cover (Phase 11c) and the accent-tinted scrubber, the spec
+    // §3.6 "Codex moment" furniture. The cover sits left of the title; the
+    // scrubber + its time label sit under the title.
+    let cover = gtk::Image::builder()
+        .pixel_size(132)
+        .icon_name("audio-x-generic-symbolic")
+        .build();
+    let cover_frame = gtk::Frame::builder()
+        .css_classes(["now-playing-cover"])
+        .child(&cover)
+        .build();
+    cover_frame.set_valign(gtk::Align::Start);
+
+    let scrubber = gtk::Scale::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .hexpand(true)
+        .draw_value(false)
+        .css_classes(["now-playing-scrubber"])
+        .build();
+    scrubber.set_range(0.0, 1.0);
+    scrubber.set_sensitive(false);
+    let scrub_label = gtk::Label::builder()
+        .xalign(0.0)
+        .css_classes(["dim-label", "caption"])
+        .build();
+
+    let audio_state = gtk::Label::builder()
+        .xalign(0.0)
+        .css_classes(["dim-label", "caption"])
+        .margin_top(2)
+        .visible(false)
+        .build();
+
     let chapter_starts = Rc::new(RefCell::new(Vec::<f64>::new()));
     let player = Rc::new(RefCell::new(None::<PlayerHandle>));
+    // The scrubber seeks through the shared handle (the now-bar idiom: the
+    // change-value signal fires on user drag, so the per-tick programmatic
+    // `set_value` never loops back into a seek).
+    scrubber.connect_change_value({
+        let player = player.clone();
+        move |_, _, value| {
+            if let Some(p) = player.borrow().as_ref() {
+                p.seek(value);
+            }
+            gtk::glib::Propagation::Proceed
+        }
+    });
     // Wire row-activation once: clicking a chapter seeks to its start. The starts
     // + handle are shared cells so the handler outlives the list rebuilds.
     chapters_list.connect_row_activated({
@@ -111,6 +178,33 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
         }
     });
 
+    // "Up next" queue-tail peek (Phase 11c): a heading + a short list of the
+    // upcoming items, hidden when the playing item is the last in the queue.
+    let upnext_heading = gtk::Label::builder()
+        .label("Up next")
+        .xalign(0.0)
+        .css_classes(["heading"])
+        .margin_top(8)
+        .build();
+    let upnext_list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let upnext_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    upnext_box.append(&upnext_heading);
+    upnext_box.append(&upnext_list);
+    upnext_box.set_visible(false);
+
+    // The header row: the full-bleed cover left of the title + scrubber + the
+    // audio-engine line.
+    let header_text = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    header_text.set_hexpand(true);
+    header_text.set_valign(gtk::Align::Center);
+    header_text.append(&title);
+    header_text.append(&scrubber);
+    header_text.append(&scrub_label);
+    header_text.append(&audio_state);
+    let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    header_row.append(&cover_frame);
+    header_row.append(&header_text);
+
     let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
     column.add_css_class("background");
     column.add_css_class("now-playing-drawer");
@@ -118,11 +212,12 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
     column.set_margin_bottom(8);
     column.set_margin_start(12);
     column.set_margin_end(12);
-    column.append(&title);
+    column.append(&header_row);
     column.append(&grid);
     column.append(&smart_speed);
     column.append(&sleep);
     column.append(&chapters_box);
+    column.append(&upnext_box);
 
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -142,6 +237,14 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
         revealer,
         title,
         grid,
+        cover,
+        cover_frame,
+        scrubber,
+        scrub_label,
+        audio_state,
+        upnext_box,
+        upnext_list,
+        accent_provider: RefCell::new(None),
         smart_speed,
         sleep,
         chapters_box,
@@ -271,9 +374,117 @@ impl NowPlayingPanel {
         }
     }
 
+    /// Load the full-bleed cover (Phase 11c) and tint its frame + the scrubber
+    /// with the item's accent. A missing cover falls back to a placeholder icon.
+    /// Called on item change.
+    pub fn set_cover(&self, cover_abs: Option<&Path>, accent: Option<u32>) {
+        match cover_abs.filter(|p| p.exists()) {
+            Some(p) => self.cover.set_from_file(Some(p)),
+            None => self.cover.set_icon_name(Some("audio-x-generic-symbolic")),
+        }
+        self.apply_accent(accent);
+    }
+
+    /// Tint the cover frame and the scrubber highlight with the item accent via a
+    /// single display-wide rule (the inspector technique); the prior provider is
+    /// swapped out each call.
+    fn apply_accent(&self, accent: Option<u32>) {
+        let Some(display) = gtk::gdk::Display::default() else {
+            return;
+        };
+        if let Some(old) = self.accent_provider.borrow_mut().take() {
+            gtk::style_context_remove_provider_for_display(&display, &old);
+        }
+        match accent {
+            Some(rgb) => {
+                let hex = rgb & 0x00ff_ffff;
+                let css = format!(
+                    ".now-playing-cover.np-acc-{hex:06x} {{ box-shadow: 0 0 0 2px #{hex:06x}; }}\n\
+                     .np-acc-{hex:06x} > trough > highlight {{ background-color: #{hex:06x}; }}"
+                );
+                let provider = gtk::CssProvider::new();
+                provider.load_from_string(&css);
+                gtk::style_context_add_provider_for_display(
+                    &display,
+                    &provider,
+                    gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                );
+                self.cover_frame
+                    .set_css_classes(&["now-playing-cover", &format!("np-acc-{hex:06x}")]);
+                self.scrubber
+                    .set_css_classes(&["now-playing-scrubber", &format!("np-acc-{hex:06x}")]);
+                *self.accent_provider.borrow_mut() = Some(provider);
+            }
+            None => {
+                self.cover_frame.set_css_classes(&["now-playing-cover"]);
+                self.scrubber.set_css_classes(&["now-playing-scrubber"]);
+            }
+        }
+    }
+
+    /// Update the scrubber position + its `m:ss / m:ss` label (Phase 11c). Cheap
+    /// per tick; disabled (and blank) when the duration is unknown.
+    pub fn set_scrubber(&self, position: f64, duration: Option<f64>) {
+        match duration {
+            Some(d) if d > 0.0 => {
+                self.scrubber.set_sensitive(true);
+                self.scrubber.set_range(0.0, d);
+                self.scrubber.set_value(position.min(d));
+                self.scrub_label.set_text(&fmt_position(position, duration));
+            }
+            _ => {
+                self.scrubber.set_sensitive(false);
+                self.scrub_label.set_text("");
+            }
+        }
+    }
+
+    /// Show / update the audio-engine state line (Phase 11c) for a track; `None`
+    /// (an episode / book) hides it.
+    pub fn set_audio_state(&self, line: Option<&str>) {
+        match line {
+            Some(text) => {
+                self.audio_state.set_text(text);
+                self.audio_state.set_visible(true);
+            }
+            None => self.audio_state.set_visible(false),
+        }
+    }
+
+    /// Rebuild the "Up next" peek (Phase 11c) from the upcoming queue rows; an
+    /// empty slice hides the section (the playing item is last).
+    pub fn set_upnext(&self, rows: &[UpNextRow]) {
+        while let Some(child) = self.upnext_list.first_child() {
+            self.upnext_list.remove(&child);
+        }
+        if rows.is_empty() {
+            self.upnext_box.set_visible(false);
+            return;
+        }
+        for r in rows {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let icon = gtk::Image::from_icon_name(r.icon);
+            icon.add_css_class("dim-label");
+            let label = gtk::Label::builder()
+                .label(&r.text)
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .css_classes(["caption"])
+                .build();
+            row.append(&icon);
+            row.append(&label);
+            self.upnext_list.append(&row);
+        }
+        self.upnext_box.set_visible(true);
+    }
+
     /// The idle "nothing playing" state.
     pub fn clear(&self) {
         self.set_fields("Now Playing", &[("".into(), "Nothing playing.".into())]);
+        self.set_cover(None, None);
+        self.set_scrubber(0.0, None);
+        self.set_audio_state(None);
+        self.set_upnext(&[]);
         self.smart_speed.set_visible(false);
         self.sleep.set_visible(false);
         self.chapters_box.set_visible(false);
@@ -282,6 +493,12 @@ impl NowPlayingPanel {
             self.chapters_list.remove(&child);
         }
     }
+}
+
+/// One "Up next" peek entry (Phase 11c): a kind icon and a `Title — Artist` line.
+pub struct UpNextRow {
+    pub icon: &'static str,
+    pub text: String,
 }
 
 /// The "Sleep · …" drawer line for an armed timer, or `None` when none is set
@@ -468,6 +685,61 @@ pub fn book_fields(
         push(&mut out, "Description", desc);
     }
     out
+}
+
+/// The audio-engine state line for a playing track (Phase 11c): the active EQ
+/// preset (or "Custom" for a non-preset non-flat curve), the enabled DSP modules,
+/// and the gapless state. EQ / DSP segments are omitted when inactive; gapless is
+/// always reported. Pure.
+pub fn audio_state_line(eq: &EqState, dsp: &DspState, gapless: bool) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    // EQ is "active" when it shapes the sound: a non-flat preset or any non-zero
+    // band. A "Flat" / unset preset with zero bands is a no-op, so it is omitted.
+    let named_preset = eq
+        .preset
+        .as_deref()
+        .filter(|p| !p.is_empty() && *p != "Flat");
+    let eq_active = named_preset.is_some() || eq.bands.iter().any(|b| *b != 0.0);
+    if eq_active {
+        let name = named_preset.map_or_else(|| "Custom".to_string(), str::to_string);
+        parts.push(format!("EQ · {name}"));
+    }
+    let mut mods: Vec<&str> = Vec::new();
+    if dsp.comp.enabled {
+        mods.push("Compressor");
+    }
+    if dsp.limiter.enabled {
+        mods.push("Limiter");
+    }
+    if dsp.leveler.enabled {
+        mods.push("Leveler");
+    }
+    if !mods.is_empty() {
+        parts.push(format!("DSP · {}", mods.join(", ")));
+    }
+    parts.push(format!("Gapless · {}", if gapless { "on" } else { "off" }));
+    parts.join("    ")
+}
+
+/// The upcoming queue rows after the current item (Phase 11c queue-tail peek): up
+/// to `n` rows past `current`. Empty when the current item is last. Pure.
+pub fn upcoming(rows: &[QueueDisplayRow], current: Option<usize>, n: usize) -> &[QueueDisplayRow] {
+    let start = current.map_or(0, |c| c + 1);
+    if start >= rows.len() {
+        return &[];
+    }
+    let end = (start + n).min(rows.len());
+    &rows[start..end]
+}
+
+/// The symbolic icon for a queue row's media kind (the "Up next" peek + the queue
+/// drawer share this vocabulary).
+pub fn kind_icon(kind: MediaKind) -> &'static str {
+    match kind {
+        MediaKind::Track => "audio-x-generic-symbolic",
+        MediaKind::Episode => "audio-speakers-symbolic",
+        MediaKind::Audiobook => "book-open-variant-symbolic",
+    }
 }
 
 /// A decimal series sequence trimmed to its shortest exact form ("1" not "1.0",
@@ -722,5 +994,64 @@ mod tests {
             ),
             Some("Sleep · until end of queue".to_string()),
         );
+    }
+
+    fn qrow(position: i64, title: &str) -> QueueDisplayRow {
+        QueueDisplayRow {
+            position,
+            kind: MediaKind::Track,
+            track_id: Some(position),
+            episode_id: None,
+            book_id: None,
+            show_id: None,
+            title: title.into(),
+            artist: None,
+            audio_path: None,
+            audio_url: None,
+        }
+    }
+
+    #[test]
+    fn upcoming_takes_next_n_after_current() {
+        let rows = [qrow(0, "A"), qrow(1, "B"), qrow(2, "C"), qrow(3, "D")];
+        // The two items after index 0.
+        let next = upcoming(&rows, Some(0), 2);
+        assert_eq!(
+            next.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(),
+            ["B", "C"]
+        );
+        // The last item has no tail.
+        assert!(upcoming(&rows, Some(3), 4).is_empty());
+        // No current cursor peeks from the head.
+        assert_eq!(upcoming(&rows, None, 1).len(), 1);
+        assert_eq!(upcoming(&rows, None, 1)[0].title, "A");
+        // An empty queue is always empty.
+        assert!(upcoming(&[], Some(0), 4).is_empty());
+    }
+
+    #[test]
+    fn audio_state_line_segments() {
+        // A flat EQ + everything off: only the gapless segment.
+        assert_eq!(
+            audio_state_line(&EqState::flat(), &DspState::default(), true),
+            "Gapless · on"
+        );
+        // A named preset + two DSP modules + gapless off.
+        let eq = EqState {
+            bands: [0.0; conservatory_core::db::EQ_BAND_COUNT],
+            preset: Some("Rock".into()),
+        };
+        let mut dsp = DspState::default();
+        dsp.comp.enabled = true;
+        dsp.limiter.enabled = true;
+        assert_eq!(
+            audio_state_line(&eq, &dsp, false),
+            "EQ · Rock    DSP · Compressor, Limiter    Gapless · off"
+        );
+        // Non-zero bands with no named preset read as "Custom".
+        let mut custom = EqState::flat();
+        custom.bands[3] = 4.0;
+        custom.preset = None;
+        assert!(audio_state_line(&custom, &DspState::default(), true).starts_with("EQ · Custom"));
     }
 }

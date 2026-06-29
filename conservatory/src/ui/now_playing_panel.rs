@@ -118,7 +118,7 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
     // §3.6 "Codex moment" furniture. The cover sits left of the title; the
     // scrubber + its time label sit under the title.
     let cover = gtk::Image::builder()
-        .pixel_size(132)
+        .pixel_size(160)
         .icon_name("audio-x-generic-symbolic")
         .build();
     let cover_frame = gtk::Frame::builder()
@@ -201,17 +201,17 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
     header_text.append(&scrubber);
     header_text.append(&scrub_label);
     header_text.append(&audio_state);
-    let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     header_row.append(&cover_frame);
     header_row.append(&header_text);
 
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
     column.add_css_class("background");
     column.add_css_class("now-playing-drawer");
-    column.set_margin_top(8);
-    column.set_margin_bottom(8);
-    column.set_margin_start(12);
-    column.set_margin_end(12);
+    column.set_margin_top(14);
+    column.set_margin_bottom(14);
+    column.set_margin_start(16);
+    column.set_margin_end(16);
     column.append(&header_row);
     column.append(&grid);
     column.append(&smart_speed);
@@ -788,6 +788,7 @@ mod tests {
             album: album.map(str::to_string),
             length: Some(294.0),
             album_cover_path: None,
+            album_accent_rgb: None,
         }
     }
 

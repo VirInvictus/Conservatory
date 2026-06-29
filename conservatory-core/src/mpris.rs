@@ -465,6 +465,7 @@ mod tests {
             album: Some("Music Has the Right".into()),
             length: Some(2.0),
             album_cover_path: Some("Electronic/Boards of Canada/Music (1998)/cover.jpg".into()),
+            album_accent_rgb: None,
         };
         let m = build_metadata(Some(7), Some(&np), std::path::Path::new("/lib"));
         assert!(m.contains_key("mpris:trackid"));
@@ -493,6 +494,7 @@ mod tests {
             album: None,
             length: None,
             album_cover_path: Some("A/cover.jpg".into()),
+            album_accent_rgb: None,
         };
         let m = build_metadata(Some(1), Some(&np), std::path::Path::new(""));
         assert!(!m.contains_key("mpris:artUrl"), "no root, no artUrl");
@@ -506,6 +508,7 @@ mod tests {
             album: None,
             length: None,
             album_cover_path: None,
+            album_accent_rgb: None,
         };
         let m = build_metadata(Some(1), Some(&np), std::path::Path::new("/lib"));
         assert!(!m.contains_key("mpris:artUrl"));

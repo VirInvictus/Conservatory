@@ -2643,17 +2643,24 @@ impl ConservatoryWindow {
                                 .ok()
                                 .flatten(),
                         });
-                let (title, artist, cover) = match np {
-                    Some(np) => (np.title, np.artist.unwrap_or_default(), np.album_cover_path),
-                    None => ("\u{2014}".to_string(), String::new(), None),
+                let (title, artist, album, cover, accent) = match np {
+                    Some(np) => (
+                        np.title,
+                        np.artist.unwrap_or_default(),
+                        np.album,
+                        np.album_cover_path,
+                        np.album_accent_rgb,
+                    ),
+                    None => ("\u{2014}".to_string(), String::new(), None, None, None),
                 };
                 now.title.set_text(&title);
-                now.artist.set_text(&artist);
+                now.artist
+                    .set_text(&crate::ui::now_bar::now_bar_subtitle(&artist, album.as_deref()));
                 let abs = match (imp.library_root.get(), cover) {
                     (Some(root), Some(cp)) => Some(root.join(cp)),
                     _ => None,
                 };
-                now.set_cover(abs.as_deref());
+                now.set_cover(abs.as_deref(), accent);
                 // Keep the Now Playing drawer in step with the new item.
                 self.refresh_now_playing(snap.kind, Some(id));
                 // Cache the playing track's static tech fields for the status bar

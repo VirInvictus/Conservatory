@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.79
+
+Phase 12c: a richer Now-bar, the answer to "the playback bar should give more information, not just be a bigger play bar."
+
+- **Bigger, accent-framed cover.** The Now-bar cover grows from 40 to 56px and sits in a frame tinted with the album's accent, the same colour the rest of the app draws from the artwork.
+- **Artist and album.** The secondary line now reads `artist · album`, folding the duplicate for a podcast (whose artist and album are both the show), so it never reads "Show · Show".
+- **Accent seek.** The filled portion of the seek slider takes the album's accent, so the progress bar belongs to what is playing.
+- **Now Playing drawer.** The drawer's cover grows (132→160px) and its spacing opens up for a more composed feel, now that artwork and the Dragon palette are in place.
+- **Tests.** The secondary-line folding is pure and unit-tested; the widgets are verified by building and by launching. Full workspace suite + clippy `-D warnings` + fmt + the music-only build green. No new dependency, no schema change (the playing item's accent rides the existing now-playing metadata read).
+
 ## v0.0.78
 
 Phase 12b: album art in the music browse, the "more covers" half of the Phase 12 overhaul.

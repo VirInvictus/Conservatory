@@ -760,10 +760,10 @@ The shipped UI was flagged as "dull and lifeless": no palette (the flat grey sys
 
 *Usable artifact:* the music browse shows album art, a thumbnail per row plus a large cover panel open by default. The downscaler is the GTK stack's own gdk-pixbuf (no new dependency).
 
-### Phase 12c — Now-bar enrichment + Now Playing polish (v0.0.79)
+### Phase 12c — Now-bar enrichment + Now Playing polish ✅ (v0.0.79)
 
-- [ ] The Now-bar carries a larger styled cover (~56px) with the per-album accent ring, a richer info cluster, an accent-tinted seek fill, and more breathing room (the answer to "more info, not just a bigger play bar").
-- [ ] Now Playing drawer spacing / typography polish, and a reserved slot for the 12d spectrum.
+- [x] The Now-bar cover grows 40→56px in an accent-ringed frame; the secondary line reads `artist · album` (folding the duplicate for a podcast, via the pure `now_bar_subtitle`); the seek fill takes the album accent (the `now-bar-seek > trough > highlight` rule, the now-playing scrubber idiom). The playing item's accent rides the existing `NowPlaying` metadata read (a new `album_accent_rgb`, populated for track / episode / book).
+- [x] Now Playing drawer breathing room: cover 132→160px, larger gaps and margins.
 
 *Usable artifact:* the playback bar is informative and album-art-led; the Now Playing drawer reads as composed.
 

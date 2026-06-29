@@ -7,13 +7,13 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, TimeZone, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPerson, BookPlayback, Chapter,
-    CompSettings, DspState, EQ_BAND_COUNT, Episode, EqPreset, EqState, InboxPolicy,
-    LevelerSettings, LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState,
-    QueueItem, ResamplerQuality, Series, Show, ShowSettings, Tag, Track, VerifyResultRow,
+    CompSettings, DspState, Episode, EqPreset, EqState, InboxPolicy, LevelerSettings,
+    LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState, QueueItem,
+    ResamplerQuality, Series, Show, ShowSettings, Tag, Track, VerifyResultRow, EQ_BAND_COUNT,
 };
 use crate::errors::Result;
 use crate::verify::VerifyVerdict;
@@ -594,6 +594,9 @@ pub struct NowPlaying {
     /// The album cover's path relative to the library root (Phase 5d), for the
     /// Now-bar thumbnail and MPRIS `mpris:artUrl`. `None` until a cover is on disk.
     pub album_cover_path: Option<String>,
+    /// The album / show / book extracted accent (packed `0x00RRGGBB`), for tinting
+    /// the Now-bar cover frame and seek fill (Phase 12c). `None` when unextracted.
+    pub album_accent_rgb: Option<u32>,
 }
 
 /// Resolve a track id to its title / artist / album / length / cover (the MPRIS
@@ -601,7 +604,7 @@ pub struct NowPlaying {
 pub fn track_metadata(conn: &Connection, track_id: i64) -> Result<Option<NowPlaying>> {
     conn.query_row(
         "SELECT t.title, t.duration, ar.name AS artist, al.title AS album,
-                al.cover_path AS album_cover_path
+                al.cover_path AS album_cover_path, al.accent_rgb AS album_accent_rgb
          FROM tracks t
          LEFT JOIN artists ar ON ar.id = t.artist_id
          LEFT JOIN albums al ON al.id = t.album_id
@@ -614,6 +617,9 @@ pub fn track_metadata(conn: &Connection, track_id: i64) -> Result<Option<NowPlay
                 album: row.get("album")?,
                 length: row.get("duration")?,
                 album_cover_path: row.get("album_cover_path")?,
+                album_accent_rgb: row
+                    .get::<_, Option<i64>>("album_accent_rgb")?
+                    .map(|v| v as u32),
             })
         },
     )
@@ -630,7 +636,8 @@ pub fn track_metadata(conn: &Connection, track_id: i64) -> Result<Option<NowPlay
 /// than the previous track's cover.
 pub fn episode_metadata(conn: &Connection, episode_id: i64) -> Result<Option<NowPlaying>> {
     conn.query_row(
-        "SELECT e.title, e.duration, s.title AS show_title, s.cover_path AS cover_path
+        "SELECT e.title, e.duration, s.title AS show_title, s.cover_path AS cover_path,
+                s.accent_rgb AS album_accent_rgb
          FROM episodes e
          JOIN shows s ON s.id = e.show_id
          WHERE e.id = ?1",
@@ -642,6 +649,9 @@ pub fn episode_metadata(conn: &Connection, episode_id: i64) -> Result<Option<Now
                 album: row.get::<_, Option<String>>("show_title")?,
                 length: row.get::<_, Option<i64>>("duration")?.map(|d| d as f64),
                 album_cover_path: row.get("cover_path")?,
+                album_accent_rgb: row
+                    .get::<_, Option<i64>>("album_accent_rgb")?
+                    .map(|v| v as u32),
             })
         },
     )
@@ -1607,7 +1617,7 @@ pub fn book_metadata(conn: &Connection, book_id: i64) -> Result<Option<NowPlayin
                 (SELECT s.name FROM series s WHERE s.id = b.series_id) AS series,
                 (SELECT COALESCE(SUM(c.duration), 0) FROM book_chapters c
                   WHERE c.book_id = b.id) AS dur,
-                b.cover_path
+                b.cover_path, b.accent_rgb AS album_accent_rgb
          FROM books b WHERE b.id = ?1",
         params![book_id],
         |row| {
@@ -1618,6 +1628,9 @@ pub fn book_metadata(conn: &Connection, book_id: i64) -> Result<Option<NowPlayin
                 album: row.get::<_, Option<String>>("series")?,
                 length: (dur > 0.0).then_some(dur),
                 album_cover_path: row.get("cover_path")?,
+                album_accent_rgb: row
+                    .get::<_, Option<i64>>("album_accent_rgb")?
+                    .map(|v| v as u32),
             })
         },
     )

@@ -16,13 +16,19 @@ use conservatory_core::db::MediaKind;
 use conservatory_core::player::SleepMode;
 use conservatory_core::{PlayerHandle, SleepStatus};
 
+use crate::ui::accent::AccentProvider;
+
 /// The Now-bar widgets the window updates each refresh. `root` is what gets
 /// attached as the bottom bar.
 pub struct NowBar {
     pub root: gtk::CenterBox,
     pub cover: gtk::Image,
+    /// The frame around the cover (Phase 12c): carries the per-album accent ring.
+    cover_frame: gtk::Frame,
     pub title: gtk::Label,
     pub artist: gtk::Label,
+    /// Held so the accent ring + seek-fill rule can be swapped per item.
+    accent: AccentProvider,
     /// The cover+title cluster, a clickable handle the window wires to toggle the
     /// Now Playing drawer (v0.0.38).
     pub left: gtk::Box,
@@ -68,6 +74,20 @@ pub fn fmt_sleep_remaining(secs: f64) -> String {
 /// The placeholder shown when the album has no cover on disk.
 const COVER_PLACEHOLDER: &str = "audio-x-generic-symbolic";
 
+/// The Now-bar's secondary line (Phase 12c): `artist · album` when the album adds
+/// information, else just the artist. Folding the duplicate keeps a podcast
+/// (whose "artist" and "album" are both the show title) from reading "Show ·
+/// Show". Pure.
+pub fn now_bar_subtitle(artist: &str, album: Option<&str>) -> String {
+    match album.map(str::trim).filter(|a| !a.is_empty()) {
+        Some(album) if !album.eq_ignore_ascii_case(artist) && !artist.is_empty() => {
+            format!("{artist} · {album}")
+        }
+        Some(album) if artist.is_empty() => album.to_string(),
+        _ => artist.to_string(),
+    }
+}
+
 /// Build the Now-bar. When a `player` is present, the transport controls are
 /// wired to it; without one (no library / libmpv unavailable) the bar renders
 /// inert.
@@ -75,10 +95,16 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     let root = gtk::CenterBox::new();
     root.add_css_class("now-bar");
 
-    // Left: cover thumbnail + title (bold) over artist (dim).
+    // Left: cover thumbnail + title (bold) over artist (dim). The cover sits in a
+    // frame so the per-album accent ring (Phase 12c) has a widget to tint without
+    // clipping the image.
     let cover = gtk::Image::from_icon_name(COVER_PLACEHOLDER);
-    cover.set_pixel_size(40);
-    cover.add_css_class("now-bar-cover");
+    cover.set_pixel_size(56);
+    let cover_frame = gtk::Frame::builder()
+        .valign(gtk::Align::Center)
+        .css_classes(["now-bar-cover"])
+        .child(&cover)
+        .build();
     let title = gtk::Label::builder()
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -107,9 +133,9 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     status.set_valign(gtk::Align::Center);
     status.append(&spinner);
     status.append(&streaming_icon);
-    let left = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let left = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     left.set_valign(gtk::Align::Center);
-    left.append(&cover);
+    left.append(&cover_frame);
     left.append(&info);
     left.append(&status);
     // The cluster is a click handle for the Now Playing drawer; show a pointer so
@@ -147,6 +173,7 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     seek.set_hexpand(true);
     seek.set_width_request(220);
     seek.set_sensitive(false);
+    seek.add_css_class("now-bar-seek");
     // A ScaleButton with the audio icons (VolumeButton is deprecated since 4.10);
     // its value is the 0..100 volume directly.
     let volume = gtk::ScaleButton::new(
@@ -197,8 +224,10 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     NowBar {
         root,
         cover,
+        cover_frame,
         title,
         artist,
+        accent: AccentProvider::new(),
         left,
         spinner,
         streaming_icon,
@@ -308,7 +337,7 @@ impl NowBar {
         self.play_btn.set_icon_name("media-playback-start-symbolic");
         self.seek.set_sensitive(false);
         self.seek.set_value(0.0);
-        self.set_cover(None);
+        self.set_cover(None, None);
         self.set_status(false, false);
         self.set_chapter_nav_visible(false);
         self.sleep_btn.set_visible(false);
@@ -353,11 +382,39 @@ impl NowBar {
         self.streaming_icon.set_visible(streaming);
     }
 
-    /// Show the album cover from `path`, or the placeholder when absent.
-    pub fn set_cover(&self, path: Option<&std::path::Path>) {
+    /// Show the album cover from `path` (or the placeholder when absent) and tint
+    /// the cover frame's ring + the seek fill with the item's `accent` (Phase
+    /// 12c). Both go through one swapped display-wide rule.
+    pub fn set_cover(&self, path: Option<&std::path::Path>, accent: Option<u32>) {
         match path.filter(|p| p.exists()) {
             Some(p) => self.cover.set_from_file(Some(p)),
             None => self.cover.set_icon_name(Some(COVER_PLACEHOLDER)),
+        }
+        self.apply_accent(accent);
+    }
+
+    /// Tint the cover ring and the seek fill with the album accent. The ring rule
+    /// is the shared cover-ring CSS; the seek rule colours the slider's filled
+    /// trough. `None` clears both back to the Dragon defaults.
+    fn apply_accent(&self, accent: Option<u32>) {
+        match accent {
+            Some(rgb) => {
+                let hex = rgb & 0x00ff_ffff;
+                let css = format!(
+                    "{}\n.now-bar-seek.cover-acc-{hex:06x} > trough > highlight \
+                     {{ background-color: #{hex:06x}; }}",
+                    crate::ui::accent::cover_ring_css(rgb)
+                );
+                self.accent.set_css(&css);
+                let cls = crate::ui::accent::accent_class(rgb);
+                self.cover_frame.set_css_classes(&["now-bar-cover", &cls]);
+                self.seek.set_css_classes(&["now-bar-seek", &cls]);
+            }
+            None => {
+                self.accent.set_css("");
+                self.cover_frame.set_css_classes(&["now-bar-cover"]);
+                self.seek.set_css_classes(&["now-bar-seek"]);
+            }
         }
     }
 }
@@ -373,6 +430,22 @@ mod tests {
         assert_eq!(fmt_sleep_remaining(61.0), "1:01");
         assert_eq!(fmt_sleep_remaining(0.0), "0:00");
         assert_eq!(fmt_sleep_remaining(-5.0), "0:00"); // clamped
+    }
+
+    #[test]
+    fn subtitle_folds_redundant_album() {
+        // Music: artist and album both inform.
+        assert_eq!(
+            now_bar_subtitle("Aphex Twin", Some("SAW 85-92")),
+            "Aphex Twin · SAW 85-92"
+        );
+        // Podcast: artist == album (the show title), so the album is folded out.
+        assert_eq!(now_bar_subtitle("Cortex", Some("Cortex")), "Cortex");
+        // No album: just the artist.
+        assert_eq!(now_bar_subtitle("Aesop Rock", None), "Aesop Rock");
+        assert_eq!(now_bar_subtitle("Aesop Rock", Some("  ")), "Aesop Rock");
+        // No artist (rare): the album carries the line.
+        assert_eq!(now_bar_subtitle("", Some("Some Album")), "Some Album");
     }
 
     #[test]

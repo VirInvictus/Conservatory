@@ -345,6 +345,13 @@ enum Command {
         action: PlaylistAction,
     },
 
+    /// Inspect or initialize the user config file (Phase 10a, spec §10). The
+    /// file lives at `$XDG_CONFIG_HOME/conservatory/config.toml`.
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+
     /// Set an album's cover image: write it into the album folder as cover.jpg
     /// and record `cover_path` + a refreshed accent (Phase 5d).
     SetCover {
@@ -1003,6 +1010,18 @@ enum PlaylistAction {
 }
 
 #[derive(Subcommand)]
+enum ConfigAction {
+    /// Print the resolved config-file path.
+    Path,
+    /// Print the effective config (the file merged over defaults; all defaults
+    /// if no file exists yet). Rendered as TOML.
+    Show,
+    /// Write a default config file if none exists. Never clobbers an existing
+    /// one; prints the path either way.
+    Init,
+}
+
+#[derive(Subcommand)]
 enum QueueAction {
     /// Append tracks to the queue tail.
     Add {
@@ -1083,6 +1102,7 @@ fn main() -> Result<()> {
         }) => play(db, root, track_id, sleep),
         Some(Command::Queue { action }) => queue(action),
         Some(Command::Playlist { action }) => playlist(action),
+        Some(Command::Config { action }) => config_cmd(action),
         Some(Command::Tag { action }) => tag(action),
         Some(Command::EmbedTags {
             db,
@@ -4339,6 +4359,30 @@ fn to_root_relative(path: &str, root: Option<&Path>) -> String {
         return rel.display().to_string();
     }
     path.to_string()
+}
+
+/// The `config` verb (Phase 10a): inspect or initialize `config.toml`. File IO
+/// only, no worker or DB; the headless surface for the core config module.
+fn config_cmd(action: ConfigAction) -> Result<()> {
+    let path = conservatory_core::config::config_path();
+    match action {
+        ConfigAction::Path => {
+            println!("{}", path.display());
+        }
+        ConfigAction::Show => {
+            let config = conservatory_core::config::load(&path)?;
+            print!("{}", conservatory_core::config::to_toml_string(&config)?);
+        }
+        ConfigAction::Init => {
+            if path.exists() {
+                println!("config already exists at {}", path.display());
+            } else {
+                conservatory_core::config::save(&path, &conservatory_core::Config::default())?;
+                println!("wrote default config to {}", path.display());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn queue_list(db: PathBuf) -> Result<()> {

@@ -620,6 +620,8 @@ smart_speed = true            # spoken-word profile shared with podcasts (§6.3)
 voice_boost = false
 ```
 
+**Ownership note (Phase 10a).** The config file is the source of truth for the app/library-level sections above: `[library]`, `[genre]`, `[podcasts]`, `[audiobooks]`, and the `[browse]` facet-pane layout (§3.2). The **audio engine state** (`[playback]` ReplayGain plus the `[audio]` EQ / DSP / output) is **DB-canonical**: it lives in the `audio_state` and `eq_state` singletons, which the Sound dialog (Phase 5.5) mutates live and the engine reads. Binding those blocks to the config file is deferred (it would duplicate working, live-tuned state); the `[playback]`/`[audio]` keys above describe the intended config surface, not the current loader. The config loader is glib-free (in `conservatory-core`) so it stays CLI-testable; the file resolves at `$XDG_CONFIG_HOME/conservatory/config.toml`.
+
 ---
 
 ## 11. Dependencies

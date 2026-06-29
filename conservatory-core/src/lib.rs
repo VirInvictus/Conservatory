@@ -14,6 +14,7 @@
 pub mod accent;
 pub mod ape;
 pub mod audit;
+pub mod config;
 pub mod covers;
 pub mod db;
 pub mod dedup;
@@ -40,6 +41,7 @@ pub use audit::{
     ArtDeficiency, ArtResDeficiency, AuditOptions, AuditReport, BitrateDeficiency, RgBucket,
     RgCoverage, TagDeficiency, TagFlags, run_audit,
 };
+pub use config::{Config, ImportMode, config_path, load_default, save_default};
 pub use covers::{resync_album_covers, sync_album_cover, write_cover};
 pub use dedup::{
     DedupOptions, DuplicateReport, ExactAlbumDupe, MultiformatDupe, SimilarAlbums, TrackDupe,

@@ -46,6 +46,9 @@ pub enum Error {
 
     #[error("dbus: {0}")]
     Dbus(#[from] zbus::Error),
+
+    #[error("config: {0}")]
+    Config(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

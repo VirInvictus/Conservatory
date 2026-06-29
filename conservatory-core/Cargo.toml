@@ -16,6 +16,9 @@ rusqlite = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
+# Phase 10a: the first config.toml (spec §10). serde derive + toml are already
+# workspace deps; core stays glib-free so the loader is CLI-testable.
+toml = { workspace = true }
 chrono = { workspace = true }
 # Phase 1c: tag read (lofty) and cover decode + accent extraction (image).
 lofty = { workspace = true }

@@ -667,13 +667,30 @@ A peripheral "feel good" addition for the music-and-podcast lifer: scrobble comp
 
 ## Phase 10 — Configuration & preferences
 
-> **Stub.** This phase is referenced throughout the earlier phases (the library root sourced from config rather than a CLI arg; user-reconfigurable + persisted facet-pane order; the consolidated "Sound" page the EQ/DSP work at 5.5b/c builds toward) but is not yet broken into sub-phases. It is recorded here so those forward references resolve; the detailed checklist lands when the phase is scoped. Known contents so far:
+Conservatory's first `config.toml` (spec §10), at `$XDG_CONFIG_HOME/conservatory/`. **Ownership decision (non-breaking):** the file owns only the app/library-level settings that are not otherwise persisted (`[library]`, `[genre]`, `[podcasts]`, `[audiobooks]` defaults, the `[browse]` facet-pane layout); the audio engine state (ReplayGain / EQ / DSP / output) **stays in the SQLite singletons** the Sound dialog already mutates live. Spec §10's `[playback]`/`[audio]` blocks are DB-canonical for now (a recorded reconciliation, not a migration).
 
-- [ ] A persisted config (spec §10): the library root, the `[playback]` defaults that today flow from `PlaybackConfig::default()`, and the per-pane field expressions + order (the §3.2 "panes are configurable 1 to 5" promise, deferred from 3b/3c).
-- [ ] An `AdwPreferencesDialog` consolidating the Phase 5.5 "Sound" page (ReplayGain / EQ / DSP / output) with a General page (library root, import defaults) and a Library page (pane configuration).
-- [ ] The library root stops being a CLI arg (the carry-forward note from 4b-ii-a / 4b-ii-c).
+### Phase 10a — Config foundation + library root from config ✅ (v0.0.70)
 
-*Usable artifact:* (to be detailed) the app is configured from a Preferences dialog, not CLI args, and remembers the user's browse layout.
+- [x] `conservatory-core/src/config.rs` (new, pure, glib-free so it stays CLI-testable): a serde `Config` mirroring the owned spec §10 sections, every section `#[serde(default)]` so a partial or absent file loads to the documented defaults and round-trips losslessly. `config_path()` resolves `$XDG_CONFIG_HOME` (else `~/.config`) `/conservatory/config.toml`; `load` (missing file → defaults, malformed → error), `save`, `to_toml_string`. The path-template defaults reuse `DEFAULT_MUSIC_TEMPLATE` / `DEFAULT_AUDIOBOOK_TEMPLATE` so there is one source. `toml` (already a workspace dep) wired into core; no new dependency.
+- [x] The GTK binary sources the library root from config: a CLI positional still overrides (dev / tooling), else `[library] root`, else none (a pure `resolve_root` helper, unit-tested). The library root stops being a required CLI arg (the carry-forward note from 4b-ii-a / 4b-ii-c).
+- [x] CLI `config` verb (the headless test surface): `config path` / `config show` (effective config as TOML) / `config init` (writes a default file, never clobbers).
+- [x] Tests: default round-trip, partial-file merge, missing-file defaults, explicit-field parse, malformed error, `config_path` honours `XDG_CONFIG_HOME`, and the GTK `resolve_root` precedence. E2e verified in a scratch `XDG_CONFIG_HOME`.
+
+*Usable artifact:* launch `conservatory` with no arguments and it finds the library from `config.toml`; inspect/init the config from the CLI.
+
+### Phase 10b — Preferences: General + Library pages
+
+- [ ] Extend the existing Sound `AdwPreferencesDialog` (`conservatory/src/ui/window.rs open_sound_settings`) with a **General** page (library root chooser via `FileDialog`, import mode, embed-tags-on-edit, genre default) that reads and writes `config.toml` through the core loader. A **Library** page hosts the pane configuration (built in 10c).
+- [ ] Tests: the General page's field projection (config ↔ rows); widgets build + manual (the 3b/3c precedent).
+
+*Usable artifact:* configure the app (library root, import defaults) from Preferences, not a hand-edited TOML or CLI args.
+
+### Phase 10c — Configurable facet panes (1 to 5)
+
+- [ ] The deferred §3.2 promise: the browse panes are built from `[browse] panes` (a field expression per pane, order, count 1 to 5) instead of the hard-coded Genre → AlbumArtist → Album. Needs the core facet field generalized beyond the three-variant `FacetField` enum, and the GTK window building panes from config; edited from the 10b Library page and persisted.
+- [ ] Tests: the pane-spec parse + the facet build-from-config (headless); widgets build + manual.
+
+*Usable artifact:* reorder, add, or remove browse panes, persisted across launches.
 
 ---
 

@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.0.70
+
+Phase 10a: Conservatory's first config file. This is the foundation of Phase 10 (Configuration & preferences); it introduces `~/.config/conservatory/config.toml` and makes the GTK app find its library from there instead of requiring a command-line argument.
+
+- **`config.toml`.** A new config file at `$XDG_CONFIG_HOME/conservatory/config.toml` (falling back to `~/.config`). It holds the app and library settings: the library root, the music/audiobook path templates, the import mode (copy or move), the genre fallback, the podcast and audiobook subdirectories and book defaults, and the browse pane layout. Every field has a sensible default, so a missing or partial file just works; only a genuinely malformed file is reported as an error rather than silently reset.
+- **Library root from config.** Launching the GTK app with no arguments now reads the library root from `config.toml`. A path given on the command line still wins (handy for development), but it is no longer required.
+- **What stays in the database.** The audio engine settings (ReplayGain, equalizer, dynamics, output) deliberately stay in the database where the Sound dialog already manages them live; the config file does not duplicate them. This keeps the working audio settings untouched.
+- **`config` CLI verb.** `conservatory-cli config path` prints the file location, `config show` prints the effective settings as TOML, and `config init` writes a default file (without ever overwriting an existing one).
+- **Still to come in Phase 10:** a Preferences page to edit these settings in the GUI (10b), and configurable browse panes (10c).
+- **Tests.** The config load/save/merge paths are unit-tested (default round-trip, partial-file merge, missing-file defaults, malformed-file error, XDG path resolution) along with the GTK root-precedence helper, and verified end to end via the `config` verb. No new dependency (the `toml` crate was already in the workspace); no schema change. Full workspace suite + clippy `-D warnings` + fmt + the music-only build green.
+
 ## v0.0.69
 
 Phase 8d: playlist export and import as portable `.m3u` / `.m3u8` files. This is the last slice of Phase 8, so library maintenance (verify, duplicates, audit, stats, APE strip, playlists) is now complete.

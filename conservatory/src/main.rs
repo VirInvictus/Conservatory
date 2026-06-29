@@ -68,9 +68,14 @@ fn main() -> glib::ExitCode {
             .map(PathBuf::from)
             .collect();
         let db = positionals.first().cloned().or_else(default_db_path);
-        // Optional library root (Phase 4b-ii-a): resolves relative track paths for
-        // playback. Phase 10 config will source this instead of an argument.
-        let root = positionals.get(1).cloned();
+        // The library root (Phase 10a): a CLI positional still wins (dev / tooling
+        // override), else it comes from `config.toml`'s `[library] root`. With
+        // neither set there is simply no library to browse, as before.
+        let config = conservatory_core::config::load_default().unwrap_or_else(|e| {
+            tracing::warn!("config load failed, using defaults: {e}");
+            conservatory_core::Config::default()
+        });
+        let root = resolve_root(positionals.get(1).cloned(), &config);
         let window = ui::window::ConservatoryWindow::new(app, db, root);
         window.present();
     });
@@ -109,4 +114,43 @@ fn default_db_path() -> Option<PathBuf> {
     path.push("conservatory");
     path.push("library.db");
     Some(path)
+}
+
+/// Resolve the library root: a CLI positional overrides (dev / tooling), else
+/// the config's `[library] root`, else `None` (no library to browse). Pure, so
+/// the precedence is unit-testable without a GTK display.
+fn resolve_root(
+    positional: Option<PathBuf>,
+    config: &conservatory_core::Config,
+) -> Option<PathBuf> {
+    positional.or_else(|| config.library.root.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use conservatory_core::Config;
+
+    #[test]
+    fn positional_root_overrides_config() {
+        let mut config = Config::default();
+        config.library.root = Some(PathBuf::from("/from/config"));
+        let root = resolve_root(Some(PathBuf::from("/from/cli")), &config);
+        assert_eq!(root, Some(PathBuf::from("/from/cli")));
+    }
+
+    #[test]
+    fn config_root_used_when_no_positional() {
+        let mut config = Config::default();
+        config.library.root = Some(PathBuf::from("/from/config"));
+        assert_eq!(
+            resolve_root(None, &config),
+            Some(PathBuf::from("/from/config"))
+        );
+    }
+
+    #[test]
+    fn no_root_anywhere_is_none() {
+        assert_eq!(resolve_root(None, &Config::default()), None);
+    }
 }

@@ -5,6 +5,7 @@
 pub mod audiobooks;
 pub mod coalescing;
 pub mod facet_pane;
+pub mod inspector;
 pub mod now_bar;
 pub mod now_playing_panel;
 pub mod objects;

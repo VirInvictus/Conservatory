@@ -699,11 +699,12 @@ Conservatory's first `config.toml` (spec §10), at `$XDG_CONFIG_HOME/conservator
 
 The finishing pass that brings the music surface up to the deadbeef / foobar2000 Columns UI the browse is modeled on (spec §3.2, §3.3): the side panels, the chrome, and the player conveniences a daily driver is expected to have. Each piece is small and self-contained, GTK-side over logic that already exists in core, so they ship independently and none blocks the others. Modeled on the reference deadbeef layout (the cover-art + properties + status-bar furniture around the central facet/track view).
 
-### Phase 11a — Track properties inspector + cover-art panel
+### Phase 11a — Track properties inspector + cover-art panel ✅ (v0.0.72)
 
-- [ ] A **properties / metadata inspector** for the selected track (the deadbeef `selproperties` widget): location, codec / format, sample rate, channels, bitrate, file size, duration, ReplayGain values, embedded-vs-sidecar cover, MusicBrainz id. Read-only; all of it is already in the DB (`tracks`) or cheap to stat. A collapsible side panel, not a modal.
-- [ ] A **cover-art panel** in the browse window (the deadbeef `coverart` widget, "playing or selected" mode): the album art at a readable size, accent-tinted (the Hermitage unit), distinct from the small Now-bar thumbnail. Reuses `albums.cover_path` (Phase 5d) and the accent.
-- [ ] Tests: the inspector field projection (a pure map from a `Track` + album row to the displayed fields); the panel is build + manual (the 3b/3c precedent).
+- [x] A **properties / metadata inspector** for the selected track (the deadbeef `selproperties` widget): title, artist, album, year, genre, track/disc, duration, format, bitrate, sample rate, file size, ReplayGain, rating, plays, last played, added, location, MusicBrainz ids, cover file. Read-only; all from the DB (`tracks`/`albums`) or a cheap `std::fs` stat (file size). A right-docked collapsible `gtk::Revealer` (the queue-drawer twin), not a modal; toggled by a header button and `Ctrl+P`; refreshed on selection change (a no-op while closed).
+- [x] A **large cover-art panel** atop the inspector (the deadbeef `coverart` widget): the album art at 240px from `albums.cover_path` (Phase 5d), accent-tinted via the display-wide CSS-class technique (the Hermitage unit), distinct from the small Now-bar thumbnail; a placeholder when there is no cover.
+- [x] Tests: the pure `inspector_fields` projection (a `Track` + `Album` → the displayed rows, skipping empties), mirroring `now_playing_panel::track_fields`; the panel build is manual (the 3b/3c precedent).
+- [ ] **Deferred:** channels (not a stored column; needs a schema/importer change or a per-selection decode) and a multi-select aggregate (the inspector shows the first selected track).
 
 *Usable artifact:* select a track and see its full technical metadata and a large cover, as in the deadbeef layout.
 

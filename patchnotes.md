@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.0.72
+
+Phase 11a: a track properties inspector and a large cover panel, the first slice of the Columns UI parity pass.
+
+- **Properties inspector.** A collapsible panel on the right of the browse window (a header button, or `Ctrl+P`) showing the selected track's full detail: title, artist, album, year, genre, track and disc, duration, format, bitrate, sample rate, file size, ReplayGain, rating, play count, last played, date added, file location, MusicBrainz ids, and the cover file. Read-only, and it updates as you move the selection. Everything comes straight from the database or a quick file-size check.
+- **Large cover.** The album art at a readable size sits above the properties, tinted with the album's accent colour, distinct from the small thumbnail in the playback bar. A placeholder shows when a track has no cover.
+- **Notes.** The panel shows the first selected track when several are selected, and it costs nothing while closed. Channels is the one deadbeef field not shown yet: it is not stored and would need decoding the file, so it is deferred.
+- **Tests.** The field projection (track and album to the displayed rows) is pure and unit-tested; the panel itself is verified by building and by hand (the established pattern for GUI work). Full workspace suite + clippy `-D warnings` + fmt + the music-only build green. No new dependency, no schema change.
+
 ## v0.0.71
 
 Phase 10b: a Preferences window. The settings introduced in 10a are now editable from the GUI instead of by hand-editing the config file.

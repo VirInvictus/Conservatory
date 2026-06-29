@@ -38,6 +38,7 @@ columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height
 .book-tile:selected { background: alpha(@accent_color, 0.18); }
 .book-cover { border-radius: 6px; background: alpha(currentColor, 0.06); }
 .book-accent { box-shadow: inset 0 -4px 0 alpha(currentColor, 0.25); }
+.inspector-cover { border-radius: 8px; background: alpha(currentColor, 0.06); }
 ";
 
 fn load_css() {

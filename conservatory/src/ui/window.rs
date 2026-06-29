@@ -27,9 +27,9 @@ use gtk::glib;
 
 use conservatory_core::db::{
     EQ_CENTRES, EqState, FacetFilter, MediaKind, Perspective, ReadPool, ResamplerQuality,
-    WorkerHandle, facet_rows, get_audio_state, get_eq_preset, get_eq_state, get_tracks,
-    list_eq_presets, list_perspectives, load_queue_display, read_playback_state, show_settings_map,
-    spawn_worker, track_render_rows, writeback_rows,
+    WorkerHandle, facet_rows, get_album, get_artist, get_audio_state, get_eq_preset, get_eq_state,
+    get_track, get_tracks, list_eq_presets, list_perspectives, load_queue_display,
+    read_playback_state, show_settings_map, spawn_worker, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
@@ -41,6 +41,7 @@ use crate::playqueue::{MixedQueueRow, build_mixed_queue, build_play_queue, fmt_p
 use crate::query::query_leaf;
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
+use crate::ui::inspector::{Inspector, build_inspector, inspector_fields};
 use crate::ui::now_bar::{NowBar, build_now_bar};
 use crate::ui::now_playing_panel::{
     NowPlayingPanel, build_now_playing_panel, episode_fields, track_fields,
@@ -102,6 +103,7 @@ mod imp {
         // future visualizer home. Refreshed on track change, toggled by the
         // Now-bar cover/title click, a header button, or Ctrl+I.
         pub now_playing: OnceCell<NowPlayingPanel>,
+        pub inspector: OnceCell<Inspector>,
         // The top-level view stack (Phase 6b-i): Music first, plus the
         // feature-gated Podcasts/Audiobooks plugin pages. `Alt+1/2/3` switch
         // its visible child by name.
@@ -277,11 +279,16 @@ impl ConservatoryWindow {
         });
         let queue_panel = build_queue_panel(queue_current.clone(), on_reorder);
 
-        // Body + the queue drawer, side by side.
+        // The right-docked track properties inspector (Phase 11a), the twin of
+        // the queue drawer; collapsed until toggled.
+        let inspector = build_inspector();
+
+        // Body + the queue drawer + the inspector, side by side.
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         content.set_vexpand(true);
         content.append(&body);
         content.append(&queue_panel.revealer);
+        content.append(&inspector.revealer);
 
         // The Music view: the always-on filter bar over the body. The filter bar
         // lives *inside* the page (not as a global top bar) so it does not show
@@ -310,6 +317,15 @@ impl ConservatoryWindow {
             }
         });
         header.pack_end(&queue_btn);
+        let props_btn = gtk::Button::from_icon_name("document-properties-symbolic");
+        props_btn.set_tooltip_text(Some("Track properties (Ctrl+P)"));
+        let weak = self.downgrade();
+        props_btn.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.toggle_inspector();
+            }
+        });
+        header.pack_end(&props_btn);
         let info_btn = gtk::Button::from_icon_name("dialog-information-symbolic");
         info_btn.set_tooltip_text(Some("Now Playing details (Ctrl+I)"));
         let weak = self.downgrade();
@@ -395,6 +411,7 @@ impl ConservatoryWindow {
         let _ = imp.filter_entry.set(filter.clone());
         let _ = imp.now_bar.set(now_bar);
         let _ = imp.now_playing.set(now_playing);
+        let _ = imp.inspector.set(inspector);
         let _ = imp.queue_current.set(queue_current);
         self.install_queue_keys(&queue_panel.list);
         self.install_view_keys();
@@ -407,6 +424,15 @@ impl ConservatoryWindow {
             leaf.column_view.connect_activate(move |_, pos| {
                 if let Some(win) = weak.upgrade() {
                     win.on_track_activated(pos);
+                }
+            });
+
+            // Refresh the properties inspector (Phase 11a) as the selection
+            // moves; a no-op while the panel is closed.
+            let weak = self.downgrade();
+            leaf.selection.connect_selection_changed(move |_, _, _| {
+                if let Some(win) = weak.upgrade() {
+                    win.refresh_inspector();
                 }
             });
 
@@ -780,6 +806,68 @@ impl ConservatoryWindow {
         }
 
         dialog.present(Some(self));
+    }
+
+    /// Toggle the track properties inspector (Phase 11a) and refresh it on open.
+    fn toggle_inspector(&self) {
+        let Some(inspector) = self.imp().inspector.get() else {
+            return;
+        };
+        inspector.set_open(!inspector.is_open());
+        self.refresh_inspector();
+    }
+
+    /// Repopulate the inspector from the first selected track (Phase 11a). A
+    /// no-op while the panel is closed, so selection churn costs nothing then.
+    fn refresh_inspector(&self) {
+        let imp = self.imp();
+        let (Some(inspector), Some(leaf), Some(pool)) =
+            (imp.inspector.get(), imp.leaf.get(), imp.pool.get())
+        else {
+            return;
+        };
+        if !inspector.is_open() {
+            return;
+        }
+        let selected = leaf.selection.selection();
+        if selected.size() == 0 {
+            inspector.clear();
+            return;
+        }
+        let Some(obj) = leaf.selection.item(selected.nth(0)) else {
+            inspector.clear();
+            return;
+        };
+        let Ok(row) = obj.downcast::<TrackRow>() else {
+            return;
+        };
+        let Ok(conn) = pool.open() else { return };
+        let Ok(Some(track)) = get_track(&conn, row.brief().id) else {
+            inspector.clear();
+            return;
+        };
+        let album = track
+            .album_id
+            .and_then(|id| get_album(&conn, id).ok().flatten());
+        let artist = track
+            .artist_id
+            .and_then(|id| get_artist(&conn, id).ok().flatten());
+        let root = imp.library_root.get();
+        let file_size = root
+            .map(|r| r.join(&track.file_path))
+            .and_then(|p| std::fs::metadata(p).ok())
+            .map(|m| m.len());
+        let fields = inspector_fields(
+            &track,
+            album.as_ref(),
+            artist.as_ref().map(|a| a.name.as_str()),
+            file_size,
+        );
+        let cover_abs = root
+            .zip(album.as_ref().and_then(|a| a.cover_path.as_deref()))
+            .map(|(r, cover)| r.join(cover));
+        let accent = album.as_ref().and_then(|a| a.accent_rgb);
+        inspector.show(&track.title, &fields, cover_abs.as_deref(), accent);
     }
 
     /// The General preferences page (Phase 10b): the `[library]` and `[genre]`
@@ -2153,6 +2241,17 @@ impl ConservatoryWindow {
             Some(gtk::CallbackAction::new(move |_, _| {
                 if let Some(win) = weak.upgrade() {
                     win.open_preferences();
+                }
+                glib::Propagation::Stop
+            })),
+        ));
+        // Ctrl+P toggles the track properties inspector (Phase 11a).
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>p"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade() {
+                    win.toggle_inspector();
                 }
                 glib::Propagation::Stop
             })),

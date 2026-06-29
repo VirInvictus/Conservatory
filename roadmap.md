@@ -678,12 +678,13 @@ Conservatory's first `config.toml` (spec §10), at `$XDG_CONFIG_HOME/conservator
 
 *Usable artifact:* launch `conservatory` with no arguments and it finds the library from `config.toml`; inspect/init the config from the CLI.
 
-### Phase 10b — Preferences: General + Library pages
+### Phase 10b — Preferences: General + Library pages ✅ (v0.0.71)
 
-- [ ] Extend the existing Sound `AdwPreferencesDialog` (`conservatory/src/ui/window.rs open_sound_settings`) with a **General** page (library root chooser via `FileDialog`, import mode, embed-tags-on-edit, genre default) that reads and writes `config.toml` through the core loader. A **Library** page hosts the pane configuration (built in 10c).
-- [ ] Tests: the General page's field projection (config ↔ rows); widgets build + manual (the 3b/3c precedent).
+- [x] Generalized the Sound `AdwPreferencesDialog` (`conservatory/src/ui/window.rs`, now `open_preferences`, dialog titled "Preferences") with a **General** page (library root chooser via `gtk::FileDialog::select_folder`, music path template, import mode, embed-tags-on-edit, genre default) and a **Library** page (podcast subdir + max downloads; audiobook subdir + path template + default speed + Smart Speed + Voice Boost). Both read and write `config.toml` through the 10a loader (`config::load_default` on open, `save_default` on dialog close); the existing Sound page (EQ / RG / DSP / output) keeps persisting to the DB singletons, untouched. The header button + `Ctrl+,` now open Preferences on the General page.
+- [x] Apply timing surfaced honestly: the library root applies on the next launch (the running session holds the root set at startup); a group description says so.
+- [x] Tests: the `import_mode` ↔ combo-index round-trip (the one non-trivial projection); the dialog build is manual (the 3b/3c precedent), saving through the 10a-proven `save_default` path.
 
-*Usable artifact:* configure the app (library root, import defaults) from Preferences, not a hand-edited TOML or CLI args.
+*Usable artifact:* configure the app (library root, import defaults, podcast/audiobook defaults) from Preferences, not a hand-edited TOML or CLI args. The Library page is built to receive the facet-pane configuration in 10c.
 
 ### Phase 10c — Configurable facet panes (1 to 5)
 

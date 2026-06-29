@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.71
+
+Phase 10b: a Preferences window. The settings introduced in 10a are now editable from the GUI instead of by hand-editing the config file.
+
+- **Preferences dialog.** The former Sound dialog (still `Ctrl+,`, now a preferences button in the header) becomes a full Preferences window with three pages: General, Library, and the existing Sound.
+- **General page.** Set the library root with a folder chooser, the music path template, the import mode (copy or move), whether edits are embedded back into files, and the fallback genre. Changing the library root takes effect on the next launch (the running session keeps the library it opened with), and the page says so.
+- **Library page.** The podcast and audiobook defaults: their library subfolders, the audiobook path template, default playback speed, and the Smart Speed / Voice Boost toggles. The browse pane configuration will join this page in a later release.
+- **Where settings live.** The General and Library pages read and write `config.toml`; the Sound page keeps managing the audio engine (equalizer, ReplayGain, dynamics, output) in the database exactly as before. Nothing about the working audio settings changed.
+- **Tests.** The import-mode mapping is unit-tested; the dialog itself is verified by building and by hand (the established pattern for GUI work), and it saves through the same config writer covered by the 10a tests. Full workspace suite + clippy `-D warnings` + fmt + the music-only build green. No new dependency, no schema change.
+
 ## v0.0.70
 
 Phase 10a: Conservatory's first config file. This is the foundation of Phase 10 (Configuration & preferences); it introduces `~/.config/conservatory/config.toml` and makes the GTK app find its library from there instead of requiring a command-line argument.

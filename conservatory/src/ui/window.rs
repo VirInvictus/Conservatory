@@ -33,8 +33,8 @@ use conservatory_core::db::{
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
-    Assignment, PlaybackConfig, PlayerHandle, TagWrite, any_path_affecting, build_album_edit,
-    build_track_edit, genres_assignment, parse_assignment, write_track_tags,
+    Assignment, Config, ImportMode, PlaybackConfig, PlayerHandle, TagWrite, any_path_affecting,
+    build_album_edit, build_track_edit, genres_assignment, parse_assignment, write_track_tags,
 };
 
 use crate::playqueue::{MixedQueueRow, build_mixed_queue, build_play_queue, fmt_position};
@@ -319,15 +319,15 @@ impl ConservatoryWindow {
             }
         });
         header.pack_end(&info_btn);
-        let sound_btn = gtk::Button::from_icon_name("audio-card-symbolic");
-        sound_btn.set_tooltip_text(Some("Sound: equalizer (Ctrl+comma)"));
+        let prefs_btn = gtk::Button::from_icon_name("preferences-system-symbolic");
+        prefs_btn.set_tooltip_text(Some("Preferences (Ctrl+comma)"));
         let weak = self.downgrade();
-        sound_btn.connect_clicked(move |_| {
+        prefs_btn.connect_clicked(move |_| {
             if let Some(win) = weak.upgrade() {
-                win.open_sound_settings();
+                win.open_preferences();
             }
         });
-        header.pack_end(&sound_btn);
+        header.pack_end(&prefs_btn);
         header.pack_end(&self.build_output_menu_button());
 
         let edit_btn = gtk::Button::from_icon_name("document-edit-symbolic");
@@ -583,10 +583,11 @@ impl ConservatoryWindow {
     }
 
     /// Open the "Sound" preferences dialog (Phase 5.5b-ii): the app's first
-    /// `adw::PreferencesDialog`, hosting the 10-band graphic equalizer. Sliders
-    /// drive the engine live (gap-free `af-command`); presets persist. Built
-    /// fresh each open from the stored state.
-    fn open_sound_settings(&self) {
+    /// The `adw::PreferencesDialog` (Phase 10b). The General + Library pages edit
+    /// `config.toml` (the 10a loader); the Sound page hosts the 10-band graphic
+    /// equalizer plus the ReplayGain / DSP / output groups, which persist to the
+    /// DB singletons. Built fresh each open from the stored state.
+    fn open_preferences(&self) {
         let Some(pool) = self.imp().pool.get() else {
             return;
         };
@@ -663,8 +664,25 @@ impl ConservatoryWindow {
         page.add(&presets_group);
 
         let dialog = adw::PreferencesDialog::new();
-        dialog.set_title("Sound");
+        dialog.set_title("Preferences");
+
+        // The config-backed pages (Phase 10b) come first, so Ctrl+, opens on
+        // General; the Sound page (DB-backed audio) follows. The config is loaded
+        // once into a shared cell the row handlers mutate, then saved on close.
+        let config = Rc::new(RefCell::new(
+            conservatory_core::config::load_default().unwrap_or_default(),
+        ));
+        dialog.add(&self.build_general_page(&config));
+        dialog.add(&self.build_library_page(&config));
         dialog.add(&page);
+        {
+            let config = config.clone();
+            dialog.connect_closed(move |_| {
+                if let Err(e) = conservatory_core::config::save_default(&config.borrow()) {
+                    tracing::warn!("saving config failed: {e}");
+                }
+            });
+        }
 
         // The ReplayGain / DSP / Output groups (Phase 5.5c-ii), backed by the
         // singleton `audio_state` (separate from the EQ's own table above).
@@ -762,6 +780,210 @@ impl ConservatoryWindow {
         }
 
         dialog.present(Some(self));
+    }
+
+    /// The General preferences page (Phase 10b): the `[library]` and `[genre]`
+    /// sections of `config.toml`. Each row mutates the shared `config`; the
+    /// dialog saves it on close. The library root applies on the next launch
+    /// (the running session holds the root it started with).
+    fn build_general_page(&self, config: &Rc<RefCell<Config>>) -> adw::PreferencesPage {
+        let page = adw::PreferencesPage::new();
+        page.set_title("General");
+        page.set_icon_name(Some("preferences-system-symbolic"));
+
+        let lib_group = adw::PreferencesGroup::new();
+        lib_group.set_title("Library");
+        lib_group.set_description(Some(
+            "Changes to the library root take effect on the next launch.",
+        ));
+
+        let root_row = adw::ActionRow::new();
+        root_row.set_title("Library root");
+        let current = config.borrow().library.root.clone();
+        root_row.set_subtitle(
+            &current
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+        );
+        let choose = gtk::Button::with_label("Choose…");
+        choose.set_valign(gtk::Align::Center);
+        {
+            let config = config.clone();
+            let root_row = root_row.clone();
+            let weak = self.downgrade();
+            choose.connect_clicked(move |_| {
+                let Some(win) = weak.upgrade() else { return };
+                let chooser = gtk::FileDialog::new();
+                chooser.set_title("Choose library root");
+                let config = config.clone();
+                let root_row = root_row.clone();
+                chooser.select_folder(Some(&win), gtk::gio::Cancellable::NONE, move |res| {
+                    if let Ok(file) = res
+                        && let Some(path) = file.path()
+                    {
+                        root_row.set_subtitle(&path.display().to_string());
+                        config.borrow_mut().library.root = Some(path);
+                    }
+                });
+            });
+        }
+        root_row.add_suffix(&choose);
+        lib_group.add(&root_row);
+
+        let tmpl = adw::EntryRow::new();
+        tmpl.set_title("Music path template");
+        tmpl.set_text(&config.borrow().library.path_template);
+        {
+            let config = config.clone();
+            tmpl.connect_changed(move |e| {
+                config.borrow_mut().library.path_template = e.text().to_string();
+            });
+        }
+        lib_group.add(&tmpl);
+
+        let modes = gtk::StringList::new(&["Copy", "Move"]);
+        let import = adw::ComboRow::new();
+        import.set_title("Import mode");
+        import.set_subtitle("Copy leaves originals; Move consumes them");
+        import.set_model(Some(&modes));
+        import.set_selected(import_mode_index(config.borrow().library.import_mode));
+        {
+            let config = config.clone();
+            import.connect_selected_notify(move |r| {
+                config.borrow_mut().library.import_mode = import_mode_from_index(r.selected());
+            });
+        }
+        lib_group.add(&import);
+
+        let embed = adw::SwitchRow::new();
+        embed.set_title("Embed tags on edit");
+        embed.set_subtitle("Write curated metadata back into files");
+        embed.set_active(config.borrow().library.embed_tags_on_edit);
+        {
+            let config = config.clone();
+            embed.connect_active_notify(move |s| {
+                config.borrow_mut().library.embed_tags_on_edit = s.is_active();
+            });
+        }
+        lib_group.add(&embed);
+        page.add(&lib_group);
+
+        let genre_group = adw::PreferencesGroup::new();
+        genre_group.set_title("Genre");
+        let unknown = adw::EntryRow::new();
+        unknown.set_title("Default unknown genre");
+        unknown.set_text(&config.borrow().genre.default_unknown);
+        {
+            let config = config.clone();
+            unknown.connect_changed(move |e| {
+                config.borrow_mut().genre.default_unknown = e.text().to_string();
+            });
+        }
+        genre_group.add(&unknown);
+        page.add(&genre_group);
+
+        page
+    }
+
+    /// The Library preferences page (Phase 10b): the `[podcasts]` and
+    /// `[audiobooks]` sections of `config.toml`. The facet-pane configuration
+    /// (spec §3.2) joins this page in Phase 10c. Kept `#[cfg]`-free: these are
+    /// plain config rows, present in the music-only build too.
+    fn build_library_page(&self, config: &Rc<RefCell<Config>>) -> adw::PreferencesPage {
+        let page = adw::PreferencesPage::new();
+        page.set_title("Library");
+        page.set_icon_name(Some("folder-music-symbolic"));
+
+        let pod_group = adw::PreferencesGroup::new();
+        pod_group.set_title("Podcasts");
+
+        let pod_subdir = adw::EntryRow::new();
+        pod_subdir.set_title("Library subfolder");
+        pod_subdir.set_text(&config.borrow().podcasts.library_subdir);
+        {
+            let config = config.clone();
+            pod_subdir.connect_changed(move |e| {
+                config.borrow_mut().podcasts.library_subdir = e.text().to_string();
+            });
+        }
+        pod_group.add(&pod_subdir);
+
+        let pod_max = adw::SpinRow::with_range(1.0, 16.0, 1.0);
+        pod_max.set_title("Max concurrent downloads");
+        pod_max.set_value(config.borrow().podcasts.max_concurrent_downloads as f64);
+        {
+            let config = config.clone();
+            pod_max.connect_value_notify(move |r| {
+                config.borrow_mut().podcasts.max_concurrent_downloads = r.value() as u32;
+            });
+        }
+        pod_group.add(&pod_max);
+        page.add(&pod_group);
+
+        let book_group = adw::PreferencesGroup::new();
+        book_group.set_title("Audiobooks");
+        book_group.set_description(Some(
+            "Browse pane configuration arrives in a later release.",
+        ));
+
+        let book_subdir = adw::EntryRow::new();
+        book_subdir.set_title("Library subfolder");
+        book_subdir.set_text(&config.borrow().audiobooks.library_subdir);
+        {
+            let config = config.clone();
+            book_subdir.connect_changed(move |e| {
+                config.borrow_mut().audiobooks.library_subdir = e.text().to_string();
+            });
+        }
+        book_group.add(&book_subdir);
+
+        let book_tmpl = adw::EntryRow::new();
+        book_tmpl.set_title("Path template");
+        book_tmpl.set_text(&config.borrow().audiobooks.path_template);
+        {
+            let config = config.clone();
+            book_tmpl.connect_changed(move |e| {
+                config.borrow_mut().audiobooks.path_template = e.text().to_string();
+            });
+        }
+        book_group.add(&book_tmpl);
+
+        let book_speed = adw::SpinRow::with_range(0.5, 3.0, 0.05);
+        book_speed.set_title("Default speed");
+        book_speed.set_digits(2);
+        book_speed.set_value(config.borrow().audiobooks.default_speed);
+        {
+            let config = config.clone();
+            book_speed.connect_value_notify(move |r| {
+                config.borrow_mut().audiobooks.default_speed = r.value();
+            });
+        }
+        book_group.add(&book_speed);
+
+        let book_ss = adw::SwitchRow::new();
+        book_ss.set_title("Smart Speed");
+        book_ss.set_active(config.borrow().audiobooks.smart_speed);
+        {
+            let config = config.clone();
+            book_ss.connect_active_notify(move |s| {
+                config.borrow_mut().audiobooks.smart_speed = s.is_active();
+            });
+        }
+        book_group.add(&book_ss);
+
+        let book_vb = adw::SwitchRow::new();
+        book_vb.set_title("Voice Boost");
+        book_vb.set_active(config.borrow().audiobooks.voice_boost);
+        {
+            let config = config.clone();
+            book_vb.connect_active_notify(move |s| {
+                config.borrow_mut().audiobooks.voice_boost = s.is_active();
+            });
+        }
+        book_group.add(&book_vb);
+        page.add(&book_group);
+
+        page
     }
 
     /// Build the ReplayGain / DSP / Output groups of the Sound page (Phase
@@ -1930,7 +2152,7 @@ impl ConservatoryWindow {
             gtk::ShortcutTrigger::parse_string("<Control>comma"),
             Some(gtk::CallbackAction::new(move |_, _| {
                 if let Some(win) = weak.upgrade() {
-                    win.open_sound_settings();
+                    win.open_preferences();
                 }
                 glib::Propagation::Stop
             })),
@@ -2718,9 +2940,25 @@ fn read_slider_bands(sliders: &[gtk::Scale]) -> [f64; EQ_CENTRES.len()] {
     bands
 }
 
+/// The import-mode `ComboRow` index for an [`ImportMode`] (Copy = 0, Move = 1),
+/// and its inverse (Phase 10b). The one non-trivial config-row projection.
+fn import_mode_index(mode: ImportMode) -> u32 {
+    match mode {
+        ImportMode::Copy => 0,
+        ImportMode::Move => 1,
+    }
+}
+
+fn import_mode_from_index(index: u32) -> ImportMode {
+    match index {
+        1 => ImportMode::Move,
+        _ => ImportMode::Copy,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::view_page_name;
+    use super::{ImportMode, import_mode_from_index, import_mode_index, view_page_name};
 
     #[test]
     fn view_keys_map_to_page_names() {
@@ -2729,5 +2967,14 @@ mod tests {
         assert_eq!(view_page_name(3), Some("audiobooks"));
         assert_eq!(view_page_name(0), None);
         assert_eq!(view_page_name(4), None);
+    }
+
+    #[test]
+    fn import_mode_index_round_trips() {
+        for mode in [ImportMode::Copy, ImportMode::Move] {
+            assert_eq!(import_mode_from_index(import_mode_index(mode)), mode);
+        }
+        // Out-of-range index degrades to the safe Copy default.
+        assert_eq!(import_mode_from_index(99), ImportMode::Copy);
     }
 }

@@ -19,17 +19,42 @@ mod ui;
 
 const APP_ID: &str = "org.virinvictus.Conservatory";
 
-/// Compact the Columns UI tables toward the dense deadbeef look (GTK's default
-/// list padding is roomy). Theme/colour follow the system; Kanagawa Dragon is a
-/// later pass.
+/// The app's visual identity (Phase 12a): the Kanagawa Dragon palette mapped onto
+/// libadwaita's named colours (the source-of-truth mapping is `docs/theme.md`),
+/// plus the structural Columns UI compaction and the lifted album-cover cards.
+/// The dense `.data-table` padding is deliberate (the deadbeef model); the covers
+/// get an Amberol-style drop shadow, and the per-album accent ring is layered on
+/// at runtime via `ui/accent.rs` (`.cover-acc-RRGGBB`).
 const CSS: &str = "\
+@define-color window_bg_color #181616;
+@define-color window_fg_color #c5c9c5;
+@define-color view_bg_color #12120f;
+@define-color view_fg_color #c5c9c5;
+@define-color headerbar_bg_color #1d1c19;
+@define-color headerbar_fg_color #c5c9c5;
+@define-color sidebar_bg_color #12120f;
+@define-color sidebar_fg_color #c5c9c5;
+@define-color secondary_sidebar_bg_color #181616;
+@define-color card_bg_color #1d1c19;
+@define-color card_fg_color #c5c9c5;
+@define-color popover_bg_color #1d1c19;
+@define-color popover_fg_color #c5c9c5;
+@define-color dialog_bg_color #1d1c19;
+@define-color accent_color #c4746e;
+@define-color accent_bg_color #c4746e;
+@define-color accent_fg_color #12120f;
+@define-color warning_color #c4b28a;
+@define-color error_color #c4746e;
+@define-color success_color #87a987;
+
 columnview.data-table > listview > row > cell { padding-top: 1px; padding-bottom: 1px; }
 columnview.data-table > listview > row:hover { background: alpha(currentColor, 0.04); }
 columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height: 0; }
 .numeric { font-feature-settings: \"tnum\"; }
 .rating-stars { color: @accent_color; }
 .filter-warn text { background-color: alpha(@warning_color, 0.20); }
-.now-bar { padding: 4px 10px; border-top: 1px solid alpha(currentColor, 0.12); }
+.now-bar { padding: 6px 12px; border-top: 1px solid alpha(currentColor, 0.10); }
+.now-bar-cover { border-radius: 6px; box-shadow: 0 1px 5px rgba(0,0,0,0.40); background: alpha(currentColor, 0.06); }
 .queue-row { padding: 4px 8px; }
 .queue-row.playing { background: alpha(@accent_color, 0.16); }
 .queue-list { border-left: 1px solid alpha(currentColor, 0.12); }
@@ -37,11 +62,11 @@ columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height
 .chapter-row.current-chapter { background: alpha(@accent_color, 0.16); font-weight: bold; }
 .book-tile { padding: 8px; border-radius: 10px; }
 .book-tile:selected { background: alpha(@accent_color, 0.18); }
-.book-cover { border-radius: 6px; background: alpha(currentColor, 0.06); }
-.book-accent { box-shadow: inset 0 -4px 0 alpha(currentColor, 0.25); }
-.inspector-cover { border-radius: 8px; background: alpha(currentColor, 0.06); }
-.now-playing-cover { border-radius: 8px; background: alpha(currentColor, 0.06); }
-.now-playing-drawer { border-top: 1px solid alpha(currentColor, 0.12); }
+.cover-art { border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); background: alpha(currentColor, 0.05); }
+.book-cover { border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.35); background: alpha(currentColor, 0.06); }
+.inspector-cover { border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); background: alpha(currentColor, 0.06); }
+.now-playing-cover { border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); background: alpha(currentColor, 0.06); }
+.now-playing-drawer { border-top: 1px solid alpha(currentColor, 0.10); }
 ";
 
 fn load_css() {
@@ -61,7 +86,12 @@ fn main() -> glib::ExitCode {
 
     let app = adw::Application::builder().application_id(APP_ID).build();
 
-    app.connect_startup(|_| load_css());
+    app.connect_startup(|_| {
+        // Kanagawa Dragon is a dark palette (Phase 12a); force the dark scheme so
+        // the `@define-color` overrides land on the dark variant, not the light.
+        adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
+        load_css();
+    });
 
     app.connect_activate(|app| {
         // Positional args are the DB path then the library root; flags (`--debug`)

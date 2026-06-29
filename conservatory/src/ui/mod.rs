@@ -1,6 +1,7 @@
 //! The GTK4/libadwaita browse UI (Phase 3b). Programmatic widgets (no `.ui`
 //! templates); all data logic lives in `conservatory-core`.
 
+pub mod accent;
 #[cfg(feature = "audiobooks")]
 pub mod audiobooks;
 pub mod coalescing;

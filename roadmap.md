@@ -738,4 +738,38 @@ The finishing pass that brings the music surface up to the deadbeef / foobar2000
 
 ### Deferred (recorded, not built)
 
-- [ ] **Spectrum visualizer** (the deadbeef `spectrum` widget): a real-time frequency-bar analyzer. Captured here at the user's request, but **post-1.0 and optional**: it needs an audio-tap off the libmpv output (an `af` data sink or a visualizer hook) and is player-toy territory rather than core to "Calibre for audio". Built only after the parity furniture above, if at all. **Its home is the v0.0.38 Now Playing drawer (11c)** (the user's intent), so it slots in there beside the metadata when built.
+- [ ] **Spectrum visualizer** (the deadbeef `spectrum` widget): a real-time frequency-bar analyzer. Captured here at the user's request; it needs an audio-tap off the libmpv output (an `af` data sink or a visualizer hook). **Pulled forward into Phase 12d** (the user asked for it as part of the visual overhaul); its home is the v0.0.38 Now Playing drawer (11c).
+
+## Phase 12 — Visual identity & album-art-forward UI (the "life" overhaul)
+
+The shipped UI was flagged as "dull and lifeless": no palette (the flat grey system theme), no album art in the music browse, an info-thin playback bar. Research compared us to the user's DeaDBeeF, Cozy, and Amberol. Decisions (user-confirmed): a fixed Kanagawa Dragon palette with the per-album accent tinting highlights only (not Amberol's full adaptive recolour); a cover column plus a large docked cover panel (the deadbeef `coverart` layout, no new album-grid view); the spectrum visualizer in scope, a blurred cover background deferred (needs a `GskBlurNode` render widget, no GTK4 CSS route). See `docs/theme.md`.
+
+### Phase 12a — Kanagawa Dragon theme + centralized accent ✅ (v0.0.77)
+
+- [x] The Kanagawa Dragon palette (Dragon variant) mapped onto libadwaita's named colours via `@define-color` in `main.rs`, and the dark scheme forced (`AdwStyleManager` `ForceDark`). The whole app is warm-dark with the dragonRed (`#c4746e`) accent instead of flat grey. Mapping documented in `docs/theme.md`.
+- [x] Lifted album-cover cards: a 10px radius + Amberol-style drop shadow (`.cover-art` and the per-surface cover variants), and the previously-styleless `.now-bar-cover` filled in.
+- [x] A centralized accent helper, `ui/accent.rs` (`AccentProvider` + `apply_cover_ring`): one display-wide-provider technique (the non-deprecated route to dynamic per-item colour) for the 2px accent ring layered over the drop shadow. The inspector is migrated onto it (de-dups the first of the three copies); the browse covers, Now-bar, and Now Playing surfaces adopt it in 12b/12c. Pure helpers (`accent_class`, `cover_ring_css`) unit-tested.
+
+*Usable artifact:* the app finally has a visual identity. Launch and it is unmistakably Kanagawa Dragon, with shadowed cover cards, before any structural change.
+
+### Phase 12b — Album art in the browse (cover column + cover panel) (v0.0.78)
+
+- [ ] `TrackBrief` + `facet_tracks` gain `cover_path` / `accent_rgb` (join `albums`); threaded through `query_leaf`. Read test.
+- [ ] A cover-thumbnail column in the track list (~48px rounded `.cover-art`, accent ring via `ui/accent.rs`), with a small texture cache so scrolling a large library does not re-decode.
+- [ ] The Phase 11a inspector promoted into the large cover panel (cover 240→~300px, accent ring, default open), the deadbeef `coverart` + `selproperties` right column.
+
+*Usable artifact:* the music browse shows album art, a thumbnail per row plus a large accent-framed cover panel.
+
+### Phase 12c — Now-bar enrichment + Now Playing polish (v0.0.79)
+
+- [ ] The Now-bar carries a larger styled cover (~56px) with the per-album accent ring, a richer info cluster, an accent-tinted seek fill, and more breathing room (the answer to "more info, not just a bigger play bar").
+- [ ] Now Playing drawer spacing / typography polish, and a reserved slot for the 12d spectrum.
+
+*Usable artifact:* the playback bar is informative and album-art-led; the Now Playing drawer reads as composed.
+
+### Phase 12d — Spectrum visualizer (v0.0.80, separate sign-off)
+
+- [ ] Spike the libmpv audio tap (an `astats` / `ebur128` `af-metadata` stage polled per tick, vs a true FFT). Pragmatic fallback: a multi-bar level / VU meter if a clean PCM tap proves infeasible (decided at the spike, surfaced to the user).
+- [ ] An accent-coloured bar widget in the Now Playing drawer slot; levels arrive via a new `PlayerSnapshot` field on the existing poll. Band / smoothing math pure and unit-tested.
+
+*Usable artifact:* a real-time accent-coloured visualizer in the Now Playing drawer (deadbeef parity), or an honest level meter if the FFT tap is not feasible.

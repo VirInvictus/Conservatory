@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.0.77
+
+Phase 12a: a visual identity. The app now ships the Kanagawa Dragon theme instead of inheriting the flat grey system look, the first step of the Phase 12 UI overhaul.
+
+- **Kanagawa Dragon palette.** The Dragon variant mapped onto libadwaita's named colours, with the dark scheme forced. Warm-dark chrome (`#181616` ground, `#c5c9c5` text) and the dragonRed accent (`#c4746e`) on the rating stars, the playing row, and selection, in place of the system grey. The full palette-to-libadwaita mapping is documented in `docs/theme.md`.
+- **Lifted cover cards.** Album, inspector, Now Playing, book, and Now-bar covers get a rounded card with an Amberol-style drop shadow, so artwork reads as a raised object rather than a flat thumbnail. The previously styleless Now-bar cover class is filled in.
+- **Centralized accent.** A shared `ui/accent.rs` helper replaces the copy-pasted per-module accent providers with one technique: a 2px per-album accent ring layered over the cover's drop shadow. The properties inspector is migrated onto it; the browse covers, Now-bar, and Now Playing surfaces adopt it in the following sub-phases.
+- **Tests.** The accent helper's pure parts (the class name and the ring CSS) are unit-tested; the visual result is verified by building and by launching. Full workspace suite + clippy `-D warnings` + fmt + the music-only build green. No new dependency, no schema change.
+
+This starts Phase 12 (Visual identity & album-art-forward UI). Still to come: album art in the music browse (a cover column and a large cover panel), an enriched playback bar, and a spectrum visualizer.
+
 ## v0.0.76
 
 Phase 11d: transport conveniences, completing the Phase 11 Columns UI parity pass.

@@ -34,3 +34,6 @@ debug-memory.log
 *.swo
 .idea/
 .vscode/
+
+# Competitor / reference clones for UI research (local only)
+/.repos/

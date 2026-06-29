@@ -8,7 +8,6 @@
 //! track_fields`); the window resolves the rows from the DB and hands them in,
 //! so this module builds no DB reads.
 
-use std::cell::RefCell;
 use std::path::Path;
 
 use gtk::prelude::*;
@@ -18,6 +17,7 @@ use conservatory_core::db::{Album, Track};
 use conservatory_core::format_size;
 
 use crate::playqueue::fmt_secs;
+use crate::ui::accent::AccentProvider;
 
 /// The inspector: the revealer the window docks, plus the cover + grid it fills.
 pub struct Inspector {
@@ -26,9 +26,8 @@ pub struct Inspector {
     cover: gtk::Image,
     cover_frame: gtk::Frame,
     grid: gtk::Grid,
-    /// The single display-wide provider carrying the current cover's accent rule
-    /// (per-widget providers are deprecated); replaced on each `show`.
-    accent_provider: RefCell<Option<gtk::CssProvider>>,
+    /// The shared accent helper (Phase 12a) carrying the current cover's ring.
+    accent: AccentProvider,
 }
 
 /// Build the inspector (revealed off; the window appends `revealer` to the right
@@ -85,7 +84,7 @@ pub fn build_inspector() -> Inspector {
         cover,
         cover_frame,
         grid,
-        accent_provider: RefCell::new(None),
+        accent: AccentProvider::new(),
     }
 }
 
@@ -150,34 +149,12 @@ impl Inspector {
         }
     }
 
-    /// Tint the cover frame with the album accent via a single display-wide rule
-    /// (the non-deprecated route to dynamic per-item colour, as the audiobook
-    /// shelf does). The old provider/class is swapped out each call.
+    /// Tint the cover frame with the album accent ring (Phase 12a routes this
+    /// through the shared `AccentProvider`, the non-deprecated per-item colour
+    /// technique, swapping the rule on each call).
     fn apply_accent(&self, accent: Option<u32>) {
-        let Some(display) = gtk::gdk::Display::default() else {
-            return;
-        };
-        if let Some(old) = self.accent_provider.borrow_mut().take() {
-            gtk::style_context_remove_provider_for_display(&display, &old);
-        }
-        match accent {
-            Some(rgb) => {
-                let hex = rgb & 0x00ff_ffff;
-                let css =
-                    format!(".inspector-acc-{hex:06x} {{ box-shadow: 0 0 0 2px #{hex:06x}; }}");
-                let provider = gtk::CssProvider::new();
-                provider.load_from_string(&css);
-                gtk::style_context_add_provider_for_display(
-                    &display,
-                    &provider,
-                    gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-                );
-                self.cover_frame
-                    .set_css_classes(&["inspector-cover", &format!("inspector-acc-{hex:06x}")]);
-                *self.accent_provider.borrow_mut() = Some(provider);
-            }
-            None => self.cover_frame.set_css_classes(&["inspector-cover"]),
-        }
+        self.accent
+            .apply_cover_ring(&self.cover_frame, &["inspector-cover"], accent);
     }
 }
 

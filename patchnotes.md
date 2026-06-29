@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.0.67
+
+Phase 8c-iii (part 1 of 2): the audit can now detect MP3s carrying a stray APEv2 tag. An APE tag sitting on an MP3 shadows the file's ID3 in players like foobar2000 and DeaDBeeF, silently defeating tag edits. This release reports them; the next will strip them.
+
+- **`audit --tier ape`.** A new audit tier (`conservatory-cli audit <db> --tier ape --root <root>`) flags every MP3 that carries a stray APEv2 tag. Like the cover-art checks it needs `--root` (it reads each file); it scans only the last 128 KB of each MP3, so it is cheap.
+- **A careful byte parser.** The detection is a hand-rolled APEv2 parser that anchors on the tag's footer and validates it (the spec-mandated reserved-zero bytes, and a header-consistency check), so a stray "APETAGEX" sequence inside the audio is not mistaken for a real tag.
+- **Tests.** The parser is unit-tested against synthesized tags (with and without a header, with and without a trailing ID3v1, and the false-positive guard), plus a filesystem test for the audit tier. Verified end to end (a clean library reports none; a crafted APE tag is flagged). Full workspace suite + clippy `-D warnings` + fmt + the music-only build green.
+
 ## v0.0.66
 
 Phase 8c-ii: a `stats` command that summarizes the library, the second slice of the Phase 8c maintenance work. It is a port of Lattice's statistics report, run over Conservatory's database. Read-only. No new dependency, no migration. With this, only the stray-APE detect + strip (8c-iii) remains in Phase 8c.

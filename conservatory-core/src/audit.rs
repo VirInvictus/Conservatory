@@ -123,6 +123,14 @@ pub struct ArtResDeficiency {
     pub height: u32,
 }
 
+/// An MP3 carrying a stray APEv2 tag that shadows its ID3 (Phase 8c-iii). The
+/// fix is the `apestrip` verb; this tier only reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApeDeficiency {
+    pub track_id: i64,
+    pub file_path: String,
+}
+
 /// The full audit report; non-OK findings only.
 #[derive(Debug, Clone, Default)]
 pub struct AuditReport {
@@ -131,6 +139,7 @@ pub struct AuditReport {
     pub replaygain: Vec<RgCoverage>,
     pub missing_art: Vec<ArtDeficiency>,
     pub low_res_art: Vec<ArtResDeficiency>,
+    pub stray_ape: Vec<ApeDeficiency>,
 }
 
 impl AuditReport {
@@ -140,8 +149,13 @@ impl AuditReport {
             && self.replaygain.is_empty()
             && self.missing_art.is_empty()
             && self.low_res_art.is_empty()
+            && self.stray_ape.is_empty()
     }
 }
+
+/// How many bytes from the end of an MP3 to scan for a stray APE footer; an
+/// APEv2 tag is far smaller than this in practice.
+pub const APE_TAIL_BYTES: u64 = 128 * 1024;
 
 /// Which tiers to run, and the two tunables.
 #[derive(Debug, Clone)]
@@ -151,6 +165,7 @@ pub struct AuditOptions {
     pub replaygain: bool,
     pub art: bool,
     pub artres: bool,
+    pub ape: bool,
     pub bitrate_floor: u32,
     pub min_art_px: (u32, u32),
 }
@@ -163,6 +178,7 @@ impl Default for AuditOptions {
             replaygain: true,
             art: true,
             artres: true,
+            ape: true,
             bitrate_floor: DEFAULT_BITRATE_FLOOR,
             min_art_px: DEFAULT_MIN_ART_PX,
         }
@@ -344,6 +360,44 @@ fn cover_dimensions(abs: &Path) -> Option<(u32, u32)> {
         .ok()
 }
 
+/// Tier 6: MP3s carrying a stray APEv2 tag (Phase 8c-iii). Needs `root` (a file
+/// read); reads only the last [`APE_TAIL_BYTES`] of each MP3 and checks for a
+/// valid trailing APE footer. Non-MP3 tracks are skipped.
+pub fn audit_ape(rows: &[AuditTrackRow], root: &Path) -> Vec<ApeDeficiency> {
+    rows.iter()
+        .filter(|r| is_mp3(r.format.as_deref(), &r.file_path))
+        .filter(|r| {
+            read_file_tail(&root.join(&r.file_path), APE_TAIL_BYTES)
+                .map(|tail| crate::ape::has_ape(&tail))
+                .unwrap_or(false)
+        })
+        .map(|r| ApeDeficiency {
+            track_id: r.track_id,
+            file_path: r.file_path.clone(),
+        })
+        .collect()
+}
+
+fn is_mp3(format: Option<&str>, path: &str) -> bool {
+    format.is_some_and(|f| f.eq_ignore_ascii_case("mp3"))
+        || std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("mp3"))
+}
+
+/// Read up to the last `n` bytes of a file (the whole file if smaller).
+fn read_file_tail(abs: &Path, n: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(abs)?;
+    let len = f.metadata()?.len();
+    let start = len.saturating_sub(n);
+    f.seek(SeekFrom::Start(start))?;
+    let mut buf = Vec::with_capacity((len - start) as usize);
+    f.read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
 /// Run the requested audit tiers. Takes the track rows by value so the Opus
 /// R128 fallback can augment them before the ReplayGain bucketing.
 pub fn run_audit(
@@ -373,6 +427,11 @@ pub fn run_audit(
         if opts.artres {
             report.low_res_art = low_res;
         }
+    }
+    if opts.ape
+        && let Some(root) = root
+    {
+        report.stray_ape = audit_ape(&tracks, root);
     }
     report
 }

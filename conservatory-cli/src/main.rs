@@ -70,6 +70,8 @@ enum AuditTier {
     Art,
     /// Low-resolution cover art (needs --root).
     Artres,
+    /// MP3s carrying a stray APEv2 tag (needs --root).
+    Ape,
 }
 
 #[derive(Parser)]
@@ -3365,6 +3367,7 @@ fn audit_options(tiers: &[AuditTier], bitrate_floor: u32, min_art_px: u32) -> Au
         replaygain: all || tiers.contains(&AuditTier::Replaygain),
         art: all || tiers.contains(&AuditTier::Art),
         artres: all || tiers.contains(&AuditTier::Artres),
+        ape: all || tiers.contains(&AuditTier::Ape),
         bitrate_floor,
         min_art_px: (min_art_px, min_art_px),
     }
@@ -3381,8 +3384,10 @@ fn run_audit_verb(
     let opts = audit_options(&tiers, bitrate_floor, min_art_px);
     // The filesystem tiers degrade without a root; warn once so the absence of
     // findings is not mistaken for a clean library.
-    if root.is_none() && (opts.artres || opts.replaygain || opts.art) {
-        eprintln!("note: without --root, cover files / art resolution / Opus R128 are not checked");
+    if root.is_none() && (opts.artres || opts.replaygain || opts.art || opts.ape) {
+        eprintln!(
+            "note: without --root, cover files / art resolution / Opus R128 / stray APE are not checked"
+        );
     }
 
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
@@ -3395,12 +3400,13 @@ fn run_audit_verb(
         Format::Human => print_audit_human(&report, &opts),
         Format::Tsv => print_audit_tsv(&report),
         Format::Json => println!(
-            "{{\"missing_tags\":{},\"low_bitrate\":{},\"replaygain\":{},\"missing_art\":{},\"low_res_art\":{}}}",
+            "{{\"missing_tags\":{},\"low_bitrate\":{},\"replaygain\":{},\"missing_art\":{},\"low_res_art\":{},\"stray_ape\":{}}}",
             report.missing_tags.len(),
             report.low_bitrate.len(),
             report.replaygain.len(),
             report.missing_art.len(),
             report.low_res_art.len(),
+            report.stray_ape.len(),
         ),
     }
     Ok(())
@@ -3449,12 +3455,19 @@ fn print_audit_human(report: &AuditReport, opts: &AuditOptions) {
             println!("{} / {}  ({}x{})", d.artist, d.title, d.width, d.height);
         }
     }
+    if opts.ape {
+        println!("\n=== Stray APEv2 tags ({}) ===", report.stray_ape.len());
+        for d in &report.stray_ape {
+            println!("{}", d.file_path);
+        }
+    }
 
     let total = report.missing_tags.len()
         + report.low_bitrate.len()
         + report.replaygain.len()
         + report.missing_art.len()
-        + report.low_res_art.len();
+        + report.low_res_art.len()
+        + report.stray_ape.len();
     println!("\n{total} finding(s) total");
 }
 
@@ -3486,6 +3499,9 @@ fn print_audit_tsv(report: &AuditReport) {
             "artres\t{}\t{}\t{}x{}",
             d.artist, d.title, d.width, d.height
         );
+    }
+    for d in &report.stray_ape {
+        println!("ape\t{}", d.file_path);
     }
 }
 

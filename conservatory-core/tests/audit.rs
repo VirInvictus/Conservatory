@@ -4,8 +4,8 @@
 
 use std::fs;
 
-use conservatory_core::audit::audit_art;
-use conservatory_core::db::AuditAlbumRow;
+use conservatory_core::audit::{audit_ape, audit_art};
+use conservatory_core::db::{AuditAlbumRow, AuditTrackRow};
 use image::{Rgb, RgbImage};
 use tempfile::tempdir;
 
@@ -64,4 +64,49 @@ fn missing_flags_null_and_absent_covers() {
     assert!(ids.contains(&1), "NULL cover_path is missing");
     assert!(ids.contains(&2), "a recorded-but-absent cover is missing");
     assert!(!ids.contains(&3), "the present cover is fine");
+}
+
+fn ape_footer(item_bytes: usize) -> Vec<u8> {
+    let mut b = vec![0u8; 32];
+    b[..8].copy_from_slice(b"APETAGEX");
+    b[8..12].copy_from_slice(&2000u32.to_le_bytes());
+    b[12..16].copy_from_slice(&((item_bytes + 32) as u32).to_le_bytes()); // items + footer
+    b[16..20].copy_from_slice(&1u32.to_le_bytes()); // count
+    // flags 0 => footer, no header
+    b
+}
+
+fn track(track_id: i64, file_path: &str) -> AuditTrackRow {
+    AuditTrackRow {
+        track_id,
+        album_id: Some(1),
+        title: "t".into(),
+        artist: Some("A".into()),
+        track_no: Some(1),
+        genre_count: 1,
+        format: Some("mp3".into()),
+        bitrate: Some(320),
+        replaygain_track: None,
+        replaygain_album: None,
+        file_path: file_path.to_string(),
+    }
+}
+
+#[test]
+fn ape_tier_flags_only_files_with_a_stray_ape() {
+    let root = tempdir().unwrap();
+    // A clean mp3 (just fake audio).
+    fs::write(root.path().join("clean.mp3"), vec![0xAAu8; 500]).unwrap();
+    // An mp3 with a stray APE tag appended (items + footer).
+    let mut tagged = vec![0xBBu8; 500];
+    let items = vec![0x22u8; 20];
+    tagged.extend_from_slice(&items);
+    tagged.extend_from_slice(&ape_footer(items.len()));
+    fs::write(root.path().join("tagged.mp3"), tagged).unwrap();
+
+    let rows = vec![track(1, "clean.mp3"), track(2, "tagged.mp3")];
+    let found = audit_ape(&rows, root.path());
+
+    assert_eq!(found.len(), 1, "only the APE-tagged file flags");
+    assert_eq!(found[0].track_id, 2);
 }

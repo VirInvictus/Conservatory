@@ -1,6 +1,6 @@
 # Keymap (draft proposal)
 
-> **Status: provisional, partly wired.** Live so far: `Ctrl+F` (filter bar, 3c); **double-click / Enter** on a track plays the visible list, **`Ctrl+Enter`** appends the selection, and the **Now-bar transport buttons** work (4b-ii-a / c); the **queue drawer** (`Ctrl+U` to toggle) with `Alt+↑/↓` reorder, `Delete`, `Ctrl+Shift+C`, and drag-and-drop (4b-ii-b); the saved queue resumes paused on launch (4b-ii-c); **media keys / headset buttons** work via MPRIS2 (4c-i); **`Ctrl+E`** opens the bulk-edit dialog over the selection (5a-ii); **`Alt+1` / `Alt+2`** switch between the Music and Podcasts views (6b-i; the Podcasts triage browse + playback + per-show settings shipped through 6b-ii). The **Now Playing drawer** (`Ctrl+I`, or click the Now-bar cover/title) shows the current item's metadata (v0.0.38). **`Ctrl+Shift+→/←`** (and the Now-bar chapter buttons, shown only for a chaptered item) skip between an episode's chapters (6c-iii-b). **`S`** pops the Now-bar sleep-timer menu (6c-iii-d; available for any playing item, the boundary row labelled by kind). Not yet wired: the in-window keyboard *playback* bindings below (`Space`, `Ctrl+→/←`, etc.). This stays a proposed keymap, finalized as those surfaces land, not a full description of current behaviour. It encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** GNOME/libadwaita conventions are followed where one exists.
+> **Status: provisional, partly wired.** Live so far: `Ctrl+F` (filter bar, 3c); **double-click / Enter** on a track plays the visible list, **`Ctrl+Enter`** appends the selection, and the **Now-bar transport buttons** work (4b-ii-a / c); the **queue drawer** (`Ctrl+U` to toggle) with `Alt+↑/↓` reorder, `Delete`, `Ctrl+Shift+C`, and drag-and-drop (4b-ii-b); the saved queue resumes paused on launch (4b-ii-c); **media keys / headset buttons** work via MPRIS2 (4c-i); **`Ctrl+E`** opens the bulk-edit dialog over the selection (5a-ii); **`Alt+1` / `Alt+2`** switch between the Music and Podcasts views (6b-i; the Podcasts triage browse + playback + per-show settings shipped through 6b-ii). The **Now Playing drawer** (`Ctrl+I`, or click the Now-bar cover/title) shows the current item's metadata (v0.0.38). **`Ctrl+Shift+→/←`** (and the Now-bar chapter buttons, shown only for a chaptered item) skip between an episode's chapters (6c-iii-b). **`S`** pops the Now-bar sleep-timer menu (6c-iii-d; available for any playing item, the boundary row labelled by kind). **`Ctrl+M`** toggles stop-after-current and **`Ctrl+J`** jumps to the playing track (11d; both also in the header primary menu). Not yet wired: the in-window keyboard *playback* bindings below (`Space`, `Ctrl+→/←`, etc.). This stays a proposed keymap, finalized as those surfaces land, not a full description of current behaviour. It encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** GNOME/libadwaita conventions are followed where one exists.
 
 ## Global
 
@@ -12,7 +12,7 @@
 | `Ctrl+Q` | Quit |
 | `F1` | Keyboard shortcuts window |
 | `Alt+1` / `Alt+2` / `Alt+3` | Switch top-level view: Music / Podcasts / Audiobooks (the `AdwTabView` `Alt+N` convention; a global shortcut switching the `AdwViewStack`, Phase 6b-i. `Alt+3` is inert until the Audiobooks tab, 7b) |
-| `Ctrl+J` | Open the jobs / activity surface (imports, moves, fetches) |
+| `Ctrl+Shift+J` | Open the jobs / activity surface (imports, moves, fetches) (proposed; `Ctrl+J` now jumps to the playing track, Phase 11d) |
 
 ## Browse (Music)
 
@@ -37,7 +37,9 @@
 | `→` / `←` | Seek forward / back (small step) |
 | `Shift+→` / `Shift+←` | Seek forward / back (large step) |
 | `Ctrl+↑` / `Ctrl+↓` | Volume up / down |
-| `Ctrl+M` | Mute |
+| `Ctrl+0` | Mute (proposed) |
+| `Ctrl+M` | Stop after current: finish the current item, then pause at the boundary (v0.0.76; also the header menu) |
+| `Ctrl+J` | Jump to the playing track: select and scroll to it in the browse list (v0.0.76; also the header menu) |
 | Media keys | Play/pause/next/previous via MPRIS2 (spec §6.5) |
 
 ## Queue

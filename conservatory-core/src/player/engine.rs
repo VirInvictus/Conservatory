@@ -119,6 +119,10 @@ struct Engine {
     /// within the one queue item. Used with the segment's cumulative `start` to
     /// report a book-absolute position.
     book_segment: usize,
+    /// Stop-after-current is armed (Phase 11d): the engine pauses at the end of
+    /// the current item instead of playing on, then disarms. Consulted at the
+    /// EOF boundary alongside the `EndOfItem` sleep mode.
+    stop_after_current: bool,
 }
 
 impl Engine {
@@ -150,6 +154,7 @@ impl Engine {
             sleep: None,
             sleep_tick: Instant::now(),
             book_segment: 0,
+            stop_after_current: false,
         }
     }
 
@@ -391,6 +396,9 @@ impl Engine {
                 self.sleep = mode.map(SleepClock::new);
                 self.sleep_tick = Instant::now();
             }
+            PlayerCommand::SetStopAfterCurrent(on) => {
+                self.stop_after_current = on;
+            }
             PlayerCommand::Stop => {
                 self.set_paused(true);
                 self.flush(StateEvent::Quit, true);
@@ -436,9 +444,15 @@ impl Engine {
                     self.sleep.as_ref().map(|c| c.mode()),
                     Some(SleepMode::EndOfItem)
                 );
+                // Stop-after-current (Phase 11d) shares the EndOfItem boundary
+                // behaviour: cue the next item but pause there, then disarm.
+                let stop_after_current = self.stop_after_current;
                 self.advance_after_end();
-                if stop_after_item {
-                    self.sleep = None;
+                if stop_after_item || stop_after_current {
+                    if stop_after_item {
+                        self.sleep = None;
+                    }
+                    self.stop_after_current = false;
                     if !self.ended {
                         self.set_paused(true);
                         self.flush(StateEvent::Pause, true);
@@ -902,6 +916,7 @@ impl Engine {
             audio_devices: self.audio_devices.clone(),
             audio_device: self.audio_device.clone(),
             sleep: self.sleep.as_ref().map(|c| c.status()),
+            stop_after_current: self.stop_after_current,
         };
         if let Ok(mut guard) = self.snapshot.lock() {
             *guard = snap;

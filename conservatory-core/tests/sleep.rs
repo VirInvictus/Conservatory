@@ -187,3 +187,36 @@ fn end_of_item_pauses_at_the_boundary() {
 
     h.runtime.block_on(h.worker.shutdown_ack()).ok();
 }
+
+/// Stop-after-current (Phase 11d) shares the end-of-item boundary: the current
+/// item plays to completion, the next is cued but paused (never played), and the
+/// flag disarms.
+#[test]
+fn stop_after_current_pauses_at_the_boundary() {
+    let h = harness();
+    let player = player::spawn_null(h.worker.clone(), h.runtime.handle().clone()).unwrap();
+
+    let two: Vec<PlayableItem> = h.items.iter().take(2).cloned().collect();
+    player.play_queue(two, 0);
+    player.set_stop_after_current(true);
+
+    // The first item ends, the engine pauses cued on the second, and disarms.
+    wait_until(&player, 30, |s| {
+        s.current_index == Some(1) && s.paused && !s.stop_after_current
+    });
+    let snap = player.snapshot();
+    assert!(
+        !snap.ended,
+        "the queue did not end; it paused at the boundary"
+    );
+
+    player.shutdown();
+
+    let conn = h.pool.open().unwrap();
+    let first = get_track(&conn, h.ids[0]).unwrap().unwrap();
+    let second = get_track(&conn, h.ids[1]).unwrap().unwrap();
+    assert_eq!(first.play_count, 1, "the first item completed");
+    assert_eq!(second.play_count, 0, "the second item was never played");
+
+    h.runtime.block_on(h.worker.shutdown_ack()).ok();
+}

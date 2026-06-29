@@ -23,6 +23,7 @@ use libadwaita as adw;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use gtk::gio;
 use gtk::glib;
 
 use conservatory_core::db::{
@@ -113,6 +114,9 @@ mod imp {
         pub status_left: OnceCell<gtk::Label>,
         pub status_right: OnceCell<gtk::Label>,
         pub last_play_state: Cell<(Option<i64>, bool)>,
+        // The stateful "stop after current" menu action (Phase 11d), held so the
+        // poll can sync its checked state when the engine disarms at the boundary.
+        pub stop_action: OnceCell<gio::SimpleAction>,
         // The playing track's static technical fields (format / sample-rate /
         // bitrate), cached on track change so the per-tick tech-line refresh
         // (which folds in the live mpv channel count) needs no DB read. `None`s
@@ -363,6 +367,7 @@ impl ConservatoryWindow {
         });
         header.pack_end(&prefs_btn);
         header.pack_end(&self.build_output_menu_button());
+        header.pack_end(&self.build_primary_menu());
 
         let edit_btn = gtk::Button::from_icon_name("document-edit-symbolic");
         edit_btn.set_tooltip_text(Some("Edit selected tracks (Ctrl+E)"));
@@ -2349,6 +2354,28 @@ impl ConservatoryWindow {
                 glib::Propagation::Stop
             })),
         ));
+        // Ctrl+M toggles stop-after-current; Ctrl+J jumps to the playing track
+        // (Phase 11d). Both also live in the header primary menu.
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>m"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade() {
+                    win.toggle_stop_after_current();
+                }
+                glib::Propagation::Stop
+            })),
+        ));
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>j"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade() {
+                    win.jump_to_current();
+                }
+                glib::Propagation::Stop
+            })),
+        ));
         // Ctrl+Shift+→/← skip to the next / previous chapter of the current item
         // (Phase 6c-iii-b); a no-op when it has no chapters.
         for (trigger, dir) in [
@@ -2568,6 +2595,15 @@ impl ConservatoryWindow {
         };
         let snap = player.snapshot();
 
+        // Keep the stop-after-current toggle's checkmark in step with the engine,
+        // which disarms the flag once the boundary fires (Phase 11d).
+        if let Some(a) = imp.stop_action.get() {
+            let cur = a.state().and_then(|v| v.get::<bool>()).unwrap_or(false);
+            if cur != snap.stop_after_current {
+                a.set_state(&snap.stop_after_current.to_variant());
+            }
+        }
+
         if snap.ended || snap.track_id.is_none() {
             if imp.last_shown.get().is_some() {
                 imp.last_shown.set(None);
@@ -2745,6 +2781,83 @@ impl ConservatoryWindow {
                     row.set_playing(s);
                 }
             }
+        }
+    }
+
+    /// The header primary menu (Phase 11d): the transport conveniences that are
+    /// keyboard-first but want a visible home (spec §3.1). Registers the backing
+    /// window actions and returns the `MenuButton`.
+    fn build_primary_menu(&self) -> gtk::MenuButton {
+        // Stop-after-current: a stateful toggle (rendered with a checkmark).
+        let stop = gio::SimpleAction::new_stateful("stop-after-current", None, &false.to_variant());
+        let weak = self.downgrade();
+        stop.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.toggle_stop_after_current();
+            }
+        });
+        self.add_action(&stop);
+        let _ = self.imp().stop_action.set(stop);
+
+        let jump = gio::SimpleAction::new("jump-to-current", None);
+        let weak = self.downgrade();
+        jump.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.jump_to_current();
+            }
+        });
+        self.add_action(&jump);
+
+        let menu = gio::Menu::new();
+        menu.append(Some("Stop After Current"), Some("win.stop-after-current"));
+        menu.append(Some("Jump to Current Track"), Some("win.jump-to-current"));
+
+        gtk::MenuButton::builder()
+            .icon_name("open-menu-symbolic")
+            .tooltip_text("Menu")
+            .menu_model(&menu)
+            .build()
+    }
+
+    /// Toggle stop-after-current (Phase 11d, `Ctrl+M`): the engine finishes the
+    /// current item, then pauses at the boundary instead of playing on.
+    fn toggle_stop_after_current(&self) {
+        let imp = self.imp();
+        let Some(player) = imp.player.get() else {
+            return;
+        };
+        let new = !player.snapshot().stop_after_current;
+        player.set_stop_after_current(new);
+        if let Some(a) = imp.stop_action.get() {
+            a.set_state(&new.to_variant());
+        }
+    }
+
+    /// Jump to the playing track in the leaf list (Phase 11d, `Ctrl+J`): select
+    /// and scroll to it. A no-op when the playing item is not a track in the
+    /// current view (e.g. an episode, or filtered out).
+    fn jump_to_current(&self) {
+        let imp = self.imp();
+        let (Some(player), Some(leaf)) = (imp.player.get(), imp.leaf.get()) else {
+            return;
+        };
+        let snap = player.snapshot();
+        if snap.kind != Some(MediaKind::Track) {
+            return;
+        }
+        let Some(id) = snap.track_id else {
+            return;
+        };
+        let model = &leaf.selection;
+        let n = model.n_items();
+        let ids: Vec<i64> = (0..n)
+            .filter_map(|i| model.item(i).and_downcast::<TrackRow>())
+            .map(|r| r.brief().id)
+            .collect();
+        if let Some(pos) = crate::statusbar::current_row_index(&ids, id) {
+            model.select_item(pos, true);
+            leaf.column_view
+                .scroll_to(pos, None, gtk::ListScrollFlags::FOCUS, None);
         }
     }
 

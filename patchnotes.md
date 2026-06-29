@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.0.76
+
+Phase 11d: transport conveniences, completing the Phase 11 Columns UI parity pass.
+
+- **Stop after current (`Ctrl+M`).** Arm it and the player finishes the current track / episode / book, then pauses at the boundary instead of playing on; it disarms itself once it fires. Also in the new header menu, with a checkmark when armed.
+- **Jump to current track (`Ctrl+J`).** Select and scroll the browse list to the playing track. A no-op when the playing item is a podcast / audiobook or has been filtered out of the view. Also in the header menu.
+- **Header menu.** A primary menu in the header bar hosts both, so the conveniences are visible and not keyboard-only (spec §3.1).
+- **Tests.** Stop-after-current is covered by an engine integration test (the queue pauses at the boundary, the next item never plays), beside the existing end-of-item sleep test; the jump's row-resolution is a pure unit. Full workspace suite + clippy `-D warnings` + fmt + the music-only build green. No new dependency, no schema change.
+
+This completes Phase 11 (Browse & player polish). The music surface now matches the deadbeef daily-driver layout: configurable facet panes, a properties inspector, a status bar with the play-status glyph, an enriched Now Playing drawer, and the expected transport conveniences.
+
 ## v0.0.75
 
 Phase 11c: a richer Now Playing drawer, the spec §3.6 surface filled out.

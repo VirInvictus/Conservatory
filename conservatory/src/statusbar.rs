@@ -111,6 +111,16 @@ pub fn play_glyph(state: u8) -> Option<&'static str> {
     }
 }
 
+/// The leaf-list position of the playing track (Phase 11d jump-to-current): the
+/// first row whose id matches, in the model's display order. `None` when the
+/// playing track is not in the current view. Pure.
+pub fn current_row_index(model_ids: &[i64], playing_id: i64) -> Option<u32> {
+    model_ids
+        .iter()
+        .position(|id| *id == playing_id)
+        .map(|p| p as u32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +201,15 @@ mod tests {
         assert_eq!(play_glyph(1), Some("media-playback-start-symbolic"));
         assert_eq!(play_glyph(2), Some("media-playback-pause-symbolic"));
         assert_eq!(play_glyph(0), None);
+    }
+
+    #[test]
+    fn current_row_index_finds_the_playing_row() {
+        let ids = [10, 20, 30, 40];
+        assert_eq!(current_row_index(&ids, 30), Some(2));
+        assert_eq!(current_row_index(&ids, 10), Some(0));
+        // Not in the current view (e.g. filtered out).
+        assert_eq!(current_row_index(&ids, 99), None);
+        assert_eq!(current_row_index(&[], 10), None);
     }
 }

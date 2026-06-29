@@ -727,14 +727,14 @@ The finishing pass that brings the music surface up to the deadbeef / foobar2000
 
 *Usable artifact:* clicking the Now-bar (or `Ctrl+I`) slides up a Now Playing drawer with the current item's full surface: a large accent cover, a draggable scrubber, the live metadata, the audio-engine state, and a queue-tail peek, across all media types.
 
-### Phase 11d — Transport conveniences
+### Phase 11d — Transport conveniences ✅ (v0.0.76)
 
-- [ ] **Stop-after-current** (the deadbeef `toggle_stop_after_current`, the user's `Ctrl+M`): the engine finishes the current item, then stops instead of advancing. A small flag on the engine consulted in `advance_after_end`.
-- [ ] **Jump-to-current-track** (the user's `Ctrl+J`): scroll the browse / queue to the playing row and select it.
-- [ ] Both as menu actions and keybindings (`docs/keymap.md`), the spec §3.1 "every action visible and keyboard-accessible" rule.
-- [ ] Tests: the stop-after-current flag gates the advance (engine null-host integration); the jump resolves the current row index (headless).
+- [x] **Stop-after-current** (the deadbeef `toggle_stop_after_current`, the user's `Ctrl+M`): the engine finishes the current item, then pauses at the boundary instead of playing on, and disarms. A `stop_after_current` flag on the engine + a `SetStopAfterCurrent` command + a snapshot field, consulted at the EOF boundary alongside the `EndOfItem` sleep mode (the shared precedent).
+- [x] **Jump-to-current-track** (the user's `Ctrl+J`): select and scroll the browse list to the playing track (a no-op when it is an episode / book or filtered out of the view), via the pure `current_row_index` + `ColumnView::scroll_to`.
+- [x] Both as menu actions (a new header primary menu, the stop toggle stateful with a checkmark) and keybindings (`docs/keymap.md`; `Ctrl+M` / `Ctrl+J` reassigned from the proposed Mute / jobs-surface slots), the spec §3.1 "every action visible and keyboard-accessible" rule.
+- [x] Tests: the stop-after-current flag gates the advance (engine null-host integration, beside the `EndOfItem` test); the jump resolves the current row index (pure unit).
 
-*Usable artifact:* **Columns UI parity.** The music surface matches the deadbeef daily-driver layout: side panels, status bar, an expanded Now Playing view, and the expected transport conveniences.
+*Usable artifact:* **Columns UI parity.** The music surface matches the deadbeef daily-driver layout: side panels, status bar, an expanded Now Playing view, and the expected transport conveniences. **Phase 11 (Browse & player polish) complete.**
 
 ### Deferred (recorded, not built)
 

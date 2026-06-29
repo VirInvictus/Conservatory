@@ -79,6 +79,10 @@ pub enum PlayerCommand {
     /// timer pauses after N seconds of playback; the boundary modes pause at the
     /// end of the current item / queue.
     SetSleepTimer(Option<SleepMode>),
+    /// Arm / disarm stop-after-current (Phase 11d, the deadbeef
+    /// `toggle_stop_after_current`): when armed, the engine pauses at the end of
+    /// the current item instead of playing on, then disarms.
+    SetStopAfterCurrent(bool),
     /// Halt playback and persist, but keep the engine thread alive.
     Stop,
     /// Stop and exit the engine thread (joined by [`PlayerHandle::shutdown`]).
@@ -133,6 +137,10 @@ pub struct PlayerSnapshot {
     /// The armed sleep timer (Phase 6c-iii-d), or `None` when no timer is set.
     /// Drives the Now-bar sleep button label and the Now Playing "Sleep · …" line.
     pub sleep: Option<SleepStatus>,
+    /// Stop-after-current is armed (Phase 11d): the engine will pause at the end
+    /// of the current item. Drives the menu toggle's checked state, which the
+    /// engine clears once the boundary fires.
+    pub stop_after_current: bool,
 }
 
 impl Default for PlayerSnapshot {
@@ -157,6 +165,7 @@ impl Default for PlayerSnapshot {
             audio_devices: Arc::from([]),
             audio_device: None,
             sleep: None,
+            stop_after_current: false,
         }
     }
 }
@@ -296,6 +305,11 @@ impl PlayerHandle {
     /// Arm (`Some`) or cancel (`None`) the sleep timer (Phase 6c-iii-d).
     pub fn set_sleep_timer(&self, mode: Option<SleepMode>) {
         let _ = self.tx.send(PlayerCommand::SetSleepTimer(mode));
+    }
+
+    /// Arm / disarm stop-after-current (Phase 11d).
+    pub fn set_stop_after_current(&self, on: bool) {
+        let _ = self.tx.send(PlayerCommand::SetStopAfterCurrent(on));
     }
 
     pub fn stop(&self) {

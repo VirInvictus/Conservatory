@@ -16,9 +16,10 @@ use realfft::num_complex::Complex;
 use realfft::RealFftPlanner;
 use realfft::RealToComplex;
 
-/// The analysis window length. ~43 ms at 48 kHz: enough low-frequency resolution
-/// (≈23 Hz/bin) without smearing the bars across too much time.
-pub const FFT_SIZE: usize = 2048;
+/// The analysis window length. ~85 ms at 48 kHz (≈12 Hz/bin): the finer bin
+/// resolution lets the many thin spectrum lines resolve distinct frequencies
+/// down low without collapsing onto each other.
+pub const FFT_SIZE: usize = 4096;
 
 /// The lowest band edge (Hz); below this is sub-bass rumble not worth a bar.
 const F_MIN: f32 = 32.0;

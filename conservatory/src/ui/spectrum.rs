@@ -109,7 +109,8 @@ pub fn build_spectrum() -> Spectrum {
     Spectrum { area, state }
 }
 
-/// Draw the bars bottom-up, brightening with level so loud bands read hot.
+/// Draw the spectrum as many thin vertical lines, one per band, stroked
+/// bottom-up and brightening with level so loud lines read hot.
 fn draw_bars(
     cr: &gtk::cairo::Context,
     width: i32,
@@ -124,17 +125,24 @@ fn draw_bars(
     let (r, g, b) = accent.map(unpack_rgb).unwrap_or(DEFAULT_ACCENT);
     let w = width as f64;
     let h = height as f64;
-    let gap = 2.0;
-    let bar_w = ((w - gap * (n as f64 - 1.0)) / n as f64).max(1.0);
+    // Thin 1px lines spread evenly across the width (a fine analyzer, not blocks).
+    cr.set_line_width(1.0);
+    let span = (w - 1.0).max(1.0);
 
     for (i, &level) in levels.iter().enumerate() {
         let level = (level as f64).clamp(0.0, 1.0);
-        let bar_h = (level * h).max(1.0);
-        let x = i as f64 * (bar_w + gap);
-        // Alpha rides the level so quiet bars recede and peaks read solid.
-        cr.set_source_rgba(r, g, b, 0.30 + 0.70 * level);
-        cr.rectangle(x, h - bar_h, bar_w, bar_h);
-        let _ = cr.fill();
+        let line_h = (level * h).max(1.0);
+        // +0.5 so a 1px line lands on a pixel boundary and stays crisp.
+        let x = if n > 1 {
+            (i as f64 / (n - 1) as f64 * span).round() + 0.5
+        } else {
+            (span / 2.0).round() + 0.5
+        };
+        // Alpha rides the level so quiet lines recede and peaks read solid.
+        cr.set_source_rgba(r, g, b, 0.28 + 0.72 * level);
+        cr.move_to(x, h);
+        cr.line_to(x, h - line_h);
+        let _ = cr.stroke();
     }
 }
 

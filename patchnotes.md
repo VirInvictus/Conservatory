@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.0.81
+
+- **Finer spectrum.** The visualizer now draws as a dense field of thin vertical lines (192 of them) instead of chunky bars, with a finer FFT for the resolution to back it. A fine analyzer look rather than blocks.
+
 ## v0.0.80
 
 Phase 12d: a real-time spectrum visualizer in the Now Playing drawer, closing Phase 12 (the visual overhaul).

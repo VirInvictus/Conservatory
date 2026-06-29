@@ -21,8 +21,9 @@ use pipewire as pw;
 use pw::spa;
 use pw::spa::pod::Pod;
 
-/// The number of spectrum bars. Log-spaced from ~32 Hz to Nyquist.
-pub const N_BANDS: usize = 28;
+/// The number of spectrum lines, log-spaced from ~32 Hz to Nyquist. Deliberately
+/// high for a dense field of thin lines (a fine analyzer, not chunky bars).
+pub const N_BANDS: usize = 192;
 
 /// A running capture: the shared band buffer the widget polls, plus the handle to
 /// stop the capture thread. Dropping or calling [`SpectrumTap::stop`] tears the

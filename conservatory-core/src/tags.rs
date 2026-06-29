@@ -129,6 +129,23 @@ fn fill_from_tag(draft: &mut TrackDraft, tag: &Tag) {
     draft.cover = tag.pictures().first().map(picture_to_cover);
 }
 
+/// Best-effort: does this file carry Opus `R128_TRACK_GAIN` / `R128_ALBUM_GAIN`
+/// tags? Returns `(has_track, has_album)`. lofty surfaces the standard
+/// `REPLAYGAIN_*` keys through [`ItemKey::ReplayGainTrackGain`] but not the
+/// R128 convention, so the Phase 8c ReplayGain audit queries the raw keys here
+/// to avoid falsely flagging an R128-only Opus file as gain-less. Any read
+/// error yields `(false, false)`.
+pub fn read_r128_presence(path: &Path) -> (bool, bool) {
+    let Ok(tagged) = lofty::read_from_path(path) else {
+        return (false, false);
+    };
+    let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) else {
+        return (false, false);
+    };
+    let has = |key: &str| tag.get_string(&ItemKey::Unknown(key.to_string())).is_some();
+    (has("R128_TRACK_GAIN"), has("R128_ALBUM_GAIN"))
+}
+
 fn picture_to_cover(pic: &Picture) -> EmbeddedCover {
     EmbeddedCover {
         data: pic.data().to_vec(),

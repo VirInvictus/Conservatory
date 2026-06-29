@@ -11,21 +11,22 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam, VerifyResultRow, dedup_rows,
-    fts_rank, get_album, get_episode, get_show_settings, get_track, library_counts, load_queue,
-    probe_read, read_playback_state, read_verify_results, search_rows, search_track_ids,
-    spawn_worker, track_render_rows, writeback_rows,
+    MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam, VerifyResultRow, audit_album_rows,
+    audit_track_rows, dedup_rows, fts_rank, get_album, get_episode, get_show_settings, get_track,
+    library_counts, load_queue, probe_read, read_playback_state, read_verify_results, search_rows,
+    search_track_ids, spawn_worker, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
-    AlbumEdit, Assignment, DEFAULT_TARGET_LUFS, DedupOptions, DuplicateReport, Field, GenreVocab,
-    ImportOptions, ImportReport, PathTemplate, PlayableItem, PlaybackConfig, SleepMode, TagWrite,
-    TrackDraft, TrackEdit, TrackFields, VerifyVerdict, any_path_affecting, build_af_chain,
-    build_album_edit, build_track_edit, compute_accent, ffmpeg_available, find_collisions,
-    find_cover_bytes, find_duplicates, flac_available, genres_assignment, import_folder,
-    parse_assignment, read_track, replace_in, replaygain_from_file, resolve_album,
-    resolve_episode_profile, resolve_music_profile, resync_album_covers, rsgain_available,
-    scan_album_files, sync_album_cover, verify_files, write_track_tags,
+    AlbumEdit, Assignment, AuditOptions, AuditReport, DEFAULT_TARGET_LUFS, DedupOptions,
+    DuplicateReport, Field, GenreVocab, ImportOptions, ImportReport, PathTemplate, PlayableItem,
+    PlaybackConfig, SleepMode, TagWrite, TrackDraft, TrackEdit, TrackFields, VerifyVerdict,
+    any_path_affecting, build_af_chain, build_album_edit, build_track_edit, compute_accent,
+    ffmpeg_available, find_collisions, find_cover_bytes, find_duplicates, flac_available,
+    genres_assignment, import_folder, parse_assignment, read_track, replace_in,
+    replaygain_from_file, resolve_album, resolve_episode_profile, resolve_music_profile,
+    resync_album_covers, rsgain_available, run_audit, scan_album_files, sync_album_cover,
+    verify_files, write_track_tags,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -53,6 +54,21 @@ enum DupeTier {
     Similar,
     /// Same recording across albums.
     Tracks,
+}
+
+/// The health-audit tiers (Phase 8c), for `audit --tier`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum AuditTier {
+    /// Missing critical tags (title / artist / track# / genre).
+    Tags,
+    /// Lossy tracks below the bitrate floor.
+    Bitrate,
+    /// Per-album ReplayGain coverage.
+    Replaygain,
+    /// Missing cover art.
+    Art,
+    /// Low-resolution cover art (needs --root).
+    Artres,
 }
 
 #[derive(Parser)]
@@ -247,6 +263,31 @@ enum Command {
         /// Limit to specific tiers (repeatable); default is all four.
         #[arg(long = "tier", value_enum)]
         tier: Vec<DupeTier>,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = Format::Human)]
+        format: Format,
+    },
+
+    /// Library health audit (Phase 8c): missing critical tags, low bitrate,
+    /// per-album ReplayGain coverage, and missing / low-resolution cover art.
+    /// Read-only; always exits 0 (a deficiency is a report, not an error). The
+    /// art-resolution, on-disk cover, and Opus R128 checks need `--root`.
+    Audit {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Limit to specific tiers (repeatable); default is all.
+        #[arg(long = "tier", value_enum)]
+        tier: Vec<AuditTier>,
+        /// Library root the relative track / cover paths hang off (enables the
+        /// cover-file, art-resolution, and Opus R128 checks).
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Bitrate floor in kbps for the bitrate tier.
+        #[arg(long, default_value_t = conservatory_core::audit::DEFAULT_BITRATE_FLOOR)]
+        bitrate_floor: u32,
+        /// Minimum cover edge in pixels for the art-resolution tier.
+        #[arg(long, default_value_t = conservatory_core::audit::DEFAULT_MIN_ART_PX.0)]
+        min_art_px: u32,
         /// Output format.
         #[arg(long, value_enum, default_value_t = Format::Human)]
         format: Format,
@@ -977,6 +1018,14 @@ fn main() -> Result<()> {
             force,
         }) => block_on(run_verify(db, query, root, verbose, force)),
         Some(Command::Duplicates { db, tier, format }) => run_duplicates(db, tier, format),
+        Some(Command::Audit {
+            db,
+            tier,
+            root,
+            bitrate_floor,
+            min_art_px,
+            format,
+        }) => run_audit_verb(db, tier, root, bitrate_floor, min_art_px, format),
         Some(Command::SetCover {
             db,
             album_id,
@@ -3280,6 +3329,139 @@ fn print_duplicates_tsv(report: &DuplicateReport) {
     }
     for d in &report.track_dupes {
         println!("track\t{}\t{}\t{}", d.artist, d.title, d.files.join(";"));
+    }
+}
+
+/// Map the repeatable `--tier` flags to `AuditOptions` (empty = all tiers).
+fn audit_options(tiers: &[AuditTier], bitrate_floor: u32, min_art_px: u32) -> AuditOptions {
+    let all = tiers.is_empty();
+    AuditOptions {
+        tags: all || tiers.contains(&AuditTier::Tags),
+        bitrate: all || tiers.contains(&AuditTier::Bitrate),
+        replaygain: all || tiers.contains(&AuditTier::Replaygain),
+        art: all || tiers.contains(&AuditTier::Art),
+        artres: all || tiers.contains(&AuditTier::Artres),
+        bitrate_floor,
+        min_art_px: (min_art_px, min_art_px),
+    }
+}
+
+fn run_audit_verb(
+    db: PathBuf,
+    tiers: Vec<AuditTier>,
+    root: Option<PathBuf>,
+    bitrate_floor: u32,
+    min_art_px: u32,
+    format: Format,
+) -> Result<()> {
+    let opts = audit_options(&tiers, bitrate_floor, min_art_px);
+    // The filesystem tiers degrade without a root; warn once so the absence of
+    // findings is not mistaken for a clean library.
+    if root.is_none() && (opts.artres || opts.replaygain || opts.art) {
+        eprintln!("note: without --root, cover files / art resolution / Opus R128 are not checked");
+    }
+
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let tracks = audit_track_rows(&conn).context("reading audit track rows")?;
+    let albums = audit_album_rows(&conn).context("reading audit album rows")?;
+    let report = run_audit(tracks, &albums, &opts, root.as_deref());
+
+    match format {
+        Format::Human => print_audit_human(&report, &opts),
+        Format::Tsv => print_audit_tsv(&report),
+        Format::Json => println!(
+            "{{\"missing_tags\":{},\"low_bitrate\":{},\"replaygain\":{},\"missing_art\":{},\"low_res_art\":{}}}",
+            report.missing_tags.len(),
+            report.low_bitrate.len(),
+            report.replaygain.len(),
+            report.missing_art.len(),
+            report.low_res_art.len(),
+        ),
+    }
+    Ok(())
+}
+
+fn print_audit_human(report: &AuditReport, opts: &AuditOptions) {
+    // Only print a section for a tier that actually ran, so a skipped tier is
+    // not mistaken for a clean one.
+    if opts.tags {
+        println!(
+            "=== Missing critical tags ({}) ===",
+            report.missing_tags.len()
+        );
+        for d in &report.missing_tags {
+            println!("{}  [{}]", d.file_path, d.missing.labels().join(", "));
+        }
+    }
+    if opts.bitrate {
+        println!("\n=== Low bitrate ({}) ===", report.low_bitrate.len());
+        for d in &report.low_bitrate {
+            let br = d.bitrate.map(|b| format!("{b} kbps")).unwrap_or_default();
+            println!("{}  {br}", d.file_path);
+        }
+    }
+    if opts.replaygain {
+        println!(
+            "\n=== ReplayGain coverage ({}) ===",
+            report.replaygain.len()
+        );
+        for d in &report.replaygain {
+            println!("{} / {}  [{}]", d.artist, d.title, d.bucket.as_str());
+        }
+    }
+    if opts.art {
+        println!("\n=== Missing cover art ({}) ===", report.missing_art.len());
+        for d in &report.missing_art {
+            println!("{} / {}  [{}]", d.artist, d.title, d.folder_path);
+        }
+    }
+    if opts.artres {
+        println!(
+            "\n=== Low-resolution cover art ({}) ===",
+            report.low_res_art.len()
+        );
+        for d in &report.low_res_art {
+            println!("{} / {}  ({}x{})", d.artist, d.title, d.width, d.height);
+        }
+    }
+
+    let total = report.missing_tags.len()
+        + report.low_bitrate.len()
+        + report.replaygain.len()
+        + report.missing_art.len()
+        + report.low_res_art.len();
+    println!("\n{total} finding(s) total");
+}
+
+fn print_audit_tsv(report: &AuditReport) {
+    for d in &report.missing_tags {
+        println!("tags\t{}\t{}", d.file_path, d.missing.labels().join(","));
+    }
+    for d in &report.low_bitrate {
+        let br = d.bitrate.map(|b| b.to_string()).unwrap_or_default();
+        println!(
+            "bitrate\t{}\t{}\t{br}",
+            d.file_path,
+            d.format.as_deref().unwrap_or("")
+        );
+    }
+    for d in &report.replaygain {
+        println!(
+            "replaygain\t{}\t{}\t{}",
+            d.artist,
+            d.title,
+            d.bucket.as_str()
+        );
+    }
+    for d in &report.missing_art {
+        println!("art\t{}\t{}\t{}", d.artist, d.title, d.folder_path);
+    }
+    for d in &report.low_res_art {
+        println!(
+            "artres\t{}\t{}\t{}x{}",
+            d.artist, d.title, d.width, d.height
+        );
     }
 }
 

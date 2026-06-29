@@ -30,9 +30,10 @@ pub use models::{
 pub use pool::ReadPool;
 pub use probe::probe_read;
 pub use reads::{
-    BookListRow, BookState, DedupRow, EpisodeListRow, LibraryCounts, ListeningTotals, NowPlaying,
-    PlaybackStateRow, QueueDisplayRow, SearchRow, SqlParam, TrackRenderRow, TriageBucket,
-    WritebackRow, album_track_genres, book_authors, book_chapters, book_metadata, book_narrators,
+    AuditAlbumRow, AuditTrackRow, BookListRow, BookState, DedupRow, EpisodeListRow, LibraryCounts,
+    ListeningTotals, NowPlaying, PlaybackStateRow, QueueDisplayRow, SearchRow, SqlParam,
+    TrackRenderRow, TriageBucket, WritebackRow, album_track_genres, audit_album_rows,
+    audit_track_rows, book_authors, book_chapters, book_metadata, book_narrators,
     corrupt_or_suspect, dedup_rows, episode_metadata, episodes_for_show, episodes_for_tag,
     episodes_in_bucket, fts_rank, get_album, get_artist, get_audio_state, get_book,
     get_book_playback, get_episode, get_episode_by_guid, get_eq_preset, get_eq_state, get_playback,

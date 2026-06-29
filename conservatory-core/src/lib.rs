@@ -12,6 +12,7 @@
 //! The import pipeline, playback, podcasts, and audiobooks follow.
 
 pub mod accent;
+pub mod audit;
 pub mod covers;
 pub mod db;
 pub mod dedup;
@@ -28,6 +29,10 @@ pub mod tags;
 pub mod verify;
 
 pub use accent::{compute_accent, find_cover_bytes};
+pub use audit::{
+    ArtDeficiency, ArtResDeficiency, AuditOptions, AuditReport, BitrateDeficiency, RgBucket,
+    RgCoverage, TagDeficiency, TagFlags, run_audit,
+};
 pub use covers::{resync_album_covers, sync_album_cover, write_cover};
 pub use dedup::{
     DedupOptions, DuplicateReport, ExactAlbumDupe, MultiformatDupe, SimilarAlbums, TrackDupe,

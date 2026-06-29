@@ -171,6 +171,88 @@ pub fn dedup_rows(conn: &Connection) -> Result<Vec<DedupRow>> {
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// One track with the fields the health audits (Phase 8c) inspect: presence of
+/// the critical tags, the bitrate, and the ReplayGain columns. `artist` is the
+/// track artist falling back to the album artist; `genre_count` is the number
+/// of raw `track_genres` rows (0 = missing genre).
+#[derive(Debug, Clone)]
+pub struct AuditTrackRow {
+    pub track_id: i64,
+    pub album_id: Option<i64>,
+    pub title: String,
+    pub artist: Option<String>,
+    pub track_no: Option<u32>,
+    pub genre_count: i64,
+    pub format: Option<String>,
+    pub bitrate: Option<u32>,
+    pub replaygain_track: Option<f64>,
+    pub replaygain_album: Option<f64>,
+    pub file_path: String,
+}
+
+/// Every track with its audit fields (Phase 8c `audit`). Read-only.
+pub fn audit_track_rows(conn: &Connection) -> Result<Vec<AuditTrackRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.album_id, t.title, t.track_no, t.format, t.bitrate,
+                t.replaygain_track, t.replaygain_album, t.file_path,
+                COALESCE(ta.name, aa.name) AS artist,
+                (SELECT COUNT(*) FROM track_genres WHERE track_id = t.id) AS genre_count
+         FROM tracks t
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists ta ON t.artist_id = ta.id
+         LEFT JOIN artists aa ON al.album_artist_id = aa.id
+         ORDER BY al.folder_path, t.disc_no, t.track_no",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let track_no: Option<i64> = row.get("track_no")?;
+        let bitrate: Option<i64> = row.get("bitrate")?;
+        Ok(AuditTrackRow {
+            track_id: row.get("id")?,
+            album_id: row.get("album_id")?,
+            title: row.get("title")?,
+            artist: row.get("artist")?,
+            track_no: track_no.map(|n| n as u32),
+            genre_count: row.get("genre_count")?,
+            format: row.get("format")?,
+            bitrate: bitrate.map(|n| n as u32),
+            replaygain_track: row.get("replaygain_track")?,
+            replaygain_album: row.get("replaygain_album")?,
+            file_path: row.get("file_path")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// One album with the fields the cover-art audits (Phase 8c) inspect.
+#[derive(Debug, Clone)]
+pub struct AuditAlbumRow {
+    pub album_id: i64,
+    pub artist: Option<String>,
+    pub title: String,
+    pub cover_path: Option<String>,
+    pub folder_path: String,
+}
+
+/// Every album with its cover fields (Phase 8c `audit` art tiers). Read-only.
+pub fn audit_album_rows(conn: &Connection) -> Result<Vec<AuditAlbumRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT al.id, al.title, al.cover_path, al.folder_path, aa.name AS artist
+         FROM albums al
+         LEFT JOIN artists aa ON al.album_artist_id = aa.id
+         ORDER BY al.folder_path",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(AuditAlbumRow {
+            album_id: row.get("id")?,
+            artist: row.get("artist")?,
+            title: row.get("title")?,
+            cover_path: row.get("cover_path")?,
+            folder_path: row.get("folder_path")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
 /// Every track with the album/artist fields needed to render its target path.
 /// Ordered to mirror the default tree (genre → album artist → album → disc/track)
 /// so CLI output and previews read top-down.

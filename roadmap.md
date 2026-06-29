@@ -625,16 +625,16 @@ Modeled on Lattice's `--duplicates` (four-section report).
 
 ### Phase 8c — Library health audits + statistics
 
-Modeled on Lattice's `--auditTags` / `--auditBitrate` / `--auditReplayGain` / `--missingArt` / `--auditArtQuality` / `--stats`.
+Modeled on Lattice's `--auditTags` / `--auditBitrate` / `--auditReplayGain` / `--missingArt` / `--auditArtQuality` / `--stats`. Sliced into **8c-i** (audits, shipped v0.0.65), **8c-ii** (statistics), **8c-iii** (stray-APE detect + byte-level strip).
 
-- [ ] Audits: missing critical tags (title / artist / track number / genre), bitrate below a floor (default 192 kbps), ReplayGain coverage per album (missing / partial / album-missing / ok, recognizing the Opus `R128_*` convention), missing cover art, and low-resolution cover art (a pixel floor, default 500x500, measured from the cover file or embedded art). Most are expressible over the existing DB and `conservatory-search`, but the cover-resolution and ReplayGain-coverage checks need this dedicated pass.
-- [ ] Library statistics: per-format counts with average bitrate, rating distribution, genre / artist / album / track totals, and total size + duration.
-- [ ] Detect MP3s carrying stray APEv2 tags (they shadow ID3 in foobar2000 / DeaDBeeF and silently defeat tag edits); report-only. The **fix** (a byte-level APE strip, the `apestrip.py` technique, with optional APE→ID3 migration) lands here too, since lofty cannot strip APE on MPEG (the Phase 5b deferral); it is a small byte-surgery module, not a lofty call. The detect-and-fix split mirrors duplicates (8b) reporting then the Phase 2c mover doing the cleanup.
+- [x] **8c-i (v0.0.65):** Audits in `conservatory-core/src/audit.rs` (pure where possible, sibling of `verify.rs`/`dedup.rs`): missing critical tags (title / artist / track number / genre), bitrate below a floor (default 192 kbps, lossless formats skipped so they are never false-flagged), ReplayGain coverage per album (missing / partial / no-album-gain / ok). The Opus `R128_*` convention is recognized via a lazy targeted lofty read of only the Opus tracks whose DB gain is NULL (`tags::read_r128_presence`), so an R128-only Opus is not flagged missing when `--root` is given. Missing cover art (NULL `cover_path`, plus a recorded-but-absent file when `--root` is given) and low-resolution cover art (a pixel floor, default 500×500, decoded header-only from the cover file via `image`). Two dedicated reads (`audit_track_rows` / `audit_album_rows`) feed all tiers.
+- [ ] **8c-ii:** Library statistics: per-format counts with average bitrate, rating distribution, genre / artist / album / track totals, and total size + duration.
+- [ ] **8c-iii:** Detect MP3s carrying stray APEv2 tags (they shadow ID3 in foobar2000 / DeaDBeeF and silently defeat tag edits); report-only. The **fix** (a byte-level APE strip, the `apestrip.py` technique, with optional APE→ID3 migration) lands here too, since lofty cannot strip APE on MPEG (the Phase 5b deferral); it is a small byte-surgery module, not a lofty call. The detect-and-fix split mirrors duplicates (8b) reporting then the Phase 2c mover doing the cleanup. Folds an `ape` tier into `audit`.
 - [ ] (Minor) Rating normalization across player conventions on read (POPM scale differences between WMP, foobar2000, and DeaDBeeF), the Lattice `tags.py` / `rerate.py` lesson, so imported ratings land consistently on the 0 to 5 scale.
-- [ ] CLI: `audit <db> [tags|bitrate|replaygain|art|artres|ape|all]`; `stats <db>`.
-- [ ] Tests: each audit flags its planted-deficiency fixture and passes a clean one; stats totals match a known fixture.
+- [x] **8c-i:** CLI `audit <db> [--tier tags|bitrate|replaygain|art|artres ...] [--root R] [--bitrate-floor N] [--min-art-px N] [--format human|tsv|json]` (read-only, exit 0; the FS / R128 tiers degrade with a printed note when `--root` is absent). `ape` joins in 8c-iii; `stats <db>` is 8c-ii.
+- [x] **8c-i:** Tests: each tier flagged against a planted set and clean on a good one (inline pure tests for tags / bitrate / ReplayGain bucketing; `tests/audit.rs` for the cover-art FS path with generated PNGs). Stats fixture totals come with 8c-ii.
 
-*Usable artifact:* a one-command health report for the library, plus a statistics summary.
+*Usable artifact:* `conservatory-cli audit <db> --root <root>` gives a one-command health report for the library (v0.0.65); statistics (8c-ii) and the APE detect+strip (8c-iii) follow.
 
 ### Phase 8d — Playlist export / import (.m3u)
 

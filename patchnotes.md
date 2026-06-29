@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.0.65
+
+Phase 8c-i: an `audit` command that reports library health problems, the third Phase 8 audit (after integrity and duplicates). It is a faithful port of Lattice's tag / bitrate / ReplayGain / cover-art audits. Read-only: it reports, it never changes a file. No new dependency, no migration. Phase 8c is large, so it is sliced: this is the audits; library statistics (8c-ii) and the stray-APE detect + strip (8c-iii) follow.
+
+- **Five health checks.** (1) Missing critical tags: title, artist, track number, or genre. (2) Low bitrate: lossy files below a floor (default 192 kbps); lossless formats are never flagged. (3) ReplayGain coverage per album: missing, partial, no-album-gain, or ok. (4) Missing cover art. (5) Low-resolution cover art below a pixel floor (default 500×500), read from the cover file's header.
+- **Opus R128 is understood.** Opus files often carry loudness as the `R128_*` convention rather than the standard ReplayGain tags. When you pass `--root`, the audit reads those tags directly for any Opus track the database does not already know a gain for, so a properly tagged Opus album is not falsely reported as missing ReplayGain.
+- **`audit` CLI verb.** `conservatory-cli audit <db> --root <root>` prints a sectioned report; `--tier tags|bitrate|replaygain|art|artres` limits which checks run, `--bitrate-floor` and `--min-art-px` tune the thresholds, and `--format tsv|json|human` (human default) picks the output. The cover-file, art-resolution, and Opus R128 checks need `--root`; without it the audit says so rather than silently skipping. Always exits 0 (a deficiency is a report, not an error).
+- **Tests.** Each check is unit-tested against a planted set, with a filesystem test for the cover-art path using generated images. Verified end to end on real albums (it correctly caught an Opus track one kbps under the floor and recognized the R128 ReplayGain on the same album). Full workspace suite + clippy `-D warnings` + fmt + the music-only build green.
+
 ## v0.0.64
 
 Phase 8b: a `duplicates` command that finds redundant copies in your library, the second Phase 8 audit. It is a faithful port of Lattice's duplicate detector. Read-only: it reports, it never deletes (cleanup goes through `organize`, with its dry-run and undo). One new dependency (`unicode-normalization`, for matching names that differ only in unicode form); no migration.

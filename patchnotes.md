@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.82
+
+Phase 13a: the layout space-reclaim fix plus a round of low-risk polish. The first of a UI/UX sleekness pass.
+
+- **Closing a side panel gives the space back.** Closing the track-properties inspector (or the queue) now flows the freed width back into the browse area instead of leaving a dead gap. The browse body is the horizontal expand-sink; before, no widget claimed the space a collapsed panel left behind.
+- **Smoother motion.** The queue, inspector, and Now Playing drawers slide with a consistent, intentional duration rather than the default snap.
+- **Hover feedback.** Track rows, sortable column headers, chapter rows, and the sleep-timer menu now respond to the pointer with a subtle, animated highlight.
+- **Breathing room.** The track-properties and Now Playing detail grids, the chapter list, and the up-next list got their cramped 2px spacing opened up so label/value pairs read cleanly.
+- **Depth and accent.** Album covers carry a softer layered drop shadow; text selection and the keyboard focus ring now use the Kanagawa accent; scrollbar sliders are gently rounded.
+
+No behavior change beyond the layout fix; the dense browse table stays dense by design.
+
 ## v0.0.81
 
 - **Finer spectrum.** The visualizer now draws as a dense field of thin vertical lines (192 of them) instead of chunky bars, with a finer FFT for the resolution to back it. A fine analyzer look rather than blocks.

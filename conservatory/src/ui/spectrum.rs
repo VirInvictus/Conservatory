@@ -17,7 +17,7 @@ use gtk4 as gtk;
 
 use conservatory_core::player::spectrum::SpectrumSmoother;
 
-use crate::viz::{SpectrumTap, N_BANDS};
+use crate::viz::{N_BANDS, SpectrumTap};
 
 /// The visualizer's fixed height (the bars draw bottom-up within it).
 const HEIGHT: i32 = 72;

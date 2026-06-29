@@ -187,6 +187,7 @@ pub fn build_queue_panel(
 
     let revealer = gtk::Revealer::builder()
         .transition_type(gtk::RevealerTransitionType::SlideLeft)
+        .transition_duration(250)
         .reveal_child(false)
         .child(&column)
         .build();

@@ -51,7 +51,7 @@ pub fn build_inspector() -> Inspector {
         .build();
 
     let grid = gtk::Grid::builder()
-        .row_spacing(2)
+        .row_spacing(8)
         .column_spacing(16)
         .margin_top(8)
         .build();
@@ -77,6 +77,7 @@ pub fn build_inspector() -> Inspector {
     // `Ctrl+P` still toggles it.
     let revealer = gtk::Revealer::builder()
         .transition_type(gtk::RevealerTransitionType::SlideLeft)
+        .transition_duration(250)
         .reveal_child(true)
         .child(&scroller)
         .build();

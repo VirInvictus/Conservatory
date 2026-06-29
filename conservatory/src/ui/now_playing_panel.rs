@@ -83,7 +83,7 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
         .label("Now Playing")
         .build();
     let grid = gtk::Grid::builder()
-        .row_spacing(2)
+        .row_spacing(8)
         .column_spacing(16)
         .margin_top(4)
         .build();
@@ -112,7 +112,7 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
     let chapters_list = gtk::ListBox::new();
     chapters_list.set_selection_mode(gtk::SelectionMode::None);
     chapters_list.add_css_class("chapter-list");
-    let chapters_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let chapters_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     chapters_box.append(&chapters_heading);
     chapters_box.append(&chapters_list);
     chapters_box.set_visible(false);
@@ -189,8 +189,8 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
         .css_classes(["heading"])
         .margin_top(8)
         .build();
-    let upnext_list = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    let upnext_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let upnext_list = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let upnext_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     upnext_box.append(&upnext_heading);
     upnext_box.append(&upnext_list);
     upnext_box.set_visible(false);
@@ -234,6 +234,7 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
 
     let revealer = gtk::Revealer::builder()
         .transition_type(gtk::RevealerTransitionType::SlideUp)
+        .transition_duration(250)
         .reveal_child(false)
         .child(&scroller)
         .build();

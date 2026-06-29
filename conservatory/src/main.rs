@@ -49,25 +49,33 @@ const CSS: &str = "\
 @define-color success_color #87a987;
 
 columnview.data-table > listview > row > cell { padding-top: 1px; padding-bottom: 1px; }
+columnview.data-table > listview > row { transition: background-color 150ms ease; }
 columnview.data-table > listview > row:hover { background: alpha(currentColor, 0.04); }
-columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height: 0; }
+columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height: 0; transition: background-color 150ms ease; }
+columnview > header > button:hover { background: alpha(currentColor, 0.08); }
 .numeric { font-feature-settings: \"tnum\"; }
 .rating-stars { color: @accent_color; }
 .filter-warn text { background-color: alpha(@warning_color, 0.20); }
+selection { background-color: alpha(@accent_color, 0.35); color: @window_fg_color; }
+*:focus-visible { outline-color: @accent_color; outline-width: 2px; outline-offset: 1px; }
+scrollbar slider { min-width: 8px; min-height: 8px; border-radius: 8px; }
 .now-bar { padding: 6px 12px; border-top: 1px solid alpha(currentColor, 0.10); }
 .now-bar-cover { border-radius: 6px; box-shadow: 0 1px 5px rgba(0,0,0,0.40); background: alpha(currentColor, 0.06); }
 .queue-row { padding: 4px 8px; }
 .queue-row.playing { background: alpha(@accent_color, 0.16); }
 .queue-list { border-left: 1px solid alpha(currentColor, 0.12); }
-.chapter-row { padding: 3px 6px; }
+.chapter-row { padding: 3px 6px; border-radius: 5px; transition: background-color 150ms ease; }
+.chapter-row:hover { background: alpha(currentColor, 0.06); }
 .chapter-row.current-chapter { background: alpha(@accent_color, 0.16); font-weight: bold; }
+.sleep-menu-row { transition: background-color 150ms ease; }
+.sleep-menu-row:hover { background: alpha(currentColor, 0.08); }
 .book-tile { padding: 8px; border-radius: 10px; }
 .book-tile:selected { background: alpha(@accent_color, 0.18); }
-.cover-art { border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); background: alpha(currentColor, 0.05); }
+.cover-art { border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 4px 14px rgba(0,0,0,0.28); background: alpha(currentColor, 0.05); }
 .cover-thumb { border-radius: 4px; background: alpha(currentColor, 0.06); }
-.book-cover { border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.35); background: alpha(currentColor, 0.06); }
-.inspector-cover { border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); background: alpha(currentColor, 0.06); }
-.now-playing-cover { border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); background: alpha(currentColor, 0.06); }
+.book-cover { border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 4px 12px rgba(0,0,0,0.26); background: alpha(currentColor, 0.06); }
+.inspector-cover { border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 6px 18px rgba(0,0,0,0.30); background: alpha(currentColor, 0.06); }
+.now-playing-cover { border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 6px 18px rgba(0,0,0,0.30); background: alpha(currentColor, 0.06); }
 .now-playing-drawer { border-top: 1px solid alpha(currentColor, 0.10); }
 .spectrum { background: alpha(currentColor, 0.04); border-radius: 6px; }
 ";

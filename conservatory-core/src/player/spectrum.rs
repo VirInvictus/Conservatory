@@ -12,9 +12,9 @@
 use std::f32::consts::PI;
 use std::sync::Arc;
 
-use realfft::num_complex::Complex;
 use realfft::RealFftPlanner;
 use realfft::RealToComplex;
+use realfft::num_complex::Complex;
 
 /// The analysis window length. ~85 ms at 48 kHz (≈12 Hz/bin): the finer bin
 /// resolution lets the many thin spectrum lines resolve distinct frequencies

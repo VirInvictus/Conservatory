@@ -277,6 +277,11 @@ impl ConservatoryWindow {
         body.set_resize_start_child(false);
         body.set_shrink_start_child(false);
         body.set_position(190);
+        // The browse body is the horizontal expand-sink: when a right-docked
+        // revealer (queue / inspector) collapses, its freed width must flow back
+        // here, not sit empty. Without this the content Box has no hexpand child to
+        // grow and leaves a dead gap where the panel was.
+        body.set_hexpand(true);
 
         // The always-on filter bar (spec §3.4); Ctrl+F focuses it, no search mode.
         let filter = gtk::SearchEntry::builder()
@@ -308,6 +313,7 @@ impl ConservatoryWindow {
         // Body + the queue drawer + the inspector, side by side.
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         content.set_vexpand(true);
+        content.set_hexpand(true);
         content.append(&body);
         content.append(&queue_panel.revealer);
         content.append(&inspector.revealer);
@@ -2654,8 +2660,10 @@ impl ConservatoryWindow {
                     None => ("\u{2014}".to_string(), String::new(), None, None, None),
                 };
                 now.title.set_text(&title);
-                now.artist
-                    .set_text(&crate::ui::now_bar::now_bar_subtitle(&artist, album.as_deref()));
+                now.artist.set_text(&crate::ui::now_bar::now_bar_subtitle(
+                    &artist,
+                    album.as_deref(),
+                ));
                 let abs = match (imp.library_root.get(), cover) {
                     (Some(root), Some(cp)) => Some(root.join(cp)),
                     _ => None,

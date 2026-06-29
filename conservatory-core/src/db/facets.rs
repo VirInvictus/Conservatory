@@ -189,11 +189,7 @@ pub fn cmp_tracks(
             .unwrap_or(Equal),
         TrackSort::Rating => a.rating.cmp(&b.rating),
     };
-    if descending {
-        ord.reverse()
-    } else {
-        ord
-    }
+    if descending { ord.reverse() } else { ord }
 }
 
 /// Stable, case-insensitive sort of the leaf set by `key`. `sort_by` is stable,

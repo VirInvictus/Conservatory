@@ -298,6 +298,7 @@ fn build_sleep_button(player: Option<PlayerHandle>) -> (gtk::MenuButton, gtk::La
             let selected = mode == current;
             let row = gtk::Button::new();
             row.add_css_class("flat");
+            row.add_css_class("sleep-menu-row");
             let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
             let check = gtk::Image::from_icon_name("object-select-symbolic");
             check.set_visible(selected);

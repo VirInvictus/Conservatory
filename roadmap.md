@@ -775,3 +775,29 @@ The shipped UI was flagged as "dull and lifeless": no palette (the flat grey sys
 - [x] Widget in the binary (`conservatory/src/ui/spectrum.rs`): a `gtk::DrawingArea` in the Now Playing drawer, redrawn on a **frame-clock tick** (display rate, independent of the engine's ~10fps snapshot), drawing accent-coloured bars. Capture starts on map (drawer opens) and stops on unmap, so it is free when closed.
 
 *Usable artifact:* a smooth, accent-coloured real-time frequency spectrum in the Now Playing drawer. **Phase 12 (Visual identity & album-art-forward UI) complete.**
+
+## Phase 13 — Sleekness pass, layout fix, and code tidy
+
+A UI/UX polish pass plus a focused code tidy, prompted by a concrete layout bug (a closed side panel not giving its space back) and a request to make the app feel sleek. A code-quality audit found the codebase already clean (no dead code, good comments, solid error handling), so the tidy is a focused dedup, not a sweep.
+
+### Phase 13a — Layout space-reclaim fix + quick CSS/spacing wins ✅ (v0.0.82)
+
+- [x] **The bug:** closing the inspector / queue Revealer left an empty gap; the content Box had no `hexpand` child to absorb the freed width. Fixed by making the browse `body` (and the content Box) the horizontal expand-sink (`window.rs`).
+- [x] Explicit Revealer transition durations (queue / inspector / Now Playing) for consistent motion.
+- [x] Animated hover feedback on track rows, column headers, chapter rows, and the sleep-timer menu (CSS).
+- [x] Opened up the cramped 2px grids/lists (track-properties, Now Playing detail, chapters, up-next).
+- [x] CSS polish: layered cover shadow, accent-tied text selection + focus ring, rounded scrollbar sliders.
+
+*Usable artifact:* closing a side panel reclaims its space, and the app reads more polished (smoother motion, breathing room, depth, accent).
+
+### Phase 13b — Structural UX: empty states, header grouping, toasts (v0.0.83)
+
+- [ ] `adw::StatusPage` empty/idle states (empty library, no filter results, idle Now Playing drawer).
+- [ ] Cluster the header buttons into functional groups for visual hierarchy.
+- [ ] `adw::ToastOverlay` feedback on currently-silent actions (import done, tags saved, tags embedded, playlist exported).
+
+### Phase 13c — Code tidy: accent + helper dedup (v0.0.84)
+
+- [ ] Finish the Phase 12a accent-provider migration (now_playing_panel; assess audiobooks).
+- [ ] Consolidate the duplicated `push()` + the `*_fields()` projections into `ui/fields.rs`.
+- [ ] Confirming pass: document the clean bill of health rather than manufacture churn.

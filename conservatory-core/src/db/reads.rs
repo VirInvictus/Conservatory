@@ -118,6 +118,59 @@ pub struct TrackRenderRow {
     pub file_path: String,
 }
 
+/// One track plus the album context the duplicate-detection tiers need (Phase
+/// 8b): the album it belongs to (id + managed folder + artist *name* + title),
+/// its ordinal/title/format/duration, and its path. Artist names (not sort
+/// names) so the normalization keys match what a user reads.
+#[derive(Debug, Clone)]
+pub struct DedupRow {
+    pub album_id: Option<i64>,
+    pub album_folder: Option<String>,
+    pub album_artist: Option<String>,
+    pub album_title: Option<String>,
+    pub track_no: Option<u32>,
+    pub disc_no: Option<u32>,
+    pub title: String,
+    pub track_artist: Option<String>,
+    pub format: Option<String>,
+    pub duration: Option<f64>,
+    pub file_path: String,
+}
+
+/// Every track with its album context, for the `duplicates` report (Phase 8b).
+/// Read-only; the four tiers all derive from this one denormalized pass.
+pub fn dedup_rows(conn: &Connection) -> Result<Vec<DedupRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.album_id, t.title, t.track_no, t.disc_no, t.format, t.duration, t.file_path,
+                al.title AS album_title, al.folder_path AS album_folder,
+                aa.name AS album_artist,
+                ta.name AS track_artist
+         FROM tracks t
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.album_artist_id = aa.id
+         LEFT JOIN artists ta ON t.artist_id = ta.id
+         ORDER BY al.folder_path, t.disc_no, t.track_no",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let track_no: Option<i64> = row.get("track_no")?;
+        let disc_no: Option<i64> = row.get("disc_no")?;
+        Ok(DedupRow {
+            album_id: row.get("album_id")?,
+            album_folder: row.get("album_folder")?,
+            album_artist: row.get("album_artist")?,
+            album_title: row.get("album_title")?,
+            track_no: track_no.map(|n| n as u32),
+            disc_no: disc_no.map(|n| n as u32),
+            title: row.get("title")?,
+            track_artist: row.get("track_artist")?,
+            format: row.get("format")?,
+            duration: row.get("duration")?,
+            file_path: row.get("file_path")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
 /// Every track with the album/artist fields needed to render its target path.
 /// Ordered to mirror the default tree (genre → album artist → album → disc/track)
 /// so CLI output and previews read top-down.

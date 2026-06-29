@@ -14,6 +14,7 @@
 pub mod accent;
 pub mod covers;
 pub mod db;
+pub mod dedup;
 pub mod edit;
 pub mod errors;
 pub mod import;
@@ -28,6 +29,10 @@ pub mod verify;
 
 pub use accent::{compute_accent, find_cover_bytes};
 pub use covers::{resync_album_covers, sync_album_cover, write_cover};
+pub use dedup::{
+    DedupOptions, DuplicateReport, ExactAlbumDupe, MultiformatDupe, SimilarAlbums, TrackDupe,
+    find_duplicates,
+};
 pub use edit::{
     AlbumEdit, Assignment, Field, TrackEdit, any_path_affecting, build_album_edit,
     build_track_edit, genres_assignment, parse_assignment, replace_in, split_genres,

@@ -617,11 +617,11 @@ Modeled on Lattice's `--testFLAC` / `--testMP3` / `--testOpus` / `--testWAV` / `
 
 Modeled on Lattice's `--duplicates` (four-section report).
 
-- [ ] A four-tier dupe report: exact albums (normalized artist + album matched across directories), within-album multi-format (same track number/title in several formats), fuzzy similar-name candidates (a SequenceMatcher-style ratio over normalized names, threshold ~0.85), and track-level cross-library (by size/identity). Normalization mirrors Lattice: NFKC, quote/dash folding, whitespace collapse, lowercase, with a loose key that strips parentheticals and "feat." clauses.
-- [ ] CLI: `duplicates <db> [--tier ...]`. Report only: no deletion, any cleanup goes through the Phase 2c mover (dry-run + undo).
-- [ ] Tests: each tier against a fixture with planted duplicates; normalization equivalence; multi-format grouping.
+- [x] A four-tier dupe report (`conservatory-core/src/dedup.rs`, v0.0.64): exact albums (`(norm artist, norm album)` in >1 folder), within-album multi-format (`(track_no, norm title)` in >1 file extension), fuzzy similar-name candidates (a hand-rolled difflib `SequenceMatcher.ratio()` port over the loose album key, threshold 0.85, skipping exact-tier pairs), and track-level cross-album (`(norm artist, norm title)` across ≥2 albums, clustered by duration Δ ≤ 2 s so a studio and a live take surface apart). Normalization mirrors Lattice exactly: NFKC (the new `unicode-normalization` dep, signed off), quote/dash folding, whitespace collapse, lowercase; the loose key adds `feat.`/`ft.`/`featuring` and trailing-paren stripping. DB-canonical: a Lattice "directory" maps to an album (the managed folder); one `dedup_rows` read feeds all four tiers.
+- [x] CLI: `duplicates <db> [--tier exact|multiformat|similar|tracks ...] [--format human|tsv|json]`. Report only (cleanup goes through `organize`, the Phase 2c mover); exit 0.
+- [x] Tests: each tier against a planted `DedupRow` set (album in two folders → exact; flac+mp3 → multi-format; "Album" vs "Album (Remastered)" → similar; one recording in two albums, with a live take splitting off by duration → tracks); the `norm_key`/`loose_key` Lattice vectors; the difflib `ratio` parity (`ratio("abcd","abce") == 0.75`). End-to-end on the real `testdata/albums/`: a clean two-album library reports zero (no false positives). **Note: the importer is album-aware (`get_or_create_album` reuses by artist+title and refuses a path conflict), so an on-disk exact duplicate cannot arise from a plain re-import; the tiers are proven by the unit fixtures.**
 
-*Usable artifact:* find duplicate albums and tracks across the managed library.
+*Usable artifact:* `conservatory-cli duplicates <db>` finds duplicate albums and tracks across the managed library (v0.0.64).
 
 ### Phase 8c — Library health audits + statistics
 

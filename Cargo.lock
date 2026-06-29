@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory"
-version = "0.0.63"
+version = "0.0.64"
 dependencies = [
  "chrono",
  "conservatory-audiobooks",
@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-audiobooks"
-version = "0.0.63"
+version = "0.0.64"
 dependencies = [
  "chrono",
  "conservatory-core",
@@ -576,7 +576,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-cli"
-version = "0.0.63"
+version = "0.0.64"
 dependencies = [
  "anyhow",
  "chrono",
@@ -592,7 +592,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-core"
-version = "0.0.63"
+version = "0.0.64"
 dependencies = [
  "chrono",
  "conservatory-search",
@@ -607,12 +607,13 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "unicode-normalization",
  "zbus 5.13.2",
 ]
 
 [[package]]
 name = "conservatory-podcasts"
-version = "0.0.63"
+version = "0.0.64"
 dependencies = [
  "ammonia",
  "chrono",
@@ -632,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-search"
-version = "0.0.63"
+version = "0.0.64"
 dependencies = [
  "chrono",
  "regex",
@@ -3335,6 +3336,15 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-xid"

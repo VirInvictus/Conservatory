@@ -11,21 +11,21 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam, VerifyResultRow, fts_rank,
-    get_album, get_episode, get_show_settings, get_track, library_counts, load_queue, probe_read,
-    read_playback_state, read_verify_results, search_rows, search_track_ids, spawn_worker,
-    track_render_rows, writeback_rows,
+    MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam, VerifyResultRow, dedup_rows,
+    fts_rank, get_album, get_episode, get_show_settings, get_track, library_counts, load_queue,
+    probe_read, read_playback_state, read_verify_results, search_rows, search_track_ids,
+    spawn_worker, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
-    AlbumEdit, Assignment, DEFAULT_TARGET_LUFS, Field, GenreVocab, ImportOptions, ImportReport,
-    PathTemplate, PlayableItem, PlaybackConfig, SleepMode, TagWrite, TrackDraft, TrackEdit,
-    TrackFields, VerifyVerdict, any_path_affecting, build_af_chain, build_album_edit,
-    build_track_edit, compute_accent, ffmpeg_available, find_collisions, find_cover_bytes,
-    flac_available, genres_assignment, import_folder, parse_assignment, read_track, replace_in,
-    replaygain_from_file, resolve_album, resolve_episode_profile, resolve_music_profile,
-    resync_album_covers, rsgain_available, scan_album_files, sync_album_cover, verify_files,
-    write_track_tags,
+    AlbumEdit, Assignment, DEFAULT_TARGET_LUFS, DedupOptions, DuplicateReport, Field, GenreVocab,
+    ImportOptions, ImportReport, PathTemplate, PlayableItem, PlaybackConfig, SleepMode, TagWrite,
+    TrackDraft, TrackEdit, TrackFields, VerifyVerdict, any_path_affecting, build_af_chain,
+    build_album_edit, build_track_edit, compute_accent, ffmpeg_available, find_collisions,
+    find_cover_bytes, find_duplicates, flac_available, genres_assignment, import_folder,
+    parse_assignment, read_track, replace_in, replaygain_from_file, resolve_album,
+    resolve_episode_profile, resolve_music_profile, resync_album_covers, rsgain_available,
+    scan_album_files, sync_album_cover, verify_files, write_track_tags,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -40,6 +40,19 @@ enum Format {
     Json,
     /// Human-readable lines.
     Human,
+}
+
+/// The duplicate-report tiers (Phase 8b), for `duplicates --tier`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DupeTier {
+    /// Exact-duplicate albums (same artist+album in >1 folder).
+    Exact,
+    /// Within-album multi-format tracks (same track in flac + mp3, …).
+    Multiformat,
+    /// Similar album names (fuzzy, per artist).
+    Similar,
+    /// Same recording across albums.
+    Tracks,
 }
 
 #[derive(Parser)]
@@ -223,6 +236,20 @@ enum Command {
         /// Re-verify even files whose cached size/mtime is unchanged.
         #[arg(long)]
         force: bool,
+    },
+
+    /// Four-tier duplicate report (Phase 8b): exact-duplicate albums, within-album
+    /// multi-format tracks, similar album names, and the same recording across
+    /// albums. Read-only (cleanup goes through `organize`).
+    Duplicates {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Limit to specific tiers (repeatable); default is all four.
+        #[arg(long = "tier", value_enum)]
+        tier: Vec<DupeTier>,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = Format::Human)]
+        format: Format,
     },
 
     /// Set an album's cover image: write it into the album folder as cover.jpg
@@ -949,6 +976,7 @@ fn main() -> Result<()> {
             verbose,
             force,
         }) => block_on(run_verify(db, query, root, verbose, force)),
+        Some(Command::Duplicates { db, tier, format }) => run_duplicates(db, tier, format),
         Some(Command::SetCover {
             db,
             album_id,
@@ -3143,6 +3171,116 @@ fn is_flac_path(rel: &str, format: Option<&str>) -> bool {
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("flac"))
+}
+
+/// Map the repeatable `--tier` flags to `DedupOptions` (empty = all tiers).
+fn dedup_options(tiers: &[DupeTier]) -> DedupOptions {
+    if tiers.is_empty() {
+        return DedupOptions::default();
+    }
+    DedupOptions {
+        exact: tiers.contains(&DupeTier::Exact),
+        multiformat: tiers.contains(&DupeTier::Multiformat),
+        similar: tiers.contains(&DupeTier::Similar),
+        tracks: tiers.contains(&DupeTier::Tracks),
+        ..DedupOptions::default()
+    }
+}
+
+fn run_duplicates(db: PathBuf, tiers: Vec<DupeTier>, format: Format) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let rows = dedup_rows(&conn).context("reading dedup rows")?;
+    let report = find_duplicates(&rows, &dedup_options(&tiers));
+
+    match format {
+        Format::Human => print_duplicates_human(&report),
+        Format::Tsv => print_duplicates_tsv(&report),
+        Format::Json => println!(
+            "{{\"exact_albums\":{},\"multiformat\":{},\"similar_albums\":{},\"track_dupes\":{}}}",
+            report.exact_albums.len(),
+            report.multiformat.len(),
+            report.similar_albums.len(),
+            report.track_dupes.len(),
+        ),
+    }
+    Ok(())
+}
+
+fn print_duplicates_human(report: &DuplicateReport) {
+    println!(
+        "=== Exact-duplicate albums ({}) ===",
+        report.exact_albums.len()
+    );
+    for d in &report.exact_albums {
+        println!("{} / {}", d.artist, d.album);
+        for f in &d.folders {
+            println!("    {f}");
+        }
+    }
+    println!(
+        "\n=== Within-album multi-format ({}) ===",
+        report.multiformat.len()
+    );
+    for d in &report.multiformat {
+        let no = d
+            .track_no
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "?".into());
+        println!("{}  (track {no}) {}", d.album_folder, d.title);
+        for f in &d.files {
+            println!("    {f}");
+        }
+    }
+    println!(
+        "\n=== Similar album names ({}) ===",
+        report.similar_albums.len()
+    );
+    for d in &report.similar_albums {
+        println!("{}  (ratio {:.2})", d.artist, d.ratio);
+        println!("    {}  [{}]", d.a.title, d.a.folder);
+        println!("    {}  [{}]", d.b.title, d.b.folder);
+    }
+    println!(
+        "\n=== Same recording across albums ({}) ===",
+        report.track_dupes.len()
+    );
+    for d in &report.track_dupes {
+        println!("{} / {}", d.artist, d.title);
+        for f in &d.files {
+            println!("    {f}");
+        }
+    }
+
+    let total = report.exact_albums.len()
+        + report.multiformat.len()
+        + report.similar_albums.len()
+        + report.track_dupes.len();
+    println!("\n{total} duplicate group(s) total");
+}
+
+fn print_duplicates_tsv(report: &DuplicateReport) {
+    for d in &report.exact_albums {
+        println!("exact\t{}\t{}\t{}", d.artist, d.album, d.folders.join(";"));
+    }
+    for d in &report.multiformat {
+        let no = d.track_no.map(|n| n.to_string()).unwrap_or_default();
+        println!(
+            "multiformat\t{}\t{no}\t{}\t{}",
+            d.album_folder,
+            d.title,
+            d.files.join(";")
+        );
+    }
+    for d in &report.similar_albums {
+        println!(
+            "similar\t{}\t{:.2}\t{}\t{}",
+            d.artist, d.ratio, d.a.title, d.b.title
+        );
+    }
+    for d in &report.track_dupes {
+        println!("track\t{}\t{}\t{}", d.artist, d.title, d.files.join(";"));
+    }
 }
 
 async fn run_set_cover(db: PathBuf, album_id: i64, image: PathBuf, root: PathBuf) -> Result<()> {

@@ -620,7 +620,7 @@ voice_boost = false
 
 ## 11. Dependencies
 
-Backend (Rust): `tokio`, `rusqlite` (bundled, FTS5), `libmpv2`, `lofty` (and/or `symphonia`), `reqwest` (conditional GET, Basic auth), `oo7` (libsecret), `feed-rs` + `quick-xml` (podcasts), `ammonia` (show-note sanitize), `id3` (chapter fallback), `image` (cover decode/accent), `serde`/`serde_json`/`toml`, `regex`, `tracing`, `zbus` (MPRIS + inhibitor). A MusicBrainz client crate only if §7.3 is taken on.
+Backend (Rust): `tokio`, `rusqlite` (bundled, FTS5), `libmpv2`, `lofty` (and/or `symphonia`), `reqwest` (conditional GET, Basic auth), `oo7` (libsecret), `feed-rs` + `quick-xml` (podcasts), `ammonia` (show-note sanitize), `id3` (chapter fallback), `image` (cover decode/accent), `serde`/`serde_json`/`toml`, `regex`, `unicode-normalization` (Phase 8b dedup NFKC key folding), `tracing`, `zbus` (MPRIS + inhibitor). A MusicBrainz client crate only if §7.3 is taken on.
 
 Frontend: `gtk4` (≥ 4.16), `libadwaita` (≥ 1.7), system `libmpv` (0.36+) with the ffmpeg filter library (`silenceremove`, `rubberband`, `acompressor`, `equalizer`, `loudnorm`), `libsecret` (via `oo7`).
 

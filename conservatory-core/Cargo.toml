@@ -28,6 +28,8 @@ zbus = { workspace = true }
 # Phase 4c fix: setlocale(LC_NUMERIC, "C") so libmpv's mpv_create() succeeds
 # under a GTK-set locale.
 libc = { workspace = true }
+# Phase 8b: NFKC folding for the duplicate-detection normalization keys.
+unicode-normalization = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

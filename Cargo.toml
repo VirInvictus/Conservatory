@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.63"
+version = "0.0.64"
 edition = "2024"
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
@@ -68,6 +68,9 @@ toml = "0.8"
 
 # Misc
 regex = "1.11"
+# Phase 8b: NFKC normalization for the duplicate-detection key folding (the
+# Lattice `_norm_key` port). Pure-Rust, no transitive weight.
+unicode-normalization = "0.1.25"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 url = "2.5"
 anyhow = "1.0"

@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.0.64
+
+Phase 8b: a `duplicates` command that finds redundant copies in your library, the second Phase 8 audit. It is a faithful port of Lattice's duplicate detector. Read-only: it reports, it never deletes (cleanup goes through `organize`, with its dry-run and undo). One new dependency (`unicode-normalization`, for matching names that differ only in unicode form); no migration.
+
+- **Four kinds of duplicate.** (1) The same album sitting in two folders. (2) The same track ripped to several formats in one album (flac + mp3). (3) Near-miss album names by the same artist, e.g. "Domestica" vs "Domestica (Deluxe Edition)", via a fuzzy match. (4) The same recording (artist + title) living in multiple albums, grouped by duration so a studio take and a live take of the same song are reported separately, not lumped together.
+- **Robust name matching.** Names are normalized the way Lattice does before comparison: unicode NFKC folding, curly quotes and dashes folded to ASCII, whitespace and case collapsed; the fuzzy tier additionally strips "feat./ft." clauses and trailing parentheticals. The fuzzy similarity is a hand-rolled port of Python's difflib ratio, so the 0.85 threshold behaves exactly as it does in Lattice.
+- **`duplicates` CLI verb.** `conservatory-cli duplicates <db>` prints a four-section report; `--tier exact|multiformat|similar|tracks` limits which sections run, and `--format tsv|json|human` (human default) picks the output. Always exits 0 (a duplicate is not an error).
+- **Tests.** Each tier is unit-tested against a planted set, plus the normalization vectors and the difflib-ratio parity. Verified end to end on real albums (a clean library reports nothing). Full workspace suite + clippy `-D warnings` + fmt + the music-only build green.
+
 ## v0.0.63
 
 Phase 8a: a `verify` command that decode-checks your files for corruption. This is the first piece of Phase 8 (library maintenance and audits), modeled on Lattice's integrity tests. One database migration (0014); no new third-party Rust dependency (it shells out to `flac` and `ffmpeg`, which need to be on your PATH).

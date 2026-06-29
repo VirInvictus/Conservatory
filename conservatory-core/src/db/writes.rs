@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
     Album, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, EQ_BAND_COUNT, Episode,
-    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track,
+    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -1316,6 +1316,40 @@ pub(crate) fn set_book_narrators(
             "INSERT INTO book_narrators (book_id, person_id) VALUES (?1, ?2)
              ON CONFLICT(book_id, person_id) DO NOTHING",
             params![book_id, id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Upsert a batch of integrity-verification results (Phase 8a), keyed by
+/// `file_path`, in one transaction. A re-verify of an unchanged file overwrites
+/// its row (new `checked_at`); a changed file (different size/mtime) overwrites
+/// the stale verdict. Empty input is a no-op.
+pub(crate) fn upsert_verify_results(conn: &mut Connection, rows: &[VerifyResultRow]) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.transaction()?;
+    for r in rows {
+        tx.execute(
+            "INSERT INTO verify_results
+                 (file_path, file_size, file_mtime, verdict, detail, checked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(file_path) DO UPDATE SET
+                 file_size  = excluded.file_size,
+                 file_mtime = excluded.file_mtime,
+                 verdict    = excluded.verdict,
+                 detail     = excluded.detail,
+                 checked_at = excluded.checked_at",
+            params![
+                r.file_path,
+                r.file_size,
+                r.file_mtime,
+                r.verdict.as_str(),
+                r.detail,
+                r.checked_at,
+            ],
         )?;
     }
     tx.commit()?;

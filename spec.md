@@ -624,6 +624,8 @@ Backend (Rust): `tokio`, `rusqlite` (bundled, FTS5), `libmpv2`, `lofty` (and/or 
 
 Frontend: `gtk4` (≥ 4.16), `libadwaita` (≥ 1.7), system `libmpv` (0.36+) with the ffmpeg filter library (`silenceremove`, `rubberband`, `acompressor`, `equalizer`, `loudnorm`), `libsecret` (via `oo7`).
 
+External tools (shelled out, not linked, ATTRIBUTIONS.md): `rsgain` (ReplayGain scan, §16.7), `ffprobe` (embedded-M4B chapters, §3.8), and `flac` + `ffmpeg` (the Phase 8a integrity audit: `flac -t` test-decodes / MD5-verifies FLAC, `ffmpeg` strict-decodes the rest to a null sink; §8). A missing tool degrades gracefully or fails with a helpful message; none is required for normal playback.
+
 **No third-party crate or system library lands without prior sign-off.** Brandon's standing rule; doubly noted here because this list is longer than usual and still partly provisional.
 
 ---

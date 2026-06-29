@@ -11,19 +11,21 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam, fts_rank, get_album, get_episode,
-    get_show_settings, get_track, library_counts, load_queue, probe_read, read_playback_state,
-    search_rows, search_track_ids, spawn_worker, track_render_rows, writeback_rows,
+    MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam, VerifyResultRow, fts_rank,
+    get_album, get_episode, get_show_settings, get_track, library_counts, load_queue, probe_read,
+    read_playback_state, read_verify_results, search_rows, search_track_ids, spawn_worker,
+    track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
     AlbumEdit, Assignment, DEFAULT_TARGET_LUFS, Field, GenreVocab, ImportOptions, ImportReport,
     PathTemplate, PlayableItem, PlaybackConfig, SleepMode, TagWrite, TrackDraft, TrackEdit,
-    TrackFields, any_path_affecting, build_af_chain, build_album_edit, build_track_edit,
-    compute_accent, find_collisions, find_cover_bytes, genres_assignment, import_folder,
-    parse_assignment, read_track, replace_in, replaygain_from_file, resolve_album,
-    resolve_episode_profile, resolve_music_profile, resync_album_covers, rsgain_available,
-    scan_album_files, sync_album_cover, write_track_tags,
+    TrackFields, VerifyVerdict, any_path_affecting, build_af_chain, build_album_edit,
+    build_track_edit, compute_accent, ffmpeg_available, find_collisions, find_cover_bytes,
+    flac_available, genres_assignment, import_folder, parse_assignment, read_track, replace_in,
+    replaygain_from_file, resolve_album, resolve_episode_profile, resolve_music_profile,
+    resync_album_covers, rsgain_available, scan_album_files, sync_album_cover, verify_files,
+    write_track_tags,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -201,6 +203,26 @@ enum Command {
     Replaygain {
         #[command(subcommand)]
         action: ReplaygainAction,
+    },
+
+    /// Decode-verify the matched tracks via `flac -t` / `ffmpeg`, classifying each
+    /// CORRUPT / SUSPECT / METADATA / OK (Phase 8a). Caches the verdict by
+    /// path+size/mtime so a re-run skips unchanged files. Exits non-zero only when
+    /// CORRUPT files exist (scriptable in a cron/backup hook).
+    Verify {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Search expression selecting the tracks to verify.
+        query: String,
+        /// Library root the relative track paths hang off.
+        #[arg(long)]
+        root: PathBuf,
+        /// List every non-OK file with its detail (not just the per-tier counts).
+        #[arg(long)]
+        verbose: bool,
+        /// Re-verify even files whose cached size/mtime is unchanged.
+        #[arg(long)]
+        force: bool,
     },
 
     /// Set an album's cover image: write it into the album folder as cover.jpg
@@ -920,6 +942,13 @@ fn main() -> Result<()> {
                     target_lufs,
                 },
         }) => block_on(run_replaygain_scan(db, query, root, apply, target_lufs)),
+        Some(Command::Verify {
+            db,
+            query,
+            root,
+            verbose,
+            force,
+        }) => block_on(run_verify(db, query, root, verbose, force)),
         Some(Command::SetCover {
             db,
             album_id,
@@ -2939,6 +2968,181 @@ async fn run_replaygain_scan(
         by_album.len()
     );
     Ok(())
+}
+
+/// The file's size + mtime (unix seconds) for the verify cache key, or `None`
+/// when it cannot be stat'd (missing / unreadable).
+fn file_size_mtime(path: &Path) -> Option<(i64, i64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    let size = meta.len() as i64;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    Some((size, mtime))
+}
+
+async fn run_verify(
+    db: PathBuf,
+    query: String,
+    root: PathBuf,
+    verbose: bool,
+    force: bool,
+) -> Result<()> {
+    let pool = ReadPool::new(db.clone(), 3).context("opening read pool")?;
+    let ids = resolve_selector(&pool, &query)?;
+    if ids.is_empty() {
+        println!("no tracks match {query:?}");
+        return Ok(());
+    }
+
+    // The matched tracks' relative paths + format (format picks flac vs ffmpeg).
+    let selected: Vec<(String, Option<String>)> = {
+        let conn = pool.open().context("opening pool connection")?;
+        track_render_rows(&conn)
+            .context("reading render rows")?
+            .into_iter()
+            .filter(|r| ids.contains(&r.track_id))
+            .map(|r| (r.file_path, r.format))
+            .collect()
+    };
+
+    // Require the decoder(s) the selection actually needs, so a missing tool
+    // fails loudly up front rather than marking every file CORRUPT.
+    let needs_flac = selected
+        .iter()
+        .any(|(p, fmt)| is_flac_path(p, fmt.as_deref()));
+    let needs_ffmpeg = selected
+        .iter()
+        .any(|(p, fmt)| !is_flac_path(p, fmt.as_deref()));
+    if needs_flac && !flac_available() {
+        anyhow::bail!("flac not found on PATH; install it to verify FLAC files");
+    }
+    if needs_ffmpeg && !ffmpeg_available() {
+        anyhow::bail!("ffmpeg not found on PATH; install it to verify non-FLAC files");
+    }
+
+    // Cached verdicts, to skip files whose size+mtime are unchanged (unless --force).
+    let cached = {
+        let conn = pool.open().context("opening pool connection")?;
+        let paths: Vec<String> = selected.iter().map(|(p, _)| p.clone()).collect();
+        read_verify_results(&conn, &paths).context("reading verify cache")?
+    };
+
+    let mut to_check: Vec<(PathBuf, Option<String>)> = Vec::new();
+    let mut sizes: std::collections::HashMap<String, (i64, i64)> = std::collections::HashMap::new();
+    let mut skipped = 0usize;
+    let mut missing: Vec<String> = Vec::new();
+    // Per-tier counts: reuse cached verdicts for skipped files.
+    let mut counts: std::collections::BTreeMap<&'static str, usize> =
+        std::collections::BTreeMap::new();
+    let mut flagged: Vec<(String, VerifyVerdict, Option<String>)> = Vec::new();
+
+    for (rel, fmt) in &selected {
+        let abs = root.join(rel);
+        let Some((size, mtime)) = file_size_mtime(&abs) else {
+            missing.push(rel.clone());
+            continue;
+        };
+        sizes.insert(rel.clone(), (size, mtime));
+        if !force
+            && let Some(row) = cached.get(rel)
+            && row.file_size == size
+            && row.file_mtime == mtime
+        {
+            skipped += 1;
+            *counts.entry(row.verdict.as_str()).or_default() += 1;
+            if row.verdict != VerifyVerdict::Ok {
+                flagged.push((rel.clone(), row.verdict, row.detail.clone()));
+            }
+            continue;
+        }
+        to_check.push((abs, fmt.clone()));
+    }
+
+    // Decode-verify the stale/new files in parallel, then map results back to the
+    // relative path (verify_files returns absolute paths in arbitrary order).
+    let checked_at = Utc::now().timestamp();
+    let results = verify_files(&to_check);
+    let mut rows: Vec<VerifyResultRow> = Vec::with_capacity(results.len());
+    for (abs, verdict, detail) in results {
+        let rel = abs
+            .strip_prefix(&root)
+            .unwrap_or(&abs)
+            .to_string_lossy()
+            .into_owned();
+        let (file_size, file_mtime) = sizes.get(&rel).copied().unwrap_or((0, 0));
+        *counts.entry(verdict.as_str()).or_default() += 1;
+        if verdict != VerifyVerdict::Ok {
+            flagged.push((rel.clone(), verdict, detail.clone()));
+        }
+        rows.push(VerifyResultRow {
+            file_path: rel,
+            file_size,
+            file_mtime,
+            verdict,
+            detail,
+            checked_at,
+        });
+    }
+
+    // Persist the fresh verdicts (one batched write).
+    if !rows.is_empty() {
+        let worker = spawn_worker(db).context("spawning worker")?;
+        worker
+            .upsert_verify_results(rows)
+            .await
+            .context("writing verify results")?;
+        worker.shutdown_ack().await.context("shutdown ack")?;
+    }
+
+    // Report.
+    if verbose && !flagged.is_empty() {
+        flagged.sort_by(|a, b| b.1.as_str().cmp(a.1.as_str()).then(a.0.cmp(&b.0)));
+        for (path, verdict, detail) in &flagged {
+            match detail {
+                Some(d) => println!("{}\t{}\t{d}", verdict.as_str().to_uppercase(), path),
+                None => println!("{}\t{}", verdict.as_str().to_uppercase(), path),
+            }
+        }
+    }
+    for path in &missing {
+        eprintln!("warning: missing file (not verified): {path}");
+    }
+    let corrupt = counts.get("corrupt").copied().unwrap_or(0);
+    println!(
+        "verified {} file(s): {} ok, {} metadata, {} suspect, {} corrupt ({skipped} cached, {} missing)",
+        selected.len() - missing.len(),
+        counts.get("ok").copied().unwrap_or(0),
+        counts.get("metadata").copied().unwrap_or(0),
+        counts.get("suspect").copied().unwrap_or(0),
+        corrupt,
+        missing.len(),
+    );
+
+    // The Lattice contract: non-zero exit only when CORRUPT files exist.
+    if corrupt > 0 {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Whether a relative path / format marks a FLAC (mirrors `verify::is_flac`,
+/// duplicated here to pick the required decoder before calling into core).
+fn is_flac_path(rel: &str, format: Option<&str>) -> bool {
+    if let Some(f) = format
+        && f.eq_ignore_ascii_case("flac")
+    {
+        return true;
+    }
+    Path::new(rel)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("flac"))
 }
 
 async fn run_set_cover(db: PathBuf, album_id: i64, image: PathBuf, root: PathBuf) -> Result<()> {

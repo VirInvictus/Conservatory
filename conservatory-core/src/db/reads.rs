@@ -13,9 +13,10 @@ use crate::db::models::{
     Album, Artist, AudioState, Book, BookChapter, BookPerson, BookPlayback, Chapter, CompSettings,
     DspState, EQ_BAND_COUNT, Episode, EqPreset, EqState, InboxPolicy, LevelerSettings,
     LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState, QueueItem,
-    ResamplerQuality, Series, Show, ShowSettings, Tag, Track,
+    ResamplerQuality, Series, Show, ShowSettings, Tag, Track, VerifyResultRow,
 };
 use crate::errors::Result;
+use crate::verify::VerifyVerdict;
 
 /// Library-wide row counts, the Phase 1b "does it load" sanity surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1501,4 +1502,56 @@ pub fn sort_shelf(rows: &mut [BookListRow]) {
             .then_with(|| b.last_played.cmp(&a.last_played))
             .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
     });
+}
+
+/// A row-mapper for `verify_results`, shared by the lookup and report reads.
+fn row_to_verify_result(row: &rusqlite::Row) -> rusqlite::Result<VerifyResultRow> {
+    let verdict: String = row.get("verdict")?;
+    Ok(VerifyResultRow {
+        file_path: row.get("file_path")?,
+        file_size: row.get("file_size")?,
+        file_mtime: row.get("file_mtime")?,
+        verdict: verdict.parse().unwrap_or(VerifyVerdict::Suspect),
+        detail: row.get("detail")?,
+        checked_at: row.get("checked_at")?,
+    })
+}
+
+/// The cached verify rows for the given library-relative `paths`, as a
+/// `path -> row` map (Phase 8a). Used to skip files whose on-disk size/mtime
+/// still match a prior verdict. Chunked so a large selection stays under
+/// SQLite's bound-parameter limit.
+pub fn read_verify_results(
+    conn: &Connection,
+    paths: &[String],
+) -> Result<HashMap<String, VerifyResultRow>> {
+    let mut out = HashMap::with_capacity(paths.len());
+    for chunk in paths.chunks(900) {
+        let placeholders = vec!["?"; chunk.len()].join(", ");
+        let sql = format!(
+            "SELECT file_path, file_size, file_mtime, verdict, detail, checked_at
+             FROM verify_results WHERE file_path IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let params = rusqlite::params_from_iter(chunk.iter());
+        let rows = stmt.query_map(params, row_to_verify_result)?;
+        for r in rows {
+            let r = r?;
+            out.insert(r.file_path.clone(), r);
+        }
+    }
+    Ok(out)
+}
+
+/// Every cached file with a CORRUPT or SUSPECT verdict (Phase 8a), corrupt first
+/// then suspect, each by path. The library-wide health report.
+pub fn corrupt_or_suspect(conn: &Connection) -> Result<Vec<VerifyResultRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT file_path, file_size, file_mtime, verdict, detail, checked_at
+         FROM verify_results
+         WHERE verdict IN ('corrupt', 'suspect')
+         ORDER BY CASE verdict WHEN 'corrupt' THEN 0 ELSE 1 END, file_path",
+    )?;
+    let rows = stmt.query_map([], row_to_verify_result)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
 }

@@ -24,6 +24,7 @@ pub mod player;
 pub mod replaygain;
 pub mod shelf_genre;
 pub mod tags;
+pub mod verify;
 
 pub use accent::{compute_accent, find_cover_bytes};
 pub use covers::{resync_album_covers, sync_album_cover, write_cover};
@@ -48,6 +49,7 @@ pub use replaygain::{
 };
 pub use shelf_genre::{AlbumGenreInput, GenreVocab, normalize, resolve_album, resolve_shelf_genre};
 pub use tags::{EmbeddedCover, TagWrite, TrackDraft, read_track, write_track_tags};
+pub use verify::{VerifyVerdict, ffmpeg_available, flac_available, verify_file, verify_files};
 
 /// Workspace version, surfaced for the CLI and GUI binaries.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

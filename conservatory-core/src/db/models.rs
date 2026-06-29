@@ -310,6 +310,21 @@ pub struct ListeningSession {
     pub smart_speed_saved: f64,
 }
 
+/// One row of the `verify_results` cache (Phase 8a): a file's integrity verdict
+/// plus the size/mtime it had when checked, so a re-verify can skip an unchanged
+/// file. Path-keyed (library-relative), media-agnostic. `checked_at`, `file_size`,
+/// and `file_mtime` are plain unix-second / byte counts (not `DateTime`, to keep
+/// the staleness comparison a cheap integer equality against `fs::metadata`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct VerifyResultRow {
+    pub file_path: String,
+    pub file_size: i64,
+    pub file_mtime: i64,
+    pub verdict: crate::verify::VerifyVerdict,
+    pub detail: Option<String>,
+    pub checked_at: i64,
+}
+
 /// An episode chapter (spec §8). Source is `podcast:chapters` JSON or ID3 CHAP;
 /// `start_time` / `end_time` are seconds into the episode.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

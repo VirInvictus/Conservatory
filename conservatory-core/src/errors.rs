@@ -41,6 +41,9 @@ pub enum Error {
     #[error("replaygain: {0}")]
     ReplayGain(String),
 
+    #[error("verify: {0}")]
+    Verify(String),
+
     #[error("dbus: {0}")]
     Dbus(#[from] zbus::Error),
 }

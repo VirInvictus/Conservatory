@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 
 use crate::db::models::{
     Album, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, EQ_BAND_COUNT, Episode,
-    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track,
+    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -361,6 +361,12 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Upsert a batch of integrity-verification results (Phase 8a), one tx.
+    UpsertVerifyResults {
+        rows: Vec<VerifyResultRow>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Upsert a show's per-show overrides.
     UpsertShowSettings {
         settings: ShowSettings,
@@ -554,6 +560,7 @@ impl Command {
             Self::SetEpisodePosition { .. } => "set_episode_position",
             Self::CompleteEpisode { .. } => "complete_episode",
             Self::InsertListeningSession { .. } => "insert_listening_session",
+            Self::UpsertVerifyResults { .. } => "upsert_verify_results",
             Self::UpsertShowSettings { .. } => "upsert_show_settings",
             Self::ReplaceChapters { .. } => "replace_chapters",
             Self::GetOrCreateTag { .. } => "get_or_create_tag",

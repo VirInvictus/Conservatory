@@ -76,10 +76,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 13,
         sql: include_str!("migrations/0013_book_playback_cursor.sql"),
     },
+    Migration {
+        version: 14,
+        sql: include_str!("migrations/0014_verify_results.sql"),
+    },
 ];
 
 /// The `user_version` a fully-migrated database reaches.
-pub const CURRENT_VERSION: i32 = 13;
+pub const CURRENT_VERSION: i32 = 14;
 
 /// Apply any unapplied migrations. Idempotent: running this on a
 /// fully-migrated database is a no-op.

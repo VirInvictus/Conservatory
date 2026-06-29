@@ -19,7 +19,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::db::command::Command;
 use crate::db::models::{
     Album, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, EQ_BAND_COUNT, Episode,
-    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track,
+    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::db::{connection, migrations, probe, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
@@ -525,6 +525,12 @@ impl WorkerHandle {
             reply,
         })
         .await
+    }
+
+    /// Upsert a batch of integrity-verification results (Phase 8a), one tx.
+    pub async fn upsert_verify_results(&self, rows: Vec<VerifyResultRow>) -> Result<()> {
+        self.dispatch(|reply| Command::UpsertVerifyResults { rows, reply })
+            .await
     }
 
     /// Upsert a show's per-show overrides.
@@ -1104,6 +1110,9 @@ fn handle(conn: &mut Connection, command: Command) {
                 audio_seconds,
                 smart_speed_saved,
             ));
+        }
+        Command::UpsertVerifyResults { rows, reply } => {
+            let _ = reply.send(writes::upsert_verify_results(conn, &rows));
         }
         Command::UpsertShowSettings { settings, reply } => {
             let _ = reply.send(writes::upsert_show_settings(conn, &settings));

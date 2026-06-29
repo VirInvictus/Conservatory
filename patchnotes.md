@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.63
+
+Phase 8a: a `verify` command that decode-checks your files for corruption. This is the first piece of Phase 8 (library maintenance and audits), modeled on Lattice's integrity tests. One database migration (0014); no new third-party Rust dependency (it shells out to `flac` and `ffmpeg`, which need to be on your PATH).
+
+- **Decode-verify with a four-tier verdict.** Each file is test-decoded and sorted into OK, METADATA (audio fine, only a container/tag note), SUSPECT (decoded to the end but the tool flagged something), or CORRUPT (the decoder errored, or a FLAC came up short, i.e. truncation or bit-rot). FLAC goes through `flac -t`, which MD5-verifies the decoded stream and so catches rot a lenient player would skip; every other format goes through a strict `ffmpeg` decode. A benign-note allowlist keeps a clean mp3's routine "estimating duration" warning from flagging it.
+- **`verify` CLI verb.** `conservatory-cli verify <db> '<search>' --root <root>` checks the matched tracks in parallel and prints a per-tier summary; `--verbose` lists each flagged file with the tool's message. The process exits non-zero only when CORRUPT files exist, so it drops straight into a cron or pre-backup hook.
+- **Cached, so re-runs are cheap.** Each verdict is stored keyed by path plus the file's size and modification time; a re-run skips files that have not changed (pass `--force` to re-check everything). The cache is path-keyed, so podcasts and audiobooks can be folded into the same verifier later with no schema change.
+- **Migration 0014** adds the `verify_results` table.
+- **Tests.** Pure classifier units for both tools (including the benign-note regression), an availability-gated integration test (a clean FLAC fixture verifies OK, a truncated copy verifies CORRUPT), and the cache round-trip through the worker. Verified end to end against real albums. Full workspace suite + clippy `-D warnings` + fmt + the music-only build green.
+
 ## v0.0.62
 
 Phase 7c-iii, and with it **Phase 7 is complete**: audiobooks are now a full third media type. You can play a book from the shelf, see it on the Now Playing surfaces, control it from GNOME's media keys, and tune its playback per book. This is the last of three audiobook-playback commits; no migration, no new third-party dependency.

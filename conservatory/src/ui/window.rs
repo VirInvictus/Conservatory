@@ -130,6 +130,9 @@ mod imp {
         // feature-gated Podcasts/Audiobooks plugin pages. `Alt+1/2/3` switch
         // its visible child by name.
         pub view_stack: OnceCell<adw::ViewStack>,
+        // The toast host (Phase 13b): brief, non-modal confirmations for actions
+        // that would otherwise complete silently or behind a modal "Done" dialog.
+        pub toast_overlay: OnceCell<adw::ToastOverlay>,
     }
 
     #[glib::object_subclass]
@@ -265,7 +268,7 @@ impl ConservatoryWindow {
 
         let split = gtk::Paned::new(gtk::Orientation::Vertical);
         split.set_start_child(Some(&facet_row));
-        split.set_end_child(Some(&leaf.view));
+        split.set_end_child(Some(&leaf.stack));
         split.set_resize_start_child(true);
         split.set_resize_end_child(true);
         split.set_position(300);
@@ -336,6 +339,11 @@ impl ConservatoryWindow {
         let now_playing = build_now_playing_panel();
 
         let header = adw::HeaderBar::new();
+
+        // The header buttons grouped into clusters (Phase 13b) for visual
+        // hierarchy: the panel-toggle trio (queue / props / info) reads as one
+        // linked segment, the selection-edit pair (edit / embed) as another, and
+        // the utility buttons (prefs / output / menu) sit apart on the far end.
         let queue_btn = gtk::Button::from_icon_name("view-list-symbolic");
         queue_btn.set_tooltip_text(Some("Show / hide the queue (Ctrl+U)"));
         let weak = self.downgrade();
@@ -344,7 +352,6 @@ impl ConservatoryWindow {
                 win.toggle_queue();
             }
         });
-        header.pack_end(&queue_btn);
         let props_btn = gtk::Button::from_icon_name("document-properties-symbolic");
         props_btn.set_tooltip_text(Some("Track properties (Ctrl+P)"));
         let weak = self.downgrade();
@@ -353,7 +360,6 @@ impl ConservatoryWindow {
                 win.toggle_inspector();
             }
         });
-        header.pack_end(&props_btn);
         let info_btn = gtk::Button::from_icon_name("dialog-information-symbolic");
         info_btn.set_tooltip_text(Some("Now Playing details (Ctrl+I)"));
         let weak = self.downgrade();
@@ -362,7 +368,12 @@ impl ConservatoryWindow {
                 win.toggle_now_playing();
             }
         });
-        header.pack_end(&info_btn);
+        let panel_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        panel_group.add_css_class("linked");
+        panel_group.append(&queue_btn);
+        panel_group.append(&props_btn);
+        panel_group.append(&info_btn);
+
         let prefs_btn = gtk::Button::from_icon_name("preferences-system-symbolic");
         prefs_btn.set_tooltip_text(Some("Preferences (Ctrl+comma)"));
         let weak = self.downgrade();
@@ -371,9 +382,12 @@ impl ConservatoryWindow {
                 win.open_preferences();
             }
         });
-        header.pack_end(&prefs_btn);
-        header.pack_end(&self.build_output_menu_button());
+        // Utility cluster on the far right (right-to-left as packed): menu, output,
+        // prefs, then the panel-toggle segment to their left.
         header.pack_end(&self.build_primary_menu());
+        header.pack_end(&self.build_output_menu_button());
+        header.pack_end(&prefs_btn);
+        header.pack_end(&panel_group);
 
         let edit_btn = gtk::Button::from_icon_name("document-edit-symbolic");
         edit_btn.set_tooltip_text(Some("Edit selected tracks (Ctrl+E)"));
@@ -383,8 +397,6 @@ impl ConservatoryWindow {
                 win.prompt_bulk_edit();
             }
         });
-        header.pack_start(&edit_btn);
-
         let embed_btn = gtk::Button::from_icon_name("document-save-symbolic");
         embed_btn.set_tooltip_text(Some("Embed metadata into selected files"));
         let weak = self.downgrade();
@@ -393,7 +405,11 @@ impl ConservatoryWindow {
                 win.prompt_embed_tags();
             }
         });
-        header.pack_start(&embed_btn);
+        let edit_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        edit_group.add_css_class("linked");
+        edit_group.append(&edit_btn);
+        edit_group.append(&embed_btn);
+        header.pack_start(&edit_group);
 
         // The toolbar content is the view stack with the Now Playing drawer
         // stacked beneath it: the drawer slides up from the bottom of the content
@@ -424,9 +440,14 @@ impl ConservatoryWindow {
         status_bar.set_start_widget(Some(&status_left));
         status_bar.set_end_widget(Some(&status_right));
 
+        // The toast host (Phase 13b) wraps the main content area, so confirmations
+        // float at the bottom of the browse, above the status / Now-bar chrome.
+        let toast_overlay = adw::ToastOverlay::new();
+        toast_overlay.set_child(Some(&content_box));
+
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
-        toolbar.set_content(Some(&content_box));
+        toolbar.set_content(Some(&toast_overlay));
         // The status bar sits above the Now-bar, which is the stable innermost
         // bottom bar (spec §2.3); the adaptive view-switcher bar reveals *beneath*
         // the Now-bar at the narrow breakpoint (added in `attach_podcasts_view`).
@@ -457,6 +478,7 @@ impl ConservatoryWindow {
 
         self.set_content(Some(&toolbar));
         let _ = imp.view_stack.set(stack);
+        let _ = imp.toast_overlay.set(toast_overlay);
 
         *imp.panes.borrow_mut() = panes;
         let _ = imp.leaf.set(leaf);
@@ -2042,6 +2064,8 @@ impl ConservatoryWindow {
             }
         }
 
+        self.toast(&format!("Updated {} track(s)", track_ids.len()));
+
         if any_path_affecting(&assignments) {
             match imp.library_root.get() {
                 Some(root) => {
@@ -2211,14 +2235,23 @@ impl ConservatoryWindow {
                 }
             }
         }
+        // A toast rather than a modal "Done" dialog (Phase 13b): a successful
+        // write needs an acknowledgement, not an interruption. Errors still get a
+        // toast (the per-file detail is on the terminal).
         let body = if errors == 0 {
-            format!("Wrote metadata into {written} file(s).")
+            format!("Embedded tags into {written} file(s)")
         } else {
-            format!("Wrote {written} file(s); {errors} failed (see terminal).")
+            format!("Embedded {written} file(s); {errors} failed (see terminal)")
         };
-        let dialog = adw::AlertDialog::new(Some("Done"), Some(&body));
-        dialog.add_response("ok", "OK");
-        dialog.present(Some(self));
+        self.toast(&body);
+    }
+
+    /// Show a brief, non-modal confirmation (Phase 13b). A no-op before the
+    /// overlay is built (it is set at the end of `build_contents`).
+    fn toast(&self, message: &str) {
+        if let Some(overlay) = self.imp().toast_overlay.get() {
+            overlay.add_toast(adw::Toast::new(message));
+        }
     }
 
     /// Keep the drawer's playing-row highlight in step with the engine: when the
@@ -3329,8 +3362,12 @@ impl ConservatoryWindow {
             .map(|e| e.text().to_string())
             .unwrap_or_default();
         let today = chrono::Utc::now().date_naive();
-        let (tracks, warnings) = query_leaf(pool, &self.current_filters(), &query, today);
-        leaf.set_tracks(&tracks);
+        let filters = self.current_filters();
+        let (tracks, warnings) = query_leaf(pool, &filters, &query, today);
+        // "Filtered" means the empty result is from a constraint (facet or filter
+        // text), not an empty library: it picks the empty-state wording.
+        let filtered = !query.trim().is_empty() || !filters.is_empty();
+        leaf.set_tracks(&tracks, filtered);
         // Cache the view aggregate for the status bar (Phase 11b) and refresh it.
         imp.view_total
             .set(crate::statusbar::view_aggregate(&tracks));

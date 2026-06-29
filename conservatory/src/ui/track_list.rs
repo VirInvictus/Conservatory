@@ -10,6 +10,7 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
+use libadwaita as adw;
 
 use conservatory_core::db::{TrackBrief, TrackSort, cmp_tracks};
 
@@ -24,12 +25,15 @@ const COVER_PLACEHOLDER: &str = "audio-x-generic-symbolic";
 
 /// The leaf table: its backing store (for repopulation), the selection (for
 /// multi-select + reading the visible order), the `ColumnView` (for row
-/// activation), and the scroller to place.
+/// activation), the scroller, and a `Stack` that swaps the table for an empty
+/// state (Phase 13b). `stack` is the placeable widget.
 pub struct Leaf {
     pub store: gio::ListStore,
     pub selection: gtk::MultiSelection,
     pub column_view: gtk::ColumnView,
     pub view: gtk::ScrolledWindow,
+    pub stack: gtk::Stack,
+    empty_page: adw::StatusPage,
 }
 
 fn track(obj: &glib::Object) -> TrackRow {
@@ -263,19 +267,52 @@ pub fn build_leaf(root: Option<PathBuf>) -> Leaf {
         .child(&view)
         .build();
 
+    // The empty state (Phase 13b): a centered StatusPage shown in place of the
+    // table when the leaf is empty. Its title / description are set per refresh
+    // (no library vs no filter matches).
+    let empty_page = adw::StatusPage::builder()
+        .icon_name(COVER_PLACEHOLDER)
+        .title("No tracks")
+        .build();
+    let stack = gtk::Stack::new();
+    stack.add_named(&scroller, Some("list"));
+    stack.add_named(&empty_page, Some("empty"));
+
     Leaf {
         store,
         selection,
         column_view: view,
         view: scroller,
+        stack,
+        empty_page,
     }
 }
 
 impl Leaf {
-    pub fn set_tracks(&self, tracks: &[TrackBrief]) {
+    /// Repopulate the table and swap to the empty state when there are no rows.
+    /// `filtered` distinguishes "the library is empty" from "nothing matches the
+    /// current filter" so the empty state can say the useful thing.
+    pub fn set_tracks(&self, tracks: &[TrackBrief], filtered: bool) {
         self.store.remove_all();
         for t in tracks {
             self.store.append(&TrackRow::new(t));
+        }
+        if tracks.is_empty() {
+            if filtered {
+                self.empty_page
+                    .set_icon_name(Some("system-search-symbolic"));
+                self.empty_page.set_title("No matches");
+                self.empty_page
+                    .set_description(Some("No tracks match the current filter."));
+            } else {
+                self.empty_page.set_icon_name(Some(COVER_PLACEHOLDER));
+                self.empty_page.set_title("No tracks yet");
+                self.empty_page
+                    .set_description(Some("Import music to start your library."));
+            }
+            self.stack.set_visible_child_name("empty");
+        } else {
+            self.stack.set_visible_child_name("list");
         }
     }
 }

@@ -790,11 +790,11 @@ A UI/UX polish pass plus a focused code tidy, prompted by a concrete layout bug 
 
 *Usable artifact:* closing a side panel reclaims its space, and the app reads more polished (smoother motion, breathing room, depth, accent).
 
-### Phase 13b — Structural UX: empty states, header grouping, toasts (v0.0.83)
+### Phase 13b — Structural UX: empty states, header grouping, toasts ✅ (v0.0.83)
 
-- [ ] `adw::StatusPage` empty/idle states (empty library, no filter results, idle Now Playing drawer).
-- [ ] Cluster the header buttons into functional groups for visual hierarchy.
-- [ ] `adw::ToastOverlay` feedback on currently-silent actions (import done, tags saved, tags embedded, playlist exported).
+- [x] `adw::StatusPage` empty/idle states: the leaf table swaps to a centered status page when the library is empty ("No tracks yet") or a filter has no matches ("No matches"); the Now Playing drawer shows a "Nothing playing" page when idle.
+- [x] Clustered the header buttons into linked groups (panel toggles | edit/embed | utility) for visual hierarchy.
+- [x] `adw::ToastOverlay` feedback on tag-embed and bulk-edit (the embed "Done" modal became a toast). Import / playlist export are CLI-only, so no GUI toast applies there.
 
 ### Phase 13c — Code tidy: accent + helper dedup (v0.0.84)
 

@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.83
+
+Phase 13b: the structural part of the sleekness pass. Empty states, a grouped header, and toast confirmations.
+
+- **Empty states that say something useful.** The browse area no longer shows a blank grid when there is nothing to show. An empty library invites you to import; a filter with no matches says so plainly. The Now Playing drawer shows a tidy "Nothing playing" panel when idle instead of a lone line of text.
+- **A grouped header.** The header buttons are organized into clusters: the panel toggles (queue, properties, Now Playing) read as one segmented group, the edit and embed actions as another, with preferences, output, and the menu set apart. Less of a flat undifferentiated row.
+- **Toast confirmations.** Actions that used to complete silently or behind a modal "Done" dialog now give a brief, non-modal toast: embedding tags into files and saving track edits both confirm themselves and get out of the way.
+
+No data or playback behavior changed; this is presentation and feedback.
+
 ## v0.0.82
 
 Phase 13a: the layout space-reclaim fix plus a round of low-risk polish. The first of a UI/UX sleekness pass.

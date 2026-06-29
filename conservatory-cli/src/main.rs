@@ -11,27 +11,29 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    ApeStripRow, MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam, VerifyResultRow,
-    ape_strips, audit_album_rows, audit_track_rows, dedup_rows, fts_rank, get_album, get_episode,
-    get_show_settings, get_track, library_counts, load_queue, probe_read, read_playback_state,
-    read_verify_results, search_rows, search_track_ids, spawn_worker, stats_genre_rows,
-    stats_track_rows, track_render_rows, writeback_rows,
+    ApeStripRow, Connection, MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam,
+    VerifyResultRow, ape_strips, audit_album_rows, audit_track_rows, dedup_rows, fts_rank,
+    get_album, get_episode, get_show_settings, get_track, library_counts, list_perspectives,
+    load_queue, playlist_rows, probe_read, read_playback_state, read_verify_results, search_rows,
+    search_track_ids, spawn_worker, stats_genre_rows, stats_track_rows, track_id_by_path,
+    track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
     AlbumEdit, Assignment, AuditOptions, AuditReport, DEFAULT_TARGET_LUFS, DedupOptions,
-    DuplicateReport, Field, GenreVocab, ImportOptions, ImportReport, LibraryStats, PathTemplate,
-    PlayableItem, PlaybackConfig, SleepMode, StripPlan, TagWrite, TrackDraft, TrackEdit,
-    TrackFields, VerifyVerdict, any_path_affecting, build_af_chain, build_album_edit,
-    build_track_edit, commit_strip, compute_accent, compute_stats, ffmpeg_available,
+    DuplicateReport, Field, GenreVocab, ImportOptions, ImportReport, LibraryStats, M3uTrack,
+    PathTemplate, PlayableItem, PlaybackConfig, SleepMode, StripPlan, TagWrite, TrackDraft,
+    TrackEdit, TrackFields, VerifyVerdict, any_path_affecting, build_af_chain, build_album_edit,
+    build_m3u, build_track_edit, commit_strip, compute_accent, compute_stats, ffmpeg_available,
     find_collisions, find_cover_bytes, find_duplicates, flac_available, format_size,
-    genres_assignment, import_folder, locate_ape, parse_assignment, plan_strip, read_track,
-    replace_in, replaygain_from_file, resolve_album, resolve_episode_profile,
+    genres_assignment, import_folder, locate_ape, parse_assignment, parse_m3u, plan_strip,
+    read_track, replace_in, replaygain_from_file, resolve_album, resolve_episode_profile,
     resolve_music_profile, restore_bytes, resync_album_covers, rsgain_available, run_audit,
     scan_album_files, sync_album_cover, verify_files, write_atomic_plain, write_track_tags,
 };
 use conservatory_search::{
-    SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
+    PerspectiveResolver, SearchItem, SqlValue, blend_relevance, collect_text_terms, parse,
+    parse_with_resolver, try_translate,
 };
 
 /// Output format for the report-producing verbs (spec §9).
@@ -333,6 +335,14 @@ enum Command {
         /// Output format.
         #[arg(long, value_enum, default_value_t = Format::Human)]
         format: Format,
+    },
+
+    /// Export or import `.m3u` playlists (Phase 8d). `export` writes a selector
+    /// (a search expression or `vl:NAME`) to a portable playlist; `import`
+    /// resolves a playlist's paths back to managed tracks and loads the queue.
+    Playlist {
+        #[command(subcommand)]
+        action: PlaylistAction,
     },
 
     /// Set an album's cover image: write it into the album folder as cover.jpg
@@ -956,6 +966,43 @@ enum TagAction {
 }
 
 #[derive(Subcommand)]
+enum PlaylistAction {
+    /// Resolve a selector and write the matched tracks to a `.m3u` (Phase 8d).
+    /// The selector is the search grammar (spec §3.4) and accepts `vl:NAME` for
+    /// a saved Perspective. Paths are root-relative unless `--absolute`.
+    Export {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The selector: a search expression, or `vl:NAME` for a Perspective.
+        query: String,
+        /// The `.m3u` / `.m3u8` file to write.
+        out: PathBuf,
+        /// Library root the relative track paths hang off (required for
+        /// `--absolute`; otherwise paths are written root-relative as stored).
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Write absolute file paths (root-joined) instead of root-relative.
+        #[arg(long, requires = "root")]
+        absolute: bool,
+    },
+    /// Read a `.m3u`, resolve its paths to managed tracks, and load the queue
+    /// (Phase 8d). Appends by default; `--replace` replaces the queue. Paths
+    /// that match no managed track are reported, not fatal.
+    Import {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The `.m3u` / `.m3u8` file to read.
+        input: PathBuf,
+        /// Library root, to map absolute playlist paths back to root-relative.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Replace the queue instead of appending to it.
+        #[arg(long)]
+        replace: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum QueueAction {
     /// Append tracks to the queue tail.
     Add {
@@ -1035,6 +1082,7 @@ fn main() -> Result<()> {
             sleep,
         }) => play(db, root, track_id, sleep),
         Some(Command::Queue { action }) => queue(action),
+        Some(Command::Playlist { action }) => playlist(action),
         Some(Command::Tag { action }) => tag(action),
         Some(Command::EmbedTags {
             db,
@@ -2590,10 +2638,35 @@ fn tag(action: TagAction) -> Result<()> {
 
 /// Resolve a search expression to the set of matching track ids (the dual SQL /
 /// eval path the `search` verb uses, membership only).
+/// A `vl:NAME` resolver backed by the stored Perspectives (Phase 8d): names are
+/// matched case-insensitively against the saved-search expressions. Preloaded
+/// into a map so the resolver does not re-borrow the pool connection mid-parse.
+struct DbPerspectiveResolver {
+    by_name: std::collections::HashMap<String, String>,
+}
+
+impl DbPerspectiveResolver {
+    fn load(conn: &Connection) -> Result<Self> {
+        let by_name = list_perspectives(conn)
+            .context("loading perspectives")?
+            .into_iter()
+            .map(|p| (p.name.to_ascii_lowercase(), p.expression))
+            .collect();
+        Ok(Self { by_name })
+    }
+}
+
+impl PerspectiveResolver for DbPerspectiveResolver {
+    fn expression(&self, name: &str) -> Option<String> {
+        self.by_name.get(&name.to_ascii_lowercase()).cloned()
+    }
+}
+
 fn resolve_selector(pool: &ReadPool, query: &str) -> Result<std::collections::HashSet<i64>> {
     let conn = pool.open().context("opening pool connection")?;
     let today = Utc::now().date_naive();
-    let parsed = parse(query);
+    let resolver = DbPerspectiveResolver::load(&conn)?;
+    let parsed = parse_with_resolver(query, &resolver);
     for w in &parsed.warnings {
         eprintln!("warning: {w}");
     }
@@ -4143,6 +4216,129 @@ async fn run_queue_clear(db: PathBuf) -> Result<()> {
     worker.shutdown_ack().await.context("shutdown ack")?;
     println!("queue cleared");
     Ok(())
+}
+
+fn playlist(action: PlaylistAction) -> Result<()> {
+    match action {
+        PlaylistAction::Export {
+            db,
+            query,
+            out,
+            root,
+            absolute,
+        } => run_playlist_export(db, query, out, root, absolute),
+        PlaylistAction::Import {
+            db,
+            input,
+            root,
+            replace,
+        } => block_on(run_playlist_import(db, input, root, replace)),
+    }
+}
+
+/// Export a selector to a `.m3u`: resolve the matched ids, then walk
+/// `playlist_rows` (already in album order) keeping the matched tracks. Paths
+/// are root-relative as stored, or root-joined absolute with `--absolute`.
+fn run_playlist_export(
+    db: PathBuf,
+    query: String,
+    out: PathBuf,
+    root: Option<PathBuf>,
+    absolute: bool,
+) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let ids = resolve_selector(&pool, &query)?;
+    let rows = {
+        let conn = pool.open().context("opening pool connection")?;
+        playlist_rows(&conn).context("reading playlist rows")?
+    };
+    let tracks: Vec<M3uTrack> = rows
+        .into_iter()
+        .filter(|r| ids.contains(&r.track_id))
+        .map(|r| {
+            let path = match (absolute, &root) {
+                (true, Some(root)) => root.join(&r.file_path).display().to_string(),
+                _ => r.file_path,
+            };
+            M3uTrack {
+                duration_secs: r.duration,
+                artist: r.artist,
+                title: r.title,
+                path,
+            }
+        })
+        .collect();
+    let n = tracks.len();
+    std::fs::write(&out, build_m3u(&tracks))
+        .with_context(|| format!("writing {}", out.display()))?;
+    println!("wrote {n} track(s) to {}", out.display());
+    Ok(())
+}
+
+/// Import a `.m3u` into the queue: resolve each path line to a managed track,
+/// then enqueue (or replace). Unresolved paths are reported, never fatal.
+async fn run_playlist_import(
+    db: PathBuf,
+    input: PathBuf,
+    root: Option<PathBuf>,
+    replace: bool,
+) -> Result<()> {
+    let text =
+        std::fs::read_to_string(&input).with_context(|| format!("reading {}", input.display()))?;
+    let pool = ReadPool::new(db.clone(), 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+
+    let mut resolved: Vec<i64> = Vec::new();
+    let mut unresolved: Vec<String> = Vec::new();
+    for path in parse_m3u(&text) {
+        let rel = to_root_relative(&path, root.as_deref());
+        match track_id_by_path(&conn, &rel).context("looking up track by path")? {
+            Some(id) => resolved.push(id),
+            None => unresolved.push(path),
+        }
+    }
+    drop(conn);
+
+    let worker = spawn_worker(db).context("spawning worker")?;
+    let n = resolved.len();
+    if replace {
+        worker
+            .replace_queue_with_tracks(resolved)
+            .await
+            .context("replacing queue")?;
+    } else {
+        worker
+            .enqueue_tracks(resolved)
+            .await
+            .context("enqueuing tracks")?;
+    }
+    worker.shutdown_ack().await.context("shutdown ack")?;
+
+    let verb = if replace {
+        "replaced queue with"
+    } else {
+        "enqueued"
+    };
+    println!("{verb} {n} track(s)");
+    if !unresolved.is_empty() {
+        eprintln!("{} path(s) matched no managed track:", unresolved.len());
+        for p in &unresolved {
+            eprintln!("  {p}");
+        }
+    }
+    Ok(())
+}
+
+/// Normalize an `.m3u` path to the root-relative form the DB stores: an
+/// absolute path under `root` is made relative to it; anything else is used
+/// as-is (already root-relative, or a foreign path that simply will not match).
+fn to_root_relative(path: &str, root: Option<&Path>) -> String {
+    if let Some(root) = root
+        && let Ok(rel) = Path::new(path).strip_prefix(root)
+    {
+        return rel.display().to_string();
+    }
+    path.to_string()
 }
 
 fn queue_list(db: PathBuf) -> Result<()> {

@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.0.69
+
+Phase 8d: playlist export and import as portable `.m3u` / `.m3u8` files. This is the last slice of Phase 8, so library maintenance (verify, duplicates, audit, stats, APE strip, playlists) is now complete.
+
+- **`playlist export`.** `conservatory-cli playlist export <db> '<expr>' <out.m3u>` writes the tracks matching a search expression to an extended-M3U playlist (with `#EXTINF` duration and `Artist - Title` lines), in album order. The selector is the full search grammar, and it accepts `vl:NAME` to export a saved Perspective. Paths are library-root-relative by default (portable when the `.m3u` sits at the library root); `--absolute` (with `--root`) writes full paths instead.
+- **`playlist import`.** `conservatory-cli playlist import <db> <in.m3u>` reads a playlist, resolves each path back to a managed track, and loads the play queue (appends by default; `--replace` replaces it). Paths that match no track in the library are reported and skipped, never fatal, so a playlist that points partly outside the library still imports what it can. Pass `--root` to map absolute playlist paths back to the library.
+- **`vl:NAME` everywhere.** Wiring the Perspective resolver into the shared selector path means `vl:NAME` now works not just in `playlist export` but in every selector-taking verb (`search`, `verify`, `duplicates`, `audit`), where it previously fell back to a plain text search.
+- **Tests.** The `.m3u` build/parse round-trip is unit-tested; verified end to end by exporting `format:mp3` to a playlist (relative and absolute) and re-importing it to the exact same eight tracks, plus a `vl:NAME` export and a missing-path import. Full workspace suite + clippy `-D warnings` + fmt + the music-only build green. No new dependency, no schema change.
+
 ## v0.0.68
 
 Phase 8c-iii (part 2 of 2): the `apestrip` command removes the stray APEv2 tags that `audit --tier ape` finds. This is the byte-level fix deferred since Phase 5b (lofty cannot remove an APE tag from an MP3). It mutates your files, so it is built with the full set of safeguards: dry-run by default, crash-safe writes, and a reversible undo. With this, Phase 8c (library health) is complete.

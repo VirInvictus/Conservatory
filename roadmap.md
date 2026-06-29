@@ -641,11 +641,13 @@ Modeled on Lattice's `--auditTags` / `--auditBitrate` / `--auditReplayGain` / `-
 
 Modeled on Lattice's `--playlist` (rule-based smart `.m3u`), bridged to Conservatory's Perspectives (saved searches).
 
-- [ ] Export a Perspective or an ad-hoc search expression to a `.m3u` / `.m3u8` (relative or absolute paths, configurable), and import an existing `.m3u` into a Perspective or straight into the queue, resolving paths back to managed tracks where possible.
-- [ ] CLI: `playlist export <db> '<expr|vl:NAME>' <out.m3u>`; `playlist import <db> <in.m3u>`.
-- [ ] Tests: exporting a search to m3u then re-importing round-trips to the same track set; missing-path entries are reported, not fatal.
+- [x] Export an ad-hoc search expression (or a `vl:NAME` Perspective) to a `.m3u` / `.m3u8` (root-relative paths by default, `--absolute` for root-joined), and import an existing `.m3u` straight into the queue (append, or `--replace`), resolving paths back to managed tracks. (v0.0.69)
+- [x] CLI: `playlist export <db> '<expr|vl:NAME>' <out.m3u> [--root R] [--absolute]`; `playlist import <db> <in.m3u> [--root R] [--replace]`. Wiring the `vl:NAME` resolver into the shared selector path also lit up `vl:` for `search` / `verify` / `duplicates` / `audit`.
+- [x] Tests: the `build`→`parse` path round-trips; e2e exporting `format:mp3` to m3u then re-importing resolves the same track set; missing-path entries are reported, not fatal.
 
-*Usable artifact:* move playlists in and out of Conservatory as portable `.m3u` files.
+*Usable artifact:* move playlists in and out of Conservatory as portable `.m3u` files. **Phase 8 (library maintenance) complete.**
+
+*Deferred:* import into a Perspective (a Perspective is a dynamic saved *search*; a static imported list does not map to an expression, so the queue is the import target) and a separate static-playlist concept; a GUI playlist surface; podcast/audiobook queue export.
 
 ---
 

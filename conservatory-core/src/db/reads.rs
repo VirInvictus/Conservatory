@@ -171,6 +171,60 @@ pub fn dedup_rows(conn: &Connection) -> Result<Vec<DedupRow>> {
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// One track with the fields a playlist export needs (Phase 8d): its id (to
+/// intersect with a resolved selector), the display `artist` (track artist
+/// falling back to album artist), `title`, `album`, `duration` (for `#EXTINF`),
+/// and the root-relative `file_path`.
+#[derive(Debug, Clone)]
+pub struct PlaylistRow {
+    pub track_id: i64,
+    pub artist: Option<String>,
+    pub title: String,
+    pub album: Option<String>,
+    pub duration: Option<f64>,
+    pub file_path: String,
+}
+
+/// Every track with its playlist fields, ordered album-artist / album / disc /
+/// track so an exported `.m3u` reads in a sensible album order (Phase 8d). The
+/// caller intersects with the resolved selector id set, preserving this order.
+pub fn playlist_rows(conn: &Connection) -> Result<Vec<PlaylistRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.title, t.duration, t.file_path,
+                al.title AS album,
+                COALESCE(ta.name, aa.name) AS artist
+         FROM tracks t
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.album_artist_id = aa.id
+         LEFT JOIN artists ta ON t.artist_id = ta.id
+         ORDER BY aa.sort_name, al.title, t.disc_no, t.track_no",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(PlaylistRow {
+            track_id: row.get("id")?,
+            artist: row.get("artist")?,
+            title: row.get("title")?,
+            album: row.get("album")?,
+            duration: row.get("duration")?,
+            file_path: row.get("file_path")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// The id of the track at a given root-relative `file_path`, or `None` if no
+/// managed track lives there (Phase 8d playlist import; the library is
+/// database-canonical, so paths are matched exactly against `tracks.file_path`).
+pub fn track_id_by_path(conn: &Connection, file_path: &str) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM tracks WHERE file_path = ?1",
+            params![file_path],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 /// One track with the fields the health audits (Phase 8c) inspect: presence of
 /// the critical tags, the bitrate, and the ReplayGain columns. `artist` is the
 /// track artist falling back to the album artist; `genre_count` is the number

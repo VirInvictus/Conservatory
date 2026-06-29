@@ -562,6 +562,8 @@ conservatory-cli play <selector>               # hand off to standalone mpv
 conservatory-cli stats                         # library + listening stats
 conservatory-cli audit [--tier ...] --root R   # health audits (Phase 8c)
 conservatory-cli apestrip --root R [--apply|--undo]  # strip stray APEv2 (Phase 8c-iii)
+conservatory-cli playlist export <db> '<expr|vl:NAME>' <out.m3u> [--root R] [--absolute]  # Phase 8d
+conservatory-cli playlist import <db> <in.m3u> [--root R] [--replace]  # .m3u -> queue (Phase 8d)
 conservatory-cli podcast add|remove|refresh|download <spec>   # Belfry verbs
 conservatory-cli import-opml|export-opml
 conservatory-cli audiobook import <path> [--copy|--move]      # import a book (folder or m4b)

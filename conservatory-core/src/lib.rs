@@ -24,6 +24,7 @@ pub mod mover;
 pub mod mpris;
 pub mod path_template;
 pub mod player;
+pub mod playlist;
 pub mod replaygain;
 pub mod shelf_genre;
 pub mod stats;
@@ -60,6 +61,7 @@ pub use player::{
     SleepStatus, StateDebounce, StateEvent, build_af_chain, eq_stage, resolve_book_profile,
     resolve_episode_profile, resolve_music_profile,
 };
+pub use playlist::{M3uTrack, build_m3u, parse_m3u};
 pub use replaygain::{
     DEFAULT_TARGET_LUFS, replaygain_from_file, rsgain_available, scan_album_files,
 };

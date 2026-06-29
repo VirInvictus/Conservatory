@@ -25,6 +25,7 @@ pub mod path_template;
 pub mod player;
 pub mod replaygain;
 pub mod shelf_genre;
+pub mod stats;
 pub mod tags;
 pub mod verify;
 
@@ -58,6 +59,10 @@ pub use replaygain::{
     DEFAULT_TARGET_LUFS, replaygain_from_file, rsgain_available, scan_album_files,
 };
 pub use shelf_genre::{AlbumGenreInput, GenreVocab, normalize, resolve_album, resolve_shelf_genre};
+pub use stats::{
+    ArtistStat, BitrateStat, FormatStat, GenreStat, LibraryStats, RatingTally, compute_stats,
+    format_size,
+};
 pub use tags::{EmbeddedCover, TagWrite, TrackDraft, read_track, write_track_tags};
 pub use verify::{VerifyVerdict, ffmpeg_available, flac_available, verify_file, verify_files};
 

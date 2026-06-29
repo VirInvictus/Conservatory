@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.0.66
+
+Phase 8c-ii: a `stats` command that summarizes the library, the second slice of the Phase 8c maintenance work. It is a port of Lattice's statistics report, run over Conservatory's database. Read-only. No new dependency, no migration. With this, only the stray-APE detect + strip (8c-iii) remains in Phase 8c.
+
+- **What it reports.** An overview (track / album / artist totals, total size, total duration, and the share of fully-tagged tracks), a per-format breakdown with sizes and percentages, a bitrate summary (average, range, and how many files fall below 192 kbps), the rating distribution as a small histogram, the genre distribution with a per-genre rating tally, and the top artists by track count.
+- **File sizes need `--root`.** The database stores everything except the size of each file on disk, so the size figures come from a quick pass over the files and need `--root`; without it the report prints sizes as "n/a" and still computes everything else. Rating 0 is treated as unrated (Conservatory's default), with 1 to 5 as stars.
+- **`stats` CLI verb.** `conservatory-cli stats <db> --root <root>` prints the full report; `--top N` sets how many genres and artists to list (default 15), and `--format tsv|json|human` (human default) picks the output.
+- **Tests.** The aggregation is unit-tested over planted rows (format counts, bitrate average / range / below-floor, the rating tally, genre and artist breakdowns, the fully-tagged predicate), with a filesystem test for the size pass. Verified end to end on real albums (14 tracks across two albums: 94.6 MB, 1h 5m, correct format split and bitrate range). Full workspace suite + clippy `-D warnings` + fmt + the music-only build green.
+
 ## v0.0.65
 
 Phase 8c-i: an `audit` command that reports library health problems, the third Phase 8 audit (after integrity and duplicates). It is a faithful port of Lattice's tag / bitrate / ReplayGain / cover-art audits. Read-only: it reports, it never changes a file. No new dependency, no migration. Phase 8c is large, so it is sliced: this is the audits; library statistics (8c-ii) and the stray-APE detect + strip (8c-iii) follow.

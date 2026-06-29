@@ -32,8 +32,8 @@ pub use probe::probe_read;
 pub use reads::{
     AuditAlbumRow, AuditTrackRow, BookListRow, BookState, DedupRow, EpisodeListRow, LibraryCounts,
     ListeningTotals, NowPlaying, PlaybackStateRow, QueueDisplayRow, SearchRow, SqlParam,
-    TrackRenderRow, TriageBucket, WritebackRow, album_track_genres, audit_album_rows,
-    audit_track_rows, book_authors, book_chapters, book_metadata, book_narrators,
+    StatsGenreRow, StatsTrackRow, TrackRenderRow, TriageBucket, WritebackRow, album_track_genres,
+    audit_album_rows, audit_track_rows, book_authors, book_chapters, book_metadata, book_narrators,
     corrupt_or_suspect, dedup_rows, episode_metadata, episodes_for_show, episodes_for_tag,
     episodes_in_bucket, fts_rank, get_album, get_artist, get_audio_state, get_book,
     get_book_playback, get_episode, get_episode_by_guid, get_eq_preset, get_eq_state, get_playback,
@@ -41,8 +41,8 @@ pub use reads::{
     list_book_rows, list_books, list_chapters, list_episodes_for_show, list_eq_presets,
     list_perspectives, list_shows, list_tags_for_show, listening_totals, load_queue,
     load_queue_display, perspective_expression, read_playback_state, read_verify_results,
-    search_rows, search_track_ids, series_for_book, show_settings_map, sort_shelf, track_metadata,
-    track_render_rows, writeback_rows,
+    search_rows, search_track_ids, series_for_book, show_settings_map, sort_shelf,
+    stats_genre_rows, stats_track_rows, track_metadata, track_render_rows, writeback_rows,
 };
 pub use worker::{WorkerHandle, spawn_worker};
 

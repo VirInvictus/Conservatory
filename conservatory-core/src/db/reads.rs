@@ -253,6 +253,78 @@ pub fn audit_album_rows(conn: &Connection) -> Result<Vec<AuditAlbumRow>> {
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// One track with the fields the library-statistics report (Phase 8c-ii)
+/// aggregates: format / bitrate / duration / rating / path, plus the
+/// fully-tagged inputs (title, artist, track number, genre count). `artist` is
+/// the track artist falling back to the album artist.
+#[derive(Debug, Clone)]
+pub struct StatsTrackRow {
+    pub format: Option<String>,
+    pub bitrate: Option<u32>,
+    pub duration: Option<f64>,
+    pub rating: i64,
+    pub file_path: String,
+    pub title: String,
+    pub artist: Option<String>,
+    pub track_no: Option<u32>,
+    pub genre_count: i64,
+}
+
+/// Every track with its statistics fields (Phase 8c-ii `stats`). Read-only.
+pub fn stats_track_rows(conn: &Connection) -> Result<Vec<StatsTrackRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.format, t.bitrate, t.duration, t.rating, t.file_path, t.title, t.track_no,
+                COALESCE(ta.name, aa.name) AS artist,
+                (SELECT COUNT(*) FROM track_genres WHERE track_id = t.id) AS genre_count
+         FROM tracks t
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists ta ON t.artist_id = ta.id
+         LEFT JOIN artists aa ON al.album_artist_id = aa.id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let bitrate: Option<i64> = row.get("bitrate")?;
+        let track_no: Option<i64> = row.get("track_no")?;
+        Ok(StatsTrackRow {
+            format: row.get("format")?,
+            bitrate: bitrate.map(|n| n as u32),
+            duration: row.get("duration")?,
+            rating: row.get("rating")?,
+            file_path: row.get("file_path")?,
+            title: row.get("title")?,
+            artist: row.get("artist")?,
+            track_no: track_no.map(|n| n as u32),
+            genre_count: row.get("genre_count")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// One `(track, genre)` pairing with that track's rating, for the genre
+/// distribution and the per-genre rating tally (Phase 8c-ii). A track with N
+/// genres yields N rows.
+#[derive(Debug, Clone)]
+pub struct StatsGenreRow {
+    pub genre: String,
+    pub rating: i64,
+}
+
+/// Every track-genre pairing with its rating (Phase 8c-ii `stats`). Read-only.
+pub fn stats_genre_rows(conn: &Connection) -> Result<Vec<StatsGenreRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT g.name AS genre, t.rating AS rating
+         FROM track_genres tg
+         JOIN genres g ON tg.genre_id = g.id
+         JOIN tracks t ON tg.track_id = t.id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(StatsGenreRow {
+            genre: row.get("genre")?,
+            rating: row.get("rating")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
 /// Every track with the album/artist fields needed to render its target path.
 /// Ordered to mirror the default tree (genre → album artist → album → disc/track)
 /// so CLI output and previews read top-down.

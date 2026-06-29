@@ -14,19 +14,20 @@ use conservatory_core::db::{
     MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam, VerifyResultRow, audit_album_rows,
     audit_track_rows, dedup_rows, fts_rank, get_album, get_episode, get_show_settings, get_track,
     library_counts, load_queue, probe_read, read_playback_state, read_verify_results, search_rows,
-    search_track_ids, spawn_worker, track_render_rows, writeback_rows,
+    search_track_ids, spawn_worker, stats_genre_rows, stats_track_rows, track_render_rows,
+    writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
     AlbumEdit, Assignment, AuditOptions, AuditReport, DEFAULT_TARGET_LUFS, DedupOptions,
-    DuplicateReport, Field, GenreVocab, ImportOptions, ImportReport, PathTemplate, PlayableItem,
-    PlaybackConfig, SleepMode, TagWrite, TrackDraft, TrackEdit, TrackFields, VerifyVerdict,
-    any_path_affecting, build_af_chain, build_album_edit, build_track_edit, compute_accent,
-    ffmpeg_available, find_collisions, find_cover_bytes, find_duplicates, flac_available,
-    genres_assignment, import_folder, parse_assignment, read_track, replace_in,
-    replaygain_from_file, resolve_album, resolve_episode_profile, resolve_music_profile,
-    resync_album_covers, rsgain_available, run_audit, scan_album_files, sync_album_cover,
-    verify_files, write_track_tags,
+    DuplicateReport, Field, GenreVocab, ImportOptions, ImportReport, LibraryStats, PathTemplate,
+    PlayableItem, PlaybackConfig, SleepMode, TagWrite, TrackDraft, TrackEdit, TrackFields,
+    VerifyVerdict, any_path_affecting, build_af_chain, build_album_edit, build_track_edit,
+    compute_accent, compute_stats, ffmpeg_available, find_collisions, find_cover_bytes,
+    find_duplicates, flac_available, format_size, genres_assignment, import_folder,
+    parse_assignment, read_track, replace_in, replaygain_from_file, resolve_album,
+    resolve_episode_profile, resolve_music_profile, resync_album_covers, rsgain_available,
+    run_audit, scan_album_files, sync_album_cover, verify_files, write_track_tags,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -288,6 +289,23 @@ enum Command {
         /// Minimum cover edge in pixels for the art-resolution tier.
         #[arg(long, default_value_t = conservatory_core::audit::DEFAULT_MIN_ART_PX.0)]
         min_art_px: u32,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = Format::Human)]
+        format: Format,
+    },
+
+    /// Library statistics (Phase 8c-ii): totals, format breakdown, bitrate,
+    /// rating / genre distribution, top artists. Read-only. File sizes need
+    /// `--root` (the schema does not store them); without it they read "n/a".
+    Stats {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Library root the relative track paths hang off (enables file sizes).
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// How many genres / artists to list.
+        #[arg(long, default_value_t = 15)]
+        top: usize,
         /// Output format.
         #[arg(long, value_enum, default_value_t = Format::Human)]
         format: Format,
@@ -1026,6 +1044,12 @@ fn main() -> Result<()> {
             min_art_px,
             format,
         }) => run_audit_verb(db, tier, root, bitrate_floor, min_art_px, format),
+        Some(Command::Stats {
+            db,
+            root,
+            top,
+            format,
+        }) => run_stats_verb(db, root, top, format),
         Some(Command::SetCover {
             db,
             album_id,
@@ -3463,6 +3487,179 @@ fn print_audit_tsv(report: &AuditReport) {
             d.artist, d.title, d.width, d.height
         );
     }
+}
+
+fn run_stats_verb(db: PathBuf, root: Option<PathBuf>, top: usize, format: Format) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let tracks = stats_track_rows(&conn).context("reading stats track rows")?;
+    let genre_rows = stats_genre_rows(&conn).context("reading stats genre rows")?;
+    let counts = library_counts(&conn).context("reading library counts")?;
+    let stats = compute_stats(&tracks, &genre_rows, counts, root.as_deref());
+
+    match format {
+        Format::Human => print_stats_human(&stats, top, root.is_some()),
+        Format::Tsv => print_stats_tsv(&stats, top),
+        Format::Json => print_stats_json(&stats),
+    }
+    Ok(())
+}
+
+const RATING_LABELS: [&str; 5] = ["★☆☆☆☆", "★★☆☆☆", "★★★☆☆", "★★★★☆", "★★★★★"];
+
+fn print_stats_human(s: &LibraryStats, top: usize, has_root: bool) {
+    let size = s
+        .total_size_bytes
+        .map(format_size)
+        .unwrap_or_else(|| "n/a (pass --root)".to_string());
+    let hours = (s.total_duration_secs / 3600.0) as u64;
+    let mins = ((s.total_duration_secs % 3600.0) / 60.0) as u64;
+    let pct_tagged = if s.total_tracks > 0 {
+        s.fully_tagged as f64 / s.total_tracks as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    println!("LIBRARY STATISTICS");
+    println!("==================");
+    println!("\nOVERVIEW");
+    println!("  Total tracks:   {}", s.total_tracks);
+    println!("  Total size:     {size}");
+    if s.total_duration_secs > 0.0 {
+        println!("  Total duration: {hours}h {mins}m");
+    }
+    println!("  Artists:        {}", s.total_artists);
+    println!("  Albums:         {}", s.total_albums);
+    println!(
+        "  Fully tagged:   {}/{} ({:.0}%)",
+        s.fully_tagged, s.total_tracks, pct_tagged
+    );
+
+    println!("\nFORMAT BREAKDOWN");
+    for f in &s.formats {
+        let pct = if s.total_tracks > 0 {
+            f.count as f64 / s.total_tracks as f64 * 100.0
+        } else {
+            0.0
+        };
+        let size = f
+            .size_bytes
+            .map(format_size)
+            .unwrap_or_else(|| "n/a".to_string());
+        println!(
+            "  {:<8} {:>6} files  ({:>5.1}%)  {:>10}",
+            f.format, f.count, pct, size
+        );
+    }
+
+    if let Some(b) = &s.bitrate {
+        println!("\nBITRATE");
+        println!("  Average: {:.0} kbps", b.avg);
+        println!("  Range:   {}–{} kbps", b.min, b.max);
+        if b.below_floor > 0 {
+            println!("  Below 192 kbps: {} files", b.below_floor);
+        }
+    }
+
+    println!(
+        "\nRATINGS ({} rated, {} unrated)",
+        s.ratings.rated(),
+        s.ratings.unrated
+    );
+    for stars in (1..=5).rev() {
+        let count = s.ratings.stars[stars - 1];
+        if count > 0 {
+            let bar_len =
+                ((count as f64 / s.total_tracks.max(1) as f64) * 150.0).min(30.0) as usize;
+            println!(
+                "  {}  {:>5}  {}",
+                RATING_LABELS[stars - 1],
+                count,
+                "█".repeat(bar_len)
+            );
+        }
+    }
+
+    if !s.genres.is_empty() {
+        println!(
+            "\nGENRES (top {} of {})",
+            top.min(s.genres.len()),
+            s.genres.len()
+        );
+        for g in s.genres.iter().take(top) {
+            let pct = if s.total_tracks > 0 {
+                g.count as f64 / s.total_tracks as f64 * 100.0
+            } else {
+                0.0
+            };
+            println!("  {:<30} {:>5}  ({:.1}%)", g.genre, g.count, pct);
+        }
+    }
+
+    if !s.top_artists.is_empty() {
+        println!(
+            "\nTOP ARTISTS (by track count, top {} of {})",
+            top.min(s.top_artists.len()),
+            s.top_artists.len()
+        );
+        for a in s.top_artists.iter().take(top) {
+            println!("  {:<35} {:>5} tracks", a.artist, a.count);
+        }
+    }
+
+    if !has_root {
+        println!("\nnote: file sizes are unavailable without --root");
+    }
+}
+
+fn print_stats_tsv(s: &LibraryStats, top: usize) {
+    println!("total_tracks\t{}", s.total_tracks);
+    println!("total_albums\t{}", s.total_albums);
+    println!("total_artists\t{}", s.total_artists);
+    if let Some(sz) = s.total_size_bytes {
+        println!("total_size_bytes\t{sz}");
+    }
+    println!("total_duration_secs\t{:.0}", s.total_duration_secs);
+    println!("fully_tagged\t{}", s.fully_tagged);
+    for f in &s.formats {
+        let sz = f.size_bytes.map(|b| b.to_string()).unwrap_or_default();
+        println!("format\t{}\t{}\t{sz}", f.format, f.count);
+    }
+    if let Some(b) = &s.bitrate {
+        println!(
+            "bitrate\t{:.0}\t{}\t{}\t{}",
+            b.avg, b.min, b.max, b.below_floor
+        );
+    }
+    for stars in 1..=5 {
+        println!("rating\t{stars}\t{}", s.ratings.stars[stars - 1]);
+    }
+    println!("rating\t0\t{}", s.ratings.unrated);
+    for g in s.genres.iter().take(top) {
+        println!("genre\t{}\t{}", g.genre, g.count);
+    }
+    for a in s.top_artists.iter().take(top) {
+        println!("artist\t{}\t{}", a.artist, a.count);
+    }
+}
+
+fn print_stats_json(s: &LibraryStats) {
+    let size = s
+        .total_size_bytes
+        .map(|b| b.to_string())
+        .unwrap_or_else(|| "null".to_string());
+    println!(
+        "{{\"total_tracks\":{},\"total_albums\":{},\"total_artists\":{},\"total_size_bytes\":{},\"total_duration_secs\":{:.0},\"fully_tagged\":{},\"formats\":{},\"genres\":{},\"artists\":{}}}",
+        s.total_tracks,
+        s.total_albums,
+        s.total_artists,
+        size,
+        s.total_duration_secs,
+        s.fully_tagged,
+        s.formats.len(),
+        s.genres.len(),
+        s.top_artists.len(),
+    );
 }
 
 async fn run_set_cover(db: PathBuf, album_id: i64, image: PathBuf, root: PathBuf) -> Result<()> {

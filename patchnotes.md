@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.0.74
+
+Phase 11b: a status bar footer and the play-status glyph column, the next slice of the Columns UI parity pass.
+
+- **Status bar.** A thin footer above the playback bar. On the left, the playing track's technical line (format, sample rate, channels, bitrate); on the right, the active view's "N tracks · total playtime", which switches to the selection's total when you select two or more rows.
+- **Play-status glyph.** The leftmost column of the track list now shows a play or pause icon on the row that is the currently playing track, the deadbeef ♫ marker. It follows track changes and pause, and it survives filtering. This is the per-row status glyph owed since Phase 3c, now that playback state exists.
+- **Channels.** Read live from the player (mpv's decoded channel count) rather than stored, so it shows while a track plays without a schema change or a re-import.
+- **Tests.** The aggregate, the playtime and thousands formatting, the technical line, and the glyph-state selection are pure and unit-tested; the widgets are verified by building and by hand (the established pattern for GUI work). Full workspace suite + clippy `-D warnings` + fmt + the music-only build green. No new dependency, no schema change.
+
 ## v0.0.73
 
 Phase 10c: configurable browse panes. The facet columns down the left of the music browser are no longer fixed at Genre, Album Artist, Album. This completes Phase 10 (Configuration & preferences).

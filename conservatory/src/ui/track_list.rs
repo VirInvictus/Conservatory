@@ -70,6 +70,57 @@ fn text_column(
     col
 }
 
+/// Set the play-status glyph on `img` from a `TrackRow::playing` state; `None`
+/// (an inactive row) renders no icon, keeping the fixed column width stable.
+fn set_glyph(img: &gtk::Image, state: u8) {
+    img.set_icon_name(crate::statusbar::play_glyph(state));
+}
+
+/// The play-status glyph column (Phase 11b, the deadbeef leftmost ♫): a symbolic
+/// play/pause icon on the row that is the currently playing *track*. Bound to the
+/// row's `playing` glib property via `notify`, so when playback moves the window
+/// flips just the affected rows' property and only those repaint (no full-store
+/// rebind on a 50k-track library). The owed item from Phase 3c.
+fn glyph_column() -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        let img = gtk::Image::new();
+        img.add_css_class("play-glyph");
+        item.set_child(Some(&img));
+    });
+    factory.connect_bind(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        let row = track(&item.item().expect("item"));
+        let img = item.child().and_downcast::<gtk::Image>().expect("Image");
+        set_glyph(&img, row.playing());
+        // Repaint this row's glyph when its `playing` property changes; the
+        // handler is stashed so unbind can disconnect it on recycle.
+        let img_weak = img.downgrade();
+        let handler = row.connect_playing_notify(move |row| {
+            if let Some(img) = img_weak.upgrade() {
+                set_glyph(&img, row.playing());
+            }
+        });
+        unsafe {
+            img.set_data("playing-handler", handler);
+        }
+    });
+    factory.connect_unbind(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        if let Some(img) = item.child().and_downcast::<gtk::Image>()
+            && let Some(handler) =
+                unsafe { img.steal_data::<glib::SignalHandlerId>("playing-handler") }
+            && let Some(obj) = item.item()
+        {
+            track(&obj).disconnect(handler);
+        }
+    });
+    let col = gtk::ColumnViewColumn::new(Some(""), Some(factory));
+    col.set_fixed_width(28);
+    col
+}
+
 /// The Rating column: a fixed row of five symbolic stars, filled to the row's
 /// rating. Symbolic icons come from the icon theme (font-independent).
 fn rating_column() -> gtk::ColumnViewColumn {
@@ -119,6 +170,7 @@ pub fn build_leaf() -> Leaf {
     view.set_show_column_separators(true);
     view.add_css_class("data-table");
 
+    view.append_column(&glyph_column());
     view.append_column(&text_column(
         "Artist",
         true,

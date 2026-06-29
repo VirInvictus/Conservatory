@@ -886,6 +886,7 @@ impl Engine {
             kind: current.map(|i| i.kind),
             position,
             duration,
+            channels: self.host.channels(),
             paused: self.paused,
             streaming: current.is_some_and(|i| i.streaming),
             // Buffering only matters while we mean to be playing: a paused or

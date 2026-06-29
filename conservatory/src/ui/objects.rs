@@ -80,12 +80,20 @@ impl FacetRow {
 
 mod track_imp {
     use super::*;
+    use gtk::prelude::*;
 
-    #[derive(Default)]
+    #[derive(glib::Properties, Default)]
+    #[properties(wrapper_type = super::TrackRow)]
     pub struct TrackRow {
         // The whole brief is carried so the column factories render it and the
         // sorter compares it through core's `cmp_tracks` (one source of truth).
         pub brief: RefCell<Option<TrackBrief>>,
+        // The play-status glyph state (Phase 11b): 0 none / 1 playing / 2 paused.
+        // A glib property so the leaf glyph column can bind `notify::playing` and
+        // repaint only the affected rows when playback moves, without rebinding
+        // the whole (50k-row) store.
+        #[property(get, set)]
+        pub playing: Cell<u8>,
     }
 
     #[glib::object_subclass]
@@ -94,6 +102,7 @@ mod track_imp {
         type Type = super::TrackRow;
     }
 
+    #[glib::derived_properties]
     impl ObjectImpl for TrackRow {}
 }
 

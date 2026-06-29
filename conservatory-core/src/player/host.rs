@@ -344,6 +344,17 @@ impl MpvHost {
         self.mpv.get_property::<f64>("speed").ok()
     }
 
+    /// The decoded channel count of the current item (Phase 11b status bar), from
+    /// mpv's `audio-params/channel-count`. `None` before the first frame / when
+    /// nothing is loaded. Sourced at runtime because `channels` is not a stored
+    /// column (the 11a deferral): the status bar shows it only while playing,
+    /// which is exactly when this property is available.
+    pub fn channels(&self) -> Option<i64> {
+        self.mpv
+            .get_property::<i64>("audio-params/channel-count")
+            .ok()
+    }
+
     /// Whether mpv's core is idle while it should be producing audio, i.e. it is
     /// waiting on the network/cache (v0.0.38). mpv's `core-idle` is true whenever
     /// no audio is being output, which includes a streamed item still buffering

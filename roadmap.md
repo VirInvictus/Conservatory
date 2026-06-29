@@ -710,11 +710,11 @@ The finishing pass that brings the music surface up to the deadbeef / foobar2000
 
 *Usable artifact:* select a track and see its full technical metadata and a large cover, as in the deadbeef layout.
 
-### Phase 11b — Status bar + play-status glyph column
+### Phase 11b — Status bar + play-status glyph column ✅ (v0.0.74)
 
-- [ ] A **status bar** (spec §3.2 footer): the current track's format / sample-rate / channels, plus the active view's track count and total playtime (the deadbeef "N tracks, D total playtime" line). The aggregate is a cheap core read over the current facet/filter selection.
-- [ ] The **play-status glyph column** (the leftmost ♫ in the deadbeef track list): a per-row playing / paused indicator. This is the item **explicitly owed from Phase 3c** ("the per-row playing/status glyph waits for playback state, Phase 4"); Phase 4 shipped the playback state, so it is now unblocked. Driven by the engine snapshot's current item (a symbolic icon, no font assumption).
-- [ ] Tests: the aggregate-count / total-playtime read against a fixture; the glyph follows the snapshot's current index (headless logic); widgets build + manual.
+- [x] A **status bar** (spec §3.2 footer): the playing track's format / sample-rate / channels (channels read live from mpv, not a stored column), plus the active view's track count and total playtime (the deadbeef "N tracks, D total playtime" line), switching to the selection's total when 2+ rows are selected. A thin bottom bar above the Now-bar; the aggregate is computed from the already-loaded leaf set (`TrackBrief` carries duration), not a re-query.
+- [x] The **play-status glyph column** (the leftmost ♫ in the deadbeef track list): a per-row playing / paused indicator. This is the item **explicitly owed from Phase 3c** ("the per-row playing/status glyph waits for playback state, Phase 4"); Phase 4 shipped the playback state, so it is now unblocked. Driven by the engine snapshot's current item (a symbolic icon, no font assumption). `TrackRow` gained a `playing` glib property so the glyph cells bind `notify::playing` and only the affected rows repaint when playback moves (no full-store rebind on a 50k-track library).
+- [x] Tests: the aggregate + playtime/thousands formatting, the technical line, and the glyph-state selection are pure units (`statusbar.rs`); widgets build + manual.
 - [x] **Pulled forward at v0.0.38 (playback feedback):** the snapshot gained `kind` / `streaming` / `buffering`, so the Now-bar shows a **buffering spinner** (mpv `core-idle`) and a **streaming glyph** for an undownloaded episode, and the Podcasts episode list gained a **downloaded vs stream-only** glyph column. (The full status-bar line and the in-list play-status glyph above are still to do.)
 
 *Usable artifact:* the browse window shows the playing row at a glance and a foobar-style status line.

@@ -14,6 +14,7 @@ use gtk::glib;
 mod book_query;
 mod playqueue;
 mod query;
+mod statusbar;
 mod ui;
 
 const APP_ID: &str = "org.virinvictus.Conservatory";

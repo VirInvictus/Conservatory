@@ -105,6 +105,23 @@ mod imp {
         // Now-bar cover/title click, a header button, or Ctrl+I.
         pub now_playing: OnceCell<NowPlayingPanel>,
         pub inspector: OnceCell<Inspector>,
+        // The status bar footer (Phase 11b, spec §3.2): `status_left` is the
+        // playing track's technical line, `status_right` the active view's
+        // (or selection's) "N tracks · playtime" aggregate. `last_play_state`
+        // caches the (playing track id, paused) last applied to the leaf glyph
+        // column, so the poll only walks the store when playback actually moves.
+        pub status_left: OnceCell<gtk::Label>,
+        pub status_right: OnceCell<gtk::Label>,
+        pub last_play_state: Cell<(Option<i64>, bool)>,
+        // The playing track's static technical fields (format / sample-rate /
+        // bitrate), cached on track change so the per-tick tech-line refresh
+        // (which folds in the live mpv channel count) needs no DB read. `None`s
+        // when nothing (or a non-track) is playing.
+        pub tech_static: RefCell<(Option<String>, Option<i32>, Option<i32>)>,
+        // The active view's (count, total seconds), cached on leaf populate so a
+        // selection change can show the selection total without re-summing the
+        // whole view.
+        pub view_total: Cell<(usize, f64)>,
         // The top-level view stack (Phase 6b-i): Music first, plus the
         // feature-gated Podcasts/Audiobooks plugin pages. `Alt+1/2/3` switch
         // its visible child by name.
@@ -374,12 +391,35 @@ impl ConservatoryWindow {
         content_box.append(&stack);
         content_box.append(&now_playing.revealer);
 
+        // The status bar footer (Phase 11b, spec §3.2): the playing track's
+        // technical line on the left, the active view's count + playtime on the
+        // right. A thin bottom bar that sits directly above the Now-bar.
+        let status_left = gtk::Label::builder()
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .margin_start(12)
+            .css_classes(["caption", "dim-label"])
+            .build();
+        let status_right = gtk::Label::builder()
+            .xalign(1.0)
+            .margin_end(12)
+            .css_classes(["caption", "dim-label"])
+            .build();
+        let status_bar = gtk::CenterBox::builder()
+            .margin_top(2)
+            .margin_bottom(2)
+            .css_classes(["status-bar"])
+            .build();
+        status_bar.set_start_widget(Some(&status_left));
+        status_bar.set_end_widget(Some(&status_right));
+
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
         toolbar.set_content(Some(&content_box));
-        // The Now-bar is the stable innermost bottom bar (spec §2.3); the
-        // adaptive view-switcher bar reveals *beneath* it at the narrow
-        // breakpoint (added in `attach_podcasts_view`).
+        // The status bar sits above the Now-bar, which is the stable innermost
+        // bottom bar (spec §2.3); the adaptive view-switcher bar reveals *beneath*
+        // the Now-bar at the narrow breakpoint (added in `attach_podcasts_view`).
+        toolbar.add_bottom_bar(&status_bar);
         toolbar.add_bottom_bar(&now_bar.root);
 
         // The Now-bar cover/title cluster toggles the drawer (the click handle).
@@ -413,6 +453,8 @@ impl ConservatoryWindow {
         let _ = imp.now_bar.set(now_bar);
         let _ = imp.now_playing.set(now_playing);
         let _ = imp.inspector.set(inspector);
+        let _ = imp.status_left.set(status_left);
+        let _ = imp.status_right.set(status_right);
         let _ = imp.queue_current.set(queue_current);
         self.install_queue_keys(&queue_panel.list);
         self.install_view_keys();
@@ -434,6 +476,7 @@ impl ConservatoryWindow {
             leaf.selection.connect_selection_changed(move |_, _, _| {
                 if let Some(win) = weak.upgrade() {
                     win.refresh_inspector();
+                    win.refresh_status_aggregate();
                 }
             });
 
@@ -521,6 +564,7 @@ impl ConservatoryWindow {
                     Some(win) => {
                         win.refresh_now_bar();
                         win.refresh_queue_highlight();
+                        win.refresh_play_glyphs();
                         glib::ControlFlow::Continue
                     }
                     None => glib::ControlFlow::Break,
@@ -2522,6 +2566,10 @@ impl ConservatoryWindow {
                 imp.last_shown.set(None);
                 now.clear();
                 self.refresh_now_playing(None, None);
+                *imp.tech_static.borrow_mut() = (None, None, None);
+                if let Some(label) = imp.status_left.get() {
+                    label.set_text("");
+                }
             }
             return;
         }
@@ -2565,6 +2613,19 @@ impl ConservatoryWindow {
                 now.set_cover(abs.as_deref());
                 // Keep the Now Playing drawer in step with the new item.
                 self.refresh_now_playing(snap.kind, Some(id));
+                // Cache the playing track's static tech fields for the status bar
+                // (Phase 11b). Only tracks carry these DB columns; an episode /
+                // book leaves the line blank (channels still folds in per tick).
+                *imp.tech_static.borrow_mut() = match snap.kind {
+                    Some(MediaKind::Track) | None => imp
+                        .pool
+                        .get()
+                        .and_then(|pool| pool.open().ok())
+                        .and_then(|conn| conservatory_core::db::get_track(&conn, id).ok().flatten())
+                        .map(|t| (t.format, t.sample_rate, t.bitrate))
+                        .unwrap_or((None, None, None)),
+                    _ => (None, None, None),
+                };
             }
         }
 
@@ -2600,6 +2661,82 @@ impl ConservatoryWindow {
                 now.seek.set_value(snap.position.min(d));
             }
             _ => now.seek.set_sensitive(false),
+        }
+
+        // Status bar tech line (Phase 11b): the cached static fields plus the
+        // live mpv channel count. Cheap (no DB); the label no-ops on no change.
+        if let Some(label) = imp.status_left.get() {
+            let st = imp.tech_static.borrow();
+            let channels = snap
+                .channels
+                .filter(|_| snap.kind == Some(MediaKind::Track));
+            label.set_text(&crate::statusbar::tech_line(
+                st.0.as_deref(),
+                st.1,
+                channels,
+                st.2,
+            ));
+        }
+    }
+
+    /// Refresh the status bar's right-hand aggregate (Phase 11b): the selection
+    /// total when two or more leaf rows are selected, else the whole view's
+    /// cached total. The selection sum walks only the selected rows.
+    fn refresh_status_aggregate(&self) {
+        let imp = self.imp();
+        let (Some(leaf), Some(label)) = (imp.leaf.get(), imp.status_right.get()) else {
+            return;
+        };
+        let selected = leaf.selection.selection();
+        let (count, total, is_sel) = if selected.size() >= 2 {
+            let mut total = 0.0;
+            let mut n = 0usize;
+            if let Some((iter, first)) = gtk::BitsetIter::init_first(&selected) {
+                let mut push = |pos: u32| {
+                    if let Some(row) = leaf.selection.item(pos).and_downcast::<TrackRow>() {
+                        total += row.brief().duration.unwrap_or(0.0);
+                        n += 1;
+                    }
+                };
+                push(first);
+                for pos in iter {
+                    push(pos);
+                }
+            }
+            (n, total, true)
+        } else {
+            let (c, t) = imp.view_total.get();
+            (c, t, false)
+        };
+        label.set_text(&crate::statusbar::aggregate_label(count, total, is_sel));
+    }
+
+    /// Update the leaf play-status glyph column (Phase 11b) when playback moves.
+    /// Walks the store only when the playing track id or pause state changed
+    /// since the last apply, flipping each row's `playing` property; the bound
+    /// glyph cells repaint themselves (no full-store rebind).
+    fn refresh_play_glyphs(&self) {
+        let imp = self.imp();
+        let (Some(player), Some(leaf)) = (imp.player.get(), imp.leaf.get()) else {
+            return;
+        };
+        let snap = player.snapshot();
+        let is_track = snap.kind == Some(MediaKind::Track) && !snap.ended;
+        let playing_id = if is_track { snap.track_id } else { None };
+        let state = (playing_id, snap.paused);
+        if imp.last_play_state.get() == state {
+            return;
+        }
+        imp.last_play_state.set(state);
+        let n = leaf.store.n_items();
+        for i in 0..n {
+            if let Some(row) = leaf.store.item(i).and_downcast::<TrackRow>() {
+                let s =
+                    crate::statusbar::play_state(row.brief().id, playing_id, is_track, snap.paused);
+                if row.playing() != s {
+                    row.set_playing(s);
+                }
+            }
         }
     }
 
@@ -3005,6 +3142,14 @@ impl ConservatoryWindow {
         let today = chrono::Utc::now().date_naive();
         let (tracks, warnings) = query_leaf(pool, &self.current_filters(), &query, today);
         leaf.set_tracks(&tracks);
+        // Cache the view aggregate for the status bar (Phase 11b) and refresh it.
+        imp.view_total
+            .set(crate::statusbar::view_aggregate(&tracks));
+        self.refresh_status_aggregate();
+        // The fresh rows default to no glyph; force the play-status column to
+        // re-apply so the playing track (if any) is marked in the new view.
+        imp.last_play_state.set((None, false));
+        self.refresh_play_glyphs();
         if let Some(entry) = imp.filter_entry.get() {
             if warnings.is_empty() {
                 entry.remove_css_class("filter-warn");

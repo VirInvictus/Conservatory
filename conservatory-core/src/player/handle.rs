@@ -98,6 +98,10 @@ pub struct PlayerSnapshot {
     pub kind: Option<MediaKind>,
     pub position: f64,
     pub duration: Option<f64>,
+    /// The current item's decoded channel count (Phase 11b status bar), read
+    /// from mpv at runtime; `None` when nothing is loaded or before the first
+    /// frame. `channels` is deliberately not a stored column (the 11a deferral).
+    pub channels: Option<i64>,
     pub paused: bool,
     /// The current item streams from a remote URL (an undownloaded episode), not
     /// a local file (v0.0.38).
@@ -139,6 +143,7 @@ impl Default for PlayerSnapshot {
             kind: None,
             position: 0.0,
             duration: None,
+            channels: None,
             paused: false,
             streaming: false,
             buffering: false,

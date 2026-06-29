@@ -6,96 +6,94 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GNOME-50%2B-4a86cf" alt="GNOME 50+">
-  <img src="https://img.shields.io/badge/status-v0.0.52%20%C2%B7%20Phase%206%20complete-orange" alt="Status: v0.0.52, Phase 6 complete">
+  <img src="https://img.shields.io/badge/status-v0.0.84%20%C2%B7%20daily%20driver-brightgreen" alt="Status: v0.0.84, daily driver">
 </p>
 
 ---
 
 # Conservatory
 
-**Calibre for audio.**
+**Calibre for audio.** A native GNOME app that owns and organizes your music, podcasts, and audiobooks on disk, browses them like foobar2000, and plays them from one queue.
 
-A native GNOME library manager that owns and organizes your music and podcasts on disk, presented through a foobar2000 Columns UI browse surface and played through a libmpv daily-driver engine that runs them from a single queue. As of v0.0.52 it is a daily-driver music player and a full podcast client in one app: import and organize a music library into a database-owned tree, browse it with a Calibre-style search grammar, play it with gapless playback, head-staged ReplayGain, and a real DSP chain (EQ, compressor/limiter, leveler), and run podcasts (fetch, Inbox → Queue → Played triage, Smart Speed, Voice Boost, chapters, a sleep timer) from the *same* unified queue, with full MPRIS / media-key integration throughout. Audiobooks, the third media type, are the next phase. Music is the native program; podcasts and audiobooks are compile-time plugins.
+The database is the source of truth: Conservatory files your audio into a tidy tree, the way Calibre files your books, and plays it back through a libmpv engine good enough to replace deadbeef as your daily player. A music track, a podcast episode, and an audiobook chapter can sit next to each other in the same queue. That mixed queue is the whole point.
 
-## Why this exists
+## Table of contents
 
-Linux has players and it has taggers, but it has nothing that manages a music collection as a database the way Calibre manages books. deadbeef and friends play files in place but leave organization to you. Lattice (my own) audits and reports but treats the filesystem as canonical and never writes. Beets organizes from a terminal but is not a daily-driver player. And podcasts live in a separate app entirely, with their own queue, their own playback engine, their own idea of what "next" means. Conservatory is the one app that owns the library, browses it like foobar2000, plays it like a real player, and puts a podcast episode and an album track in the same queue.
+- [What you get](#what-you-get)
+- [Why it exists](#why-it-exists)
+- [Installing and building](#installing-and-building)
+- [Quick start](#quick-start)
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [How it is built](#how-it-is-built)
+- [Project status](#project-status)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
+
+## What you get
+
+**A library manager.** Point it at a folder and get an organized, database-owned library. It reads the embedded tags, resolves a single shelf genre, renders a path from a template (`Genre / Album Artist / Album /` by default), and moves the files to match. Every move is dry-run previewed, journaled for undo, and roll-forward recoverable after a crash. Curated metadata is written back into the files, so the tree stays portable and a wipe-and-reimport rebuilds it.
+
+**A Columns UI browser.** The music surface is a faceted, hierarchical browser in the foobar2000 / deadbeef-cui style: Genre into Album Artist into Album panes (the number of panes is configurable), a sortable multi-select track list with album-art thumbnails, and an always-on filter bar driven by the full Calibre-style search grammar (`genre:ambient AND year:>=1990`, hierarchical tags, virtual libraries, boolean logic). Saved Perspectives keep your favourite views a click away.
+
+**A real player, not a previewer.**
+
+- Gapless playback and head-staged per-track ReplayGain
+- A live audio chain: a 10-band graphic EQ with presets, plus a DSP rack (compressor, brick-wall limiter, leveler)
+- Output-device and resampler selection
+- A persistent transport bar, a drag-and-drop queue, launch-resume paused where you left off
+- MPRIS2, media keys, headset buttons, and a sleep-suspend inhibitor while playing
+
+**A podcast client.** A full one, not a bolt-on. Conditional-GET fetching, OPML import and export, per-show credentials, and downloads; an Inbox into Queue into Played triage tab; episodes that play in the same queue as your music and resume to the second; per-show speed, Smart Speed (silence skipping), and Voice Boost; chapters, time-saved accounting, and a sleep timer.
+
+**Audiobooks.** The third tab, modeled on Cozy and Audiobookshelf: a cover-grid shelf, per-book resume, chapter navigation, bulk metadata editing, and the same spoken-word engine the podcasts use (variable speed, Smart Speed, Voice Boost). A whole book is one item in the queue; an M4B or a folder of chapter files both work.
+
+**Library health tools.** A read-only audit suite (run from the CLI): integrity and decode checks (`verify`), four-tier duplicate detection (`duplicates`), tag and ReplayGain and cover-art audits (`audit`), library statistics (`stats`), stray APE-tag detection and stripping (`apestrip`), and `.m3u` playlist export and import.
+
+**A look you will not want to close.** A fixed Kanagawa Dragon theme, album art across the browse and an accent colour pulled from each cover, an informative now-playing bar, a Now Playing drawer with a real-time spectrum visualizer, and a Preferences window backed by a plain `config.toml`.
+
+## Why it exists
+
+Linux has players and it has taggers, but nothing manages a music collection as a database the way Calibre manages books. deadbeef and friends play files in place and leave the organizing to you. Beets organizes from a terminal but is not a daily-driver player. And podcasts live in a separate app entirely, with their own queue, their own engine, their own idea of what "next" means. Conservatory is the one app that owns the library, browses it like foobar2000, plays it like a real player, and puts a podcast episode and an album track in the same queue.
 
 Four commitments, in priority order:
 
-1. **The database owns the library.** SQLite is the source of truth for organization and curated metadata; the app owns the on-disk layout and moves files to match it (`Genre / Album Artist / Album /` by default). This inverts the filesystem-canonical stance of Lattice and Belfry, the way Calibre takes a book and files it under its author tree. That trust is spent carefully: dry-run preview, an undo journal, and embedded-tag write-back so files stay portable and self-describing.
-2. **Calibre-shaped, Columns UI browse.** Every list view is a queryable database. The default music surface is a faceted, hierarchical Columns UI browser (the design proven in deadbeef-cui), backed by the full Calibre-style search expression grammar.
-3. **One engine, one queue, three media types.** Music tracks, podcast episodes, and (at Phase 7) audiobooks share a single libmpv engine and a single play queue. Each item carries its own playback profile: gapless and ReplayGain for an album track, Smart Speed and Voice Boost for a spoken-word item. A mixed listening queue (an album track next to a podcast episode) is the standout feature, and the reason Belfry was absorbed rather than kept separate.
-4. **A daily-driver player, not a previewer.** For libraries Conservatory manages, it is the place you listen, replacing deadbeef. Gapless, head-staged ReplayGain, a DSP chain (EQ, compressor/limiter, leveler), output-device selection, MPRIS, media keys. Required, not optional: because Conservatory moves files, any external player's in-place references go stale the moment a library is re-shelved.
+1. **The database owns the library.** SQLite is the source of truth for organization and curated metadata; the app owns the on-disk layout and moves files to match it. That trust is spent carefully: dry-run preview, an undo journal, and embedded-tag write-back so files stay self-describing.
+2. **Calibre-shaped, Columns UI browse.** Every list view is a queryable database, backed by the full Calibre-style search expression grammar.
+3. **One engine, one queue, three media types.** Music tracks, podcast episodes, and audiobooks share a single libmpv engine and a single play queue. Each item carries its own playback profile: gapless and ReplayGain for an album track, Smart Speed and Voice Boost for a spoken-word one.
+4. **A daily-driver player.** For libraries Conservatory manages, it is the place you listen. This is not optional: because Conservatory moves files, an external player's in-place references go stale the moment a library is re-shelved.
 
-## Absorbs Belfry
+> Conservatory absorbed Brandon's earlier podcast client, **Belfry**: its single-writer SQLite worker, its Smart Speed / Voice Boost engine, and its Inbox into Queue into Played triage all live here now. Belfry is retired; the podcast story lives entirely in Conservatory.
 
-Conservatory absorbs Brandon's podcast client, Belfry. Belfry's Phase 1 work is not discarded: its single-writer SQLite worker is the exact pattern this app needs and migrated here, and its audio engine (Smart Speed, Voice Boost) and Inbox → Queue → Played triage model became the Podcasts side. The one casualty is Belfry's filesystem-canonical design; in Conservatory, podcasts become app-managed downloads, acceptable for ephemeral episodes in a way it would not be for a curated music collection. **Conservatory reached podcast parity at v0.0.52 (Phase 6c, the sleep timer the last piece), so Belfry is now retired** (spec §16.8): its repo is archived and the podcast subsystem lives entirely here.
+## Installing and building
 
-**Author's Note:** I'm a college student in my late thirties with no professional industry experience yet; Conservatory is one in a string of native Linux desktop apps I'm building to learn the craft and assemble a portfolio. I came from foobar2000 and Directory Opus, and I keep a large Calibre library. What Calibre does for my books, nothing does for my music. Conservatory is the manager-and-player I want to exist. I work on Fedora 44 on a ThinkPad T14s AMD Gen 6; that's the environment it'll be tested against. I welcome contributions but can only honestly support my own setup.
+Conservatory runs from source. There is no packaged release yet.
 
-## Status
-
-**v0.0.52. Phases 1 through 6 are complete: a daily-driver music player and a full podcast client in one app, with audiobooks (Phase 7) the remaining media type.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root (spec §5.1). Each phase below left a usable artifact; [`roadmap.md`](roadmap.md) carries the sub-phase detail and [`patchnotes.md`](patchnotes.md) the per-release notes.
-
-- **Phase 1: data layer.** Single-writer SQLite worker, read-only pool, numbered migrations, the music schema with FTS5, the embedded-tag reader (`lofty`), and median-cut cover accents.
-- **Phase 2: the manager (headless).** Point the CLI at a folder and get an organized, database-owned library: tag read → shelf-genre resolution → path-template render → crash-safe move (dry-run preview, undo journal, roll-forward recovery). Verbs: `import`, `organize`, `shelf-genre-set`.
-- **Phase 3: the browser.** `conservatory-search` (the Calibre-style grammar: lex → parse → eval + all-or-nothing SQL translate, bm25 + recency rank) behind a deadbeef-cui faceted browse window: hierarchical Genre → Album Artist → Album panes, a sortable multi-select track list, an always-on filter bar (`Ctrl+F`), and saved Perspectives.
-- **Phase 4: the player.** The threaded libmpv engine and the unified queue: double-click to play the visible list, a persistent Now-bar transport, a drag-and-drop queue drawer (`Ctrl+U`), launch-resume paused at the cursor, MPRIS2 + media keys + a suspend inhibitor, and live output-device selection. **A daily-driver music player.**
-- **Phase 5: editing & write-back.** Bulk metadata editing (CLI `tag set` / `tag replace`, and the `Ctrl+E` dialog with a move preview for path-affecting edits); embedded-tag write-back so the tree stays self-describing and a wipe-and-reimport reconstructs it (§5.6); in-app ReplayGain scan (`rsgain`, all formats including Opus); and cover-art-to-disk feeding the Now-bar and MPRIS art.
-- **Phase 5.5: the audio engine.** A labelled `af`-chain built once per item and mutated live: head-staged per-track ReplayGain (fixing mpv #8267), a 10-band ISO graphic EQ with live sliders and persisted presets, a DSP rack (compressor, brick-wall limiter, leveler), and output backend + resampler control, all surfaced in a foobar2000-style Sound preferences page.
-- **Phase 6: podcasts (absorbing Belfry).** The full podcast client: conditional-GET fetch, `feed-rs` + the `podcast:` namespace handler, OPML round-trip, libsecret credentials, and downloads; the Inbox → Queue → Played triage tab with tags; episodes in the *same* queue as music tracks, resuming to the second; per-show speed, Smart Speed (silence-skip) and Voice Boost; chapters, time-saved accounting, a Now Playing surface, and a sleep timer. **Podcast parity reached; Belfry retired** (spec §16.8).
-
-Next: **Phase 7 (audiobooks)**, the third media type, reusing the spoken-word engine (variable speed, Smart Speed, Voice Boost, chapters, sleep timer) with per-book resume; or the independent **Phase 8** library audits (integrity, duplicates, health reports, playlist export).
-
-- [`spec.md`](spec.md): the design contract.
-- [`roadmap.md`](roadmap.md): the phased plan, broken into independently shippable sub-phases.
-- [`patchnotes.md`](patchnotes.md): release notes (newest at top).
-- [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md): design lineage, dependency licenses, and the GPL-3 chain analysis.
-- [`docs/`](docs/): design references: [schema](docs/schema.md), [import](docs/import.md), [path templates](docs/path-template.md), [genre normalization](docs/genre-normalization.md), [file mover](docs/mover.md), [cover accent](docs/accent.md), [search grammar](docs/search-grammar.md), [libmpv profiles](docs/libmpv-profiles.md), [keymap](docs/keymap.md).
-
-## Workspace
-
-Six crates, matching the Belfry / Atrium discipline that every non-GUI surface stays CLI-testable. Music is the native program; podcasts and audiobooks are **compile-time plugins**: feature-gated crates, on by default, with all schema staying in core's single migration ledger (spec §2.2).
-
-- `conservatory-core`: headless data layer and the music-native engine: SQLite worker, all migrations, import pipeline, file mover, playback host and profiles, the unified queue.
-- `conservatory-search`: the Calibre-shaped search expression language (see [`docs/search-grammar.md`](docs/search-grammar.md)); deliberately feature-free.
-- `conservatory-podcasts`: plugin crate for the absorbed Belfry podcast subsystem (Phase 6).
-- `conservatory-audiobooks`: plugin crate for the audiobook subsystem (Phase 7).
-- `conservatory-cli`: headless binary: import, organize, search, tag, queue, podcast ops, stats.
-- `conservatory`: the GTK4 / libadwaita binary.
-
-Both binaries take `--no-default-features` for a music-only build (no podcast or audiobook code compiled in), which CI keeps green alongside the full build.
-
-## Stack
-
-- **Rust 2024 Edition**
-- **GTK 4.16+ / libadwaita 1.7+**
-- **SQLite** via `rusqlite` (bundled, FTS5): single-writer worker, read-only pool, WAL mode
-- **`tokio`** runtime; **`reqwest`** for podcast fetch; **`feed-rs`** + **`quick-xml`** for feeds (Phase 6)
-- **Tag read/write** via `lofty` (signed off over `symphonia`, spec §7.1); **`image`** for cover decode and accent extraction
-- **libmpv** via `libmpv2`, with the chain riding ffmpeg's `volume` (ReplayGain) / `equalizer` (EQ) / `acompressor` / `alimiter` / `dynaudnorm` (DSP) / `silenceremove` (Smart Speed) filters and `scaletempo2` for variable speed
-- **`oo7`** for libsecret credential storage (HTTP Basic per-show auth)
-- **`zbus`** for MPRIS2 and the suspend inhibitor
-- **Meson** wrapper over Cargo for Flatpak packaging
-- **Memory budget:** < 200 MB idle, < 300 MB active on a 50k-track library (see [`spec.md`](spec.md) §13)
-
-## Building
+System build dependencies (Fedora 44):
 
 ```bash
-# Native (development)
+sudo dnf install gtk4-devel libadwaita-devel mpv-libs-devel sqlite-devel pipewire-devel
+# The audio chain rides the full (GPL) ffmpeg build: RPM Fusion's ffmpeg-libs, not ffmpeg-free-libs
+sudo dnf install --setopt=install_weak_deps=False ffmpeg-libs
+```
+
+Build and test:
+
+```bash
 cargo build --workspace
 cargo test --workspace
 
-# CI gate (matches the portfolio)
+# The CI gate (matches the portfolio):
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-Day to day:
+A music-only build (no podcast or audiobook code compiled in) is `--no-default-features`; CI keeps it green alongside the full build.
+
+## Quick start
 
 ```bash
-# Import a folder into a database-owned library (copies by default)
+# Import a folder into a database-owned library (copies by default; --move consumes the originals)
 cargo run -p conservatory-cli -- import library.db /path/to/album ~/Music/Conservatory
 
 # Search it with the full grammar
@@ -105,18 +103,80 @@ cargo run -p conservatory-cli -- search library.db 'genre:ambient AND year:>=199
 cargo run -p conservatory-cli -- podcast add library.db https://example.com/feed.xml
 cargo run -p conservatory-cli -- podcast refresh library.db
 
-# Launch the browse + playback window (second arg is the library root)
+# Audit the library
+cargo run -p conservatory-cli -- verify library.db
+cargo run -p conservatory-cli -- duplicates library.db
+
+# Launch the browse + playback window (the second argument is the library root)
 cargo run -p conservatory -- library.db ~/Music/Conservatory
 ```
 
-System build dependencies (Fedora 44):
+The CLI mirrors the GUI: every non-graphical action has a verb, which is how the engine stays testable. Run `conservatory-cli --help` for the full set.
 
-```bash
-sudo dnf install gtk4-devel libadwaita-devel mpv-libs-devel sqlite-devel
-# The af-chain rides the full (GPL) ffmpeg build: RPM Fusion's ffmpeg-libs, not ffmpeg-free-libs
-sudo dnf install --setopt=install_weak_deps=False ffmpeg-libs
-```
+## Keyboard shortcuts
+
+A few of the most useful; the [full keymap](docs/keymap.md) has the rest.
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+F` | Focus the filter bar (the full search grammar) |
+| `Alt+1` / `Alt+2` / `Alt+3` | Switch Music / Podcasts / Audiobooks |
+| `Ctrl+U` | Show or hide the queue drawer |
+| `Ctrl+P` | Show or hide the track-properties inspector |
+| `Ctrl+I` | Show or hide the Now Playing drawer (with the spectrum) |
+| `Ctrl+E` | Edit metadata for the selection (bulk editor) |
+| `Ctrl+Enter` | Append the selection to the queue |
+| `Ctrl+M` | Stop after the current item |
+| `Ctrl+J` | Jump to the playing track |
+| `S` | Sleep-timer menu |
+| `Ctrl+,` | Preferences |
+
+## How it is built
+
+Six crates, on the discipline that every non-GUI surface stays CLI-testable. Music is the native program; podcasts and audiobooks are **compile-time plugins** (feature-gated crates, on by default), with all schema living in core's single migration ledger.
+
+- `conservatory-core`: the headless data layer and the music engine: SQLite worker, all migrations, the import pipeline, the file mover, the playback host and profiles, and the unified queue.
+- `conservatory-search`: the Calibre-shaped search expression language (see [`docs/search-grammar.md`](docs/search-grammar.md)).
+- `conservatory-podcasts`: the absorbed Belfry podcast subsystem.
+- `conservatory-audiobooks`: the audiobook subsystem.
+- `conservatory-cli`: the headless binary.
+- `conservatory`: the GTK4 / libadwaita binary.
+
+**Stack:** Rust 2024, GTK 4.16+ / libadwaita 1.7+, SQLite via `rusqlite` (bundled, FTS5, single-writer worker + read pool + WAL), `tokio`. libmpv via `libmpv2`, with the audio chain riding ffmpeg's `volume` / `equalizer` / `acompressor` / `alimiter` / `dynaudnorm` / `silenceremove` filters and `scaletempo2` for variable speed. `lofty` for tag read and write, `image` for cover decode and accent extraction, `reqwest` + `feed-rs` + `quick-xml` + `ammonia` for podcasts, `oo7` for libsecret credentials, `zbus` for MPRIS2. The spectrum visualizer taps the system audio through `pipewire` and runs its own FFT with `realfft`. Meson wraps Cargo for Flatpak packaging. Memory budget: under 200 MB idle, under 300 MB active on a 50k-track library (spec §13).
+
+## Project status
+
+**v0.0.84. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
+
+Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [patchnotes](patchnotes.md) the per-release notes):
+
+- **1 to 3:** the data layer, the headless manager (import / organize / move), and the Columns UI browser with the search grammar.
+- **4 and 5:** the libmpv player and unified queue; bulk editing, embedded write-back, and ReplayGain scanning.
+- **5.5:** the audio engine (EQ, DSP rack, output quality) behind a Sound preferences page.
+- **6:** podcasts, absorbing Belfry (fetch, triage, Smart Speed, Voice Boost, chapters, sleep timer).
+- **7:** audiobooks (shelf, import, per-book resume, chapter navigation, bulk edit).
+- **8:** the library maintenance suite (integrity, duplicates, audits, stats, APE stripping, playlists).
+- **10:** the `config.toml`-backed Preferences window.
+- **11:** Columns UI polish (the properties inspector, the status bar, the Now Playing drawer, transport conveniences).
+- **12:** the visual identity (Kanagawa Dragon theme, album art across the browse, an enriched now-bar, the spectrum visualizer).
+- **13:** the sleekness pass (a layout fix, empty states, toasts, and an internal tidy).
+
+Not built yet: **Phase 9**, optional ListenBrainz / Last.fm scrobbling, off by default. The roadmap has the full picture.
+
+## Documentation
+
+- [`spec.md`](spec.md): the design contract. Read it before changing semantics.
+- [`roadmap.md`](roadmap.md): the phased plan, in independently shippable sub-phases.
+- [`patchnotes.md`](patchnotes.md): release notes, newest at top.
+- [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md): design lineage, dependency licenses, and the GPL-3 chain analysis.
+- [`docs/`](docs/): design references for [schema](docs/schema.md), [import](docs/import.md), [path templates](docs/path-template.md), [genre normalization](docs/genre-normalization.md), [the file mover](docs/mover.md), [cover accent](docs/accent.md), [the search grammar](docs/search-grammar.md), [libmpv profiles](docs/libmpv-profiles.md), [the audiobook reader](docs/audiobook-reader.md), [the theme](docs/theme.md), and the [keymap](docs/keymap.md).
+
+## Contributing
+
+I'm a college student in my late thirties with no professional industry experience yet; Conservatory is one in a string of native Linux desktop apps I'm building to learn the craft and assemble a portfolio. I came from foobar2000 and Directory Opus, and I keep a large Calibre library. What Calibre does for my books, nothing did for my music, so I am building it.
+
+I develop on Fedora 44 on a ThinkPad T14s AMD Gen 6, and that is the only environment I can honestly support. Contributions are welcome, but please understand that I can only test against my own setup.
 
 ## License
 
-GPL-3.0-or-later. The license is forced by the GPL libraries the player links, not by a call Conservatory makes: libmpv links a GPL ffmpeg build (the `volume` / `equalizer` / `acompressor` / `dynaudnorm` / `silenceremove` filters the `af`-chain rides) and librubberband (GPL-2-or-later) where the build carries it. As of Phase 6c the app no longer invokes the `rubberband` filter itself (Smart Speed is `silenceremove`, variable speed is `scaletempo2`), but the obligation flows from linking the stack (spec §15). See [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md) for the full chain.
+GPL-3.0-or-later. The license is forced by the GPL libraries the player links, not by a call Conservatory makes: libmpv links a GPL ffmpeg build (the filters the audio chain rides), and librubberband (GPL-2-or-later) where the build carries it. See [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md) for the full chain.

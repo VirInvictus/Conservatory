@@ -95,7 +95,11 @@ pub fn tech_line(
 /// episode / book) and its id matches.
 pub fn play_state(row_id: i64, playing_id: Option<i64>, is_track: bool, paused: bool) -> u8 {
     if is_track && playing_id == Some(row_id) {
-        if paused { 2 } else { 1 }
+        if paused {
+            2
+        } else {
+            1
+        }
     } else {
         0
     }
@@ -134,6 +138,8 @@ mod tests {
             genres: String::new(),
             duration,
             rating: 0,
+            cover_path: None,
+            accent_rgb: None,
         }
     }
 

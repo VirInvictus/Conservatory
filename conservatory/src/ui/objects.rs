@@ -146,6 +146,16 @@ impl TrackRow {
         self.with(|b| b.rating)
     }
 
+    /// The album cover, root-relative (Phase 12b); `None` when absent on disk.
+    pub fn cover_path(&self) -> Option<String> {
+        self.with(|b| b.cover_path.clone())
+    }
+
+    /// The album's extracted accent (packed `0x00RRGGBB`).
+    pub fn accent_rgb(&self) -> Option<u32> {
+        self.with(|b| b.accent_rgb)
+    }
+
     /// `m:ss`, or empty when unknown.
     pub fn duration_text(&self) -> String {
         let secs = self.with(|b| b.duration.unwrap_or(0.0));

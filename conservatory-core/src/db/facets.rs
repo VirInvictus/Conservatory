@@ -144,6 +144,11 @@ pub struct TrackBrief {
     pub genres: String,
     pub duration: Option<f64>,
     pub rating: u8,
+    /// The album's cover, root-relative (Phase 12b), for the browse thumbnail.
+    /// `None` when the album has no cover on disk yet.
+    pub cover_path: Option<String>,
+    /// The album's extracted accent (packed `0x00RRGGBB`), for tinting.
+    pub accent_rgb: Option<u32>,
 }
 
 /// A sortable leaf column (Phase 3c). The GTK `ColumnView` header drives this;
@@ -184,7 +189,11 @@ pub fn cmp_tracks(
             .unwrap_or(Equal),
         TrackSort::Rating => a.rating.cmp(&b.rating),
     };
-    if descending { ord.reverse() } else { ord }
+    if descending {
+        ord.reverse()
+    } else {
+        ord
+    }
 }
 
 /// Stable, case-insensitive sort of the leaf set by `key`. `sort_by` is stable,
@@ -306,6 +315,7 @@ pub fn facet_tracks(conn: &Connection, filters: &[FacetFilter]) -> Result<Vec<Tr
     // genres (the inner ORDER BY feeds group_concat in order, so it is stable).
     let sql = format!(
         "SELECT t.id, t.title, t.duration, t.rating, ta.name AS artist, al.title AS album,
+                al.cover_path AS cover_path, al.accent_rgb AS accent_rgb,
                 (SELECT group_concat(name, ', ') FROM (
                     SELECT g.name FROM track_genres tg JOIN genres g ON g.id = tg.genre_id
                     WHERE tg.track_id = t.id ORDER BY g.name COLLATE NOCASE
@@ -319,6 +329,7 @@ pub fn facet_tracks(conn: &Connection, filters: &[FacetFilter]) -> Result<Vec<Tr
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
+        let accent: Option<i64> = r.get("accent_rgb")?;
         Ok(TrackBrief {
             id: r.get("id")?,
             title: r.get("title")?,
@@ -327,6 +338,8 @@ pub fn facet_tracks(conn: &Connection, filters: &[FacetFilter]) -> Result<Vec<Tr
             genres: r.get::<_, Option<String>>("genres")?.unwrap_or_default(),
             duration: r.get("duration")?,
             rating: r.get::<_, i64>("rating")?.clamp(0, 5) as u8,
+            cover_path: r.get("cover_path")?,
+            accent_rgb: accent.map(|v| v as u32),
         })
     })?;
     rows.map(|r| r.map_err(Into::into)).collect()
@@ -352,6 +365,8 @@ mod tests {
             genres: genres.into(),
             duration: Some(id as f64), // distinct, so duration sort order is checkable
             rating,
+            cover_path: None,
+            accent_rgb: None,
         }
     }
 

@@ -752,13 +752,13 @@ The shipped UI was flagged as "dull and lifeless": no palette (the flat grey sys
 
 *Usable artifact:* the app finally has a visual identity. Launch and it is unmistakably Kanagawa Dragon, with shadowed cover cards, before any structural change.
 
-### Phase 12b — Album art in the browse (cover column + cover panel) (v0.0.78)
+### Phase 12b — Album art in the browse (cover column + cover panel) ✅ (v0.0.78)
 
-- [ ] `TrackBrief` + `facet_tracks` gain `cover_path` / `accent_rgb` (join `albums`); threaded through `query_leaf`. Read test.
-- [ ] A cover-thumbnail column in the track list (~48px rounded `.cover-art`, accent ring via `ui/accent.rs`), with a small texture cache so scrolling a large library does not re-decode.
-- [ ] The Phase 11a inspector promoted into the large cover panel (cover 240→~300px, accent ring, default open), the deadbeef `coverart` + `selproperties` right column.
+- [x] `TrackBrief` + `facet_tracks` gain `cover_path` / `accent_rgb` (the `albums` join already existed, so a one-line SELECT add); threaded through `query_leaf` (a single change point feeds both the SQL-fast and in-memory-filter paths). A core read test asserts the projection.
+- [x] A 40px cover-thumbnail column leads the track list, rounded via `.cover-thumb` + `overflow: hidden`, decoded once through a shared downscaling texture cache (`ui/covers.rs`, `CoverCache`) so a large library does not re-decode on scroll. No per-row accent ring (a single display-wide provider cannot serve N row accents, and a ring on a 40px thumbnail is negligible); the ring stays on the big surfaces.
+- [x] The Phase 11a inspector promoted into the large cover panel: cover 240→300px and **open by default** (the deadbeef `coverart` + `selproperties` right column). `Ctrl+P` still toggles it.
 
-*Usable artifact:* the music browse shows album art, a thumbnail per row plus a large accent-framed cover panel.
+*Usable artifact:* the music browse shows album art, a thumbnail per row plus a large cover panel open by default. The downscaler is the GTK stack's own gdk-pixbuf (no new dependency).
 
 ### Phase 12c — Now-bar enrichment + Now Playing polish (v0.0.79)
 

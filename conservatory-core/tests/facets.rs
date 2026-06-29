@@ -164,3 +164,74 @@ async fn multi_value_genre_counts_under_each() {
 
     worker.shutdown_ack().await.unwrap();
 }
+
+#[tokio::test]
+async fn leaf_carries_album_cover_and_accent() {
+    // Phase 12b: facet_tracks projects the album's cover_path + accent_rgb onto
+    // each leaf row, so the browse cover column can render art per track.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("library.db");
+    let worker = spawn_worker(path.clone()).unwrap();
+
+    let artist = worker
+        .insert_artist(Artist {
+            id: 0,
+            name: "Aphex Twin".into(),
+            sort_name: "Aphex Twin".into(),
+            musicbrainz_id: None,
+        })
+        .await
+        .unwrap();
+    let album = worker
+        .insert_album(Album {
+            id: 0,
+            title: "Selected Ambient Works 85-92".into(),
+            album_artist_id: Some(artist),
+            shelf_genre: Some("Electronic".into()),
+            year: Some(1992),
+            release_date: None,
+            musicbrainz_release_id: None,
+            cover_path: Some("Electronic/Aphex Twin/SAW (1992)/cover.jpg".into()),
+            accent_rgb: Some(0x00c4_746e),
+            folder_path: "Electronic/Aphex Twin/SAW (1992)".into(),
+            added_at: None,
+        })
+        .await
+        .unwrap();
+    worker
+        .insert_track(Track {
+            id: 0,
+            album_id: Some(album),
+            artist_id: Some(artist),
+            title: "Xtal".into(),
+            track_no: Some(1),
+            disc_no: Some(1),
+            duration: None,
+            file_path: "Electronic/Aphex Twin/SAW (1992)/01 Xtal.flac".into(),
+            format: Some("flac".into()),
+            bitrate: None,
+            sample_rate: None,
+            replaygain_track: None,
+            replaygain_album: None,
+            rating: 0,
+            play_count: 0,
+            last_played: None,
+            starred: false,
+            musicbrainz_recording_id: None,
+            added_at: None,
+        })
+        .await
+        .unwrap();
+
+    let pool = ReadPool::new(path, 3).unwrap();
+    let conn = pool.open().unwrap();
+    let leaf = facet_tracks(&conn, &[]).unwrap();
+    assert_eq!(leaf.len(), 1);
+    assert_eq!(
+        leaf[0].cover_path.as_deref(),
+        Some("Electronic/Aphex Twin/SAW (1992)/cover.jpg")
+    );
+    assert_eq!(leaf[0].accent_rgb, Some(0x00c4_746e));
+
+    worker.shutdown_ack().await.unwrap();
+}

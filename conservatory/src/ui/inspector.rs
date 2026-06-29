@@ -41,7 +41,7 @@ pub fn build_inspector() -> Inspector {
         .build();
 
     let cover = gtk::Image::builder()
-        .pixel_size(240)
+        .pixel_size(300)
         .icon_name("audio-x-generic-symbolic")
         .build();
     let cover_frame = gtk::Frame::builder()
@@ -68,13 +68,16 @@ pub fn build_inspector() -> Inspector {
 
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
-        .width_request(300)
+        .width_request(340)
         .child(&body)
         .build();
 
+    // Open by default (Phase 12b): the cover panel is the deadbeef `coverart` +
+    // `selproperties` right column, so album art is present from first launch.
+    // `Ctrl+P` still toggles it.
     let revealer = gtk::Revealer::builder()
         .transition_type(gtk::RevealerTransitionType::SlideLeft)
-        .reveal_child(false)
+        .reveal_child(true)
         .child(&scroller)
         .build();
 

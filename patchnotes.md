@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.0.78
+
+Phase 12b: album art in the music browse, the "more covers" half of the Phase 12 overhaul.
+
+- **Cover thumbnail per track.** The track list gains a leading album-cover column, the deadbeef album-art-per-row look. Covers load lazily (only visible rows) and are cached downscaled, so scrolling a large library does not re-decode full-resolution artwork.
+- **A large cover panel.** The properties inspector (the right-docked `coverart` + properties column) now opens by default with a bigger 300px cover, so album art is on screen from first launch. `Ctrl+P` still toggles it.
+- **Read layer.** The leaf query now projects each album's cover and accent onto its tracks; a single change point feeds both the fast SQL path and the in-memory filter path.
+- **Tests.** A core read test asserts the cover/accent projection; the column, cache, and panel are verified by building and by launching. Full workspace suite + clippy `-D warnings` + fmt + the music-only build green. No new dependency (the downscaler is the GTK stack's own gdk-pixbuf), no schema change.
+
 ## v0.0.77
 
 Phase 12a: a visual identity. The app now ships the Kanagawa Dragon theme instead of inheriting the flat grey system look, the first step of the Phase 12 UI overhaul.

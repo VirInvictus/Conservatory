@@ -63,6 +63,7 @@ columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height
 .book-tile { padding: 8px; border-radius: 10px; }
 .book-tile:selected { background: alpha(@accent_color, 0.18); }
 .cover-art { border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); background: alpha(currentColor, 0.05); }
+.cover-thumb { border-radius: 4px; background: alpha(currentColor, 0.06); }
 .book-cover { border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.35); background: alpha(currentColor, 0.06); }
 .inspector-cover { border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); background: alpha(currentColor, 0.06); }
 .now-playing-cover { border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); background: alpha(currentColor, 0.06); }

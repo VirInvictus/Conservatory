@@ -251,7 +251,7 @@ impl ConservatoryWindow {
                 .into_iter()
                 .map(build_pane)
                 .collect();
-        let leaf = build_leaf();
+        let leaf = build_leaf(imp.library_root.get().cloned());
 
         // Facet panes in a row on top; the track table below (a draggable split,
         // the deadbeef-cui layout).

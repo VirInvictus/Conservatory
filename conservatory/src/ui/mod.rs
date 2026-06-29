@@ -5,6 +5,7 @@ pub mod accent;
 #[cfg(feature = "audiobooks")]
 pub mod audiobooks;
 pub mod coalescing;
+pub mod covers;
 pub mod facet_pane;
 pub mod inspector;
 pub mod now_bar;

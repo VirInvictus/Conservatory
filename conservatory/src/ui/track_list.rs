@@ -4,6 +4,8 @@
 //! GTK sort and the headless `sort_tracks` never diverge. Multi-select comes free
 //! from `MultiSelection` (Ctrl/Shift). Rating renders as accent-tinted stars.
 
+use std::path::PathBuf;
+
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
@@ -11,9 +13,14 @@ use gtk4 as gtk;
 
 use conservatory_core::db::{TrackBrief, TrackSort, cmp_tracks};
 
+use crate::ui::covers::CoverCache;
 use crate::ui::objects::TrackRow;
 
 const MAX_STARS: i32 = 5;
+/// The browse cover thumbnail edge, in px. A 40px cover gives album-art-per-row
+/// (the deadbeef look) while keeping the table reasonably dense.
+const COVER_PX: i32 = 40;
+const COVER_PLACEHOLDER: &str = "audio-x-generic-symbolic";
 
 /// The leaf table: its backing store (for repopulation), the selection (for
 /// multi-select + reading the visible order), the `ColumnView` (for row
@@ -121,6 +128,42 @@ fn glyph_column() -> gtk::ColumnViewColumn {
     col
 }
 
+/// The album-cover thumbnail column (Phase 12b, the deadbeef album-art-per-row):
+/// a small rounded cover loaded from the album's `cover_path`, resolved against
+/// the library `root` and decoded once through the shared `CoverCache`. Falls
+/// back to the generic-audio icon when the album has no cover on disk. Lazy-bound
+/// like the other factory columns, so only visible rows decode.
+fn cover_column(root: Option<PathBuf>, cache: CoverCache) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        let img = gtk::Image::builder()
+            .pixel_size(COVER_PX)
+            .icon_name(COVER_PLACEHOLDER)
+            .css_classes(["cover-thumb"])
+            .overflow(gtk::Overflow::Hidden) // clip the texture to the rounded corners
+            .build();
+        item.set_child(Some(&img));
+    });
+    factory.connect_bind(move |_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        let row = track(&item.item().expect("item"));
+        let img = item.child().and_downcast::<gtk::Image>().expect("Image");
+        // Decode at 2x the display size for crispness on HiDPI.
+        let tex = root
+            .as_ref()
+            .zip(row.cover_path())
+            .and_then(|(r, cp)| cache.texture(&r.join(cp), COVER_PX * 2));
+        match tex {
+            Some(t) => img.set_paintable(Some(&t)),
+            None => img.set_icon_name(Some(COVER_PLACEHOLDER)),
+        }
+    });
+    let col = gtk::ColumnViewColumn::new(Some(""), Some(factory));
+    col.set_fixed_width(COVER_PX + 8);
+    col
+}
+
 /// The Rating column: a fixed row of five symbolic stars, filled to the row's
 /// rating. Symbolic icons come from the icon theme (font-independent).
 fn rating_column() -> gtk::ColumnViewColumn {
@@ -157,8 +200,9 @@ fn rating_column() -> gtk::ColumnViewColumn {
     col
 }
 
-pub fn build_leaf() -> Leaf {
+pub fn build_leaf(root: Option<PathBuf>) -> Leaf {
     let store = gio::ListStore::new::<TrackRow>();
+    let cover_cache = CoverCache::new();
 
     // Wrap the store in a SortListModel so header clicks reorder the rows; its
     // sorter is the ColumnView's own (set once the view exists, just below).
@@ -170,6 +214,7 @@ pub fn build_leaf() -> Leaf {
     view.set_show_column_separators(true);
     view.add_css_class("data-table");
 
+    view.append_column(&cover_column(root, cover_cache));
     view.append_column(&glyph_column());
     view.append_column(&text_column(
         "Artist",

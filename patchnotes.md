@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.84
+
+Phase 13c: an internal tidy. No behavior change, no new features; the app does exactly what it did at v0.0.83.
+
+- **One accent helper.** The Now Playing drawer and the Audiobooks shelf each carried their own copy of the "swap a display-wide CSS provider" dance for per-item accent colour. Both now route through the single shared helper the inspector and the Now-bar already use, so there is one implementation instead of three.
+- **One home for the metadata projections.** The pure functions that turn a track, episode, or audiobook into labelled display rows (and the small `push` helper that was duplicated between two files) moved into a single `ui/fields.rs` module, with their unit tests. The inspector, the Now Playing drawer, and the browse all read from the same place.
+- **A clean bill on the rest.** A code audit found the codebase otherwise in good shape (no dead code, no stale comments to speak of, consistent error handling), so this release does not churn it for its own sake.
+
+The full test suite, clippy, and the music-only build are green; the moved field projections keep their headless tests as the guardrail.
+
 ## v0.0.83
 
 Phase 13b: the structural part of the sleekness pass. Empty states, a grouped header, and toast confirmations.

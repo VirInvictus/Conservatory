@@ -796,8 +796,8 @@ A UI/UX polish pass plus a focused code tidy, prompted by a concrete layout bug 
 - [x] Clustered the header buttons into linked groups (panel toggles | edit/embed | utility) for visual hierarchy.
 - [x] `adw::ToastOverlay` feedback on tag-embed and bulk-edit (the embed "Done" modal became a toast). Import / playlist export are CLI-only, so no GUI toast applies there.
 
-### Phase 13c — Code tidy: accent + helper dedup (v0.0.84)
+### Phase 13c — Code tidy: accent + helper dedup ✅ (v0.0.84)
 
-- [ ] Finish the Phase 12a accent-provider migration (now_playing_panel; assess audiobooks).
-- [ ] Consolidate the duplicated `push()` + the `*_fields()` projections into `ui/fields.rs`.
-- [ ] Confirming pass: document the clean bill of health rather than manufacture churn.
+- [x] Finished the Phase 12a accent-provider migration: `now_playing_panel` and `audiobooks` both route through the shared `ui/accent.rs` `AccentProvider` (the audiobooks shelf hands it an N-rule CSS string; the provider swap is the same), so the three inline copies are gone.
+- [x] Consolidated the duplicated `push()` and the four `*_fields()` projections (`track`/`episode`/`book`/`inspector`) into a new `ui/fields.rs`, tests moved with them.
+- [x] Confirming pass: the audit found the codebase otherwise clean (no dead code, good comments, solid error handling), so no churn was manufactured. Documented rather than invented.

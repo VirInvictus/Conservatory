@@ -43,11 +43,10 @@ use crate::playqueue::{MixedQueueRow, build_mixed_queue, build_play_queue, fmt_p
 use crate::query::query_leaf;
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
-use crate::ui::inspector::{Inspector, build_inspector, inspector_fields};
+use crate::ui::fields::{book_fields, episode_fields, inspector_fields, track_fields};
+use crate::ui::inspector::{Inspector, build_inspector};
 use crate::ui::now_bar::{NowBar, build_now_bar};
-use crate::ui::now_playing_panel::{
-    NowPlayingPanel, build_now_playing_panel, episode_fields, track_fields,
-};
+use crate::ui::now_playing_panel::{NowPlayingPanel, build_now_playing_panel};
 use crate::ui::objects::TrackRow;
 use crate::ui::queue_panel::{QueuePanel, build_queue_panel};
 use crate::ui::sound;
@@ -2968,13 +2967,7 @@ impl ConservatoryWindow {
                     .unwrap_or(true);
                 panel.set_fields(
                     &np.title.clone(),
-                    &crate::ui::now_playing_panel::book_fields(
-                        &np,
-                        &book,
-                        &narrators,
-                        chapters.len(),
-                        single_file,
-                    ),
+                    &book_fields(&np, &book, &narrators, chapters.len(), single_file),
                 );
                 let cover_abs = match (imp.library_root.get(), np.album_cover_path.as_deref()) {
                     (Some(root), Some(cp)) => Some(root.join(cp)),

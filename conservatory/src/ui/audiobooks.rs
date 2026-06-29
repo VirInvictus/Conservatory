@@ -71,7 +71,7 @@ pub fn build_audiobooks_view(
         detail,
         filter: filter.clone(),
         all_rows: RefCell::new(Vec::new()),
-        accent_provider: RefCell::new(None),
+        accent: crate::ui::accent::AccentProvider::new(),
     });
 
     // The shelf grid: a cover tile per book.
@@ -210,7 +210,11 @@ struct Inner {
     /// The whole shelf, sorted in-progress-first; the filter narrows it into
     /// `store` without re-reading the database.
     all_rows: RefCell<Vec<BookListRow>>,
-    accent_provider: RefCell<Option<gtk::CssProvider>>,
+    /// The shared accent provider (Phase 13c). Unlike the single-accent surfaces,
+    /// the shelf serves *many* `.book-accent-RRGGBB` rules at once (one per
+    /// distinct tile colour), but the provider-swap is the same; only the CSS the
+    /// shelf hands it carries N rules instead of one.
+    accent: crate::ui::accent::AccentProvider,
 }
 
 impl Inner {
@@ -271,23 +275,7 @@ impl Inner {
                 ".book-accent-{hex:06x} {{ box-shadow: inset 0 -4px 0 #{hex:06x}; }}\n"
             ));
         }
-        let Some(display) = gtk::gdk::Display::default() else {
-            return;
-        };
-        if let Some(old) = self.accent_provider.borrow_mut().take() {
-            gtk::style_context_remove_provider_for_display(&display, &old);
-        }
-        if css.is_empty() {
-            return;
-        }
-        let provider = gtk::CssProvider::new();
-        provider.load_from_string(&css);
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-        *self.accent_provider.borrow_mut() = Some(provider);
+        self.accent.set_css(&css);
     }
 
     /// Populate the detail pane for the selected book (or clear it).

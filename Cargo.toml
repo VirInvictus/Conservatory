@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.79"
+version = "0.0.80"
 edition = "2024"
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
@@ -37,6 +37,13 @@ quick-xml = "0.37"
 
 # Playback
 libmpv2 = "4.1"
+
+# Visualizer (Phase 12d, spec §12). libmpv exposes no PCM tap, so the spectrum
+# captures the PipeWire sink monitor (`pipewire`, binary-only I/O) and runs its
+# own FFT (`realfft`, on core, where the pure band math is unit-tested). Both
+# MIT/Apache, compatible with the GPL-3.0-or-later app. Signed off at 12d.
+realfft = "3.5"
+pipewire = "0.10"
 
 # Tag read/write (music). Signed off at Phase 1c (spec §7.1): lofty (read+write,
 # broad coverage) over symphonia (decode-only), so one library serves both the

@@ -26,6 +26,9 @@ image = { workspace = true }
 # Phase 4a: the libmpv playback host (spec §6). Links the system libmpv at
 # runtime; the player lives in core (spec §16.13), not the GTK binary.
 libmpv2 = { workspace = true }
+# Phase 12d: the visualizer FFT. The pure PCM→bands math lives here (spec
+# §16.13: logic in core, CLI-testable); the PipeWire capture is in the binary.
+realfft = { workspace = true }
 # Phase 4c-i: MPRIS2 + the suspend inhibitor (spec §6.5). D-Bus, on tokio.
 zbus = { workspace = true }
 # Phase 4c fix: setlocale(LC_NUMERIC, "C") so libmpv's mpv_create() succeeds

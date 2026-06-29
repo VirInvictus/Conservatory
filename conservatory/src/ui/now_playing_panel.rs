@@ -64,6 +64,9 @@ pub struct NowPlayingPanel {
     /// handler survives list rebuilds (re-connecting would double-fire).
     chapter_starts: Rc<RefCell<Vec<f64>>>,
     /// The handle the chapter rows seek through; set on each `set_chapters`.
+    /// The spectrum visualizer (Phase 12d): captures the system audio and draws
+    /// accent-tinted frequency bars while the drawer is open.
+    spectrum: crate::ui::spectrum::Spectrum,
     player: Rc<RefCell<Option<PlayerHandle>>>,
     /// The currently-highlighted chapter row, so a tick only touches the CSS
     /// class when the playhead crosses a boundary.
@@ -212,7 +215,9 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
     column.set_margin_bottom(14);
     column.set_margin_start(16);
     column.set_margin_end(16);
+    let spectrum = crate::ui::spectrum::build_spectrum();
     column.append(&header_row);
+    column.append(&spectrum.area);
     column.append(&grid);
     column.append(&smart_speed);
     column.append(&sleep);
@@ -250,6 +255,7 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
         chapters_box,
         chapters_list,
         chapter_starts,
+        spectrum,
         player,
         current_chapter: Cell::new(None),
     }
@@ -383,6 +389,7 @@ impl NowPlayingPanel {
             None => self.cover.set_icon_name(Some("audio-x-generic-symbolic")),
         }
         self.apply_accent(accent);
+        self.spectrum.set_accent(accent);
     }
 
     /// Tint the cover frame and the scrubber highlight with the item accent via a

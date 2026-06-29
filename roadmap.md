@@ -767,9 +767,11 @@ The shipped UI was flagged as "dull and lifeless": no palette (the flat grey sys
 
 *Usable artifact:* the playback bar is informative and album-art-led; the Now Playing drawer reads as composed.
 
-### Phase 12d — Spectrum visualizer (v0.0.80, separate sign-off)
+### Phase 12d — Spectrum visualizer ✅ (v0.0.80)
 
-- [ ] Spike the libmpv audio tap (an `astats` / `ebur128` `af-metadata` stage polled per tick, vs a true FFT). Pragmatic fallback: a multi-bar level / VU meter if a clean PCM tap proves infeasible (decided at the spike, surfaced to the user).
-- [ ] An accent-coloured bar widget in the Now Playing drawer slot; levels arrive via a new `PlayerSnapshot` field on the existing poll. Band / smoothing math pure and unit-tested.
+- [x] **Spike outcome:** libmpv has no PCM tap or audio callback (confirmed in the mpv source + `docs/libmpv-profiles.md`), and its metadata filters give levels, not FFT bins. The user chose the faithful FFT spectrum, so it taps **outside** libmpv, at PipeWire.
+- [x] Pure DSP in core (`conservatory-core/src/player/spectrum.rs`, `realfft`): a Hann-windowed real FFT → log-spaced frequency bands → dB-normalized levels, plus a fast-attack / slow-decay `SpectrumSmoother`. Unit-tested headless (a 1 kHz tone lands in the right band; silence is flat; the smoother rises fast, decays slow).
+- [x] Capture thread in the binary (`conservatory/src/viz.rs`, `pipewire`): a capture-sink stream on the default sink monitor, never altering playback, downmixed to mono and analyzed, publishing bands to a shared buffer. *Caveat:* a sink-monitor tap sees all system audio, not only Conservatory's.
+- [x] Widget in the binary (`conservatory/src/ui/spectrum.rs`): a `gtk::DrawingArea` in the Now Playing drawer, redrawn on a **frame-clock tick** (display rate, independent of the engine's ~10fps snapshot), drawing accent-coloured bars. Capture starts on map (drawer opens) and stops on unmap, so it is free when closed.
 
-*Usable artifact:* a real-time accent-coloured visualizer in the Now Playing drawer (deadbeef parity), or an honest level meter if the FFT tap is not feasible.
+*Usable artifact:* a smooth, accent-coloured real-time frequency spectrum in the Now Playing drawer. **Phase 12 (Visual identity & album-art-forward UI) complete.**

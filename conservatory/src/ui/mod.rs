@@ -15,5 +15,6 @@ pub mod objects;
 pub mod podcasts;
 pub mod queue_panel;
 pub mod sound;
+pub mod spectrum;
 pub mod track_list;
 pub mod window;

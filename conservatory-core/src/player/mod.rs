@@ -22,6 +22,7 @@ pub mod item;
 pub mod profile;
 pub mod session;
 pub mod sleep;
+pub mod spectrum;
 pub mod spoken;
 pub mod state;
 

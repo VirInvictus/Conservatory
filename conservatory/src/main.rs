@@ -16,6 +16,7 @@ mod playqueue;
 mod query;
 mod statusbar;
 mod ui;
+mod viz;
 
 const APP_ID: &str = "org.virinvictus.Conservatory";
 
@@ -68,6 +69,7 @@ columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height
 .inspector-cover { border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); background: alpha(currentColor, 0.06); }
 .now-playing-cover { border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); background: alpha(currentColor, 0.06); }
 .now-playing-drawer { border-top: 1px solid alpha(currentColor, 0.10); }
+.spectrum { background: alpha(currentColor, 0.04); border-radius: 6px; }
 ";
 
 fn load_css() {

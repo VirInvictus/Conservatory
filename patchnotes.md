@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.0.80
+
+Phase 12d: a real-time spectrum visualizer in the Now Playing drawer, closing Phase 12 (the visual overhaul).
+
+- **Frequency spectrum.** Accent-coloured frequency bars that move with the music, the deadbeef spectrum brought across. They live in the Now Playing drawer (`Ctrl+I`); open it while something plays and the bars dance.
+- **How it works.** libmpv exposes no way to read the audio it plays, so the visualizer taps the system audio at PipeWire (the default output's monitor) and runs its own FFT. The maths (windowing, the transform, the log-spaced bands, the fall-off smoothing) is in the engine core and unit-tested; the capture and the drawing are in the app.
+- **Smooth.** The bars are drawn on the display's frame clock and smoothed with a fast rise and a slow fall, so they animate fluidly rather than at the player's slower polling rate. Capture runs only while the drawer is open, so it costs nothing when closed.
+- **Caveat.** Because it taps the output device, the visualizer reacts to whatever your system is playing, not only Conservatory. If a browser tab is making noise, the bars will show it too.
+- **Tests.** The band maths and the smoother are pure and unit-tested (a 1 kHz tone lands in the right band; silence is flat; the smoother rises fast and decays slow). The capture and the widget are verified by running. Full workspace suite + clippy `-D warnings` + fmt + the music-only build green. New dependencies: `realfft` (the FFT) and `pipewire` (the capture), both recorded in ATTRIBUTIONS.md; no schema change.
+
+This closes Phase 12 (Visual identity & album-art-forward UI): the Kanagawa Dragon theme, album art across the browse, an enriched playback bar, and now a live spectrum.
+
 ## v0.0.79
 
 Phase 12c: a richer Now-bar, the answer to "the playback bar should give more information, not just be a bigger play bar."

@@ -686,12 +686,14 @@ Conservatory's first `config.toml` (spec §10), at `$XDG_CONFIG_HOME/conservator
 
 *Usable artifact:* configure the app (library root, import defaults, podcast/audiobook defaults) from Preferences, not a hand-edited TOML or CLI args. The Library page is built to receive the facet-pane configuration in 10c.
 
-### Phase 10c — Configurable facet panes (1 to 5)
+### Phase 10c — Configurable facet panes (1 to 5) ✅ (v0.0.73)
 
-- [ ] The deferred §3.2 promise: the browse panes are built from `[browse] panes` (a field expression per pane, order, count 1 to 5) instead of the hard-coded Genre → AlbumArtist → Album. Needs the core facet field generalized beyond the three-variant `FacetField` enum, and the GTK window building panes from config; edited from the 10b Library page and persisted.
-- [ ] Tests: the pane-spec parse + the facet build-from-config (headless); widgets build + manual.
+- [x] The §3.2 promise: the browse panes are built from `[browse] panes` (a field per pane, order, 1 to 5) instead of the hard-coded Genre → AlbumArtist → Album. The `FacetField` enum is generalized from three variants to seven (Genre, Shelf Genre, Album Artist, Artist, Album, Year, Format), each with a config key / title / plural and `filter_sql` + `target_sql` arms; `panes_from_config` resolves the keys (unknown dropped, capped at 5, default hierarchy when empty). The GTK window builds N panes from config (`build_pane(field)`); the cascade, `imp.panes`, and coalescer were already N-pane generic.
+- [x] Edited from the 10b Library page: a **Browse panes** group of five ordered field/`(none)` `ComboRow`s; the non-empty slots become `[browse].panes`. Applies on the next launch (no live rebuild of the central browse widget; matches the 10a/10b precedent), surfaced in the group description.
+- [x] Tests: the key round-trip + `panes_from_config` (skip/cap/default) as pure units; a fixture-DB test that the new single-valued facets partition all tracks and the cascade narrows a new-field pane. The editor + config-driven build are build + manual (the 3b/3c precedent). E2e: a custom `[browse].panes` round-trips through `config show`.
+- [ ] **Deferred:** live pane rebuild on prefs close; `Composer`/`Work` facets (need new schema); `Rating`/`Added` facets (easy follow-ons).
 
-*Usable artifact:* reorder, add, or remove browse panes, persisted across launches.
+*Usable artifact:* reorder, add, or remove browse panes (up to five, choosing the field per pane), persisted across launches. **Phase 10 (Configuration & preferences) complete.**
 
 ---
 

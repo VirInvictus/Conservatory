@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.0.73
+
+Phase 10c: configurable browse panes. The facet columns down the left of the music browser are no longer fixed at Genre, Album Artist, Album. This completes Phase 10 (Configuration & preferences).
+
+- **Pick your browse columns.** Preferences → Library → Browse panes gives five ordered slots; each is a field or "(none)". Choose from Genre, Shelf Genre, Album Artist, Artist, Album, Year, and Format, in any order, one to five panes. The change saves to `config.toml` and takes effect on the next launch.
+- **Four new facet fields.** Beyond the original three, the browser can now facet by Shelf Genre, Artist (the track artist, distinct from the album artist), Year, and Format, all from data already in the library.
+- **Safe by default.** Unknown field names in the config are ignored, the list is capped at five, and an empty list falls back to the default Genre → Album Artist → Album, so the browser is never left without panes.
+- **Tests.** The field parsing, the config resolution (skip unknown / cap / default), and the new facet queries (each partitions the library; the cascade still narrows) are tested; the editor and the config-driven build are verified by building and by hand. Full workspace suite + clippy `-D warnings` + fmt + the music-only build green. No new dependency, no schema change.
+
 ## v0.0.72
 
 Phase 11a: a track properties inspector and a large cover panel, the first slice of the Columns UI parity pass.

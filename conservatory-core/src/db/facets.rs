@@ -11,12 +11,109 @@ use rusqlite::Connection;
 
 use crate::errors::Result;
 
-/// A browse facet. The default hierarchy is Genre → AlbumArtist → Album.
+/// A browse facet. The default hierarchy is Genre → AlbumArtist → Album; the
+/// pane set and order are configurable (spec §3.2, `config.toml [browse].panes`,
+/// Phase 10c). The keys/titles align with the search grammar field names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FacetField {
     Genre,
+    ShelfGenre,
     AlbumArtist,
+    Artist,
     Album,
+    Year,
+    Format,
+}
+
+impl FacetField {
+    /// Every facet, in menu order (also the editor's option order, Phase 10c).
+    pub const ALL: [FacetField; 7] = [
+        FacetField::Genre,
+        FacetField::ShelfGenre,
+        FacetField::AlbumArtist,
+        FacetField::Artist,
+        FacetField::Album,
+        FacetField::Year,
+        FacetField::Format,
+    ];
+
+    /// The config token (aligned with the search grammar field names).
+    pub fn as_key(self) -> &'static str {
+        match self {
+            FacetField::Genre => "genre",
+            FacetField::ShelfGenre => "shelfgenre",
+            FacetField::AlbumArtist => "albumartist",
+            FacetField::Artist => "artist",
+            FacetField::Album => "album",
+            FacetField::Year => "year",
+            FacetField::Format => "format",
+        }
+    }
+
+    /// The pane column header.
+    pub fn title(self) -> &'static str {
+        match self {
+            FacetField::Genre => "Genre",
+            FacetField::ShelfGenre => "Shelf Genre",
+            FacetField::AlbumArtist => "Album Artist",
+            FacetField::Artist => "Artist",
+            FacetField::Album => "Album",
+            FacetField::Year => "Year",
+            FacetField::Format => "Format",
+        }
+    }
+
+    /// The noun for the `[All (N …)]` header row.
+    pub fn plural(self) -> &'static str {
+        match self {
+            FacetField::Genre => "genres",
+            FacetField::ShelfGenre => "shelf genres",
+            FacetField::AlbumArtist => "album artists",
+            FacetField::Artist => "artists",
+            FacetField::Album => "albums",
+            FacetField::Year => "years",
+            FacetField::Format => "formats",
+        }
+    }
+
+    /// Parse a config key (case-insensitive; accepts the underscored aliases).
+    pub fn parse(key: &str) -> Option<FacetField> {
+        match key.to_ascii_lowercase().as_str() {
+            "genre" => Some(FacetField::Genre),
+            "shelfgenre" | "shelf_genre" => Some(FacetField::ShelfGenre),
+            "albumartist" | "album_artist" => Some(FacetField::AlbumArtist),
+            "artist" => Some(FacetField::Artist),
+            "album" => Some(FacetField::Album),
+            "year" => Some(FacetField::Year),
+            "format" => Some(FacetField::Format),
+            _ => None,
+        }
+    }
+
+    /// Resolve the `[browse].panes` config keys to facets: unknown keys are
+    /// dropped (warned), the list is capped at 5 (spec §3.2), and an empty
+    /// result falls back to the default hierarchy so browse is never paneless.
+    pub fn panes_from_config(keys: &[String]) -> Vec<FacetField> {
+        let mut fields: Vec<FacetField> = keys
+            .iter()
+            .filter_map(|k| {
+                let f = FacetField::parse(k);
+                if f.is_none() {
+                    tracing::warn!("unknown browse pane field {k:?}; ignored");
+                }
+                f
+            })
+            .take(5)
+            .collect();
+        if fields.is_empty() {
+            fields = vec![
+                FacetField::Genre,
+                FacetField::AlbumArtist,
+                FacetField::Album,
+            ];
+        }
+        fields
+    }
 }
 
 /// An upstream pane's selection. An empty `values` is the `[All]` row (no
@@ -97,6 +194,8 @@ pub fn sort_tracks(tracks: &mut [TrackBrief], key: TrackSort, descending: bool) 
 }
 
 const VARIOUS: &str = "Various Artists";
+const UNKNOWN: &str = "Unknown";
+const UNKNOWN_ARTIST: &str = "Unknown Artist";
 
 /// The `WHERE` fragment for a set of filters (AND of self-contained `EXISTS`
 /// subqueries against the outer `tracks t`), pushing the bound values in order.
@@ -121,6 +220,21 @@ fn filter_sql(filters: &[FacetFilter], params: &mut Vec<String>) -> String {
             FacetField::Album => format!(
                 "EXISTS (SELECT 1 FROM albums a WHERE a.id = t.album_id AND a.title IN ({placeholders}))"
             ),
+            FacetField::ShelfGenre => format!(
+                "EXISTS (SELECT 1 FROM albums a WHERE a.id = t.album_id \
+                 AND COALESCE(a.shelf_genre, '{UNKNOWN}') IN ({placeholders}))"
+            ),
+            FacetField::Artist => format!(
+                "COALESCE((SELECT ar.name FROM artists ar WHERE ar.id = t.artist_id), \
+                 '{UNKNOWN_ARTIST}') IN ({placeholders})"
+            ),
+            FacetField::Year => format!(
+                "EXISTS (SELECT 1 FROM albums a WHERE a.id = t.album_id \
+                 AND COALESCE(CAST(a.year AS TEXT), '{UNKNOWN}') IN ({placeholders}))"
+            ),
+            FacetField::Format => {
+                format!("COALESCE(t.format, '{UNKNOWN}') IN ({placeholders})")
+            }
         });
     }
     if parts.is_empty() {
@@ -142,6 +256,19 @@ fn target_sql(target: FacetField) -> (&'static str, &'static str) {
             "JOIN albums al ON t.album_id = al.id LEFT JOIN artists ar ON ar.id = al.album_artist_id",
         ),
         FacetField::Album => ("al.title", "JOIN albums al ON t.album_id = al.id"),
+        FacetField::ShelfGenre => (
+            "COALESCE(al.shelf_genre, 'Unknown')",
+            "JOIN albums al ON t.album_id = al.id",
+        ),
+        FacetField::Artist => (
+            "COALESCE(ta.name, 'Unknown Artist')",
+            "LEFT JOIN artists ta ON ta.id = t.artist_id",
+        ),
+        FacetField::Year => (
+            "COALESCE(CAST(al.year AS TEXT), 'Unknown')",
+            "JOIN albums al ON t.album_id = al.id",
+        ),
+        FacetField::Format => ("COALESCE(t.format, 'Unknown')", ""),
     }
 }
 
@@ -286,6 +413,76 @@ mod tests {
         assert_eq!(
             cmp_tracks(&a, &b, TrackSort::Artist, true),
             std::cmp::Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn field_keys_round_trip_and_have_labels() {
+        for f in FacetField::ALL {
+            assert_eq!(FacetField::parse(f.as_key()), Some(f), "{f:?} key");
+            assert!(!f.title().is_empty(), "{f:?} title");
+            assert!(!f.plural().is_empty(), "{f:?} plural");
+        }
+        // Underscored aliases parse too; unknown keys do not.
+        assert_eq!(
+            FacetField::parse("album_artist"),
+            Some(FacetField::AlbumArtist)
+        );
+        assert_eq!(
+            FacetField::parse("shelf_genre"),
+            Some(FacetField::ShelfGenre)
+        );
+        assert_eq!(FacetField::parse("ALBUM"), Some(FacetField::Album));
+        assert_eq!(FacetField::parse("composer"), None);
+    }
+
+    #[test]
+    fn panes_from_config_resolves_skips_caps_and_defaults() {
+        let keys = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // A valid list resolves in order.
+        assert_eq!(
+            FacetField::panes_from_config(&keys(&["year", "albumartist", "format"])),
+            vec![
+                FacetField::Year,
+                FacetField::AlbumArtist,
+                FacetField::Format
+            ],
+        );
+        // Unknown keys are dropped, the rest kept.
+        assert_eq!(
+            FacetField::panes_from_config(&keys(&["genre", "bogus", "album"])),
+            vec![FacetField::Genre, FacetField::Album],
+        );
+        // Capped at 5.
+        assert_eq!(
+            FacetField::panes_from_config(&keys(&[
+                "genre",
+                "shelfgenre",
+                "albumartist",
+                "artist",
+                "album",
+                "year",
+                "format",
+            ]))
+            .len(),
+            5,
+        );
+        // Empty (or all-unknown) falls back to the default hierarchy.
+        assert_eq!(
+            FacetField::panes_from_config(&[]),
+            vec![
+                FacetField::Genre,
+                FacetField::AlbumArtist,
+                FacetField::Album
+            ],
+        );
+        assert_eq!(
+            FacetField::panes_from_config(&keys(&["nope"])),
+            vec![
+                FacetField::Genre,
+                FacetField::AlbumArtist,
+                FacetField::Album
+            ],
         );
     }
 }

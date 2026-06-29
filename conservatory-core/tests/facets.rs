@@ -59,6 +59,43 @@ async fn fixture_cascade_and_counts() {
 }
 
 #[tokio::test]
+async fn new_single_valued_field_facets_and_cascade() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("library.db");
+    let worker = spawn_worker(path.clone()).unwrap();
+    fixtures::generate(&worker, FixtureScale::Small)
+        .await
+        .unwrap();
+    let pool = ReadPool::new(path, 3).unwrap();
+
+    // Each new single-valued facet partitions the 80 tracks exactly (every track
+    // maps to one bucket, unlike multi-value Genre), so the per-bucket counts sum
+    // back to 80.
+    for field in [
+        FacetField::ShelfGenre,
+        FacetField::Artist,
+        FacetField::Year,
+        FacetField::Format,
+    ] {
+        let buckets = rows(&pool, field, &[]);
+        assert!(!buckets.is_empty(), "{field:?} produced no rows");
+        let total: i64 = buckets.iter().map(|(_, c)| c).sum();
+        assert_eq!(total, 80, "{field:?} buckets must partition all 80 tracks");
+    }
+
+    // The cascade narrows a new-field pane (Format) by an upstream Genre pick.
+    let electronic = FacetFilter {
+        field: FacetField::Genre,
+        values: vec!["Electronic".into()],
+    };
+    let format_elec = rows(&pool, FacetField::Format, std::slice::from_ref(&electronic));
+    let sum_elec: i64 = format_elec.iter().map(|(_, c)| c).sum();
+    assert!(sum_elec > 0 && sum_elec < 80, "the cascade narrows Format");
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+#[tokio::test]
 async fn multi_value_genre_counts_under_each() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("library.db");

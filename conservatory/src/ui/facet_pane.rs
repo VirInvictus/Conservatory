@@ -35,9 +35,12 @@ fn facet(obj: &glib::Object) -> FacetRow {
     obj.clone().downcast::<FacetRow>().expect("FacetRow")
 }
 
-/// Build a pane for `field`. `title` is the value-column header; `plural` labels
-/// the `[All (N <plural>)]` row.
-pub fn build_pane(field: FacetField, title: &str, plural: &str) -> FacetPane {
+/// Build a pane for `field`. The column header (`field.title()`) and the
+/// `[All (N <plural>)]` noun (`field.plural()`) come from the field descriptor
+/// (Phase 10c), so the window builds N panes from a config list.
+pub fn build_pane(field: FacetField) -> FacetPane {
+    let title = field.title();
+    let plural = field.plural();
     let store = gio::ListStore::new::<FacetRow>();
 
     let view = gtk::ColumnView::new(None::<gtk::SelectionModel>);

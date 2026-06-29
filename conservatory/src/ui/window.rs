@@ -26,10 +26,11 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 
 use conservatory_core::db::{
-    EQ_CENTRES, EqState, FacetFilter, MediaKind, Perspective, ReadPool, ResamplerQuality,
-    WorkerHandle, facet_rows, get_album, get_artist, get_audio_state, get_eq_preset, get_eq_state,
-    get_track, get_tracks, list_eq_presets, list_perspectives, load_queue_display,
-    read_playback_state, show_settings_map, spawn_worker, track_render_rows, writeback_rows,
+    EQ_CENTRES, EqState, FacetField, FacetFilter, MediaKind, Perspective, ReadPool,
+    ResamplerQuality, WorkerHandle, facet_rows, get_album, get_artist, get_audio_state,
+    get_eq_preset, get_eq_state, get_track, get_tracks, list_eq_presets, list_perspectives,
+    load_queue_display, read_playback_state, show_settings_map, spawn_worker, track_render_rows,
+    writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
@@ -220,15 +221,15 @@ impl ConservatoryWindow {
             }
         }
 
-        let panes = vec![
-            build_pane(conservatory_core::db::FacetField::Genre, "Genre", "genres"),
-            build_pane(
-                conservatory_core::db::FacetField::AlbumArtist,
-                "Album Artist",
-                "artists",
-            ),
-            build_pane(conservatory_core::db::FacetField::Album, "Album", "albums"),
-        ];
+        // The browse panes come from `config.toml [browse].panes` (Phase 10c),
+        // resolved to facets (unknown keys dropped, capped at 5, default
+        // hierarchy when empty). The cascade is already N-pane generic.
+        let config = conservatory_core::config::load_default().unwrap_or_default();
+        let panes: Vec<FacetPane> =
+            conservatory_core::db::FacetField::panes_from_config(&config.browse.panes)
+                .into_iter()
+                .map(build_pane)
+                .collect();
         let leaf = build_leaf();
 
         // Facet panes in a row on top; the track table below (a draggable split,
@@ -982,6 +983,50 @@ impl ConservatoryWindow {
         page.set_title("Library");
         page.set_icon_name(Some("folder-music-symbolic"));
 
+        // Browse panes (Phase 10c): five ordered slots, each a facet field or
+        // "(none)". The non-empty slots, top to bottom, become `[browse].panes`.
+        let browse_group = adw::PreferencesGroup::new();
+        browse_group.set_title("Browse panes");
+        browse_group.set_description(Some(
+            "Choose up to five browse columns, top to bottom. Takes effect on the next launch.",
+        ));
+        let mut items: Vec<&str> = vec!["(none)"];
+        items.extend(FacetField::ALL.iter().map(|f| f.title()));
+        let current = FacetField::panes_from_config(&config.borrow().browse.panes);
+        let mut combo_rows = Vec::with_capacity(5);
+        for slot in 0..5 {
+            let model = gtk::StringList::new(&items);
+            let row = adw::ComboRow::new();
+            row.set_title(&format!("Pane {}", slot + 1));
+            row.set_model(Some(&model));
+            let selected = current
+                .get(slot)
+                .and_then(|f| FacetField::ALL.iter().position(|x| x == f))
+                .map(|i| i as u32 + 1)
+                .unwrap_or(0);
+            row.set_selected(selected);
+            browse_group.add(&row);
+            combo_rows.push(row);
+        }
+        let combo_rows = Rc::new(combo_rows);
+        for row in combo_rows.iter() {
+            let config = config.clone();
+            let combo_rows = combo_rows.clone();
+            row.connect_selected_notify(move |_| {
+                let panes: Vec<String> = combo_rows
+                    .iter()
+                    .filter_map(|r| {
+                        r.selected()
+                            .checked_sub(1)
+                            .and_then(|k| FacetField::ALL.get(k as usize))
+                            .map(|f| f.as_key().to_string())
+                    })
+                    .collect();
+                config.borrow_mut().browse.panes = panes;
+            });
+        }
+        page.add(&browse_group);
+
         let pod_group = adw::PreferencesGroup::new();
         pod_group.set_title("Podcasts");
 
@@ -1010,9 +1055,6 @@ impl ConservatoryWindow {
 
         let book_group = adw::PreferencesGroup::new();
         book_group.set_title("Audiobooks");
-        book_group.set_description(Some(
-            "Browse pane configuration arrives in a later release.",
-        ));
 
         let book_subdir = adw::EntryRow::new();
         book_subdir.set_title("Library subfolder");

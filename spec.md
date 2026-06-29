@@ -164,7 +164,7 @@ The switcher follows current libadwaita idiom (1.4+): an `AdwViewSwitcher` (`pol
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Panes are configurable (1–5), each driven by a title-formatting-style field expression, exactly as deadbeef-cui configures its columns. Selecting in a pane filters the panes to its right and the track list. Multi-select aggregates (Ctrl/Shift-click). An `[All (N …)]` synthetic row tops each pane. Selection-change is debounced before downstream recompute (the deadbeef-cui invariant that keeps multi-select drags cheap on large libraries).
+Panes are configurable (1–5), each driven by a field (Phase 10c: chosen from Genre, Shelf Genre, Album Artist, Artist, Album, Year, Format, persisted as `config.toml [browse].panes` and edited from Preferences → Library; applied on the next launch), exactly as deadbeef-cui configures its columns. Selecting in a pane filters the panes to its right and the track list. Multi-select aggregates (Ctrl/Shift-click). An `[All (N …)]` synthetic row tops each pane. Selection-change is debounced before downstream recompute (the deadbeef-cui invariant that keeps multi-select drags cheap on large libraries).
 
 ### 3.3 Faceted Browse (Columns UI)
 

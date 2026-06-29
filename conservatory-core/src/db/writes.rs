@@ -7,8 +7,9 @@
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
-    Album, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, EQ_BAND_COUNT, Episode,
-    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track, VerifyResultRow,
+    Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
+    EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
+    Track, VerifyResultRow,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -1353,5 +1354,40 @@ pub(crate) fn upsert_verify_results(conn: &mut Connection, rows: &[VerifyResultR
         )?;
     }
     tx.commit()?;
+    Ok(())
+}
+
+/// Record an APE-strip undo row (Phase 8c-iii), keyed by `file_path`. Written
+/// before the file is touched so the strip is reversible; a re-strip of the
+/// same path overwrites the prior backup.
+pub(crate) fn record_ape_strip(conn: &Connection, row: &ApeStripRow) -> Result<()> {
+    conn.execute(
+        "INSERT INTO ape_strips
+             (file_path, ape_bytes, tag_start, orig_size, orig_mtime, stripped_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(file_path) DO UPDATE SET
+             ape_bytes   = excluded.ape_bytes,
+             tag_start   = excluded.tag_start,
+             orig_size   = excluded.orig_size,
+             orig_mtime  = excluded.orig_mtime,
+             stripped_at = excluded.stripped_at",
+        params![
+            row.file_path,
+            row.ape_bytes,
+            row.tag_start,
+            row.orig_size,
+            row.orig_mtime,
+            row.stripped_at,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Delete an APE-strip undo row (Phase 8c-iii) after the strip has been undone.
+pub(crate) fn delete_ape_strip(conn: &Connection, file_path: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM ape_strips WHERE file_path = ?1",
+        params![file_path],
+    )?;
     Ok(())
 }

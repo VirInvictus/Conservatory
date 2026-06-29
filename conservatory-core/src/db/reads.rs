@@ -10,10 +10,10 @@ use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
-    Album, Artist, AudioState, Book, BookChapter, BookPerson, BookPlayback, Chapter, CompSettings,
-    DspState, EQ_BAND_COUNT, Episode, EqPreset, EqState, InboxPolicy, LevelerSettings,
-    LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState, QueueItem,
-    ResamplerQuality, Series, Show, ShowSettings, Tag, Track, VerifyResultRow,
+    Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPerson, BookPlayback, Chapter,
+    CompSettings, DspState, EQ_BAND_COUNT, Episode, EqPreset, EqState, InboxPolicy,
+    LevelerSettings, LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState,
+    QueueItem, ResamplerQuality, Series, Show, ShowSettings, Tag, Track, VerifyResultRow,
 };
 use crate::errors::Result;
 use crate::verify::VerifyVerdict;
@@ -1748,6 +1748,26 @@ pub fn read_verify_results(
         }
     }
     Ok(out)
+}
+
+/// Every outstanding APE-strip undo row (Phase 8c-iii), ordered by path. The
+/// `apestrip --undo` worklist.
+pub fn ape_strips(conn: &Connection) -> Result<Vec<ApeStripRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT file_path, ape_bytes, tag_start, orig_size, orig_mtime, stripped_at
+         FROM ape_strips ORDER BY file_path",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(ApeStripRow {
+            file_path: row.get("file_path")?,
+            ape_bytes: row.get("ape_bytes")?,
+            tag_start: row.get("tag_start")?,
+            orig_size: row.get("orig_size")?,
+            orig_mtime: row.get("orig_mtime")?,
+            stripped_at: row.get("stripped_at")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
 }
 
 /// Every cached file with a CORRUPT or SUSPECT verdict (Phase 8a), corrupt first

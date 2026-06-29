@@ -18,8 +18,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::db::command::Command;
 use crate::db::models::{
-    Album, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, EQ_BAND_COUNT, Episode,
-    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track, VerifyResultRow,
+    Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
+    EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
+    Track, VerifyResultRow,
 };
 use crate::db::{connection, migrations, probe, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
@@ -530,6 +531,18 @@ impl WorkerHandle {
     /// Upsert a batch of integrity-verification results (Phase 8a), one tx.
     pub async fn upsert_verify_results(&self, rows: Vec<VerifyResultRow>) -> Result<()> {
         self.dispatch(|reply| Command::UpsertVerifyResults { rows, reply })
+            .await
+    }
+
+    /// Record an APE-strip undo row before a file is stripped (Phase 8c-iii).
+    pub async fn record_ape_strip(&self, row: ApeStripRow) -> Result<()> {
+        self.dispatch(|reply| Command::RecordApeStrip { row, reply })
+            .await
+    }
+
+    /// Delete an APE-strip undo row after a strip is undone (Phase 8c-iii).
+    pub async fn delete_ape_strip(&self, file_path: String) -> Result<()> {
+        self.dispatch(|reply| Command::DeleteApeStrip { file_path, reply })
             .await
     }
 
@@ -1113,6 +1126,12 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::UpsertVerifyResults { rows, reply } => {
             let _ = reply.send(writes::upsert_verify_results(conn, &rows));
+        }
+        Command::RecordApeStrip { row, reply } => {
+            let _ = reply.send(writes::record_ape_strip(conn, &row));
+        }
+        Command::DeleteApeStrip { file_path, reply } => {
+            let _ = reply.send(writes::delete_ape_strip(conn, &file_path));
         }
         Command::UpsertShowSettings { settings, reply } => {
             let _ = reply.send(writes::upsert_show_settings(conn, &settings));

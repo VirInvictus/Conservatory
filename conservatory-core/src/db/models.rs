@@ -325,6 +325,19 @@ pub struct VerifyResultRow {
     pub checked_at: i64,
 }
 
+/// The undo record for one `apestrip` (Phase 8c-iii): the excised APEv2 tag
+/// bytes and where they were removed, plus the pre-strip size/mtime so undo can
+/// refuse a file that changed after the strip. Path-keyed (library-relative).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApeStripRow {
+    pub file_path: String,
+    pub ape_bytes: Vec<u8>,
+    pub tag_start: i64,
+    pub orig_size: i64,
+    pub orig_mtime: i64,
+    pub stripped_at: i64,
+}
+
 /// An episode chapter (spec §8). Source is `podcast:chapters` JSON or ID3 CHAP;
 /// `start_time` / `end_time` are seconds into the episode.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

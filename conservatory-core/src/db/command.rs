@@ -11,8 +11,9 @@
 use tokio::sync::oneshot;
 
 use crate::db::models::{
-    Album, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, EQ_BAND_COUNT, Episode,
-    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track, VerifyResultRow,
+    Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
+    EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
+    Track, VerifyResultRow,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -367,6 +368,18 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Record an APE-strip undo row before a file is stripped (Phase 8c-iii).
+    RecordApeStrip {
+        row: ApeStripRow,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Delete an APE-strip undo row after a strip is undone (Phase 8c-iii).
+    DeleteApeStrip {
+        file_path: String,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Upsert a show's per-show overrides.
     UpsertShowSettings {
         settings: ShowSettings,
@@ -579,6 +592,8 @@ impl Command {
             Self::SetBookSeries { .. } => "set_book_series",
             Self::SetBookAuthors { .. } => "set_book_authors",
             Self::SetBookNarrators { .. } => "set_book_narrators",
+            Self::RecordApeStrip { .. } => "record_ape_strip",
+            Self::DeleteApeStrip { .. } => "delete_ape_strip",
             Self::Shutdown { .. } => "shutdown",
             #[cfg(test)]
             Self::Panic => "panic",

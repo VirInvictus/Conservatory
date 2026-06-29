@@ -11,23 +11,24 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam, VerifyResultRow, audit_album_rows,
-    audit_track_rows, dedup_rows, fts_rank, get_album, get_episode, get_show_settings, get_track,
-    library_counts, load_queue, probe_read, read_playback_state, read_verify_results, search_rows,
-    search_track_ids, spawn_worker, stats_genre_rows, stats_track_rows, track_render_rows,
-    writeback_rows,
+    ApeStripRow, MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam, VerifyResultRow,
+    ape_strips, audit_album_rows, audit_track_rows, dedup_rows, fts_rank, get_album, get_episode,
+    get_show_settings, get_track, library_counts, load_queue, probe_read, read_playback_state,
+    read_verify_results, search_rows, search_track_ids, spawn_worker, stats_genre_rows,
+    stats_track_rows, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
     AlbumEdit, Assignment, AuditOptions, AuditReport, DEFAULT_TARGET_LUFS, DedupOptions,
     DuplicateReport, Field, GenreVocab, ImportOptions, ImportReport, LibraryStats, PathTemplate,
-    PlayableItem, PlaybackConfig, SleepMode, TagWrite, TrackDraft, TrackEdit, TrackFields,
-    VerifyVerdict, any_path_affecting, build_af_chain, build_album_edit, build_track_edit,
-    compute_accent, compute_stats, ffmpeg_available, find_collisions, find_cover_bytes,
-    find_duplicates, flac_available, format_size, genres_assignment, import_folder,
-    parse_assignment, read_track, replace_in, replaygain_from_file, resolve_album,
-    resolve_episode_profile, resolve_music_profile, resync_album_covers, rsgain_available,
-    run_audit, scan_album_files, sync_album_cover, verify_files, write_track_tags,
+    PlayableItem, PlaybackConfig, SleepMode, StripPlan, TagWrite, TrackDraft, TrackEdit,
+    TrackFields, VerifyVerdict, any_path_affecting, build_af_chain, build_album_edit,
+    build_track_edit, commit_strip, compute_accent, compute_stats, ffmpeg_available,
+    find_collisions, find_cover_bytes, find_duplicates, flac_available, format_size,
+    genres_assignment, import_folder, locate_ape, parse_assignment, plan_strip, read_track,
+    replace_in, replaygain_from_file, resolve_album, resolve_episode_profile,
+    resolve_music_profile, restore_bytes, resync_album_covers, rsgain_available, run_audit,
+    scan_album_files, sync_album_cover, verify_files, write_atomic_plain, write_track_tags,
 };
 use conservatory_search::{
     SearchItem, SqlValue, blend_relevance, collect_text_terms, parse, try_translate,
@@ -291,6 +292,27 @@ enum Command {
         /// Minimum cover edge in pixels for the art-resolution tier.
         #[arg(long, default_value_t = conservatory_core::audit::DEFAULT_MIN_ART_PX.0)]
         min_art_px: u32,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = Format::Human)]
+        format: Format,
+    },
+
+    /// Strip stray APEv2 tags from MP3s by byte surgery (Phase 8c-iii). Dry-run
+    /// by default (reports what would change); `--apply` removes them with a
+    /// crash-safe write and a recorded undo; `--undo` restores from that record.
+    /// The fix for the `audit ape` tier.
+    Apestrip {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Library root the relative track paths hang off.
+        #[arg(long)]
+        root: PathBuf,
+        /// Actually strip (default is a dry-run preview).
+        #[arg(long)]
+        apply: bool,
+        /// Restore previously stripped files from the undo journal.
+        #[arg(long, conflicts_with = "apply")]
+        undo: bool,
         /// Output format.
         #[arg(long, value_enum, default_value_t = Format::Human)]
         format: Format,
@@ -1052,6 +1074,13 @@ fn main() -> Result<()> {
             top,
             format,
         }) => run_stats_verb(db, root, top, format),
+        Some(Command::Apestrip {
+            db,
+            root,
+            apply,
+            undo,
+            format,
+        }) => block_on(run_apestrip(db, root, apply, undo, format)),
         Some(Command::SetCover {
             db,
             album_id,
@@ -3676,6 +3705,162 @@ fn print_stats_json(s: &LibraryStats) {
         s.genres.len(),
         s.top_artists.len(),
     );
+}
+
+async fn run_apestrip(
+    db: PathBuf,
+    root: PathBuf,
+    apply: bool,
+    undo: bool,
+    format: Format,
+) -> Result<()> {
+    if undo {
+        return run_apestrip_undo(db, root).await;
+    }
+
+    // Candidate MP3s from the DB.
+    let candidates: Vec<String> = {
+        let pool = ReadPool::new(db.clone(), 3).context("opening read pool")?;
+        let conn = pool.open().context("opening pool connection")?;
+        audit_track_rows(&conn)
+            .context("reading track rows")?
+            .into_iter()
+            .filter(|r| {
+                r.format
+                    .as_deref()
+                    .is_some_and(|f| f.eq_ignore_ascii_case("mp3"))
+            })
+            .map(|r| r.file_path)
+            .collect()
+    };
+
+    // Plan: which files carry a strippable stray APE.
+    let mut planned: Vec<(String, StripPlan)> = Vec::new();
+    for fp in &candidates {
+        match plan_strip(&root.join(fp)) {
+            Ok(Some(plan)) => planned.push((fp.clone(), plan)),
+            Ok(None) => {}
+            Err(e) => eprintln!("skip {fp}: {e}"),
+        }
+    }
+
+    if !apply {
+        for (fp, plan) in &planned {
+            match format {
+                Format::Tsv => println!("{fp}\t{}\t{}", plan.item_count, plan.ape_bytes.len()),
+                _ => println!(
+                    "{fp}  ({} item(s), {} bytes)",
+                    plan.item_count,
+                    plan.ape_bytes.len()
+                ),
+            }
+        }
+        println!(
+            "{} file(s) carry a stray APE; pass --apply to strip (dry-run)",
+            planned.len()
+        );
+        return Ok(());
+    }
+
+    let worker = spawn_worker(db).context("spawning worker")?;
+    let now = Utc::now().timestamp();
+    let mut stripped = 0usize;
+    let mut failed = 0usize;
+    for (fp, plan) in &planned {
+        // Record the undo row FIRST so the excised bytes are journaled before
+        // the file is touched (crash-safe ordering).
+        let row = ApeStripRow {
+            file_path: fp.clone(),
+            ape_bytes: plan.ape_bytes.clone(),
+            tag_start: plan.tag_start as i64,
+            orig_size: plan.orig_size as i64,
+            orig_mtime: plan.orig_mtime,
+            stripped_at: now,
+        };
+        if let Err(e) = worker.record_ape_strip(row).await {
+            eprintln!("skip {fp}: could not record undo: {e}");
+            failed += 1;
+            continue;
+        }
+        match commit_strip(&root.join(fp), &plan.stripped) {
+            Ok(()) => {
+                println!("stripped {fp}");
+                stripped += 1;
+            }
+            Err(e) => {
+                // The strip did not happen; drop the now-stale undo row.
+                eprintln!("FAILED {fp}: {e}");
+                let _ = worker.delete_ape_strip(fp.clone()).await;
+                failed += 1;
+            }
+        }
+    }
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("{stripped} stripped, {failed} failed");
+    Ok(())
+}
+
+async fn run_apestrip_undo(db: PathBuf, root: PathBuf) -> Result<()> {
+    let rows = {
+        let pool = ReadPool::new(db.clone(), 3).context("opening read pool")?;
+        let conn = pool.open().context("opening pool connection")?;
+        ape_strips(&conn).context("reading ape_strips")?
+    };
+    if rows.is_empty() {
+        println!("nothing to undo");
+        return Ok(());
+    }
+
+    let worker = spawn_worker(db).context("spawning worker")?;
+    let mut restored = 0usize;
+    let mut skipped = 0usize;
+    for row in &rows {
+        let abs = root.join(&row.file_path);
+        let cur = match std::fs::read(&abs) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("skip {}: {e}", row.file_path);
+                skipped += 1;
+                continue;
+            }
+        };
+        let tag_start = row.tag_start as usize;
+        let orig_size = row.orig_size as usize;
+        let expected_stripped = orig_size.saturating_sub(row.ape_bytes.len());
+
+        // Already consistent: the file still carries the recorded APE (a crash
+        // before the strip, or it never ran). Just clear the stale row.
+        if cur.len() == orig_size && locate_ape(&cur).is_some_and(|s| s.tag_start == tag_start) {
+            let _ = worker.delete_ape_strip(row.file_path.clone()).await;
+            skipped += 1;
+            continue;
+        }
+        // Staleness guard: only restore a file still in the exact stripped state.
+        if cur.len() != expected_stripped {
+            eprintln!("skip {} (changed since strip)", row.file_path);
+            skipped += 1;
+            continue;
+        }
+        let Some(restored_bytes) = restore_bytes(&cur, &row.ape_bytes, tag_start) else {
+            eprintln!("skip {} (offset out of range)", row.file_path);
+            skipped += 1;
+            continue;
+        };
+        match write_atomic_plain(&abs, &restored_bytes) {
+            Ok(()) => {
+                let _ = worker.delete_ape_strip(row.file_path.clone()).await;
+                println!("restored {}", row.file_path);
+                restored += 1;
+            }
+            Err(e) => {
+                eprintln!("FAILED {}: {e}", row.file_path);
+                skipped += 1;
+            }
+        }
+    }
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("{restored} restored, {skipped} skipped");
+    Ok(())
 }
 
 async fn run_set_cover(db: PathBuf, album_id: i64, image: PathBuf, root: PathBuf) -> Result<()> {

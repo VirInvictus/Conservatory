@@ -312,3 +312,10 @@ CREATE TABLE book_playback (            -- one row per book; first-class resume 
 - `book_fts` (title, author, narrator, series) — Phase 7a-i, migration `0011`; author/narrator/series denormalized from the link tables (see the audiobook section)
 
 Triggers keep them in sync on insert/update/delete. Consumed by `conservatory-search` for the bare-text path and bm25 ranking (see [`search-grammar.md`](search-grammar.md)). Not transcripts (spec §14).
+
+## Maintenance tables (Phase 8)
+
+Path-keyed (library-relative), media-agnostic side tables for the audit/maintenance verbs. Orphans are harmless; they are caches and journals, not part of the library model.
+
+- `verify_results` (migration `0014`, Phase 8a): the cached integrity verdict per file (`file_path` PK, `file_size`, `file_mtime`, `verdict`, `detail`, `checked_at`). The size/mtime let a re-`verify` skip an unchanged file.
+- `ape_strips` (migration `0015`, Phase 8c-iii): the undo journal for `apestrip` (`file_path` PK, `ape_bytes` BLOB, `tag_start`, `orig_size`, `orig_mtime`, `stripped_at`). The excised APEv2 bytes are written here *before* the file is stripped, so `--undo` re-splices them exactly; the size is the staleness guard.

@@ -156,6 +156,131 @@ pub fn strip_bytes(data: &[u8], span: &ApeSpan) -> Vec<u8> {
     out
 }
 
+// --- Mutating helpers (Phase 8c-iii strip, commit 2) ---
+
+use std::io;
+use std::path::{Path, PathBuf};
+
+/// Everything the `apestrip` verb needs for one file: the bytes to write, the
+/// excised tag (for the undo journal), and the pre-strip identity.
+#[derive(Debug, Clone)]
+pub struct StripPlan {
+    /// The new file content, with the APE tag removed.
+    pub stripped: Vec<u8>,
+    /// The excised APE tag bytes, stored for an exact undo.
+    pub ape_bytes: Vec<u8>,
+    pub tag_start: usize,
+    pub item_count: u32,
+    pub orig_size: u64,
+    pub orig_mtime: i64,
+}
+
+/// Read a file and plan its strip. `Ok(None)` when the file carries no valid
+/// trailing APE (nothing to do). Pure read; writes nothing.
+pub fn plan_strip(abs: &Path) -> io::Result<Option<StripPlan>> {
+    let data = std::fs::read(abs)?;
+    let meta = std::fs::metadata(abs)?;
+    let Some(span) = locate_ape(&data) else {
+        return Ok(None);
+    };
+    Ok(Some(StripPlan {
+        stripped: strip_bytes(&data, &span),
+        ape_bytes: data[span.tag_start..span.tag_end].to_vec(),
+        tag_start: span.tag_start,
+        item_count: span.item_count,
+        orig_size: data.len() as u64,
+        orig_mtime: mtime_secs(&meta),
+    }))
+}
+
+/// Write `stripped` over `abs`, crash-safe: a sibling temp file, fsync, a
+/// decode check (lofty must still read it as a valid MPEG), then an atomic
+/// rename. Refuses (and leaves the original untouched) if the new bytes still
+/// contain an APE or fail to decode.
+pub fn commit_strip(abs: &Path, stripped: &[u8]) -> io::Result<()> {
+    if locate_ape(stripped).is_some() {
+        return Err(io::Error::other("strip left an APE tag in place"));
+    }
+    write_atomic_verified(abs, stripped)
+}
+
+/// Re-insert `ape_bytes` at `tag_start` of the current file content (the undo
+/// inverse of `strip_bytes`).
+pub fn restore_bytes(current: &[u8], ape_bytes: &[u8], tag_start: usize) -> Option<Vec<u8>> {
+    if tag_start > current.len() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(current.len() + ape_bytes.len());
+    out.extend_from_slice(&current[..tag_start]);
+    out.extend_from_slice(ape_bytes);
+    out.extend_from_slice(&current[tag_start..]);
+    Some(out)
+}
+
+/// Write `bytes` over `abs` via a sibling temp file + fsync + lofty decode
+/// check + atomic rename + size verify. The original is replaced only if the
+/// new file is fully written and decodes; on any error the temp is removed and
+/// the original is untouched.
+pub fn write_atomic_verified(abs: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic(abs, bytes, true)
+}
+
+/// Atomic in-place rewrite without the decode check, for restoring the original
+/// (possibly malformed) APE tag on undo: the bytes are exactly what was there
+/// before, so requiring them to decode would be wrong (the malformed tag is
+/// often why the file was stripped).
+pub fn write_atomic_plain(abs: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic(abs, bytes, false)
+}
+
+/// Sibling temp file + fsync + (optional) decode check + atomic rename + size
+/// verify. The original is replaced only on full success; any error removes the
+/// temp and leaves the original untouched.
+fn write_atomic(abs: &Path, bytes: &[u8], verify_decode: bool) -> io::Result<()> {
+    let temp = temp_sibling(abs);
+    let result = (|| -> io::Result<()> {
+        std::fs::write(&temp, bytes)?;
+        let mut f = std::fs::File::open(&temp)?;
+        f.sync_all()?;
+        // Content-based decode check (lofty reads from the handle, so it is
+        // robust to the temp file's non-audio extension).
+        if verify_decode && lofty::read_from(&mut f).is_err() {
+            return Err(io::Error::other(
+                "decode check failed; refusing to replace the original",
+            ));
+        }
+        drop(f);
+        std::fs::rename(&temp, abs)?;
+        let len = std::fs::metadata(abs)?.len();
+        if len != bytes.len() as u64 {
+            return Err(io::Error::other(format!(
+                "size mismatch after write: {len} != {}",
+                bytes.len()
+            )));
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+/// A temp path beside the target, on the same filesystem so the rename is atomic.
+fn temp_sibling(abs: &Path) -> PathBuf {
+    let mut s = abs.as_os_str().to_owned();
+    s.push(".conservatory-apestrip");
+    PathBuf::from(s)
+}
+
+fn mtime_secs(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

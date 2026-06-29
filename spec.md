@@ -560,6 +560,8 @@ conservatory-cli shelf-genre set <album-selector> <genre>
 conservatory-cli queue add|remove|reorder|list <selector>
 conservatory-cli play <selector>               # hand off to standalone mpv
 conservatory-cli stats                         # library + listening stats
+conservatory-cli audit [--tier ...] --root R   # health audits (Phase 8c)
+conservatory-cli apestrip --root R [--apply|--undo]  # strip stray APEv2 (Phase 8c-iii)
 conservatory-cli podcast add|remove|refresh|download <spec>   # Belfry verbs
 conservatory-cli import-opml|export-opml
 conservatory-cli audiobook import <path> [--copy|--move]      # import a book (folder or m4b)

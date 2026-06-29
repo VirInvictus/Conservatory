@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.0.68
+
+Phase 8c-iii (part 2 of 2): the `apestrip` command removes the stray APEv2 tags that `audit --tier ape` finds. This is the byte-level fix deferred since Phase 5b (lofty cannot remove an APE tag from an MP3). It mutates your files, so it is built with the full set of safeguards: dry-run by default, crash-safe writes, and a reversible undo. With this, Phase 8c (library health) is complete.
+
+- **`apestrip` CLI verb.** `conservatory-cli apestrip <db> --root <root>` previews which MP3s carry a stray APE and changes nothing (dry-run). `--apply` strips them; `--undo` puts them back. A stray APE shadows the file's ID3 in foobar2000 / DeaDBeeF, so removing it lets your curated tags win.
+- **Safe by construction.** Every strip writes a sibling temp file, fsyncs it, decode-checks it (the result must still parse as valid audio), then atomically renames it over the original; a failure leaves the original untouched. Before any file is touched, the exact bytes being removed are recorded in the database, so `--undo` restores the file precisely. Undo refuses a file that changed since the strip, rather than clobbering it.
+- **Migration deferred.** Optionally migrating APE fields into ID3 before stripping is left for a follow-up; Conservatory's database is the source of truth and already writes canonical ID3, so removing the shadow is the win here.
+- **Tests.** The byte-level splice and the full strip-then-undo roundtrip on a real MP3 are tested, plus a database migration (0015) for the undo journal. Verified end to end (dry-run, apply to a byte-identical result that still decodes, and undo to the exact original). Full workspace suite + clippy `-D warnings` + fmt + the music-only build green.
+
 ## v0.0.67
 
 Phase 8c-iii (part 1 of 2): the audit can now detect MP3s carrying a stray APEv2 tag. An APE tag sitting on an MP3 shadows the file's ID3 in players like foobar2000 and DeaDBeeF, silently defeating tag edits. This release reports them; the next will strip them.

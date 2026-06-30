@@ -129,8 +129,13 @@ fn after_timer_fires_pauses_and_tap_extends() {
     player.set_sleep_timer(Some(SleepMode::After(0.5)));
 
     // It fires: playback pauses, the queue has not ended, and the snapshot reports
-    // the timer fired (the tap-to-extend window is open).
-    wait_until(&player, 30, |s| s.sleep.is_some_and(|sl| sl.fired));
+    // the timer fired (the tap-to-extend window is open). Wait for `fired` *and*
+    // `paused` together: the engine sets `fired` and issues the pause on the same
+    // tick, but the paused state propagates back through a later snapshot, so
+    // polling on `fired` alone can observe the gap between them under load.
+    wait_until(&player, 30, |s| {
+        s.sleep.is_some_and(|sl| sl.fired) && s.paused
+    });
     let snap = player.snapshot();
     assert!(snap.paused, "a fired timer pauses playback");
     assert!(!snap.ended, "the timer stopped mid-queue, not at its end");

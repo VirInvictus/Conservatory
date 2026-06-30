@@ -29,17 +29,19 @@ pub(crate) fn open_writer(path: &Path) -> Result<Connection> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let conn = Connection::open(path)?;
+    let mut conn = Connection::open(path)?;
     apply_writer_pragmas(&conn)?;
+    crate::debug::install_sql_profiler(&mut conn, crate::debug::SqlRole::Writer);
     Ok(conn)
 }
 
 pub(crate) fn open_reader(path: &Path) -> Result<Connection> {
-    let conn = Connection::open_with_flags(
+    let mut conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     conn.busy_timeout(READER_BUSY_TIMEOUT)?;
+    crate::debug::install_sql_profiler(&mut conn, crate::debug::SqlRole::Reader);
     Ok(conn)
 }
 

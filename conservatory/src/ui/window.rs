@@ -638,6 +638,13 @@ impl ConservatoryWindow {
             self.populate_initial();
             self.refresh_perspectives();
         }
+        // Debug mode (Phase 14): a one-shot RSS sample once the library is loaded,
+        // then a periodic sampler, so `--debug` can be checked against the spec §13
+        // memory budget. No-ops when debug mode is off.
+        conservatory_core::debug::log_memory("library-loaded");
+        if let Some(rt) = imp.runtime.get() {
+            conservatory_core::debug::spawn_memory_sampler(rt.handle());
+        }
         // Apply the persisted equalizer so it is active from the first track
         // (Phase 5.5b-ii).
         self.apply_persisted_eq();

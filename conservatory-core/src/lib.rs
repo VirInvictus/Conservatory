@@ -17,6 +17,7 @@ pub mod audit;
 pub mod config;
 pub mod covers;
 pub mod db;
+pub mod debug;
 pub mod dedup;
 pub mod edit;
 pub mod errors;

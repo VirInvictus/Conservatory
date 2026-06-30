@@ -187,6 +187,7 @@ fn bundled_font_dir() -> Option<PathBuf> {
 fn main() -> glib::ExitCode {
     init_tracing();
     register_bundled_fonts();
+    conservatory_core::debug::log_memory("startup");
 
     let app = adw::Application::builder().application_id(APP_ID).build();
 
@@ -233,8 +234,17 @@ fn main() -> glib::ExitCode {
 fn init_tracing() {
     use tracing_subscriber::{EnvFilter, fmt};
 
-    let default = if std::env::args().any(|a| a == "--debug" || a == "-d") {
-        "info,conservatory=debug,conservatory_core=debug,conservatory_podcasts=debug"
+    let debug = std::env::args().any(|a| a == "--debug" || a == "-d");
+    if debug {
+        // The one switch for the deep hooks (SQL profiler, memory sampler);
+        // RUST_LOG still narrows the output (Phase 14).
+        conservatory_core::debug::set_enabled(true);
+    }
+    // In debug mode our crates plus the conservatory::{sql,io,net,mem} channels
+    // (the `conservatory` directive covers the `conservatory::*` targets) go to
+    // debug; everything else stays at info. RUST_LOG overrides either way.
+    let default = if debug {
+        "info,conservatory=debug,conservatory_core=debug,conservatory_podcasts=debug,conservatory_audiobooks=debug"
     } else {
         "info"
     };
@@ -242,6 +252,7 @@ fn init_tracing() {
     fmt()
         .with_env_filter(filter)
         .with_target(true)
+        .with_writer(std::io::stderr)
         .compact()
         .init();
 }

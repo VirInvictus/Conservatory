@@ -84,6 +84,9 @@ enum AuditTier {
     about = "Conservatory headless CLI"
 )]
 struct Cli {
+    /// Verbose debug output: SQL, IO, network, and memory to stderr (Phase 14).
+    #[arg(long, short = 'd', global = true)]
+    debug: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -1066,8 +1069,10 @@ fn plugin_list() -> String {
 }
 
 fn main() -> Result<()> {
-    init_tracing();
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    init_tracing(cli.debug);
+    conservatory_core::debug::log_memory("cli-start");
+    let result = match cli.command {
         Some(Command::DebugRoundtrip { db }) => debug_roundtrip(db),
         Some(Command::DebugFixture { db, scale }) => debug_fixture(db, scale),
         Some(Command::DebugTags { file }) => debug_tags(file),
@@ -1252,7 +1257,9 @@ fn main() -> Result<()> {
             println!("Try `import <db> <folder> <root>`, then `organize <db> <root> --apply`.");
             Ok(())
         }
-    }
+    };
+    conservatory_core::debug::log_memory("cli-end");
+    result
 }
 
 fn debug_roundtrip(db: PathBuf) -> Result<()> {
@@ -5204,10 +5211,20 @@ fn now_secs() -> i64 {
 /// `warn` keeps a scriptable run quiet (only warnings/errors), so routine info
 /// never clutters stderr or interferes with the `--tsv` / `--json` stdout. Logs
 /// go to stderr.
-fn init_tracing() {
+fn init_tracing(debug: bool) {
     use tracing_subscriber::{EnvFilter, fmt};
 
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+    if debug {
+        // The one switch for the deep hooks (SQL profiler, memory); RUST_LOG
+        // still narrows the output (Phase 14).
+        conservatory_core::debug::set_enabled(true);
+    }
+    let default = if debug {
+        "info,conservatory=debug,conservatory_core=debug,conservatory_podcasts=debug,conservatory_audiobooks=debug,conservatory_cli=debug"
+    } else {
+        "warn"
+    };
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
     fmt()
         .with_env_filter(filter)
         .with_target(true)

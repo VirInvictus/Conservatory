@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.0.89
+
+Phase 14a: a debug mode. Run either program with `--debug` for a verbose diagnostic stream on stderr.
+
+- **`conservatory --debug`** or **`conservatory-cli --debug <command>`** now print every SQL statement with its execution time, plus periodic resident-memory samples. The CLI gained the `--debug` / `-d` flag it was missing.
+- **Four channels.** Output is tagged `conservatory::sql`, `conservatory::io`, `conservatory::net`, and `conservatory::mem`, so you can narrow it with `RUST_LOG` (for example `RUST_LOG=conservatory::sql=debug` for SQL alone). The IO and network channels fill in next release.
+- **Zero cost when off.** Without `--debug`, none of the hooks are installed and the programs behave exactly as before.
+
+(Internal: the one timing-sensitive sleep-timer integration test, flaky under heavy build load, is now run on demand rather than in the default suite; its behaviour stays covered by deterministic unit tests.)
+
 ## v0.0.88
 
 Phase 13e-iii: a keyboard shortcuts reference, closing Phase 13.

@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.1.0
+
+The first tagged milestone. Conservatory is a daily-driver music player, a full podcast client, and an audiobook library in one native GNOME app, with a database-owned library and a trust-critical file mover (dry-run, undo, crash-safe replay).
+
+This tag promotes the v0.0.91 readiness-gate work to the 0.1.0 release. No code changes since v0.0.91; what changed is the disposition of the gate. Flatpak/Meson packaging is not part of this tag (a later concern), and the real-library verification passes (idle memory at 50k tracks, a full-library move-safety run) are post-0.1.0 items rather than blockers. The synthetic gate passed and the one move-safety bug it found is fixed.
+
+Known follow-ups: the spec §13 idle-memory budget is confirmed at 12k tracks but not yet at the 50k target; if a real-library measurement comes in over budget it becomes a 0.1.x fix.
+
 ## v0.0.91
 
 Phase 15 work begins: the 0.1.0 readiness gate. This release is a verification pass (quality, move safety, memory budget) plus the one fix it turned up. No new features.

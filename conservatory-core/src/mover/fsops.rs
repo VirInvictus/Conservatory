@@ -56,6 +56,7 @@ pub fn revert(src: &Path, dst: &Path, mode: MoveMode) -> io::Result<()> {
         MoveMode::Move => relocate(dst, src, MoveMode::Move),
         MoveMode::Copy => {
             if dst.try_exists()? {
+                tracing::debug!(target: "conservatory::io", dst = %dst.display(), "mover: revert (delete copy)");
                 fs::remove_file(dst)?;
             }
             Ok(())
@@ -65,9 +66,13 @@ pub fn revert(src: &Path, dst: &Path, mode: MoveMode) -> io::Result<()> {
 
 fn move_one(src: &Path, dst: &Path, src_len: u64) -> io::Result<()> {
     match fs::rename(src, dst) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            tracing::debug!(target: "conservatory::io", src = %src.display(), dst = %dst.display(), bytes = src_len, "mover: rename");
+            Ok(())
+        }
         Err(e) if is_cross_device(&e) => {
             copy_across(src, dst, src_len)?;
+            tracing::debug!(target: "conservatory::io", src = %src.display(), "mover: remove source after cross-device copy");
             fs::remove_file(src)
         }
         Err(e) => Err(e),
@@ -106,6 +111,7 @@ pub(crate) fn copy_across(src: &Path, dst: &Path, src_len: u64) -> io::Result<()
                 dst.display()
             )));
         }
+        tracing::debug!(target: "conservatory::io", src = %src.display(), dst = %dst.display(), bytes = src_len, "mover: copy + fsync + rename");
         Ok(())
     })();
 

@@ -69,8 +69,11 @@ pub fn parse_chapters_json(body: &str) -> Result<Vec<Chapter>> {
 /// fetcher's connection pool (a plain GET; chapters carry no conditional-GET
 /// bookkeeping). Returns the parsed chapter set, or an error the caller logs.
 pub async fn fetch_chapters(client: &reqwest::Client, url: &str) -> Result<Vec<Chapter>> {
+    tracing::debug!(target: "conservatory::net", url, "chapters: GET");
     let body = client.get(url).send().await?.text().await?;
-    parse_chapters_json(&body)
+    let chapters = parse_chapters_json(&body)?;
+    tracing::debug!(target: "conservatory::net", url, count = chapters.len(), "chapters: parsed");
+    Ok(chapters)
 }
 
 #[cfg(test)]

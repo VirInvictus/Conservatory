@@ -48,6 +48,7 @@ pub async fn download_episode(
     }
     // error_for_status turns a 401 (auth required) / 404 into an error before we
     // touch the filesystem.
+    tracing::debug!(target: "conservatory::net", url, episode = episode.id, "download: GET");
     let mut response = req.send().await?.error_for_status()?;
 
     // Stream to a sibling temp file, fsync, then rename atomically (same dir).
@@ -69,6 +70,7 @@ pub async fn download_episode(
     tokio::fs::rename(&tmp, &dst)
         .await
         .map_err(|e| FetchError::Download(format!("renaming into {}: {e}", dst.display())))?;
+    tracing::debug!(target: "conservatory::io", dst = %dst.display(), bytes = written, "download: wrote episode");
 
     if let Some(expected) = episode.file_size
         && expected != written

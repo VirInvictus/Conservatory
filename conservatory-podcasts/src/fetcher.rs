@@ -120,6 +120,7 @@ impl Fetcher {
             req = req.basic_auth(&a.user, Some(&a.password));
         }
         tracing::debug!(
+            target: "conservatory::net",
             url,
             conditional = etag.is_some() || last_modified.is_some(),
             "fetch: GET"
@@ -147,7 +148,7 @@ impl Fetcher {
         }
 
         if status == StatusCode::NOT_MODIFIED {
-            tracing::debug!(url, "fetch: 304 (cached)");
+            tracing::debug!(target: "conservatory::net", url, "fetch: 304 (cached)");
             return Ok(FetchResult {
                 status: status.as_u16(),
                 body: Vec::new(),
@@ -163,6 +164,7 @@ impl Fetcher {
             header_str(&response, header::CACHE_CONTROL).and_then(|cc| parse_max_age(&cc));
         let body = response.bytes().await?.to_vec();
         tracing::debug!(
+            target: "conservatory::net",
             url,
             status = status.as_u16(),
             body_bytes = body.len(),

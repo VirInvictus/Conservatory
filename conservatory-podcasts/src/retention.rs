@@ -84,7 +84,9 @@ pub async fn apply(worker: &WorkerHandle, root: &Path, prunes: &[RetentionPrune]
     for p in prunes {
         let dst = root.join(&p.audio_path);
         match tokio::fs::remove_file(&dst).await {
-            Ok(()) => {}
+            Ok(()) => {
+                tracing::debug!(target: "conservatory::io", path = %dst.display(), episode = p.episode_id, "retention: delete");
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {} // already gone
             Err(e) => {
                 tracing::warn!(

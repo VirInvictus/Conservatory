@@ -36,6 +36,7 @@ pub fn write_cover(album_dir: &Path, bytes: &[u8]) -> Result<&'static str> {
     };
     let _ = std::fs::remove_file(album_dir.join(other));
     std::fs::write(album_dir.join(name), bytes)?;
+    tracing::debug!(target: "conservatory::io", dir = %album_dir.display(), name, bytes = bytes.len(), "covers: write");
     Ok(name)
 }
 

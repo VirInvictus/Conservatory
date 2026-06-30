@@ -146,7 +146,7 @@ Six crates, on the discipline that every non-GUI surface stays CLI-testable. Mus
 
 ## Project status
 
-**v0.0.84. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
+**v0.0.90. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
 
 Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [patchnotes](patchnotes.md) the per-release notes):
 
@@ -159,7 +159,8 @@ Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [
 - **10:** the `config.toml`-backed Preferences window.
 - **11:** Columns UI polish (the properties inspector, the status bar, the Now Playing drawer, transport conveniences).
 - **12:** the visual identity (Kanagawa Dragon theme, album art across the browse, an enriched now-bar, the spectrum visualizer).
-- **13:** the sleekness pass (a layout fix, empty states, toasts, and an internal tidy).
+- **13:** the sleekness pass (a layout fix, empty states, toasts, an internal tidy, bundled typography, and deadbeef-cui browser parity).
+- **14:** a `--debug` diagnostic mode (SQL, IO, network, and memory to stderr on filterable channels). See [`docs/debugging.md`](docs/debugging.md).
 
 Not built yet: **Phase 9**, optional ListenBrainz / Last.fm scrobbling, off by default. The roadmap has the full picture.
 
@@ -169,13 +170,15 @@ Not built yet: **Phase 9**, optional ListenBrainz / Last.fm scrobbling, off by d
 - [`roadmap.md`](roadmap.md): the phased plan, in independently shippable sub-phases.
 - [`patchnotes.md`](patchnotes.md): release notes, newest at top.
 - [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md): design lineage, dependency licenses, and the GPL-3 chain analysis.
-- [`docs/`](docs/): design references for [schema](docs/schema.md), [import](docs/import.md), [path templates](docs/path-template.md), [genre normalization](docs/genre-normalization.md), [the file mover](docs/mover.md), [cover accent](docs/accent.md), [the search grammar](docs/search-grammar.md), [libmpv profiles](docs/libmpv-profiles.md), [the audiobook reader](docs/audiobook-reader.md), [the theme](docs/theme.md), and the [keymap](docs/keymap.md).
+- [`docs/`](docs/): design references for [schema](docs/schema.md), [import](docs/import.md), [path templates](docs/path-template.md), [genre normalization](docs/genre-normalization.md), [the file mover](docs/mover.md), [cover accent](docs/accent.md), [the search grammar](docs/search-grammar.md), [libmpv profiles](docs/libmpv-profiles.md), [the audiobook reader](docs/audiobook-reader.md), [the theme](docs/theme.md), [debugging](docs/debugging.md), and the [keymap](docs/keymap.md).
 
 ## Contributing
 
 I'm a college student in my late thirties with no professional industry experience yet; Conservatory is one in a string of native Linux desktop apps I'm building to learn the craft and assemble a portfolio. I came from foobar2000 and Directory Opus, and I keep a large Calibre library. What Calibre does for my books, nothing did for my music, so I am building it.
 
 I develop on Fedora 44 on a ThinkPad T14s AMD Gen 6, and that is the only environment I can honestly support. Contributions are welcome, but please understand that I can only test against my own setup.
+
+When something misbehaves, run either binary with `--debug` for a verbose diagnostic stream (SQL with timings, file IO, network requests, and memory) on stderr. [`docs/debugging.md`](docs/debugging.md) covers the four channels and how to narrow them with `RUST_LOG`.
 
 ## License
 

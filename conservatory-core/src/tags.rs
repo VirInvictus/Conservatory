@@ -231,6 +231,7 @@ pub fn write_track_tags(path: &Path, w: &TagWrite) -> Result<()> {
     }
 
     tagged.save_to_path(path, WriteOptions::default())?;
+    tracing::debug!(target: "conservatory::io", path = %path.display(), "tags: write-back");
     Ok(())
 }
 

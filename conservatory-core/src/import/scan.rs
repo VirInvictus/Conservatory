@@ -28,6 +28,7 @@ pub fn scan(dir: &Path) -> Result<Vec<PathBuf>> {
     }
     walk(dir, &mut out)?;
     out.sort();
+    tracing::debug!(target: "conservatory::io", dir = %dir.display(), files = out.len(), "import: scanned");
     Ok(out)
 }
 

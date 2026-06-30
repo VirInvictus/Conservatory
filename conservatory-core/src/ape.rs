@@ -251,6 +251,7 @@ fn write_atomic(abs: &Path, bytes: &[u8], verify_decode: bool) -> io::Result<()>
         }
         drop(f);
         std::fs::rename(&temp, abs)?;
+        tracing::debug!(target: "conservatory::io", path = %abs.display(), bytes = bytes.len(), "ape: strip + rename");
         let len = std::fs::metadata(abs)?.len();
         if len != bytes.len() as u64 {
             return Err(io::Error::other(format!(

@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.0.90
+
+Phase 14b: the `--debug` mode now sees file IO and network, completing the four channels.
+
+- **`conservatory::io`** lights up across every place the app touches the filesystem: the file mover (rename, cross-device copy + fsync + rename, revert), cover writes, tag write-back, APE stripping, the import scan, podcast downloads and retention deletes, and playlist / OPML export. A `--debug` import now prints a line per file moved, with byte counts.
+- **`conservatory::net`** carries every HTTP request (there is no other network): feed fetches (GET / 304 / response), episode downloads, and chapter fetches, all on one filterable channel.
+- New [`docs/debugging.md`](docs/debugging.md) documents the flag, the four channels, and `RUST_LOG` narrowing; the README points at it.
+
 ## v0.0.89
 
 Phase 14a: a debug mode. Run either program with `--debug` for a verbose diagnostic stream on stderr.

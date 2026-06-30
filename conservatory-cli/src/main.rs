@@ -4298,6 +4298,7 @@ fn run_playlist_export(
     let n = tracks.len();
     std::fs::write(&out, build_m3u(&tracks))
         .with_context(|| format!("writing {}", out.display()))?;
+    tracing::debug!(target: "conservatory::io", path = %out.display(), tracks = n, "playlist: export m3u");
     println!("wrote {n} track(s) to {}", out.display());
     Ok(())
 }
@@ -5183,6 +5184,7 @@ async fn run_export_opml(db: PathBuf, out: Option<PathBuf>) -> Result<()> {
     match out {
         Some(path) => {
             std::fs::write(&path, &xml).with_context(|| format!("writing {}", path.display()))?;
+            tracing::debug!(target: "conservatory::io", path = %path.display(), bytes = xml.len(), "opml: export");
             eprintln!("Wrote OPML to {}.", path.display());
         }
         None => print!("{xml}"),

@@ -424,7 +424,7 @@ impl ConservatoryWindow {
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .margin_start(12)
-            .css_classes(["caption", "dim-label"])
+            .css_classes(["caption", "dim-label", "tech"])
             .build();
         let status_right = gtk::Label::builder()
             .xalign(1.0)

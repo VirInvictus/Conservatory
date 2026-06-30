@@ -77,6 +77,37 @@ inside the accent rule because a later `box-shadow` rule replaces the property
 wholesale rather than stacking, so the ring and the lift have to share one
 declaration.
 
+## Typography (Phase 13d)
+
+Three bundled OFL fonts, one per role, applied through `font-family` rules in the
+`CSS` const (`conservatory/src/main.rs`). Every rule carries a generic fallback so
+a missing font degrades to a sane default rather than breaking text.
+
+| Role | Font | CSS selector | Fallback |
+|---|---|---|---|
+| Base UI (chrome, menus, track list, facet panes, property values) | Inter | `window, popover, dropdown, tooltip` | `"Adwaita Sans", sans-serif` |
+| Headers and titles | Fraunces | `.title-1`..`.title-4`, `.large-title`, `.heading` | `serif` |
+| Technical text (paths, the status-bar tech line, MusicBrainz ids) | IBM Plex Mono | `.tech` | `monospace` |
+
+Inter is the base because it is screen-optimized, has tabular figures by default
+(so the numeric / duration / year columns align without extra OpenType setup), and
+is the typeface GNOME's own Adwaita Sans derives from, so it reads native. Fraunces
+is a warm display serif for headline character; IBM Plex Mono marks the genuinely
+technical surfaces (the `.tech` class, applied to the path / id property rows via
+`ui/fields::is_tech_field` and to the status-bar technical line).
+
+### Bundling and registration
+
+The fonts must never be assumed installed on the host (spec §7.2.9). The files live
+in `data/fonts/` with a per-family `OFL.txt`. Pango's `add_font_file` would be the
+clean loader but needs pango v1_56 and the workspace is on 0.20, so registration
+goes through fontconfig the way the spec names: `register_bundled_fonts()` (in
+`main.rs`, called first thing in `main()` before GTK lays out any text) writes a
+small fontconfig file that `<include>`s the system config and adds the bundled
+directory, then points fontconfig at it via `FONTCONFIG_FILE`. The Flatpak instead
+installs the files into the data fonts dir (`meson.build`), where fontconfig finds
+them automatically. A `CONSERVATORY_FONT_DIR` env var overrides the directory.
+
 ## Why no blurred cover background
 
 GTK4 CSS has no `backdrop-filter`, and `filter: blur()` applies to a widget's own

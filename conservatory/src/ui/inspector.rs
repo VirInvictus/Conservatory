@@ -144,6 +144,9 @@ impl Inspector {
                 .selectable(true)
                 .hexpand(true)
                 .build();
+            if crate::ui::fields::is_tech_field(label) {
+                val.add_css_class("tech");
+            }
             self.grid.attach(&key, 0, row as i32, 1, 1);
             self.grid.attach(&val, 1, row as i32, 1, 1);
         }

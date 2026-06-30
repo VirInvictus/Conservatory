@@ -48,6 +48,14 @@ const CSS: &str = "\
 @define-color error_color #c4746e;
 @define-color success_color #87a987;
 
+/* Typography (Phase 13d): bundled OFL fonts registered via fontconfig at startup
+   so nothing is assumed installed. Inter body, Fraunces headers, IBM Plex Mono
+   technical fields; each rule keeps a generic-family fallback so a missing font
+   degrades to a sane default rather than breaking text. */
+window, popover, dropdown, tooltip { font-family: \"Inter\", \"Adwaita Sans\", sans-serif; }
+.title-1, .title-2, .title-3, .title-4, .large-title, .heading { font-family: \"Fraunces\", serif; }
+.tech { font-family: \"IBM Plex Mono\", monospace; }
+
 columnview.data-table > listview > row > cell { padding-top: 1px; padding-bottom: 1px; }
 columnview.data-table > listview > row { transition: background-color 150ms ease; }
 columnview.data-table > listview > row:hover { background: alpha(currentColor, 0.04); }
@@ -92,8 +100,93 @@ fn load_css() {
     }
 }
 
+/// Register the bundled fonts (Phase 13d) so the typography (Inter body, Fraunces
+/// headers, IBM Plex Mono technical fields) renders without assuming any font is
+/// installed on the host (spec §7.2.9). Pango's `add_font_file` would be cleaner
+/// but needs pango v1_56 and the workspace is on 0.20, so we go through fontconfig
+/// the way the spec names: write a tiny config that includes the system config and
+/// adds our bundled font dir, then point fontconfig at it via `FONTCONFIG_FILE`.
+/// Runs before GTK lays out any text (fontconfig is read lazily on first layout),
+/// hence the call is the first thing in `main()`. Every failure is a soft fallback
+/// to the generic families in the CSS, so text never breaks.
+fn register_bundled_fonts() {
+    // Respect a user-provided fontconfig setup rather than clobbering it.
+    if std::env::var_os("FONTCONFIG_FILE").is_some() {
+        return;
+    }
+    let Some(font_dir) = bundled_font_dir() else {
+        tracing::warn!("bundled font directory not found; using system font fallbacks");
+        return;
+    };
+    let mut conf_path = glib::user_cache_dir();
+    conf_path.push("conservatory");
+    if let Err(e) = std::fs::create_dir_all(&conf_path) {
+        tracing::warn!("could not create font cache dir: {e}");
+        return;
+    }
+    conf_path.push("fonts.conf");
+    // Include the system config (which transitively pulls in the user's own
+    // fontconfig and ~/.local/share/fonts) so we add to it rather than replace it.
+    let conf = format!(
+        "<?xml version=\"1.0\"?>\n\
+         <!DOCTYPE fontconfig SYSTEM \"urn:fontconfig:fonts.dtd\">\n\
+         <fontconfig>\n  \
+         <include ignore_missing=\"yes\">/etc/fonts/fonts.conf</include>\n  \
+         <dir>{}</dir>\n\
+         </fontconfig>\n",
+        font_dir.display()
+    );
+    if let Err(e) = std::fs::write(&conf_path, conf) {
+        tracing::warn!("could not write bundled font config: {e}");
+        return;
+    }
+    // SAFETY: the very first thing main() does, before the app builds or any other
+    // thread spawns, so there is no concurrent env access (the 2024-edition rule).
+    unsafe { std::env::set_var("FONTCONFIG_FILE", &conf_path) };
+    tracing::debug!("registered bundled fonts from {}", font_dir.display());
+}
+
+/// Locate the bundled `fonts/` directory across the dev and installed layouts.
+/// Picks the first candidate that exists and actually holds a font file.
+fn bundled_font_dir() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = std::env::var_os("CONSERVATORY_FONT_DIR") {
+        candidates.push(PathBuf::from(dir));
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(bin_dir) = exe.parent()
+    {
+        if let Some(prefix) = bin_dir.parent() {
+            candidates.push(prefix.join("share/conservatory/fonts"));
+        }
+        candidates.push(bin_dir.join("fonts"));
+    }
+    candidates.push(PathBuf::from("/app/share/fonts")); // Flatpak
+    // Dev: the repo's data/fonts, relative to this crate.
+    candidates.push(PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../data/fonts"
+    )));
+
+    candidates.into_iter().find(|dir| {
+        std::fs::read_dir(dir)
+            .map(|mut entries| {
+                entries.any(|e| {
+                    e.ok().is_some_and(|e| {
+                        matches!(
+                            e.path().extension().and_then(|s| s.to_str()),
+                            Some("ttf" | "otf")
+                        )
+                    })
+                })
+            })
+            .unwrap_or(false)
+    })
+}
+
 fn main() -> glib::ExitCode {
     init_tracing();
+    register_bundled_fonts();
 
     let app = adw::Application::builder().application_id(APP_ID).build();
 

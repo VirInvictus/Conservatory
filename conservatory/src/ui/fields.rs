@@ -12,6 +12,13 @@ use conservatory_core::format_size;
 
 use crate::playqueue::fmt_secs;
 
+/// Whether a projected row holds a filesystem path or an opaque id, i.e. a value
+/// that reads better in a monospace face (the `.tech` class, Phase 13d). The one
+/// source of truth for which property rows go mono, shared by both grid fills.
+pub(crate) fn is_tech_field(label: &str) -> bool {
+    matches!(label, "Location" | "File" | "MB recording" | "MB release")
+}
+
 /// Push a non-empty `(label, value)` onto `out`; skips empty values so absent
 /// fields do not render blank rows.
 pub(crate) fn push(out: &mut Vec<(String, String)>, label: &str, value: impl Into<String>) {

@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.0.85
+
+Phase 13d: typography. Conservatory now ships its own fonts and uses the right one for each part of the interface.
+
+- **Inter for the interface.** The body, menus, and the dense track list and facet panes are set in Inter, a screen-optimized typeface with aligned (tabular) numbers, so the duration, year, and bitrate columns line up cleanly.
+- **Fraunces for headers.** Titles and section headings are set in Fraunces, a warm display serif, giving the headings a bit of character against the neutral body.
+- **IBM Plex Mono for technical text.** File paths, the status-bar codec and bitrate line, and MusicBrainz ids render in a monospace, so the technical bits read as technical and line up.
+- **Bundled, never assumed.** All three fonts are open-licensed (SIL OFL) and ship with the app; nothing has to be installed on your system. If a font ever cannot be loaded, the text falls back to a sane default rather than breaking.
+
+No behavior change beyond the look; the full test suite, clippy, and the music-only build are green.
+
 ## v0.0.84
 
 Phase 13c: an internal tidy. No behavior change, no new features; the app does exactly what it did at v0.0.83.

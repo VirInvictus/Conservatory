@@ -801,3 +801,10 @@ A UI/UX polish pass plus a focused code tidy, prompted by a concrete layout bug 
 - [x] Finished the Phase 12a accent-provider migration: `now_playing_panel` and `audiobooks` both route through the shared `ui/accent.rs` `AccentProvider` (the audiobooks shelf hands it an N-rule CSS string; the provider swap is the same), so the three inline copies are gone.
 - [x] Consolidated the duplicated `push()` and the four `*_fields()` projections (`track`/`episode`/`book`/`inspector`) into a new `ui/fields.rs`, tests moved with them.
 - [x] Confirming pass: the audit found the codebase otherwise clean (no dead code, good comments, solid error handling), so no churn was manufactured. Documented rather than invented.
+
+### Phase 13d — Typography: bundled OFL fonts per UI role ✅ (v0.0.85)
+
+- [x] Bundled three SIL OFL fonts in `data/fonts/` (with per-family `OFL.txt`): Inter (base UI), Fraunces (headers), IBM Plex Mono (technical fields). ~1.5 MB total.
+- [x] Registered them at startup with no host-font assumption (spec §7.2.9): `register_bundled_fonts()` writes a fontconfig file including the system config plus the bundled dir and sets `FONTCONFIG_FILE` before GTK lays out text (pango v1_56 `add_font_file` is unavailable on the 0.20 stack). No new dependency, no version bump of the GTK stack.
+- [x] Applied per role in CSS with generic fallbacks: Inter on `window`/`popover`/`dropdown`/`tooltip`, Fraunces on the title/heading classes, a new `.tech` class for IBM Plex Mono on the path / id property rows (`ui/fields::is_tech_field`) and the status-bar technical line.
+- [x] Packaging + docs: a `meson.build` font install target, `ATTRIBUTIONS.md` font entries, and a Typography section in `docs/theme.md`.

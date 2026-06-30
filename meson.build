@@ -16,3 +16,18 @@ dependency('gtk4', version: '>= 4.16')
 dependency('libadwaita-1', version: '>= 1.7')
 dependency('mpv', version: '>= 0.36')
 dependency('sqlite3', version: '>= 3.38')
+
+# Bundled OFL fonts (Phase 13d): Inter (body), Fraunces (headers), IBM Plex Mono
+# (technical text). Installed into the data fonts dir so the packaged build's
+# fontconfig finds them, never assuming a host font (spec §7.2.9). The native /
+# dev build registers data/fonts/ at runtime instead (see register_bundled_fonts
+# in conservatory/src/main.rs); this target is the packaging half of the same rule.
+install_data(
+    [
+        'data/fonts/Inter.ttf',
+        'data/fonts/Fraunces.ttf',
+        'data/fonts/IBMPlexMono-Regular.ttf',
+        'data/fonts/IBMPlexMono-Medium.ttf',
+    ],
+    install_dir: get_option('datadir') / 'fonts' / 'conservatory',
+)

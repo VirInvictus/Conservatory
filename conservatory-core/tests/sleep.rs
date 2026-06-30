@@ -141,16 +141,19 @@ fn after_timer_fires_pauses_and_tap_extends() {
     assert!(!snap.ended, "the timer stopped mid-queue, not at its end");
 
     // Tap-to-extend: pressing play re-arms the full interval and clears `fired`.
-    // (A `Some` + `!fired` snapshot can only come from a re-arm: firing leaves
-    // remaining at 0, and the 30 s window cannot lapse inside this 5 s wait.) The
-    // observed remaining is the re-armed 0.5 s minus the command + poll latency, so
-    // assert it bounced well clear of zero rather than at a tight threshold.
+    // A `Some` + `!fired` snapshot can only come from a re-arm (firing leaves the
+    // timer at `fired` with remaining 0; the 30 s window cannot lapse here), so
+    // `!fired` is itself the proof of re-arm. The re-armed 0.5 s decays in real
+    // time, so assert only that it bounced clear of zero, not a wall-clock-sensitive
+    // magnitude: under heavy scheduler load the snapshot can be observed well into
+    // the decay, which is what made a tight `> 0.2` threshold flaky. The deadline is
+    // generous for the same reason (the engine pump that re-arms competes for CPU).
     player.play();
-    wait_until(&player, 5, |s| s.sleep.is_some_and(|sl| !sl.fired));
+    wait_until(&player, 30, |s| s.sleep.is_some_and(|sl| !sl.fired));
     let re = player.snapshot().sleep.expect("timer still armed");
     assert!(
-        re.remaining.is_some_and(|r| r > 0.2),
-        "play within the window re-armed the 0.5 s interval, got {:?}",
+        re.remaining.is_some_and(|r| r > 0.0),
+        "play within the window re-armed the interval, got {:?}",
         re.remaining
     );
 

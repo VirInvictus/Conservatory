@@ -1,12 +1,12 @@
 # Conservatory — Application Specification
 
-**Version:** 0.0.2 (in development; Phase 1a/1b shipped, and the workspace is restructured around compile-time plugins, see §2.2)
+**Version:** 0.0.90 (Phases 0–8 and 10–14 shipped; Phase 9, scrobbling, is the remaining pre-1.0 feature. See §17 and roadmap.md.)
 **Target:** GNOME 50+, GTK4 ≥ 4.16, libadwaita ≥ 1.7
 **Language:** Rust (2024 Edition)
 **Build System:** Cargo workspace (`conservatory-core` + `conservatory-search` + `conservatory-podcasts` + `conservatory-audiobooks` + `conservatory-cli` + `conservatory`) / Meson wrapper for Flatpak packaging
 **License:** GNU GPL v3.0 or later (forced by the GPL libraries libmpv links, the same license chain as Belfry; see §15)
 
-> **Status note.** This is the design contract. The decisions below are settled enough to build against. As of v0.0.1 the workspace skeleton exists and Phase 1 (§17) is underway; the build is no longer deferred (the original deferral and its rationale are preserved in §16.1 and §17 for the record, since they are the thing to re-read if the concurrency with Atrium proves a mistake). Provisional detail (exact schema columns, CLI verbs, config keys) follows the established portfolio patterns from Atrium and Belfry and will firm up at implementation time. Genuinely open decisions are collected in §16, not scattered as silent guesses.
+> **Status note.** This is the design contract. The decisions below are settled enough to build against. As of v0.0.90 the app is a daily-driver music player, a full podcast client, and an audiobook player: Phases 0–8 and 10–14 (§17) have shipped, with Phase 9 (scrobbling) the remaining pre-1.0 feature. The build is no longer deferred (the original deferral and its rationale are preserved in §16.1 and §17 for the record, since they are the thing to re-read if the concurrency with Atrium proves a mistake). Detail that was provisional at first draft (exact schema columns, CLI verbs, config keys) is now implemented; the `docs/` references carry the firmed-up specifics. Genuinely open decisions are collected in §16, not scattered as silent guesses.
 
 ---
 
@@ -35,7 +35,7 @@ Reference apps:
 - **Atrium** and **Viaduct** (Brandon's own) — the single-writer SQLite worker pattern and the search-expression grammar shape.
 - **Hermitage** (Brandon's own) — cover art as the visual unit; per-album accent extracted from cover hue (median-cut quantizer).
 
-**Absorbs Belfry.** Conservatory is the convergence of Brandon's music tooling (`Lattice`, `deadbeef-cui`) and his podcast project (`Belfry`) into one media app. Belfry's Phase 1 work is not discarded: `belfry-core`'s single-writer worker is the exact pattern this app needs and migrates here, and Belfry's audio engine and triage model become the Podcasts side. The one casualty is Belfry's filesystem-canonical design; in Conservatory, podcasts become app-managed downloads (§5.3), which is acceptable for ephemeral episodes in a way it would not be for a curated music collection. Belfry is **not retired until Conservatory reaches podcast parity** (§17).
+**Absorbs Belfry.** Conservatory is the convergence of Brandon's music tooling (`Lattice`, `deadbeef-cui`) and his podcast project (`Belfry`) into one media app. Belfry's Phase 1 work is not discarded: `belfry-core`'s single-writer worker is the exact pattern this app needs and migrates here, and Belfry's audio engine and triage model become the Podcasts side. The one casualty is Belfry's filesystem-canonical design; in Conservatory, podcasts become app-managed downloads (§5.3), which is acceptable for ephemeral episodes in a way it would not be for a curated music collection. Belfry was **retired at v0.0.52, when Conservatory reached podcast parity** (§16.8, §17).
 
 Non-goals are enumerated in §14.
 
@@ -713,9 +713,16 @@ The phases below are the contract-level shape. `roadmap.md` breaks each into ind
 - **Phase 5.** Bulk editing + embedded-tag write-back.
 - **Phase 5.5.** Audio engine: the labelled `af`-chain builder, a graphic + parametric equalizer, the DSP modules (compressor / limiter / leveler), correct head-staged ReplayGain, and output backend / resampler control. Resolves §16.6. Lands before the **Phase 6c spoken-word chain** (which is built as presets on it, §6.3), not before all of Phase 6: the podcast manager and triage (Phases 6a/6b) are independent of the audio engine and shipped first. The music daily-driver feels complete here.
 - **Phase 6.** Podcasts: absorb the Belfry subsystem as the `conservatory-podcasts` plugin crate (§2.2) behind the Podcasts tab, hook episodes into the unified queue. The podcast schema lands in core's ledger; the behaviour lands in the plugin. **Done at v0.0.52: podcast parity reached, Belfry retired.**
-- **Phase 7.** Audiobooks: the `conservatory-audiobooks` plugin crate (§2.2), a third tab over the absorbed spoken-word engine. The book/chapter/series data model and local-source import (headless), then the Audiobooks browse tab, then playback (chapters + first-class resume) reusing the shared Phase 5.5 chain engine via the Phase 6c spoken-word presets. Placed after Phase 6 because it reuses that engine; the audiobook *manager* could in principle land earlier, but the deliberate choice is to keep it whole and post-podcast (§16.12).
+- **Phase 7.** Audiobooks: the `conservatory-audiobooks` plugin crate (§2.2), a third tab over the absorbed spoken-word engine. The book/chapter/series data model and local-source import (headless), then the Audiobooks browse tab, then playback (chapters + first-class resume) reusing the shared Phase 5.5 chain engine via the Phase 6c spoken-word presets. Placed after Phase 6 because it reuses that engine; the audiobook *manager* could in principle land earlier, but the deliberate choice is to keep it whole and post-podcast (§16.12). **Done.**
+- **Phase 8.** Library maintenance: integrity verify, duplicate detection, health audits, library stats, stray-APE strip, and `.m3u` playlist export/import. **Done (v0.0.63–v0.0.69).**
+- **Phase 9.** Listening history: optional ListenBrainz / Last.fm scrobbling, off by default. **Planned (the remaining pre-1.0 feature).**
+- **Phase 10.** Configuration: the `config.toml` foundation and a Preferences window (General + Library pages, configurable browse panes 1–5). Audio/EQ/DSP state stays DB-owned; config owns library/genre/podcasts/audiobooks/browse. **Done (v0.0.70–v0.0.73).**
+- **Phase 11.** Browse + player polish: the track-properties inspector, the status bar + play-status glyph, Now Playing enrichment, and transport conveniences (stop-after-current, jump-to-current, the header menu). **Done (v0.0.72–v0.0.76).**
+- **Phase 12.** Visual identity: the Kanagawa Dragon theme, album art across the browse, an enriched now-bar, and the spectrum visualizer. **Done (v0.0.77–v0.0.80).**
+- **Phase 13.** Sleekness: a layout fix, empty states and toasts, an internal tidy, bundled typography (Inter / Fraunces / IBM Plex Mono via fontconfig), and deadbeef-cui browser parity (activate-to-play, keyboard shortcuts, the shortcuts reference). **Done (v0.0.82–v0.0.88).**
+- **Phase 14.** Debug + observability: a `--debug` mode on both binaries emitting SQL (with timings), filesystem IO, network requests, and memory (RSS) to stderr on four filterable channels (`conservatory::{sql,io,net,mem}`); documented in `docs/debugging.md`. **Done (v0.0.89–v0.0.90).**
 
-The manager half (Phases 1–3) must be usable before the player half is finished, and the player must be usable before podcasts arrive. Audiobooks (Phase 7) come last because they lean on the podcast engine; each is a hard phase that leaves a usable artifact. No phase leaves the app non-functional.
+The manager half (Phases 1–3) must be usable before the player half is finished, and the player must be usable before podcasts arrive. Audiobooks (Phase 7) complete the three media types; the maintenance, configuration, and polish phases (8, 10–14) build on that base, and Phase 9 (scrobbling) remains the one pre-1.0 feature outstanding. Each is a hard phase that leaves a usable artifact. No phase leaves the app non-functional.
 
 ---
 

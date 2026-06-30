@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.0.87
+
+Phase 13e-ii: keyboard shortcuts for playback. The app is now keyboard-drivable for daily listening without reaching for the mouse.
+
+- **Space** plays / pauses, everywhere except when you are typing in the filter box.
+- **Ctrl+Right / Ctrl+Left** skip to the next / previous track.
+- **Ctrl+Up / Ctrl+Down** nudge the volume; **Ctrl+0** mutes and unmutes.
+- **Ctrl+L** clears the filter; **Ctrl+Q** quits.
+
+Two keys were deliberately left out: bare-arrow seek (the arrow keys navigate the browse columns, so binding them to seek would break navigation) and a library-delete shortcut (deleting files needs a confirmation step, not a bare keypress).
+
 ## v0.0.86
 
 Phase 13e-i: double-click a genre or artist to play it.

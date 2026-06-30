@@ -816,3 +816,8 @@ Research found the per-column `[All (N)]` item and track double-click-to-play al
 ### Phase 13e-i — Facet activate-to-play ✅ (v0.0.86)
 
 - [x] Double-click / Enter on a facet value (a genre, an artist) plays its filtered set, the deadbeef-cui `activate_row()` move. The facet panes previously only wired `selection_changed` (filter cascade); now the pane `ColumnView` has `connect_activate` → `on_facet_activated(i)`, which flushes the debounced cascade (`recompute_from`) so the leaf reflects the clicked row, then plays it from the top (shared `play_leaf_from` extracted from `on_track_activated`). The `[All]` row plays everything under the other panes.
+
+### Phase 13e-ii — Keyboard shortcuts: playback, navigation, conveniences ✅ (v0.0.87)
+
+- [x] Wired the researched playback / navigation keys: Space (play/pause, via a capture-phase key controller that yields to text entry, the foobar2000 rule), Ctrl+→/← (next/previous), Ctrl+↑/↓ (volume ±5), Ctrl+0 (mute toggle, `pre_mute_volume` remembers the level), Ctrl+L (clear filter), Ctrl+Q (quit). All reuse existing `PlayerHandle` methods.
+- [x] Deliberately skipped (documented, not silent): bare/Shift arrow seek (conflicts with list navigation; deadbeef-cui does not bind it either) and Delete = remove-from-library (destructive, needs a confirmation flow).

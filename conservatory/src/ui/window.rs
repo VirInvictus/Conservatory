@@ -80,6 +80,10 @@ mod imp {
         pub sidebar_list: OnceCell<gtk::ListBox>,
         pub perspectives: RefCell<Vec<Perspective>>,
         pub suppress: Cell<bool>,
+        // The volume to restore on un-mute (Phase 13e-ii, Ctrl+0); `None` when not
+        // muted. Stored here rather than in the engine so the toggle is a pure GUI
+        // convenience over the existing `set_volume`.
+        pub pre_mute_volume: Cell<Option<i64>>,
         // Worker before runtime: on drop the handle closes the channel (the serve
         // loop exits cleanly) before the runtime it runs on is torn down.
         pub worker: OnceCell<WorkerHandle>,
@@ -2458,6 +2462,98 @@ impl ConservatoryWindow {
                 })),
             ));
         }
+        // Playback / navigation keys (Phase 13e-ii). Ctrl-modified so they do not
+        // collide with list navigation or type-ahead; Space (play/pause) is the
+        // separate capture controller below because it must beat list selection.
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>Right"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade()
+                    && let Some(player) = win.imp().player.get()
+                {
+                    player.next();
+                }
+                glib::Propagation::Stop
+            })),
+        ));
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>Left"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade()
+                    && let Some(player) = win.imp().player.get()
+                {
+                    player.previous();
+                }
+                glib::Propagation::Stop
+            })),
+        ));
+        // Ctrl+Up / Ctrl+Down nudge the volume by 5 (clamped 0..=100); a manual
+        // change also clears any active mute.
+        for (trigger, delta) in [("<Control>Up", 5_i64), ("<Control>Down", -5_i64)] {
+            let weak = self.downgrade();
+            global.add_shortcut(gtk::Shortcut::new(
+                gtk::ShortcutTrigger::parse_string(trigger),
+                Some(gtk::CallbackAction::new(move |_, _| {
+                    if let Some(win) = weak.upgrade()
+                        && let Some(player) = win.imp().player.get()
+                    {
+                        let vol = (player.snapshot().volume + delta).clamp(0, 100);
+                        player.set_volume(vol);
+                        win.imp().pre_mute_volume.set(None);
+                    }
+                    glib::Propagation::Stop
+                })),
+            ));
+        }
+        // Ctrl+0 toggles mute, remembering the level to restore.
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>0"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade()
+                    && let Some(player) = win.imp().player.get()
+                {
+                    if let Some(prev) = win.imp().pre_mute_volume.take() {
+                        player.set_volume(prev);
+                    } else {
+                        win.imp()
+                            .pre_mute_volume
+                            .set(Some(player.snapshot().volume));
+                        player.set_volume(0);
+                    }
+                }
+                glib::Propagation::Stop
+            })),
+        ));
+        // Ctrl+L clears the filter bar (its coalescer re-runs the query).
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>l"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade()
+                    && let Some(entry) = win.imp().filter_entry.get()
+                {
+                    entry.set_text("");
+                }
+                glib::Propagation::Stop
+            })),
+        ));
+        // Ctrl+Q quits.
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>q"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade() {
+                    match win.application() {
+                        Some(app) => app.quit(),
+                        None => win.close(),
+                    }
+                }
+                glib::Propagation::Stop
+            })),
+        ));
         self.add_controller(global);
 
         // `S` pops the Now-bar sleep-timer menu (Phase 6c-iii-d). A window-local
@@ -2480,6 +2576,34 @@ impl ConservatoryWindow {
             })),
         ));
         self.add_controller(sleep_keys);
+
+        // Space toggles play/pause everywhere except a text entry (Phase 13e-ii,
+        // the foobar2000 rule). A capture-phase key controller so it intercepts
+        // Space before a focused list consumes it for selection-toggle; it yields
+        // to editables by checking the focused widget and proceeding when it is a
+        // `gtk::Text` (the inner widget of every entry).
+        let space = gtk::EventControllerKey::new();
+        space.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = self.downgrade();
+        space.connect_key_pressed(move |_, keyval, _, state| {
+            if keyval != gtk::gdk::Key::space
+                || state.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+            {
+                return glib::Propagation::Proceed;
+            }
+            let Some(win) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if gtk::prelude::GtkWindowExt::focus(&win).is_some_and(|w| w.is::<gtk::Text>()) {
+                return glib::Propagation::Proceed;
+            }
+            if let Some(player) = win.imp().player.get() {
+                player.toggle_pause();
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        self.add_controller(space);
 
         let local = gtk::ShortcutController::new();
         for (trigger, action) in [

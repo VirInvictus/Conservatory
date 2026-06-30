@@ -842,3 +842,34 @@ A `--debug` firehose across both binaries, 0.1.0-prep: SQL, IO, network, and mem
 - [x] `conservatory::io` events at every filesystem mutation: the mover (`fsops.rs`: rename, cross-device copy + fsync + rename, copy revert), cover writes, tag write-back, APE strip, the import scan summary, podcast download and retention delete, and the CLI playlist / OPML export. A `--debug` import prints a line per file moved with byte counts (verified live).
 - [x] `conservatory::net` carries all HTTP: the feed fetcher's three events retargeted onto the channel, plus new GET/wrote events in episode download and chapter fetch. Confirmed nothing else in the workspace makes network calls.
 - [x] New `docs/debugging.md` (the flag on both binaries, the four channels, `RUST_LOG` narrowing, the `/proc` memory note, the sleep-test caveat); README gains a "Debugging" pointer and a Phase 14 status line.
+
+## Phase 15 — 0.1.0 readiness gate (quality, no new features)
+
+The bar for tagging **0.1.0**: a quality and confidence milestone, not a feature phase (Phase 9 scrobbling stays deferred past 0.1.0). Nothing here adds capability; it proves that what is built is safe and within budget and that the release scaffolding is sound. Each item is a verification with a recorded result, not a code change; a fix only lands if verification turns up a gap.
+
+### Phase 15a — Move-safety release-blockers, proven (spec §5.4)
+
+The headline gate. A move bug damages a real library, so this is the item that actually blocks the tag. The dry-run preview, undo journal, and crash-safe replay already carry unit and integration coverage; this is the end-to-end confidence pass.
+
+- [ ] Dry-run preview accuracy: run an import / organize dry-run against a real library copy and confirm the previewed moves match what an `--apply` would do (no surprise relocations; genre and path-template output correct).
+- [ ] Undo journal round-trip: `--apply` a move, then undo, and confirm byte-identical restoration to the original layout (checksums, not just paths).
+- [ ] Crash-safe roll-forward: simulate a crash mid-move (kill between the file op and the journal-complete write) and confirm replay completes the operation idempotently with no data loss. Audit whether an automated test covers this exact path; write one if it does not.
+- [ ] Run the above against Brandon's **real music library** (a working copy), not only synthetic fixtures, since the real library is the actual risk surface. (Needs Brandon: the library path and a go-ahead on a copy.)
+
+### Phase 15b — Memory budget, measured (spec §13)
+
+Phase 14's `--debug` RSS sampling is the instrument; this turns the budget from an assumption into a number.
+
+- [ ] Load a large library (Brandon's real one, or `debug-fixture --scale large`) and read RSS via `--debug` at **idle** (target under 200 MB) and **active playback** (target under 300 MB on roughly 50k tracks).
+- [ ] Record the numbers (patchnotes or a note). If either exceeds budget, file the overage as a pre-0.1.0 fix; do not tag over budget.
+
+### Phase 15c — Release scaffolding sanity
+
+Mostly already true; a confirm pass, not new work.
+
+- [ ] `LICENSE` (GPL-3.0-or-later) and `ATTRIBUTIONS.md` present and current; the GPL chain analysis still matches the linked libraries.
+- [ ] CI green on both the default build and `--no-default-features` (music-only); `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` all clean.
+- [ ] README, spec.md, and docs/ confirmed current (the v0.0.90 staleness sweep did this; re-confirm nothing regressed before the tag).
+- [ ] Decide the Flatpak / Meson packaging question for 0.1.0: is a working installable build part of *this* tag, or a 0.1.x follow-on? Open decision, not a blocker unless chosen as one.
+
+*Usable artifact:* a `v0.1.0` tag that the move logic, the memory budget, and the release scaffolding have all been verified to earn, with the numbers recorded.

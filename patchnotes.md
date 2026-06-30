@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.0.91
+
+Phase 15 work begins: the 0.1.0 readiness gate. This release is a verification pass (quality, move safety, memory budget) plus the one fix it turned up. No new features.
+
+- **Undo now restores the cover too.** Verifying the move-safety undo path turned up a real gap: undoing an `organize` move put the track files back but left the album's `cover.jpg` stranded in the old destination, with the database's `cover_path` pointing at the wrong folder. Undo now re-syncs covers the same way an apply does, so an undo is a byte-identical restoration of the whole album folder. A regression test (`cover_resyncs_back_on_undo`) locks it in.
+- **Move safety, end to end.** Against a real two-album working copy: the dry-run preview matched what `--apply` actually moved, the undo round-trip restored the tree byte-for-byte, and the crash-mid-move roll-forward path stays covered by its existing test.
+- **Memory, measured.** A release build was sampled via `--debug`: idle on a 12,000-track library sits at about 196 MB, and active playback holds around 187 MB (playback adds no measurable resident memory over the warm floor). Both are within the spec §13 budgets at this scale. The 50,000-track idle target is not yet confirmed (the synthetic fixture tops out at 12k) and is tracked as a pre-1.0 check.
+- **Housekeeping.** Removed a dead `id3` entry from the workspace dependency catalog (it was never wired into any crate). The quality gate (format, clippy on both the default and music-only builds, the full test suite) is green.
+
 ## v0.0.90
 
 Phase 14b: the `--debug` mode now sees file IO and network, completing the four channels.

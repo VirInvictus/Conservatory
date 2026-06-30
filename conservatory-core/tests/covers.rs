@@ -96,8 +96,57 @@ async fn cover_follows_a_path_affecting_edit() {
     worker.shutdown_ack().await.unwrap();
 }
 
+#[tokio::test]
+async fn cover_resyncs_back_on_undo() {
+    let dir = tempdir().unwrap();
+    let (pool, worker, lib) = managed_lib(dir.path()).await;
+    let before = {
+        let conn = pool.open().unwrap();
+        get_album(&conn, 1).unwrap().unwrap().cover_path.unwrap()
+    };
+
+    // Forward: a year edit moves the album folder, organize relocates the
+    // tracks, the cover-resync follows.
+    worker
+        .update_album(
+            1,
+            AlbumEdit {
+                year: Some(1990),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let job = organize_all(&worker, &pool, &lib).await;
+    resync_album_covers(&worker, &pool, &lib).await.unwrap();
+    let moved = {
+        let conn = pool.open().unwrap();
+        get_album(&conn, 1).unwrap().unwrap().cover_path.unwrap()
+    };
+    assert_ne!(before, moved, "cover moved with the album");
+
+    // Undo reverts the journaled track moves and folder_path; the resync the
+    // CLI runs after undo must carry the cover back too, else the restored
+    // folder is left without its cover and cover_path goes stale.
+    mover::undo(&worker, &pool, job).await.unwrap();
+    resync_album_covers(&worker, &pool, &lib).await.unwrap();
+
+    let after = {
+        let conn = pool.open().unwrap();
+        get_album(&conn, 1).unwrap().unwrap().cover_path.unwrap()
+    };
+    assert_eq!(after, before, "cover_path restored to the original folder");
+    assert!(
+        lib.join(&after).exists(),
+        "cover back at the original location"
+    );
+    assert!(!lib.join(&moved).exists(), "stale moved cover removed");
+    worker.shutdown_ack().await.unwrap();
+}
+
 /// Re-render every track from the DB and move to match (the organize flow).
-async fn organize_all(worker: &WorkerHandle, pool: &ReadPool, root: &Path) {
+/// Returns the move job id so a test can undo it.
+async fn organize_all(worker: &WorkerHandle, pool: &ReadPool, root: &Path) -> i64 {
     let rows = {
         let conn = pool.open().unwrap();
         track_render_rows(&conn).unwrap()
@@ -139,5 +188,5 @@ async fn organize_all(worker: &WorkerHandle, pool: &ReadPool, root: &Path) {
         ops,
     )
     .await
-    .unwrap();
+    .unwrap()
 }

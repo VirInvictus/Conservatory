@@ -2537,7 +2537,23 @@ async fn run_organize(
         mover::undo(&worker, &pool, job_id)
             .await
             .with_context(|| format!("undoing job {job_id}"))?;
-        println!("undid job {job_id}");
+        // Covers are not journaled (Phase 5d, idempotent), so undo must resync
+        // them back like apply does; otherwise the reverted album folder loses
+        // its cover and cover_path goes stale.
+        let covers = resync_album_covers(&worker, &pool, &root)
+            .await
+            .context("resyncing covers")?;
+        match format {
+            Format::Json => println!("{{\"undid\":{job_id},\"covers\":{covers}}}"),
+            _ => println!(
+                "undid job {job_id}{}",
+                if covers > 0 {
+                    format!(" ({covers} cover(s) moved)")
+                } else {
+                    String::new()
+                }
+            ),
+        }
         worker.shutdown_ack().await.context("shutdown ack")?;
         return Ok(());
     }

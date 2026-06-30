@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.90"
+version = "0.0.91"
 edition = "2024"
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
@@ -50,10 +50,9 @@ pipewire = "0.10"
 # 1c tag read and the 5b embedded write-back.
 lofty = "0.21"
 
-# HTML / chapters / images (ammonia + id3 are pulled by conservatory-podcasts;
-# image is core, for cover decode + accent)
+# HTML / images (ammonia is pulled by conservatory-podcasts; image is core, for
+# cover decode + accent)
 ammonia = "4.0"
-id3 = "1.16"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 # Credentials (libsecret; pulled by conservatory-podcasts for HTTP Basic auth).

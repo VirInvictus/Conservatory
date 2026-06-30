@@ -851,25 +851,30 @@ The bar for tagging **0.1.0**: a quality and confidence milestone, not a feature
 
 The headline gate. A move bug damages a real library, so this is the item that actually blocks the tag. The dry-run preview, undo journal, and crash-safe replay already carry unit and integration coverage; this is the end-to-end confidence pass.
 
-- [ ] Dry-run preview accuracy: run an import / organize dry-run against a real library copy and confirm the previewed moves match what an `--apply` would do (no surprise relocations; genre and path-template output correct).
-- [ ] Undo journal round-trip: `--apply` a move, then undo, and confirm byte-identical restoration to the original layout (checksums, not just paths).
-- [ ] Crash-safe roll-forward: simulate a crash mid-move (kill between the file op and the journal-complete write) and confirm replay completes the operation idempotently with no data loss. Audit whether an automated test covers this exact path; write one if it does not.
-- [ ] Run the above against Brandon's **real music library** (a working copy), not only synthetic fixtures, since the real library is the actual risk surface. (Needs Brandon: the library path and a go-ahead on a copy.)
+- [x] Dry-run preview accuracy: run an import / organize dry-run against a real library copy and confirm the previewed moves match what an `--apply` would do (no surprise relocations; genre and path-template output correct). **(v0.0.91: against the two committed real albums, the dry-run listed exactly the 6 track moves `--apply` then executed; shelf-genre and path-template output correct.)**
+- [x] Undo journal round-trip: `--apply` a move, then undo, and confirm byte-identical restoration to the original layout (checksums, not just paths). **(v0.0.91: SHA-256 manifest confirmed byte-identical after undo. This pass found a real gap: `organize --undo` reverted the track moves but left the album cover stranded with a stale `cover_path`, because covers are not journaled and the undo branch, unlike apply, did not re-sync them. Fixed by mirroring apply's idempotent `resync_album_covers` call; regression test `cover_resyncs_back_on_undo`.)**
+- [x] Crash-safe roll-forward: simulate a crash mid-move (kill between the file op and the journal-complete write) and confirm replay completes the operation idempotently with no data loss. Audit whether an automated test covers this exact path; write one if it does not. **(v0.0.91: `crash_mid_job_rolls_forward_on_recovery` already covers this exact path: journal written, files relocated without the completion marker, `recover()` rolls forward idempotently with tree and DB consistent. No new test needed.)**
+- [ ] Run the above against Brandon's **real music library** (a working copy), not only synthetic fixtures, since the real library is the actual risk surface. **(Deferred by decision: synthetic-only verification chosen for 0.1.0. The two committed real albums stand in; the full-library pass is a tracked pre-1.0 item below.)**
 
 ### Phase 15b — Memory budget, measured (spec §13)
 
 Phase 14's `--debug` RSS sampling is the instrument; this turns the budget from an assumption into a number.
 
-- [ ] Load a large library (Brandon's real one, or `debug-fixture --scale large`) and read RSS via `--debug` at **idle** (target under 200 MB) and **active playback** (target under 300 MB on roughly 50k tracks).
-- [ ] Record the numbers (patchnotes or a note). If either exceeds budget, file the overage as a pre-0.1.0 fix; do not tag over budget.
+- [x] Load a large library (Brandon's real one, or `debug-fixture --scale large`) and read RSS via `--debug` at **idle** (target under 200 MB) and **active playback** (target under 300 MB on roughly 50k tracks). **(v0.0.91, release build: idle on the 12k fixture ~196 MB; active playback ~187 MB, playback adding no measurable RSS over the warm floor. The floor is dominated by the GTK+libmpv base; per-track scaling is gentle, ~9 MB across 12k tracks.)**
+- [x] Record the numbers (patchnotes or a note). If either exceeds budget, file the overage as a pre-0.1.0 fix; do not tag over budget. **(Recorded in v0.0.91 patchnotes. Both within budget at 12k. Caveat: the synthetic fixture tops out at 12k, so the 50k idle target is unverified; idle sits at the 200 MB line at 12k and extrapolates to ~215–230 MB at 50k. Tracked pre-1.0 item below: confirm/optimize idle RSS at 50k before the `v1.0.0` tag.)**
 
 ### Phase 15c — Release scaffolding sanity
 
 Mostly already true; a confirm pass, not new work.
 
-- [ ] `LICENSE` (GPL-3.0-or-later) and `ATTRIBUTIONS.md` present and current; the GPL chain analysis still matches the linked libraries.
-- [ ] CI green on both the default build and `--no-default-features` (music-only); `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` all clean.
-- [ ] README, spec.md, and docs/ confirmed current (the v0.0.90 staleness sweep did this; re-confirm nothing regressed before the tag).
-- [ ] Decide the Flatpak / Meson packaging question for 0.1.0: is a working installable build part of *this* tag, or a 0.1.x follow-on? Open decision, not a blocker unless chosen as one.
+- [x] `LICENSE` (GPL-3.0-or-later) and `ATTRIBUTIONS.md` present and current; the GPL chain analysis still matches the linked libraries. **(v0.0.91: confirmed. Also removed a dead `id3` entry from the workspace dependency catalog: unreferenced by any crate, not compiled or linked, so ATTRIBUTIONS correctly omitted it.)**
+- [x] CI green on both the default build and `--no-default-features` (music-only); `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` all clean. **(v0.0.91: all green on both feature sets, after the 15a fix.)**
+- [x] README, spec.md, and docs/ confirmed current (the v0.0.90 staleness sweep did this; re-confirm nothing regressed before the tag). **(v0.0.91: VERSION matches the workspace `Cargo.toml`, README links the `--debug` docs, all 12 `docs/` references present; no regression.)**
+- [x] Decide the Flatpak / Meson packaging question for 0.1.0: is a working installable build part of *this* tag, or a 0.1.x follow-on? **(Decided: a 0.1.x follow-on. The 0.1.0 tag rests on the quality/safety gate, not on a shipped installable build.)**
 
-*Usable artifact:* a `v0.1.0` tag that the move logic, the memory budget, and the release scaffolding have all been verified to earn, with the numbers recorded.
+### Tracked pre-1.0 items (surfaced by the Phase 15 gate)
+
+- [ ] **Idle memory at 50k:** confirm the spec §13 idle target (< 200 MB) on a real ~50k-track library, since the synthetic fixture tops out at 12k and the 12k idle (~196 MB) extrapolates to ~215–230 MB at 50k. If over, optimize before the `v1.0.0` tag.
+- [ ] **Full-library move-safety pass:** run the 15a move/undo/crash checks against a working copy of Brandon's real library (the synthetic-only pass covered 0.1.0).
+
+*Usable artifact:* a `v0.1.0` tag that the move logic, the memory budget, and the release scaffolding have all been verified to earn, with the numbers recorded. **(v0.0.91: the gate is exercised and recorded; the synthetic passes hold and the one move-safety bug found is fixed. The `v0.1.0` tag itself is held pending the disposition of the tracked items above, not cut at v0.0.91.)**

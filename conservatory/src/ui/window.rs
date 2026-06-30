@@ -574,6 +574,14 @@ impl ConservatoryWindow {
                     win.on_pane_changed(i);
                 }
             });
+            // Double-click / Enter on a facet value plays its filtered set
+            // (Phase 13e-i, deadbeef-cui activate-to-play).
+            let weak = self.downgrade();
+            pane.column_view.connect_activate(move |_, _| {
+                if let Some(win) = weak.upgrade() {
+                    win.on_facet_activated(i);
+                }
+            });
         }
 
         let weak = self.downgrade();
@@ -1623,9 +1631,26 @@ impl ConservatoryWindow {
     }
 
     /// Double-click / Enter on a track: play the visible leaf list from that row
-    /// (spec §3.6). The selection model presents rows in display (sorted) order,
-    /// so its index range is the queue order and `pos` is the start.
+    /// (spec §3.6).
     fn on_track_activated(&self, pos: u32) {
+        self.play_leaf_from(pos);
+    }
+
+    /// Double-click / Enter on a facet value (Phase 13e-i): play that facet's
+    /// filtered set, the deadbeef-cui activate-to-play move. The activated row is
+    /// already selected, but the cascade that narrows the leaf to it is debounced,
+    /// so flush it synchronously (`recompute_from`) before reading the leaf, then
+    /// play from the top. The `[All]` row plays everything under the other panes
+    /// (its constraint is empty).
+    fn on_facet_activated(&self, pane: usize) {
+        self.recompute_from(pane);
+        self.play_leaf_from(0);
+    }
+
+    /// Play the visible leaf list from row `pos`. The selection model presents
+    /// rows in display (sorted) order, so its index range is the queue order and
+    /// `pos` is the start. Shared by track double-click and facet activate-to-play.
+    fn play_leaf_from(&self, pos: u32) {
         let imp = self.imp();
         // Playback needs the library root to resolve the managed relative track
         // paths; a bare `conservatory <db>` launch can browse but not play. Log a

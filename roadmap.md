@@ -808,3 +808,11 @@ A UI/UX polish pass plus a focused code tidy, prompted by a concrete layout bug 
 - [x] Registered them at startup with no host-font assumption (spec §7.2.9): `register_bundled_fonts()` writes a fontconfig file including the system config plus the bundled dir and sets `FONTCONFIG_FILE` before GTK lays out text (pango v1_56 `add_font_file` is unavailable on the 0.20 stack). No new dependency, no version bump of the GTK stack.
 - [x] Applied per role in CSS with generic fallbacks: Inter on `window`/`popover`/`dropdown`/`tooltip`, Fraunces on the title/heading classes, a new `.tech` class for IBM Plex Mono on the path / id property rows (`ui/fields::is_tech_field`) and the status-bar technical line.
 - [x] Packaging + docs: a `meson.build` font install target, `ATTRIBUTIONS.md` font entries, and a Typography section in `docs/theme.md`.
+
+## Phase 13e — deadbeef-cui column-browser parity (interaction + shortcuts)
+
+Research found the per-column `[All (N)]` item and track double-click-to-play already match deadbeef-cui, so this phase fills the two real gaps: facet activate-to-play and the unwired keyboard shortcuts.
+
+### Phase 13e-i — Facet activate-to-play ✅ (v0.0.86)
+
+- [x] Double-click / Enter on a facet value (a genre, an artist) plays its filtered set, the deadbeef-cui `activate_row()` move. The facet panes previously only wired `selection_changed` (filter cascade); now the pane `ColumnView` has `connect_activate` → `on_facet_activated(i)`, which flushes the debounced cascade (`recompute_from`) so the leaf reflects the clicked row, then plays it from the top (shared `play_leaf_from` extracted from `on_track_activated`). The `[All]` row plays everything under the other panes.

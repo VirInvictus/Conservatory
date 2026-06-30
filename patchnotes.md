@@ -1,5 +1,11 @@
 # Patch Notes
 
+## v0.0.86
+
+Phase 13e-i: double-click a genre or artist to play it.
+
+- **Activate-to-play in the browse columns.** Double-clicking (or pressing Enter on) a value in any browse column now plays that filtered set, the way deadbeef-cui and foobar2000 do. Double-click "Ambient" and it plays your ambient tracks; double-click the `[All]` row and it plays everything under your other column selections. The track list already played on double-click; this brings the facet columns in line.
+
 ## v0.0.85
 
 Phase 13d: typography. Conservatory now ships its own fonts and uses the right one for each part of the interface.

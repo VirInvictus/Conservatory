@@ -20,6 +20,9 @@ pub struct FacetPane {
     pub field: FacetField,
     pub store: gio::ListStore,
     pub selection: gtk::MultiSelection,
+    /// The inner `ColumnView`; the window connects `activate` to it for
+    /// double-click / Enter to play the facet's filtered set (Phase 13e-i).
+    pub column_view: gtk::ColumnView,
     pub view: gtk::ScrolledWindow,
 }
 
@@ -128,6 +131,7 @@ pub fn build_pane(field: FacetField) -> FacetPane {
         field,
         store,
         selection,
+        column_view: view,
         view: scroller,
     }
 }

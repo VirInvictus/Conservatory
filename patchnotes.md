@@ -1,5 +1,12 @@
 # Patch Notes
 
+## v0.0.88
+
+Phase 13e-iii: a keyboard shortcuts reference, closing Phase 13.
+
+- **Press F1** (or open "Keyboard Shortcuts" from the header menu) for a grouped, scrollable list of every shortcut that actually works: playback, browse and queue, panels and view. The list is curated to match what is wired, so it will not promise a key that does nothing.
+- The keymap documentation is brought in line with reality: the playback keys are marked live, and the handful still on the drawing board (arrow-key seek, save-as-Perspective, remove-from-library) are flagged as such rather than implied to work.
+
 ## v0.0.87
 
 Phase 13e-ii: keyboard shortcuts for playback. The app is now keyboard-drivable for daily listening without reaching for the mouse.

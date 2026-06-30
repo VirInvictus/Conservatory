@@ -2554,6 +2554,17 @@ impl ConservatoryWindow {
                 glib::Propagation::Stop
             })),
         ));
+        // F1 opens the keyboard-shortcuts reference (Phase 13e-iii).
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("F1"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade() {
+                    win.show_shortcuts_window();
+                }
+                glib::Propagation::Stop
+            })),
+        ));
         self.add_controller(global);
 
         // `S` pops the Now-bar sleep-timer menu (Phase 6c-iii-d). A window-local
@@ -2980,6 +2991,75 @@ impl ConservatoryWindow {
         }
     }
 
+    /// The keyboard-shortcuts reference (Phase 13e-iii, `F1`). Built as an
+    /// `adw::PreferencesDialog` of grouped rows rather than a `gtk::ShortcutsWindow`
+    /// (deprecated in recent GTK; `AdwShortcutsDialog` postdates our libadwaita), so
+    /// it stays current and inherits the app's typography. The list is curated to
+    /// match what is actually wired (no aspirational keys).
+    fn show_shortcuts_window(&self) {
+        let groups: [(&str, &[(&str, &str)]); 3] = [
+            (
+                "Playback",
+                &[
+                    ("Space", "Play / pause"),
+                    ("Ctrl+Right", "Next track"),
+                    ("Ctrl+Left", "Previous track"),
+                    ("Ctrl+Up / Ctrl+Down", "Volume up / down"),
+                    ("Ctrl+0", "Mute / unmute"),
+                    ("Ctrl+M", "Stop after the current track"),
+                    ("Ctrl+J", "Jump to the playing track"),
+                    ("Ctrl+Shift+Right / Left", "Next / previous chapter"),
+                    ("S", "Sleep timer"),
+                ],
+            ),
+            (
+                "Browse & Queue",
+                &[
+                    ("Double-click / Enter", "Play the track or facet"),
+                    ("Ctrl+Enter", "Add the selection to the queue"),
+                    ("Ctrl+E", "Edit the selected tracks"),
+                    ("Ctrl+F", "Focus the filter"),
+                    ("Ctrl+L", "Clear the filter"),
+                    ("Alt+Up / Alt+Down", "Move the queued item"),
+                    ("Delete", "Remove from the queue"),
+                    ("Ctrl+Shift+C", "Clear the queue"),
+                ],
+            ),
+            (
+                "Panels & View",
+                &[
+                    ("Ctrl+U", "Queue"),
+                    ("Ctrl+P", "Track properties"),
+                    ("Ctrl+I", "Now Playing"),
+                    ("Alt+1 / Alt+2 / Alt+3", "Music / Podcasts / Audiobooks"),
+                    ("Ctrl+comma", "Preferences"),
+                    ("F1", "This shortcuts window"),
+                    ("Ctrl+Q", "Quit"),
+                ],
+            ),
+        ];
+
+        let page = adw::PreferencesPage::new();
+        for (title, rows) in groups {
+            let group = adw::PreferencesGroup::builder().title(title).build();
+            for (accel, desc) in rows {
+                let row = adw::ActionRow::builder().title(*desc).build();
+                let keys = gtk::Label::builder()
+                    .label(*accel)
+                    .css_classes(["dim-label", "numeric"])
+                    .build();
+                row.add_suffix(&keys);
+                group.add(&row);
+            }
+            page.add(&group);
+        }
+
+        let dialog = adw::PreferencesDialog::new();
+        dialog.set_title("Keyboard Shortcuts");
+        dialog.add(&page);
+        dialog.present(Some(self));
+    }
+
     /// The header primary menu (Phase 11d): the transport conveniences that are
     /// keyboard-first but want a visible home (spec §3.1). Registers the backing
     /// window actions and returns the `MenuButton`.
@@ -3004,9 +3084,22 @@ impl ConservatoryWindow {
         });
         self.add_action(&jump);
 
+        // Keyboard Shortcuts (Phase 13e-iii): also bound to F1.
+        let shortcuts = gio::SimpleAction::new("show-shortcuts", None);
+        let weak = self.downgrade();
+        shortcuts.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.show_shortcuts_window();
+            }
+        });
+        self.add_action(&shortcuts);
+
         let menu = gio::Menu::new();
         menu.append(Some("Stop After Current"), Some("win.stop-after-current"));
         menu.append(Some("Jump to Current Track"), Some("win.jump-to-current"));
+        let help = gio::Menu::new();
+        help.append(Some("Keyboard Shortcuts"), Some("win.show-shortcuts"));
+        menu.append_section(None, &help);
 
         gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")

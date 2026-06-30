@@ -821,3 +821,8 @@ Research found the per-column `[All (N)]` item and track double-click-to-play al
 
 - [x] Wired the researched playback / navigation keys: Space (play/pause, via a capture-phase key controller that yields to text entry, the foobar2000 rule), Ctrl+→/← (next/previous), Ctrl+↑/↓ (volume ±5), Ctrl+0 (mute toggle, `pre_mute_volume` remembers the level), Ctrl+L (clear filter), Ctrl+Q (quit). All reuse existing `PlayerHandle` methods.
 - [x] Deliberately skipped (documented, not silent): bare/Shift arrow seek (conflicts with list navigation; deadbeef-cui does not bind it either) and Delete = remove-from-library (destructive, needs a confirmation flow).
+
+### Phase 13e-iii — Shortcuts reference + keymap doc ✅ (v0.0.88)
+
+- [x] `F1` (and a "Keyboard Shortcuts" header-menu entry) opens a grouped, curated shortcuts reference, built as an `adw::PreferencesDialog` rather than the deprecated `gtk::ShortcutsWindow` (and `AdwShortcutsDialog` postdates the project's libadwaita), so it stays current and inherits the app typography.
+- [x] `docs/keymap.md` brought in line with reality: the now-live playback keys marked wired, facet activate-to-play documented, and the still-deferred keys (arrow seek, save-Perspective, remove-from-library, jobs) honestly flagged. **Phase 13 (sleekness, layout, tidy, typography, browser parity) complete.**

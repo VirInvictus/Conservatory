@@ -21,15 +21,15 @@ use gtk4 as gtk;
 use libadwaita as adw;
 
 use conservatory_audiobooks::edit::{
-    BookEdit, SeriesEdit, parse_opt_index, parse_opt_rating, parse_opt_year, split_people,
+    parse_opt_index, parse_opt_rating, parse_opt_year, split_people, BookEdit, SeriesEdit,
 };
 use conservatory_audiobooks::{apply_book_edit, apply_book_reorg, plan_book_reorg};
-use conservatory_core::PlayerHandle;
 use conservatory_core::db::{
-    BookListRow, BookPlayback, ReadPool, WorkerHandle, book_chapters, get_book_playback,
-    list_book_rows, sort_shelf,
+    book_chapters, get_book_playback, list_book_rows, sort_shelf, BookListRow, BookPlayback,
+    ReadPool, WorkerHandle,
 };
 use conservatory_core::mover::MoveMode;
+use conservatory_core::PlayerHandle;
 
 use crate::book_query::filter_books;
 use crate::query::PoolResolver;
@@ -71,6 +71,7 @@ pub fn build_audiobooks_view(
         detail,
         filter: filter.clone(),
         all_rows: RefCell::new(Vec::new()),
+        detail_book: RefCell::new(None),
         accent: crate::ui::accent::AccentProvider::new(),
     });
 
@@ -95,6 +96,17 @@ pub fn build_audiobooks_view(
     {
         let inner = inner.clone();
         grid.connect_activate(move |_, pos| inner.play_from(pos as usize));
+    }
+
+    // Activating a chapter row in the detail pane plays that book from the chapter.
+    {
+        let handler = inner.clone();
+        inner.detail.chapters.connect_row_activated(move |_, row| {
+            let idx = row.index();
+            if idx >= 0 {
+                handler.play_detail_chapter(idx as usize);
+            }
+        });
     }
 
     // The detail pane's gear opens the per-book playback settings dialog.
@@ -210,6 +222,9 @@ struct Inner {
     /// The whole shelf, sorted in-progress-first; the filter narrows it into
     /// `store` without re-reading the database.
     all_rows: RefCell<Vec<BookListRow>>,
+    /// The book currently shown in the detail pane and its chapters, so a chapter
+    /// row activation can play that book from the chapter's book-absolute start.
+    detail_book: RefCell<Option<(i64, Vec<conservatory_core::db::BookChapter>)>>,
     /// The shared accent provider (Phase 13c). Unlike the single-accent surfaces,
     /// the shelf serves *many* `.book-accent-RRGGBB` rules at once (one per
     /// distinct tile colour), but the provider-swap is the same; only the CSS the
@@ -282,6 +297,7 @@ impl Inner {
     fn show_detail(&self, book: Option<&BookRow>) {
         let Some(book) = book else {
             self.detail.clear();
+            *self.detail_book.borrow_mut() = None;
             return;
         };
         let cover = self.cover_abs(book.cover_path());
@@ -292,6 +308,37 @@ impl Inner {
             }
         };
         self.detail.show(book, cover.as_deref(), &chapters);
+        *self.detail_book.borrow_mut() = Some((book.id(), chapters));
+    }
+
+    /// Play the detailed book from the activated chapter row (the chapter-list
+    /// twin of double-clicking a track): the book becomes the queue and playback
+    /// jumps to the chapter's book-absolute start, the timeline the Now Playing
+    /// chapter list also seeks on.
+    fn play_detail_chapter(&self, idx: usize) {
+        let (Some(player), Some(root)) = (self.player.as_ref(), self.root.as_ref()) else {
+            return;
+        };
+        let guard = self.detail_book.borrow();
+        let Some((book_id, chapters)) = guard.as_ref() else {
+            return;
+        };
+        let book_id = *book_id;
+        let _ = self
+            .rt
+            .block_on(self.worker.replace_queue_with_books(vec![book_id]));
+        let (items, _) = crate::playqueue::build_audiobook_queue(&self.pool, &[book_id], 0, root);
+        if items.is_empty() {
+            return;
+        }
+        let start = conservatory_core::player::plan_book(chapters)
+            .marks
+            .get(idx)
+            .map(|m| m.start_time);
+        player.play_queue(items, 0);
+        if let Some(pos) = start {
+            player.seek(pos);
+        }
     }
 
     /// Play the shelf from the activated cover (Phase 7c-iii): the activated book

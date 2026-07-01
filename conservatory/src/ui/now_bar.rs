@@ -41,6 +41,10 @@ pub struct NowBar {
     /// has chapters (`chapter_count > 0`), flanking the item prev/next.
     pub prev_chapter_btn: gtk::Button,
     pub next_chapter_btn: gtk::Button,
+    /// Per-show playback (speed / Smart Speed / Voice Boost) for the playing
+    /// podcast episode; sits by the transport, hidden unless an episode is playing.
+    /// The window wires the click to a per-show settings dialog.
+    pub podcast_btn: gtk::Button,
     pub position: gtk::Label,
     pub seek: gtk::Scale,
     pub volume: gtk::ScaleButton,
@@ -154,6 +158,13 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     let next_chapter_btn = transport_button("media-seek-forward-symbolic", "Next chapter");
     prev_chapter_btn.set_visible(false);
     next_chapter_btn.set_visible(false);
+    // Per-show podcast playback affordance, by the transport; hidden for music /
+    // books (the window toggles it for episodes and wires the dialog).
+    let podcast_btn = transport_button(
+        "preferences-other-symbolic",
+        "Speed, Smart Speed & Voice Boost",
+    );
+    podcast_btn.set_visible(false);
     let transport = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     transport.set_valign(gtk::Align::Center);
     transport.append(&prev_chapter_btn);
@@ -161,6 +172,7 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     transport.append(&play_btn);
     transport.append(&next_btn);
     transport.append(&next_chapter_btn);
+    transport.append(&podcast_btn);
     root.set_center_widget(Some(&transport));
 
     // Right: position label, seek slider, volume.
@@ -234,6 +246,7 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         play_btn,
         prev_chapter_btn,
         next_chapter_btn,
+        podcast_btn,
         position,
         seek,
         volume,

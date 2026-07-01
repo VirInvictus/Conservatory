@@ -37,7 +37,7 @@ pub fn build_inspector() -> Inspector {
         .build();
 
     let cover = gtk::Image::builder()
-        .pixel_size(300)
+        .pixel_size(210)
         .icon_name("audio-x-generic-symbolic")
         .build();
     let cover_frame = gtk::Frame::builder()
@@ -64,17 +64,18 @@ pub fn build_inspector() -> Inspector {
 
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
-        .width_request(340)
+        .width_request(250)
         .child(&body)
         .build();
 
-    // Open by default (Phase 12b): the cover panel is the deadbeef `coverart` +
-    // `selproperties` right column, so album art is present from first launch.
-    // `Ctrl+P` still toggles it.
+    // Closed by default: an empty inspector (no track selected) is dead space on
+    // launch. The browse fills the full width instead; `Ctrl+P` slides it in, and
+    // closing it returns the space (Phase 12b had it open, but the empty panel read
+    // as a wasted gap).
     let revealer = gtk::Revealer::builder()
         .transition_type(gtk::RevealerTransitionType::SlideLeft)
         .transition_duration(250)
-        .reveal_child(true)
+        .reveal_child(false)
         .child(&scroller)
         .build();
 

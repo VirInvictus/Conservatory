@@ -43,7 +43,7 @@ use crate::playqueue::{MixedQueueRow, build_mixed_queue, build_play_queue, fmt_p
 use crate::query::query_leaf;
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
-use crate::ui::fields::{book_fields, episode_fields, inspector_fields, track_fields};
+use crate::ui::fields::inspector_fields;
 use crate::ui::inspector::{Inspector, build_inspector};
 use crate::ui::now_bar::{NowBar, build_now_bar};
 use crate::ui::now_playing_panel::{NowPlayingPanel, build_now_playing_panel};
@@ -99,6 +99,10 @@ mod imp {
         pub poll_source: RefCell<Option<glib::SourceId>>,
         pub now_labels: RefCell<HashMap<i64, (String, String)>>,
         pub last_shown: Cell<Option<i64>>,
+        // The queue slot currently displayed. Item-change detection keys on this
+        // alongside `last_shown`: `track_id` alone is ambiguous (a track and an
+        // episode can share an id), which left the drawer stale between songs.
+        pub last_index: Cell<Option<usize>>,
         // The queue drawer (Phase 4b-ii-b). `queue_current` is the playing
         // position, shared with the panel's row factory for the highlight; the
         // window updates it from the snapshot and rebuilds the drawer.
@@ -262,6 +266,7 @@ impl ConservatoryWindow {
         // Facet panes in a row on top; the track table below (a draggable split,
         // the deadbeef-cui layout).
         let facet_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        facet_row.set_hexpand(true);
         for (i, pane) in panes.iter().enumerate() {
             if i > 0 {
                 facet_row.append(&gtk::Separator::new(gtk::Orientation::Vertical));
@@ -275,6 +280,10 @@ impl ConservatoryWindow {
         split.set_resize_start_child(true);
         split.set_resize_end_child(true);
         split.set_position(300);
+        // Fill both axes so the browse grows into space freed by a collapsing
+        // side / bottom revealer (see the expand-sink note on `body`).
+        split.set_hexpand(true);
+        split.set_vexpand(true);
 
         let sidebar = self.build_sidebar();
         let body = gtk::Paned::new(gtk::Orientation::Horizontal);
@@ -283,11 +292,13 @@ impl ConservatoryWindow {
         body.set_resize_start_child(false);
         body.set_shrink_start_child(false);
         body.set_position(190);
-        // The browse body is the horizontal expand-sink: when a right-docked
-        // revealer (queue / inspector) collapses, its freed width must flow back
-        // here, not sit empty. Without this the content Box has no hexpand child to
-        // grow and leaves a dead gap where the panel was.
+        // The browse body is the expand-sink: when a right-docked revealer (queue /
+        // inspector) or the bottom Now Playing drawer collapses, its freed space
+        // must flow back here, not sit empty. The whole container chain up to the
+        // AdwViewStack page must carry both expand flags or the browse parks at its
+        // natural size in the top-left and the freed space reads as a dead gap.
         body.set_hexpand(true);
+        body.set_vexpand(true);
 
         // The always-on filter bar (spec §3.4); Ctrl+F focuses it, no search mode.
         let filter = gtk::SearchEntry::builder()
@@ -329,12 +340,19 @@ impl ConservatoryWindow {
         // over the Podcasts tab (spec §2.3). This is the only layout change to
         // the music browse; its behaviour is unchanged.
         let music_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        music_page.set_hexpand(true);
+        music_page.set_vexpand(true);
         music_page.append(&filter_bar);
         music_page.append(&content);
 
         // The top-level view stack (spec §2.2, §2.3): Music first; the Podcasts
         // (and later Audiobooks) plugin pages are added, feature-gated, below.
+        // AdwViewStack does not propagate its page's expand flags, so it is set to
+        // fill explicitly; otherwise the page parks at its natural size and the
+        // browse cannot grow into freed revealer space.
         let stack = adw::ViewStack::new();
+        stack.set_hexpand(true);
+        stack.set_vexpand(true);
         stack.add_titled_with_icon(&music_page, Some("music"), "Music", "folder-music-symbolic");
 
         // The bottom Now Playing drawer (v0.0.38): built here so the toolbar
@@ -466,6 +484,15 @@ impl ConservatoryWindow {
             }
         });
         now_bar.left.add_controller(click);
+
+        // The transport's podcast affordance opens the playing episode's per-show
+        // playback settings (speed / Smart Speed / Voice Boost) right by play/pause.
+        let weak = self.downgrade();
+        now_bar.podcast_btn.connect_clicked(move |btn| {
+            if let Some(win) = weak.upgrade() {
+                win.open_playing_show_settings(btn);
+            }
+        });
 
         // The plugin pages (lazily built) plus the shared multi-view chrome
         // (switcher in the header, the adaptive bottom switcher bar, the
@@ -681,6 +708,9 @@ impl ConservatoryWindow {
             && let Ok(state) = get_audio_state(&conn)
         {
             player.set_dsp(state.dsp);
+            player.set_smart_speed_level(conservatory_core::player::SmartSpeedLevel::from_db(
+                &state.smart_speed_level,
+            ));
             player.set_output_backend(state.output_backend);
             player.set_resampler_quality(state.resampler);
         }
@@ -1540,8 +1570,43 @@ impl ConservatoryWindow {
         }
         out_group.add(&gapless);
 
+        // --- Spoken word (Smart Speed level) ---
+        let ss_group = adw::PreferencesGroup::new();
+        ss_group.set_title("Spoken word");
+        ss_group.set_description(Some(
+            "How aggressively Smart Speed trims dead air. Turn Smart Speed on per \
+             show or per book; this sets how hard it cuts (applies live).",
+        ));
+        let ss_level = adw::ComboRow::new();
+        ss_level.set_title("Smart Speed level");
+        ss_level.set_model(Some(&gtk::StringList::new(&sound::option_labels(
+            &sound::SMART_SPEED_LEVELS,
+        ))));
+        ss_level.set_selected(sound::option_index(
+            &sound::SMART_SPEED_LEVELS,
+            &state.borrow().smart_speed_level,
+        ));
+        {
+            let state = state.clone();
+            let weak = self.downgrade();
+            ss_level.connect_selected_notify(move |row| {
+                let value = sound::option_value(&sound::SMART_SPEED_LEVELS, row.selected());
+                state.borrow_mut().smart_speed_level = value.to_string();
+                // Apply live to the current episode / book (persisted on close).
+                if let Some(win) = weak.upgrade()
+                    && let Some(player) = win.imp().player.get()
+                {
+                    player.set_smart_speed_level(
+                        conservatory_core::player::SmartSpeedLevel::from_db(value),
+                    );
+                }
+            });
+        }
+        ss_group.add(&ss_level);
+
         page.add(&rg_group);
         page.add(&dsp_group);
+        page.add(&ss_group);
         page.add(&out_group);
 
         // Persist the whole audio config on close (live changes applied above are
@@ -1718,6 +1783,7 @@ impl ConservatoryWindow {
 
         *imp.now_labels.borrow_mut() = labels;
         imp.last_shown.set(None); // force a label refresh on the next poll
+        imp.last_index.set(None);
         if let Some(cur) = imp.queue_current.get() {
             cur.set(Some(start as i64));
         }
@@ -1738,13 +1804,6 @@ impl ConservatoryWindow {
             .and_then(|conn| load_queue_display(&conn).ok())
             .unwrap_or_default();
         panel.set_rows(&rows);
-        // Keep the Now Playing "Up next" peek in step with queue edits (Phase 11c).
-        if let Some(np) = imp.now_playing.get()
-            && np.is_open()
-            && let Ok(conn) = pool.open()
-        {
-            self.refresh_now_playing_upnext(&conn);
-        }
     }
 
     fn toggle_queue(&self) {
@@ -1892,6 +1951,7 @@ impl ConservatoryWindow {
         let position = saved.map(|s| s.position).unwrap_or(0.0);
         *imp.now_labels.borrow_mut() = labels;
         imp.last_shown.set(None);
+        imp.last_index.set(None);
         if let Some(cur) = imp.queue_current.get() {
             cur.set(Some(start as i64));
         }
@@ -2800,6 +2860,15 @@ impl ConservatoryWindow {
         };
         let snap = player.snapshot();
 
+        // Gate the spectrum capture on real playback (Phase 12d isolation): the tap
+        // targets our own mpv output node, which exists only while audio flows, so
+        // the visualizer reacts to Conservatory alone and never the microphone.
+        if let Some(panel) = imp.now_playing.get() {
+            let playing =
+                snap.track_id.is_some() && !snap.paused && !snap.ended && !snap.buffering;
+            panel.set_playing(playing);
+        }
+
         // Keep the stop-after-current toggle's checkmark in step with the engine,
         // which disarms the flag once the boundary fires (Phase 11d).
         if let Some(a) = imp.stop_action.get() {
@@ -2812,6 +2881,7 @@ impl ConservatoryWindow {
         if snap.ended || snap.track_id.is_none() {
             if imp.last_shown.get().is_some() {
                 imp.last_shown.set(None);
+                imp.last_index.set(None);
                 now.clear();
                 self.refresh_now_playing(None, None);
                 *imp.tech_static.borrow_mut() = (None, None, None);
@@ -2822,8 +2892,12 @@ impl ConservatoryWindow {
             return;
         }
 
-        if imp.last_shown.get() != snap.track_id {
+        // Detect an item change on the queue slot as well as the id: a track and
+        // an episode can share an id, so `track_id` alone missed some advances and
+        // left the drawer / Now-bar showing the previous song.
+        if imp.last_shown.get() != snap.track_id || imp.last_index.get() != snap.current_index {
             imp.last_shown.set(snap.track_id);
+            imp.last_index.set(snap.current_index);
             if let Some(id) = snap.track_id {
                 // Resolve title / artist / cover by (kind, id). A track and an
                 // episode share the snapshot's id field, so the kind decides which
@@ -2895,6 +2969,9 @@ impl ConservatoryWindow {
         now.set_status(snap.buffering, snap.streaming);
         // Chapter-skip buttons appear only for an item with chapters (6c-iii-b).
         now.set_chapter_nav_visible(snap.chapter_count > 0);
+        // The per-show podcast playback affordance shows only for an episode.
+        now.podcast_btn
+            .set_visible(snap.kind == Some(MediaKind::Episode));
         // Sleep timer (6c-iii-d): the moon button shows whenever something is
         // loaded (the media-agnostic scope decision); its label tracks the timer.
         now.sleep_btn.set_visible(snap.track_id.is_some());
@@ -2908,7 +2985,6 @@ impl ConservatoryWindow {
             panel.set_current_chapter(snap.current_chapter);
             panel.set_smart_speed(snap.smart_speed_active, snap.smart_speed_saved);
             panel.set_sleep(snap.sleep, snap.kind);
-            panel.set_scrubber(snap.position, snap.duration);
         }
         now.position
             .set_text(&fmt_position(snap.position, snap.duration));
@@ -3157,24 +3233,122 @@ impl ConservatoryWindow {
         }
     }
 
+    /// Open the per-show playback settings (speed / Smart Speed / Voice Boost) for
+    /// the currently-playing podcast episode's show, from the Now-bar affordance.
+    /// The library-management fields (skip intro/outro, inbox policy) are preserved
+    /// from the stored row; this is the transport-side shortcut to the show gear,
+    /// so the controls live near play/pause where you reach for them.
+    #[cfg(feature = "podcasts")]
+    fn open_playing_show_settings(&self, anchor: &gtk::Button) {
+        use crate::ui::podcasts::{MAX_SPEED, MIN_SPEED, default_settings, settings_from_form};
+        use conservatory_core::db::{get_episode, get_show, get_show_settings};
+
+        let imp = self.imp();
+        let (Some(player), Some(pool)) = (imp.player.get(), imp.pool.get()) else {
+            return;
+        };
+        let snap = player.snapshot();
+        let (Some(MediaKind::Episode), Some(episode_id)) = (snap.kind, snap.track_id) else {
+            return;
+        };
+        let Ok(conn) = pool.open() else { return };
+        let Some(ep) = get_episode(&conn, episode_id).ok().flatten() else {
+            return;
+        };
+        let show_id = ep.show_id;
+        let show_title = get_show(&conn, show_id)
+            .ok()
+            .flatten()
+            .map(|s| s.title)
+            .unwrap_or_else(|| "Show".to_string());
+        let current = get_show_settings(&conn, show_id).ok().flatten();
+        let cur = current.clone().unwrap_or_else(|| default_settings(show_id));
+        drop(conn);
+
+        let group = adw::PreferencesGroup::new();
+        group.set_description(Some(
+            "Smart Speed trims dead air; Voice Boost lifts quiet, uneven speech. \
+             They apply to this show's episodes when you play them.",
+        ));
+        let speed = adw::SpinRow::with_range(MIN_SPEED, MAX_SPEED, 0.05);
+        speed.set_title("Playback speed");
+        speed.set_digits(2);
+        speed.set_value(cur.playback_speed);
+        let smart = adw::SwitchRow::new();
+        smart.set_title("Smart Speed");
+        smart.set_active(cur.smart_speed);
+        let voice = adw::SwitchRow::new();
+        voice.set_title("Voice Boost");
+        voice.set_active(cur.voice_boost);
+        group.add(&speed);
+        group.add(&smart);
+        group.add(&voice);
+
+        let dialog = adw::AlertDialog::new(Some(&show_title), None);
+        dialog.set_extra_child(Some(&group));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("save", "Save");
+        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("save"));
+        dialog.set_close_response("cancel");
+
+        let weak = self.downgrade();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "save" {
+                return;
+            }
+            let Some(win) = weak.upgrade() else { return };
+            let imp = win.imp();
+            let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
+                return;
+            };
+            let settings = settings_from_form(
+                current.as_ref(),
+                show_id,
+                speed.value(),
+                smart.is_active(),
+                voice.is_active(),
+                cur.skip_intro,
+                cur.skip_outro,
+                cur.inbox_policy,
+            );
+            let _ = rt.block_on(worker.upsert_show_settings(settings));
+            // Apply to the episode playing now so the change is heard immediately,
+            // not only from the next episode (the persisted settings cover that).
+            if let Some(player) = imp.player.get() {
+                player.set_spoken(speed.value(), smart.is_active(), voice.is_active());
+            }
+        });
+        dialog.present(Some(anchor));
+    }
+
+    /// Music-only builds carry the Now-bar button but never show it (no episodes),
+    /// so the handler is an inert stub.
+    #[cfg(not(feature = "podcasts"))]
+    fn open_playing_show_settings(&self, _anchor: &gtk::Button) {}
+
     /// Toggle the bottom Now Playing drawer; when opening, fill it from the
-    /// current snapshot so it never shows stale content (v0.0.38).
+    /// current snapshot so it never shows stale content (v0.0.38). The toggle
+    /// happens *before* the refresh: `refresh_now_playing` no-ops while the drawer
+    /// reads closed, so refreshing first would leave the freshly-opened drawer
+    /// stale.
     fn toggle_now_playing(&self) {
         let imp = self.imp();
         let Some(panel) = imp.now_playing.get() else {
             return;
         };
-        if !panel.is_open()
+        let opening = !panel.is_open();
+        panel.toggle();
+        if opening
             && let Some(player) = imp.player.get()
         {
             let snap = player.snapshot();
             self.refresh_now_playing(snap.kind, snap.track_id);
         }
-        panel.toggle();
     }
 
-    /// Refresh the Now Playing drawer for `(kind, id)`: read the full metadata
-    /// and project it to label/value rows (v0.0.38). A no-op while the drawer is
+    /// Refresh the Now Playing drawer for `(kind, id)`: read the item's title /
+    /// subtitle / cover and its chapter list (v0.0.38). A no-op while the drawer is
     /// closed, so the queue advancing does not do needless reads.
     fn refresh_now_playing(&self, kind: Option<MediaKind>, id: Option<i64>) {
         let imp = self.imp();
@@ -3192,8 +3366,8 @@ impl ConservatoryWindow {
             return;
         };
         use conservatory_core::db::{
-            book_chapters, book_metadata, book_narrators, episode_metadata, get_album, get_book,
-            get_episode, get_show, get_track, list_chapters, track_metadata,
+            book_chapters, book_metadata, episode_metadata, get_album, get_book, get_track,
+            list_chapters, track_metadata,
         };
         match kind {
             Some(MediaKind::Audiobook) => {
@@ -3204,26 +3378,12 @@ impl ConservatoryWindow {
                     return;
                 };
                 let chapters = book_chapters(&conn, id).unwrap_or_default();
-                let narrators: Vec<String> = book_narrators(&conn, id)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|p| p.name)
-                    .collect();
-                // A book is one file (M4B) when every chapter shares a path.
-                let single_file = chapters
-                    .first()
-                    .map(|c0| chapters.iter().all(|c| c.file_path == c0.file_path))
-                    .unwrap_or(true);
-                panel.set_fields(
-                    &np.title.clone(),
-                    &book_fields(&np, &book, &narrators, chapters.len(), single_file),
-                );
+                panel.set_now_playing(&np.title, &np.artist.clone().unwrap_or_default());
                 let cover_abs = match (imp.library_root.get(), np.album_cover_path.as_deref()) {
                     (Some(root), Some(cp)) => Some(root.join(cp)),
                     _ => None,
                 };
                 panel.set_cover(cover_abs.as_deref(), book.accent_rgb);
-                panel.set_audio_state(None);
                 // The clickable chapter list speaks book-absolute time (the engine's
                 // `Seek` is absolute too): synthesize a `Chapter` per mark.
                 if let Some(player) = imp.player.get() {
@@ -3246,24 +3406,16 @@ impl ConservatoryWindow {
                 }
             }
             Some(MediaKind::Episode) => {
-                let (Ok(Some(np)), Ok(Some(ep))) =
-                    (episode_metadata(&conn, id), get_episode(&conn, id))
-                else {
+                let Ok(Some(np)) = episode_metadata(&conn, id) else {
                     panel.clear();
                     return;
                 };
-                let show = get_show(&conn, ep.show_id).ok().flatten();
-                let streaming = ep.audio_path.is_none();
-                panel.set_fields(
-                    &np.title.clone(),
-                    &episode_fields(&np, &ep, show.as_ref(), streaming),
-                );
+                panel.set_now_playing(&np.title, &np.artist.clone().unwrap_or_default());
                 let cover_abs = match (imp.library_root.get(), np.album_cover_path.as_deref()) {
                     (Some(root), Some(cp)) => Some(root.join(cp)),
                     _ => None,
                 };
                 panel.set_cover(cover_abs.as_deref(), None);
-                panel.set_audio_state(None);
                 // The clickable chapter list tracks the playing episode (6c-iii-c);
                 // the current-chapter highlight + Smart Speed line tick from the
                 // per-poll snapshot in `refresh_now_bar`.
@@ -3282,11 +3434,11 @@ impl ConservatoryWindow {
                 let album = track
                     .album_id
                     .and_then(|aid| get_album(&conn, aid).ok().flatten());
-                panel.set_fields(
-                    &np.title.clone(),
-                    &track_fields(&np, &track, album.as_ref()),
+                let subtitle = crate::ui::now_bar::now_bar_subtitle(
+                    &np.artist.clone().unwrap_or_default(),
+                    np.album.as_deref(),
                 );
-                // Full-bleed accent cover + the audio-engine state line (Phase 11c).
+                panel.set_now_playing(&np.title, &subtitle);
                 let cover_abs = match (imp.library_root.get(), np.album_cover_path.as_deref()) {
                     (Some(root), Some(cp)) => Some(root.join(cp)),
                     _ => None,
@@ -3295,44 +3447,12 @@ impl ConservatoryWindow {
                     cover_abs.as_deref(),
                     album.as_ref().and_then(|a| a.accent_rgb),
                 );
-                let eq = conservatory_core::db::get_eq_state(&conn)
-                    .unwrap_or_else(|_| conservatory_core::db::EqState::flat());
-                let audio = conservatory_core::db::get_audio_state(&conn).unwrap_or_default();
-                panel.set_audio_state(Some(&crate::ui::now_playing_panel::audio_state_line(
-                    &eq,
-                    &audio.dsp,
-                    audio.gapless,
-                )));
                 // A track has no chapters: hide the section.
                 if let Some(player) = imp.player.get() {
                     panel.set_chapters(&[], player);
                 }
             }
         }
-        self.refresh_now_playing_upnext(&conn);
-    }
-
-    /// The "Up next" queue-tail peek for the Now Playing drawer (Phase 11c): the
-    /// items after the playing one, hidden when it is last. Shared by all kinds.
-    fn refresh_now_playing_upnext(&self, conn: &conservatory_core::db::Connection) {
-        let imp = self.imp();
-        let Some(panel) = imp.now_playing.get() else {
-            return;
-        };
-        let rows = conservatory_core::db::load_queue_display(conn).unwrap_or_default();
-        let current = imp.player.get().and_then(|p| p.snapshot().current_index);
-        let up = crate::ui::now_playing_panel::upcoming(&rows, current, 4);
-        let upnext: Vec<crate::ui::now_playing_panel::UpNextRow> = up
-            .iter()
-            .map(|r| crate::ui::now_playing_panel::UpNextRow {
-                icon: crate::ui::now_playing_panel::kind_icon(r.kind),
-                text: match r.artist.as_deref().filter(|a| !a.is_empty()) {
-                    Some(a) => format!("{} \u{2014} {}", r.title, a),
-                    None => r.title.clone(),
-                },
-            })
-            .collect();
-        panel.set_upnext(&upnext);
     }
 
     /// The left Perspectives column: a list (Default + saved searches) over a

@@ -1,5 +1,23 @@
 # Patch Notes
 
+## v0.1.2
+
+Smart Speed gains a level.
+
+- **Smart Speed level (Gentle / Balanced / Aggressive).** A new control on the Sound settings sets how aggressively Smart Speed trims dead air, so you can trade gentle cuts for more trimming. Gentle is the v0.1.1 tuning and stays the default; Balanced and Aggressive act on shorter, quieter pauses. Measured on a real episode with ffmpeg, the tiers remove roughly 0.3% / 1% / 3.5% of a tightly-produced podcast (more on looser, chattier shows). The per-show and per-book Smart Speed on/off is unchanged; this is the one global aggressiveness applied wherever Smart Speed is on, for podcasts and audiobooks alike. The level applies to the current episode live (the audio-filter chain rebuilds without a reload), persists in the audio settings (a new `audio_state` column, migration 0016), and is settable headless with `conservatory-cli dsp smart-speed <gentle|balanced|aggressive>`.
+
+## v0.1.1
+
+A polish and bug-fix pass over the player surface, plus spoken-word playback fixes.
+
+- **The Now Playing drawer is a full-bleed spectrum.** The expanded drawer (Ctrl+I) drops the redundant second seekbar and the metadata grid; the visualizer now fills it edge to edge as the hero, with a minimal cover / title / artist chip over it. The analyzer is much denser (one thin bar per band, 320 bands) with gradient bars, slow-falling peak caps, and a soft reflection, and it updates live as the queue advances (item-change detection now keys on the queue slot, not just the track id, so it no longer goes stale between songs).
+- **The spectrum taps only Conservatory.** It captured the whole output device before, so any other app's audio moved the bars. It now targets our own mpv output node by name (WirePlumber fans the node out to both the speakers and the capture), so it reacts to Conservatory alone; the tap runs only while playing, so it never falls back to the microphone.
+- **Side panels give their space back.** Closing the Track Properties inspector or the queue, and the Now Playing drawer collapsing, now return the freed area to the browse, which fills both axes (a revealer was expanding when it should not have, so the browse sat parked in the top-left). The inspector no longer opens empty by default, and both side panels are a touch narrower.
+- **The CLI exits cleanly.** `conservatory-cli play` and `audiobook play` now respond to Ctrl-C and exit promptly, instead of ignoring the signal (libmpv sets it to ignore) and then hanging in libmpv / libpipewire teardown.
+- **Audiobook chapters are playable.** Activating a chapter row in the book detail pane now plays that book from the chapter's position; it was display-only before.
+- **Podcast Smart Speed / Voice Boost / speed by the transport.** A per-show playback control sits next to the transport whenever a podcast episode is playing, so speed, Smart Speed, and Voice Boost are reachable where you reach for play/pause. Changes apply to the current episode live: mpv speed and the audio-filter chain rebuild without a reload, not only from the next episode.
+- **Smart Speed actually trims dead air now.** Its silence gate was tuned to near-digital-silence (-40 dB over 1 s) and was measured (ffmpeg, real episodes) to remove nothing from produced podcasts; it is now -30 dB over 0.5 s, which triggers on real speech pauses. Modern loudness-normalized podcasts still have little removable silence, so a per-show aggressiveness level and a dynamic speed-up approach are planned.
+
 ## v0.1.0
 
 The first tagged milestone. Conservatory is a daily-driver music player, a full podcast client, and an audiobook library in one native GNOME app, with a database-owned library and a trust-critical file mover (dry-run, undo, crash-safe replay).

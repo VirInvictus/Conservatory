@@ -7,13 +7,13 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, TimeZone, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPerson, BookPlayback, Chapter,
-    CompSettings, DspState, EQ_BAND_COUNT, Episode, EqPreset, EqState, InboxPolicy,
-    LevelerSettings, LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState,
-    QueueItem, ResamplerQuality, Series, Show, ShowSettings, Tag, Track, VerifyResultRow,
+    CompSettings, DspState, Episode, EqPreset, EqState, InboxPolicy, LevelerSettings,
+    LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState, QueueItem,
+    ResamplerQuality, Series, Show, ShowSettings, Tag, Track, VerifyResultRow, EQ_BAND_COUNT,
 };
 use crate::errors::Result;
 use crate::verify::VerifyVerdict;
@@ -1460,6 +1460,7 @@ pub fn get_audio_state(conn: &Connection) -> Result<AudioState> {
                 output_backend: row.get("output_backend")?,
                 // Degrade an unrecognized stored value to the default.
                 resampler: resampler_raw.parse().unwrap_or(ResamplerQuality::Default),
+                smart_speed_level: row.get("smart_speed_level")?,
             })
         })
         .optional()?;

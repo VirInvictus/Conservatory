@@ -359,7 +359,7 @@ impl Inner {
 
 /// The schema defaults for a show with no stored `show_settings` row (mirrors
 /// the CLI `run_podcast_settings` skeleton and the migration `0006` defaults).
-fn default_settings(show_id: i64) -> ShowSettings {
+pub(crate) fn default_settings(show_id: i64) -> ShowSettings {
     ShowSettings {
         show_id,
         playback_speed: 1.0,
@@ -396,7 +396,7 @@ fn inbox_policy_from_index(index: u32) -> InboxPolicy {
 /// preserving `skip_forward` / `skip_back` from `current` (the panel does not
 /// expose those global-inherit fields, so a save must not clobber them).
 #[allow(clippy::too_many_arguments)]
-fn settings_from_form(
+pub(crate) fn settings_from_form(
     current: Option<&ShowSettings>,
     show_id: i64,
     speed: f64,
@@ -422,8 +422,8 @@ fn settings_from_form(
 /// Variable-speed bounds for the speed spin row, mirroring `player::profile`
 /// (`MIN_SPEED` / `MAX_SPEED`). The authoritative clamp is at playback
 /// resolution; this only bounds the input widget.
-const MIN_SPEED: f64 = 0.25;
-const MAX_SPEED: f64 = 4.0;
+pub(crate) const MIN_SPEED: f64 = 0.25;
+pub(crate) const MAX_SPEED: f64 = 4.0;
 
 fn detail_subtitle(r: &EpisodeRow) -> String {
     let mut parts = vec![r.show_title()];

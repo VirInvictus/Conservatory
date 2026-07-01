@@ -649,6 +649,10 @@ pub struct AudioState {
     pub dsp: DspState,
     pub output_backend: String,
     pub resampler: ResamplerQuality,
+    /// The global Smart Speed aggressiveness, stored as TEXT (`gentle` / `balanced`
+    /// / `aggressive`) so this struct stays db-owned; the player layer converts it
+    /// to `player::spoken::SmartSpeedLevel` (the `replaygain_mode` idiom).
+    pub smart_speed_level: String,
 }
 
 impl Default for AudioState {
@@ -663,6 +667,7 @@ impl Default for AudioState {
             dsp: DspState::off(),
             output_backend: "auto".to_string(),
             resampler: ResamplerQuality::Default,
+            smart_speed_level: "gentle".to_string(),
         }
     }
 }

@@ -4,12 +4,12 @@
 //! update/delete land with the editor and mover in later phases. Reads never
 //! come through here: they use the read pool (`reads.rs`).
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::models::{
-    Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
-    Track, VerifyResultRow,
+    Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, Episode,
+    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track, VerifyResultRow,
+    EQ_BAND_COUNT,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -359,7 +359,7 @@ pub(crate) fn set_audio_state(conn: &Connection, state: &AudioState) -> Result<(
             comp_attack_ms = ?8, comp_release_ms = ?9,
             limiter_enabled = ?10, limiter_ceiling_db = ?11,
             leveler_enabled = ?12, leveler_target_peak = ?13, leveler_gausssize = ?14,
-            output_backend = ?15, resampler_quality = ?16
+            output_backend = ?15, resampler_quality = ?16, smart_speed_level = ?17
          WHERE id = 0",
         params![
             state.replaygain_mode,
@@ -378,6 +378,7 @@ pub(crate) fn set_audio_state(conn: &Connection, state: &AudioState) -> Result<(
             dsp.leveler.settings.gausssize,
             state.output_backend,
             state.resampler.as_str(),
+            state.smart_speed_level,
         ],
     )?;
     Ok(())

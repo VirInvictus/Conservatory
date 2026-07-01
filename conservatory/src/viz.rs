@@ -1,29 +1,34 @@
 //! The spectrum audio tap (Phase 12d). libmpv exposes no PCM tap, so the
-//! visualizer captures the PipeWire **default sink monitor** (what is playing,
-//! never altering it) on its own thread, runs the core FFT analyzer, and
-//! publishes log-spaced band levels into a shared buffer the GTK widget reads on
-//! its frame clock.
+//! visualizer captures the PipeWire graph (never altering it) on its own thread,
+//! runs the core FFT analyzer, and publishes log-spaced band levels into a shared
+//! buffer the GTK widget reads on its frame clock.
+//!
+//! It targets **our own mpv output node** (`application.name = AUDIO_CLIENT_NAME`)
+//! rather than the device sink, so the bars react only to Conservatory's playback,
+//! not whatever else the machine is playing. WirePlumber fans the node's output
+//! out to both the speakers and this capture, so playback is untouched. Because a
+//! target-less capture would fall back to the **microphone**, the GTK side only
+//! runs this tap while Conservatory is actually playing (the node is then present),
+//! so the mic is never tapped.
 //!
 //! All PipeWire objects are `Rc`-based and thread-affine, so the entire capture
 //! lives inside the spawned thread; only the `Arc<Mutex<Vec<f32>>>` band buffer
 //! and a `pipewire::channel` terminate signal cross the boundary.
-//!
-//! Caveat: a sink-monitor tap sees *all* system audio, not only Conservatory's.
-//! When something else plays, the bars react too. That is inherent to capturing
-//! the output device without a private loopback.
 
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use conservatory_core::player::spectrum::{FFT_SIZE, SpectrumAnalyzer};
+use conservatory_core::player::spectrum::{SpectrumAnalyzer, FFT_SIZE};
+use conservatory_core::player::AUDIO_CLIENT_NAME;
 
 use pipewire as pw;
 use pw::spa;
 use pw::spa::pod::Pod;
 
 /// The number of spectrum lines, log-spaced from ~32 Hz to Nyquist. Deliberately
-/// high for a dense field of thin lines (a fine analyzer, not chunky bars).
-pub const N_BANDS: usize = 192;
+/// high for a dense field of thin lines (a fine foobar2000-style analyzer, not
+/// chunky bars); the widget draws one bar per band.
+pub const N_BANDS: usize = 320;
 
 /// A running capture: the shared band buffer the widget polls, plus the handle to
 /// stop the capture thread. Dropping or calling [`SpectrumTap::stop`] tears the
@@ -106,13 +111,18 @@ fn run_capture(
         move |_| mainloop.quit()
     });
 
-    // `STREAM_CAPTURE_SINK=true` makes this an input that records the default
-    // sink's monitor (what is playing), following the default device.
+    // Target our own mpv output node by name (`target.object` = the player's
+    // `audio-client-name`): WirePlumber links this capture to that node's output
+    // ports (a fan-out tap; the speakers keep their link), so only Conservatory's
+    // audio reaches the analyzer. No `STREAM_CAPTURE_SINK`, which would record the
+    // whole device. The caller only runs this while the node exists (playing), so
+    // the target is always present and the capture never falls back to the mic.
     let props = pw::properties::properties! {
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Capture",
         *pw::keys::MEDIA_ROLE => "Music",
-        *pw::keys::STREAM_CAPTURE_SINK => "true",
+        // `PW_KEY_TARGET_OBJECT`; not exposed as a `pw::keys` const in this binding.
+        "target.object" => AUDIO_CLIENT_NAME,
         *pw::keys::NODE_NAME => "Conservatory Visualizer",
     };
 

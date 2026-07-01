@@ -19,6 +19,7 @@ use libmpv2::{EndFileReason, Mpv, mpv_end_file_reason};
 use crate::db::models::{DspState, EqState, ResamplerQuality};
 use crate::errors::{Error, Result};
 use crate::player::profile::MusicProfile;
+use crate::player::spoken::SmartSpeedLevel;
 use crate::player::state::EndReason;
 
 /// An audio output device mpv can play to (spec §6.5, the output-sink picker).
@@ -54,6 +55,11 @@ pub struct MpvHost {
     /// applied into the `af` chain on each load. Defaults to off (no dynamics
     /// stages); the engine updates it via [`MpvHost::set_dsp`].
     dsp: DspState,
+    /// The global Smart Speed aggressiveness (Phase 6c follow-on), folded into the
+    /// `@ss` gate whenever a spoken-word item has Smart Speed on. The engine
+    /// updates it via [`MpvHost::set_smart_speed_level`]; the per-item on/off stays
+    /// in the show / book settings.
+    smart_speed_level: SmartSpeedLevel,
     /// The currently-loaded item's profile (Phase 5.5b-ii), kept so the `af`
     /// chain can be rebuilt mid-playback on an EQ change. `None` when nothing is
     /// loaded (an EQ change then just updates state, applied on the next load).
@@ -96,6 +102,11 @@ impl MpvHost {
             // cover art (mpv would otherwise treat the picture as a video).
             init.set_property("vo", "null")?;
             init.set_property("vid", "no")?;
+            // A stable client name so the visualizer can target *our* output node
+            // on PipeWire (the spectrum taps this node specifically, not the whole
+            // sink, so other apps' audio does not move the bars). Surfaces as the
+            // node's application.name; see `crate::player::AUDIO_CLIENT_NAME`.
+            init.set_property("audio-client-name", crate::player::AUDIO_CLIENT_NAME)?;
             if silent {
                 init.set_property("ao", "null")?;
             }
@@ -106,6 +117,7 @@ impl MpvHost {
             mpv,
             eq: EqState::flat(),
             dsp: DspState::off(),
+            smart_speed_level: SmartSpeedLevel::default(),
             current_profile: None,
             output_backend: "auto".to_string(),
             resampler: ResamplerQuality::Default,
@@ -128,6 +140,30 @@ impl MpvHost {
     /// [`MpvHost::load`].
     pub fn set_dsp(&mut self, dsp: DspState) {
         self.dsp = dsp;
+        let _ = self.rebuild_af();
+    }
+
+    /// Set the global Smart Speed aggressiveness (Phase 6c follow-on). Applied live
+    /// when playing (a structural `af` rebuild, the `set_dsp` shape), else stored
+    /// for the next load. Only affects a spoken-word item with Smart Speed on.
+    pub fn set_smart_speed_level(&mut self, level: SmartSpeedLevel) {
+        self.smart_speed_level = level;
+        let _ = self.rebuild_af();
+    }
+
+    /// Apply spoken-word settings (speed / Smart Speed / Voice Boost) to the item
+    /// playing now (Phase 6c): update the stored profile so the af rebuild reflects
+    /// them, set mpv `speed` live, and rebuild the `af` chain for the `@ss` / `@vb`
+    /// stages. A no-op with nothing loaded, so it never leaks a podcast's speed
+    /// onto the next music track (that item resolves its own profile at load).
+    pub fn set_spoken(&mut self, speed: f64, smart_speed: bool, voice_boost: bool) {
+        let Some(profile) = self.current_profile.as_mut() else {
+            return;
+        };
+        profile.speed = speed;
+        profile.smart_speed = smart_speed;
+        profile.voice_boost = voice_boost;
+        let _ = self.mpv.set_property("speed", speed);
         let _ = self.rebuild_af();
     }
 
@@ -172,7 +208,8 @@ impl MpvHost {
         let Some(profile) = self.current_profile else {
             return Ok(());
         };
-        let af = crate::player::chain::build_af_chain(&profile, &self.eq, &self.dsp);
+        let af =
+            crate::player::chain::build_af_chain(&profile, &self.eq, &self.dsp, self.smart_speed_level);
         self.mpv
             .set_property("af", af.as_str())
             .map_err(|e| Error::Player(format!("rebuilding af chain: {e}")))
@@ -206,7 +243,8 @@ impl MpvHost {
         // track — the fix for mpv #8267, where the built-in `--replaygain` (now
         // dropped) sat after the chain and inherited the first track's gain. An
         // empty string clears any prior chain.
-        let af = crate::player::chain::build_af_chain(profile, &self.eq, &self.dsp);
+        let af =
+            crate::player::chain::build_af_chain(profile, &self.eq, &self.dsp, self.smart_speed_level);
         self.mpv
             .set_property("af", af.as_str())
             .map_err(|e| Error::Player(format!("setting af chain: {e}")))?;

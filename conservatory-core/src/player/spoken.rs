@@ -11,17 +11,67 @@
 use crate::player::chain::fmt_db;
 use crate::player::dsp::{db_to_linear, fmt_lin};
 
+/// How aggressively Smart Speed trims dead air. The per-show / per-book on/off is
+/// separate; this is the global gate applied wherever Smart Speed is on. The three
+/// tiers are the measured presets (ffmpeg over real episodes): `Gentle` removes
+/// ~0.3% on a tightly-produced show, `Aggressive` ~3.5%, at the cost of cutting
+/// closer to natural speech rhythm. `Gentle` is the default (the v0.1.1 tuning).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SmartSpeedLevel {
+    #[default]
+    Gentle,
+    Balanced,
+    Aggressive,
+}
+
+impl SmartSpeedLevel {
+    /// The DB / config token (round-trips through `AudioState`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gentle => "gentle",
+            Self::Balanced => "balanced",
+            Self::Aggressive => "aggressive",
+        }
+    }
+
+    /// Parse a stored token, degrading an unknown value to the default (`Gentle`)
+    /// rather than failing playback on a hand-edited row.
+    pub fn from_db(s: &str) -> Self {
+        match s {
+            "balanced" => Self::Balanced,
+            "aggressive" => Self::Aggressive,
+            _ => Self::Gentle,
+        }
+    }
+
+    /// `(stop_duration, stop_threshold, stop_silence)` for the level, tuned against
+    /// real podcasts (see the module note). A lower threshold + shorter duration +
+    /// smaller retained beat trims more but risks sounding choppy.
+    fn gate(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::Gentle => ("0.5", "-30dB", "0.3"),
+            Self::Balanced => ("0.35", "-30dB", "0.2"),
+            Self::Aggressive => ("0.3", "-28dB", "0.15"),
+        }
+    }
+}
+
 /// Smart Speed (Phase 6c): remove dead air mid-stream via ffmpeg `silenceremove`
 /// (`stop_periods=-1` removes every silence run, not just the leading one), or
-/// `None` when off. `stop_threshold` / `stop_duration` are tuned to trim dead air
-/// without clipping natural pauses, and `stop_silence` leaves a short beat so a
-/// cut is not jarring. `silenceremove` changes stream duration on the fly, so the
-/// timeline is non-linear: the time-saved accounting (6c-ii) and the seek math
-/// account for it.
-pub fn smart_speed_stage(enabled: bool) -> Option<String> {
+/// `None` when off. `stop_silence` leaves a short beat so a cut is not jarring.
+/// `silenceremove` changes stream duration on the fly, so the timeline is
+/// non-linear: the time-saved accounting (6c-ii) and the seek math account for it.
+///
+/// The gate comes from `level`. The original `-40dB / 1s` was measured (silenceremove
+/// + silencedetect over real podcasts) to remove *nothing*: mastered speech "silence"
+/// is room tone / breaths / music beds around -25 to -30 dB, not below -40 dB, and
+/// pauses are shorter than 1 s. The tiers here actually trigger on real speech.
+pub fn smart_speed_stage(enabled: bool, level: SmartSpeedLevel) -> Option<String> {
     enabled.then(|| {
-        "@ss:lavfi=[silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-40dB:stop_silence=0.3]"
-            .to_string()
+        let (dur, threshold, silence) = level.gate();
+        format!(
+            "@ss:lavfi=[silenceremove=stop_periods=-1:stop_duration={dur}:stop_threshold={threshold}:stop_silence={silence}]"
+        )
     })
 }
 
@@ -55,18 +105,57 @@ mod tests {
 
     #[test]
     fn smart_speed_off_contributes_no_stage() {
-        assert!(smart_speed_stage(false).is_none());
+        assert!(smart_speed_stage(false, SmartSpeedLevel::Gentle).is_none());
+        assert!(smart_speed_stage(false, SmartSpeedLevel::Aggressive).is_none());
     }
 
     #[test]
-    fn smart_speed_on_is_a_silenceremove_stage() {
-        let stage = smart_speed_stage(true).expect("enabled Smart Speed has a stage");
+    fn smart_speed_gentle_is_the_default_gate() {
+        let stage = smart_speed_stage(true, SmartSpeedLevel::default())
+            .expect("enabled Smart Speed has a stage");
         assert!(stage.starts_with("@ss:lavfi=[silenceremove="));
         // Mid-stream removal (negative stop_periods) is what removes dead air
         // throughout the episode, not just at the start.
         assert!(stage.contains("stop_periods=-1"), "{stage}");
-        assert!(stage.contains("stop_threshold=-40dB"), "{stage}");
+        // The Gentle default = the v0.1.1 gate that actually triggers on real
+        // speech (the old -40dB gate measured to remove nothing).
+        assert!(stage.contains("stop_threshold=-30dB"), "{stage}");
+        assert!(stage.contains("stop_duration=0.5"), "{stage}");
         assert!(stage.contains("stop_silence=0.3"), "{stage}");
+    }
+
+    #[test]
+    fn smart_speed_levels_have_distinct_gates() {
+        let g = smart_speed_stage(true, SmartSpeedLevel::Gentle).unwrap();
+        let b = smart_speed_stage(true, SmartSpeedLevel::Balanced).unwrap();
+        let a = smart_speed_stage(true, SmartSpeedLevel::Aggressive).unwrap();
+        assert!(
+            b.contains("stop_duration=0.35") && b.contains("stop_threshold=-30dB"),
+            "{b}"
+        );
+        assert!(
+            a.contains("stop_duration=0.3") && a.contains("stop_threshold=-28dB"),
+            "{a}"
+        );
+        // Punchier tiers trim more, so the gates must differ.
+        assert_ne!(g, b);
+        assert_ne!(b, a);
+    }
+
+    #[test]
+    fn smart_speed_level_round_trips_through_db_token() {
+        for lvl in [
+            SmartSpeedLevel::Gentle,
+            SmartSpeedLevel::Balanced,
+            SmartSpeedLevel::Aggressive,
+        ] {
+            assert_eq!(SmartSpeedLevel::from_db(lvl.as_str()), lvl);
+        }
+        // An unknown / hand-edited token degrades to the default.
+        assert_eq!(
+            SmartSpeedLevel::from_db("nonsense"),
+            SmartSpeedLevel::Gentle
+        );
     }
 
     #[test]

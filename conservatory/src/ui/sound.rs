@@ -8,7 +8,7 @@
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use conservatory_core::db::{EQ_BAND_COUNT, EqPreset};
+use conservatory_core::db::{EqPreset, EQ_BAND_COUNT};
 
 /// The "no named preset matches" label shown in the preset picker.
 pub const CUSTOM_LABEL: &str = "Custom";
@@ -53,6 +53,14 @@ pub const BACKENDS: [(&str, &str); 5] = [
 /// The resampler-quality picker options: the display label paired with the stored
 /// `audio_state.resampler_quality` value (mirrors `ResamplerQuality::as_str`).
 pub const RESAMPLERS: [(&str, &str); 2] = [("Default", "default"), ("High quality", "high")];
+
+/// The Smart Speed aggressiveness picker: the display label paired with the stored
+/// `audio_state.smart_speed_level` token (mirrors `SmartSpeedLevel::as_str`).
+pub const SMART_SPEED_LEVELS: [(&str, &str); 3] = [
+    ("Gentle", "gentle"),
+    ("Balanced", "balanced"),
+    ("Aggressive", "aggressive"),
+];
 
 /// The display labels of an option table, for a `gtk::StringList` model.
 pub fn option_labels<'a>(table: &[(&'a str, &'a str)]) -> Vec<&'a str> {

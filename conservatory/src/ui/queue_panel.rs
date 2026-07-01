@@ -16,7 +16,7 @@ use gtk4 as gtk;
 
 use conservatory_core::db::MediaKind;
 
-use crate::playqueue::{DropBias, drop_target_position};
+use crate::playqueue::{drop_target_position, DropBias};
 use crate::ui::objects::QueueRow;
 
 /// The queue drawer: its backing store (for repopulation), the selection (for
@@ -167,7 +167,7 @@ pub fn build_queue_panel(
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
-        .width_request(260)
+        .width_request(230)
         .child(&list)
         .build();
 

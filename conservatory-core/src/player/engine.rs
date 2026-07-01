@@ -389,6 +389,20 @@ impl Engine {
                 // else from the next load.
                 self.host.set_dsp(dsp);
             }
+            PlayerCommand::SetSmartSpeedLevel(level) => {
+                // The global Smart Speed aggressiveness: live when a spoken-word
+                // item with Smart Speed on is playing, else from the next load.
+                self.host.set_smart_speed_level(level);
+            }
+            PlayerCommand::SetSpoken {
+                speed,
+                smart_speed,
+                voice_boost,
+            } => {
+                // Live spoken-word change for the current episode / book (structural
+                // rebuild); a no-op when nothing is loaded.
+                self.host.set_spoken(speed, smart_speed, voice_boost);
+            }
             PlayerCommand::SetSleepTimer(mode) => {
                 // Arm a fresh clock (or cancel). Reset the tick baseline so the
                 // first countdown sample is a small delta, not the gap since the

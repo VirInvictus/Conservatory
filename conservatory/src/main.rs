@@ -83,9 +83,12 @@ scrollbar slider { min-width: 8px; min-height: 8px; border-radius: 8px; }
 .cover-thumb { border-radius: 4px; background: alpha(currentColor, 0.06); }
 .book-cover { border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 4px 12px rgba(0,0,0,0.26); background: alpha(currentColor, 0.06); }
 .inspector-cover { border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 6px 18px rgba(0,0,0,0.30); background: alpha(currentColor, 0.06); }
-.now-playing-cover { border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 6px 18px rgba(0,0,0,0.30); background: alpha(currentColor, 0.06); }
+.now-playing-cover { border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 6px 18px rgba(0,0,0,0.30); background: alpha(currentColor, 0.06); }
 .now-playing-drawer { border-top: 1px solid alpha(currentColor, 0.10); }
-.spectrum { background: alpha(currentColor, 0.04); border-radius: 6px; }
+/* The chip floating over the full-bleed spectrum: a translucent scrim keeps the
+   title / artist legible against the bars behind it. */
+.now-playing-info { background-color: alpha(@window_bg_color, 0.72); border-radius: 10px; padding: 8px 14px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
+.spectrum { background: alpha(currentColor, 0.03); }
 ";
 
 fn load_css() {

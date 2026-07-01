@@ -657,6 +657,25 @@ impl OnOff {
     }
 }
 
+/// The Smart Speed aggressiveness level (spec §6.3): how hard the `@ss` silence
+/// gate trims dead air when Smart Speed is on for a show / book.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum SmartSpeedArg {
+    Gentle,
+    Balanced,
+    Aggressive,
+}
+
+impl SmartSpeedArg {
+    fn token(self) -> &'static str {
+        match self {
+            Self::Gentle => "gentle",
+            Self::Balanced => "balanced",
+            Self::Aggressive => "aggressive",
+        }
+    }
+}
+
 /// DSP-module verbs (Phase 5.5c). Each module's parameters persist while it is
 /// off, so toggling it back on restores them; the optional flags edit those
 /// parameters. Negative dB values are allowed (thresholds/ceilings).
@@ -714,6 +733,15 @@ enum DspAction {
         /// Gaussian window size (odd, 3..301; larger smooths the gain curve).
         #[arg(long)]
         gausssize: Option<u32>,
+    },
+    /// Set the global Smart Speed level (how hard the silence gate trims dead air
+    /// when Smart Speed is on for a show / book).
+    SmartSpeed {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The aggressiveness: gentle / balanced / aggressive.
+        #[arg(value_enum)]
+        level: SmartSpeedArg,
     },
 }
 
@@ -1729,10 +1757,16 @@ fn run_audiobook_play(
         println!("Sleep timer armed ({mode:?}).");
     }
 
+    let interrupted = watch_interrupt(&runtime);
+
     // Poll the snapshot until the book finishes (or a duration sleep timer fires),
     // printing the current chapter as it advances.
     let mut last_chapter: Option<usize> = None;
     loop {
+        if interrupted.load(std::sync::atomic::Ordering::SeqCst) {
+            println!("\nInterrupted; stopping.");
+            break;
+        }
         let snap = player.snapshot();
         if snap.current_chapter != last_chapter {
             if let Some(ch) = snap.current_chapter {
@@ -1759,7 +1793,9 @@ fn run_audiobook_play(
     player.shutdown();
     let _ = runtime.block_on(worker.shutdown_ack());
     println!("Done.");
-    Ok(())
+    // See `play`: exit now rather than hang in libmpv / libpipewire atexit cleanup.
+    std::io::Write::flush(&mut std::io::stdout()).ok();
+    std::process::exit(0);
 }
 
 /// Set a book's per-book playback overrides (Phase 7c-ii). Reads the current
@@ -2087,7 +2123,29 @@ fn dsp(action: DspAction) -> Result<()> {
             target,
             gausssize,
         } => block_on(run_dsp_leveler(db, state, target, gausssize)),
+        DspAction::SmartSpeed { db, level } => block_on(run_dsp_smart_speed(db, level)),
     }
+}
+
+/// Set the global Smart Speed level on the audio_state singleton (Phase 6c
+/// follow-on). Read-modify-write through the worker so the GUI / next episode
+/// pick it up; the level is the `@ss` gate aggressiveness.
+async fn run_dsp_smart_speed(db: PathBuf, level: SmartSpeedArg) -> Result<()> {
+    use conservatory_core::db::get_audio_state;
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let mut audio = {
+        let conn = pool.open().context("opening pool connection")?;
+        get_audio_state(&conn).context("reading audio state")?
+    };
+    audio.smart_speed_level = level.token().to_string();
+    worker
+        .set_audio_state(audio)
+        .await
+        .context("saving audio state")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Smart Speed level: {}.", level.token());
+    Ok(())
 }
 
 fn dsp_show(db: PathBuf) -> Result<()> {
@@ -2095,7 +2153,9 @@ fn dsp_show(db: PathBuf) -> Result<()> {
     use conservatory_core::player::{comp_stage, leveler_stage, limiter_stage};
     let pool = ReadPool::new(db, 1).context("opening read pool")?;
     let conn = pool.open().context("opening pool connection")?;
-    let dsp = get_audio_state(&conn).context("reading audio state")?.dsp;
+    let audio = get_audio_state(&conn).context("reading audio state")?;
+    let dsp = &audio.dsp;
+    println!("smart speed: {} (level)", audio.smart_speed_level);
     println!(
         "compressor: {}  (threshold={:+} dB ratio={}:1 attack={} ms release={} ms)",
         on_off(dsp.comp.enabled),
@@ -2291,7 +2351,12 @@ fn debug_dsp(db: PathBuf, track_id: Option<i64>) -> Result<()> {
     let eq = conservatory_core::db::get_eq_state(&conn).context("reading EQ state")?;
     let audio = conservatory_core::db::get_audio_state(&conn).context("reading audio state")?;
     let dsp = &audio.dsp;
-    let chain = build_af_chain(&profile, &eq, dsp);
+    let chain = build_af_chain(
+        &profile,
+        &eq,
+        dsp,
+        conservatory_core::player::SmartSpeedLevel::from_db(&audio.smart_speed_level),
+    );
 
     println!("track:        {} {}", track.id, track.title);
     println!(
@@ -4102,6 +4167,25 @@ fn parse_sleep_spec(spec: &str) -> Result<SleepMode> {
     }
 }
 
+/// Watch for Ctrl-C on `runtime`, flipping the returned flag so a polling playback
+/// loop can stop cleanly (the normal `player.shutdown()` then persists position).
+/// Spawned after the player is up so tokio's SIGINT handler is installed *after*
+/// libmpv's init; without this the CLI's playback loops ignore Ctrl-C and have to
+/// be killed.
+fn watch_interrupt(
+    runtime: &tokio::runtime::Runtime,
+) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    use std::sync::atomic::Ordering;
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let f = flag.clone();
+    runtime.spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            f.store(true, Ordering::SeqCst);
+        }
+    });
+    flag
+}
+
 fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>, sleep: Option<String>) -> Result<()> {
     let sleep_mode = sleep.as_deref().map(parse_sleep_spec).transpose()?;
     // Multi-thread runtime: the worker runs on a blocking thread and the player
@@ -4186,10 +4270,16 @@ fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>, sleep: Option<String>
         println!("Sleep timer armed ({mode:?}).");
     }
 
+    let interrupted = watch_interrupt(&runtime);
+
     // Drive the engine by polling its snapshot; print each advance until the
     // queue ends. The engine itself persists position + play counts.
     let mut last: Option<usize> = None;
     loop {
+        if interrupted.load(std::sync::atomic::Ordering::SeqCst) {
+            println!("\nInterrupted; stopping.");
+            break;
+        }
         let snap = player.snapshot();
         if snap.current_index != last {
             if let Some(idx) = snap.current_index {
@@ -4218,7 +4308,11 @@ fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>, sleep: Option<String>
     drop(worker);
     drop(runtime);
     println!("Done.");
-    Ok(())
+    // State is persisted (player shutdown + worker ack); exit now rather than fall
+    // through to the process's normal teardown, which hangs in libmpv / libpipewire
+    // C-library atexit cleanup. Safe because nothing of ours remains to flush.
+    std::io::Write::flush(&mut std::io::stdout()).ok();
+    std::process::exit(0);
 }
 
 fn queue(action: QueueAction) -> Result<()> {
@@ -4735,8 +4829,14 @@ fn podcast_debug_chain(db: PathBuf, episode_id: i64) -> Result<()> {
     let settings = get_show_settings(&conn, episode.show_id).context("reading show settings")?;
     let profile = resolve_episode_profile(settings.as_ref());
     let eq = get_eq_state(&conn).context("reading EQ state")?;
-    let dsp = get_audio_state(&conn).context("reading audio state")?.dsp;
-    let chain = build_af_chain(&profile, &eq, &dsp);
+    let audio = get_audio_state(&conn).context("reading audio state")?;
+    let dsp = &audio.dsp;
+    let chain = build_af_chain(
+        &profile,
+        &eq,
+        dsp,
+        conservatory_core::player::SmartSpeedLevel::from_db(&audio.smart_speed_level),
+    );
 
     println!("episode:     {} {}", episode.id, episode.title);
     println!(

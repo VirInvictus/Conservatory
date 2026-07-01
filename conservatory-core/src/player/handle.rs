@@ -16,6 +16,7 @@ use crate::db::{DspState, EqState, MediaKind};
 use crate::player::host::AudioDevice;
 use crate::player::item::PlayableItem;
 use crate::player::sleep::{SleepMode, SleepStatus};
+use crate::player::spoken::SmartSpeedLevel;
 
 /// A command sent from a consumer to the engine thread.
 pub enum PlayerCommand {
@@ -75,6 +76,19 @@ pub enum PlayerCommand {
     /// Set the active DSP modules (Phase 5.5c); applied live when playing (a
     /// structural rebuild), else from the next loaded item.
     SetDsp(DspState),
+    /// Set the global Smart Speed aggressiveness level (Phase 6c follow-on); a
+    /// live `af` rebuild when a spoken-word item with Smart Speed on is playing,
+    /// else stored for the next load.
+    SetSmartSpeedLevel(SmartSpeedLevel),
+    /// Apply the spoken-word settings (speed / Smart Speed / Voice Boost) to the
+    /// item playing now (Phase 6c): live mpv speed + an `af` rebuild for the
+    /// `@ss` / `@vb` stages. A no-op when nothing is loaded (the persisted per-show
+    /// settings still take effect from the next episode load).
+    SetSpoken {
+        speed: f64,
+        smart_speed: bool,
+        voice_boost: bool,
+    },
     /// Arm (`Some`) or cancel (`None`) the sleep timer (Phase 6c-iii-d). A duration
     /// timer pauses after N seconds of playback; the boundary modes pause at the
     /// end of the current item / queue.
@@ -300,6 +314,23 @@ impl PlayerHandle {
     /// Set the active DSP modules (Phase 5.5c): compressor / limiter / leveler.
     pub fn set_dsp(&self, dsp: DspState) {
         let _ = self.tx.send(PlayerCommand::SetDsp(dsp));
+    }
+
+    /// Set the global Smart Speed aggressiveness level (Phase 6c follow-on): live
+    /// when a spoken-word item with Smart Speed on is playing, else from next load.
+    pub fn set_smart_speed_level(&self, level: SmartSpeedLevel) {
+        let _ = self.tx.send(PlayerCommand::SetSmartSpeedLevel(level));
+    }
+
+    /// Apply spoken-word settings to the current item live (Phase 6c): the
+    /// transport / show-settings path so a Smart Speed / Voice Boost / speed change
+    /// is heard immediately, not only from the next episode.
+    pub fn set_spoken(&self, speed: f64, smart_speed: bool, voice_boost: bool) {
+        let _ = self.tx.send(PlayerCommand::SetSpoken {
+            speed,
+            smart_speed,
+            voice_boost,
+        });
     }
 
     /// Arm (`Some`) or cancel (`None`) the sleep timer (Phase 6c-iii-d).

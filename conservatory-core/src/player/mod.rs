@@ -11,6 +11,12 @@
 //! `state` are pure and unit-tested headless; `host` is the thin libmpv glue,
 //! kept in core (not the GTK binary) so the whole engine stays CLI-driveable.
 
+/// The audio client name mpv reports to the sound server. On PipeWire it becomes
+/// our output node's `application.name`, which the spectrum visualizer targets so
+/// it taps only Conservatory's playback (not the whole sink). Shared by the host
+/// (which sets it) and the binary's capture (which matches on it).
+pub const AUDIO_CLIENT_NAME: &str = "Conservatory";
+
 pub mod book;
 pub mod chain;
 pub mod chapters;
@@ -40,5 +46,5 @@ pub use profile::{
 };
 pub use session::{SessionAccumulator, SessionOwner};
 pub use sleep::{SleepClock, SleepMode, SleepStatus};
-pub use spoken::{smart_speed_stage, voice_boost_stages};
+pub use spoken::{SmartSpeedLevel, smart_speed_stage, voice_boost_stages};
 pub use state::{EndReason, INSURANCE_INTERVAL_MS, StateDebounce, StateEvent};

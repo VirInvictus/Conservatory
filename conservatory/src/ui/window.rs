@@ -2527,14 +2527,96 @@ impl ConservatoryWindow {
         self.reload_queue_panel();
     }
 
-    /// The bulk-edit dialog (Phase 5a-ii, spec §3.5): one entry per field, blank
-    /// means unchanged. Built on the `adw::AlertDialog` precedent. Path-affecting
-    /// edits are confirmed with a move preview after the values are written.
+    /// The value shared across the selection for each bulk-edit field, or `None`
+    /// when the tracks differ ("multiple values"), for pre-filling the dialog
+    /// (Phase 16c). Best-effort: an unreadable source yields an all-empty common.
+    /// Order is irrelevant (the collapse only checks for agreement).
+    fn bulk_edit_commons(
+        &self,
+        ids: &[i64],
+    ) -> std::collections::HashMap<&'static str, Option<String>> {
+        use std::collections::{HashMap, HashSet};
+
+        let mut out: HashMap<&'static str, Option<String>> = HashMap::new();
+        let imp = self.imp();
+        let (Some(pool), Some(leaf)) = (imp.pool.get(), imp.leaf.get()) else {
+            return out;
+        };
+        let Ok(conn) = pool.open() else {
+            return out;
+        };
+        let idset: HashSet<i64> = ids.iter().copied().collect();
+
+        // Album-level (album artist, album, year, shelf genre) + track fields from
+        // the render rows; the album artist display is resolved once per album.
+        let (mut albumartist, mut album, mut year, mut shelfgenre, mut artist, mut title) =
+            (vec![], vec![], vec![], vec![], vec![], vec![]);
+        let mut aa: HashMap<i64, String> = HashMap::new();
+        for r in track_render_rows(&conn)
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| idset.contains(&r.track_id))
+        {
+            let aa_name = match r.album_id {
+                Some(aid) => aa
+                    .entry(aid)
+                    .or_insert_with(|| {
+                        get_album(&conn, aid)
+                            .ok()
+                            .flatten()
+                            .and_then(|al| al.album_artist_id)
+                            .and_then(|artist_id| get_artist(&conn, artist_id).ok().flatten())
+                            .map(|ar| ar.name)
+                            .unwrap_or_default()
+                    })
+                    .clone(),
+                None => String::new(),
+            };
+            albumartist.push(aa_name);
+            album.push(r.album.clone().unwrap_or_default());
+            year.push(r.year.map(|y| y.to_string()).unwrap_or_default());
+            shelfgenre.push(r.shelf_genre.clone().unwrap_or_default());
+            artist.push(r.track_artist.clone().unwrap_or_default());
+            title.push(r.title.clone());
+        }
+        drop(conn);
+
+        // Genres and rating live on the leaf briefs, not the render row.
+        let (mut genre, mut rating) = (vec![], vec![]);
+        let model = &leaf.selection;
+        for i in 0..model.n_items() {
+            if model.is_selected(i)
+                && let Some(row) = model.item(i).and_then(|o| o.downcast::<TrackRow>().ok())
+            {
+                let b = row.brief();
+                genre.push(b.genres);
+                rating.push(b.rating.to_string());
+            }
+        }
+
+        out.insert("albumartist", common_value(albumartist));
+        out.insert("album", common_value(album));
+        out.insert("year", common_value(year));
+        out.insert("shelfgenre", common_value(shelfgenre));
+        out.insert("artist", common_value(artist));
+        out.insert("title", common_value(title));
+        out.insert("genre", common_value(genre));
+        out.insert("rating", common_value(rating));
+        out
+    }
+
+    /// The bulk-edit dialog (Phase 5a-ii, spec §3.5; Phase 16c checkboxes + mixed
+    /// values): a checkbox, label, and entry per field. The entry pre-fills the
+    /// value shared across the selection, or reads "multiple values" when they
+    /// differ (the foobar/MusicBee affordance). Only ticked fields are written;
+    /// editing a field ticks it. Path-affecting edits are confirmed with a move
+    /// preview after the values are written.
     fn prompt_bulk_edit(&self) {
         let ids = self.selected_track_ids();
         if ids.is_empty() {
             return;
         }
+        let commons = self.bulk_edit_commons(&ids);
 
         // (field key as `edit::Field::parse` accepts it, display label).
         let fields: [(&str, &str); 8] = [
@@ -2551,22 +2633,38 @@ impl ConservatoryWindow {
             .row_spacing(6)
             .column_spacing(12)
             .build();
-        let mut entries: Vec<(String, gtk::Entry)> = Vec::new();
+        let mut entries: Vec<(String, gtk::CheckButton, gtk::Entry)> = Vec::new();
         for (r, (key, label)) in fields.iter().enumerate() {
-            let lbl = gtk::Label::builder().label(*label).xalign(1.0).build();
-            let entry = gtk::Entry::builder()
-                .placeholder_text("unchanged")
-                .hexpand(true)
+            let check = gtk::CheckButton::builder()
+                .tooltip_text("Write this field")
+                .valign(gtk::Align::Center)
                 .build();
-            grid.attach(&lbl, 0, r as i32, 1, 1);
-            grid.attach(&entry, 1, r as i32, 1, 1);
-            entries.push(((*key).to_string(), entry));
+            let lbl = gtk::Label::builder().label(*label).xalign(1.0).build();
+            let entry = gtk::Entry::builder().hexpand(true).build();
+            // Pre-fill the shared value; hint "multiple values" when they differ.
+            match commons.get(*key).cloned().flatten() {
+                Some(v) if !v.is_empty() => {
+                    entry.set_text(&v);
+                    entry.set_placeholder_text(Some("unchanged"));
+                }
+                Some(_) => entry.set_placeholder_text(Some("unchanged")),
+                None => entry.set_placeholder_text(Some("multiple values")),
+            }
+            // Editing a field ticks its checkbox. Connected after the pre-fill so
+            // the initial `set_text` does not tick it.
+            let check_edit = check.clone();
+            entry.connect_changed(move |_| check_edit.set_active(true));
+            grid.attach(&check, 0, r as i32, 1, 1);
+            grid.attach(&lbl, 1, r as i32, 1, 1);
+            grid.attach(&entry, 2, r as i32, 1, 1);
+            entries.push(((*key).to_string(), check, entry));
         }
 
         let dialog = adw::AlertDialog::new(
             Some("Edit metadata"),
             Some(&format!(
-                "Apply to {} selected track(s). Blank fields are left unchanged.",
+                "Apply to {} selected track(s). Tick a field to write it; shared values are \
+                 shown, differing ones read \u{201c}multiple values\u{201d}.",
                 ids.len()
             )),
         );
@@ -2585,7 +2683,12 @@ impl ConservatoryWindow {
             let Some(win) = weak.upgrade() else { return };
             let mut assignments = Vec::new();
             let mut errors = Vec::new();
-            for (key, entry) in &entries {
+            for (key, check, entry) in &entries {
+                // Only ticked fields write; a ticked-but-empty field is left for a
+                // later "clear a field" follow-on (empty fails year/rating parse).
+                if !check.is_active() {
+                    continue;
+                }
                 let val = entry.text().to_string();
                 if val.trim().is_empty() {
                     continue;
@@ -4379,9 +4482,42 @@ fn import_mode_from_index(index: u32) -> ImportMode {
     }
 }
 
+/// The value shared by every entry in `vals`, or `None` when they differ (the
+/// bulk-edit "multiple values" state, Phase 16c). An empty selection collapses to
+/// a shared empty string. Pure, for testing without a realized dialog.
+fn common_value(mut vals: Vec<String>) -> Option<String> {
+    match vals.pop() {
+        None => Some(String::new()),
+        Some(first) if vals.iter().all(|v| *v == first) => Some(first),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ImportMode, import_mode_from_index, import_mode_index, view_page_name};
+    use super::{
+        ImportMode, common_value, import_mode_from_index, import_mode_index, view_page_name,
+    };
+
+    #[test]
+    fn common_value_agrees_or_reports_mixed() {
+        // All the same collapses to that value (the shared prefill).
+        assert_eq!(
+            common_value(vec!["Aphex Twin".into(), "Aphex Twin".into()]),
+            Some("Aphex Twin".into())
+        );
+        // A single track is trivially "shared".
+        assert_eq!(common_value(vec!["Solo".into()]), Some("Solo".into()));
+        // Differing values are "multiple values" (None).
+        assert_eq!(common_value(vec!["A".into(), "B".into()]), None);
+        // All-empty is a shared empty string, not mixed.
+        assert_eq!(
+            common_value(vec![String::new(), String::new()]),
+            Some(String::new())
+        );
+        // An empty selection collapses to empty, not mixed.
+        assert_eq!(common_value(vec![]), Some(String::new()));
+    }
 
     #[test]
     fn view_keys_map_to_page_names() {

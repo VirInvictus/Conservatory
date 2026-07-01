@@ -1,5 +1,11 @@
 # Patch Notes
 
+## v0.1.5
+
+The bulk metadata editor shows what you are editing.
+
+- **"Multiple values" in the bulk editor.** Editing several tracks at once, each field now pre-fills the value the selection shares, and reads "multiple values" when they differ, so you can see the current state instead of a row of blank boxes. Each field has a checkbox: only ticked fields are written (and editing a field ticks it for you), so a shared value is never silently rewritten and you choose exactly what to change. Path-affecting edits still go through the same dry-run move preview.
+
 ## v0.1.4
 
 Click a star to rate.

@@ -905,9 +905,13 @@ The rating column's stars are now clickable (Apple's "click in the rating column
 - [x] `TrackRow` gains a `rating` glib property (the `playing`-glyph precedent); the star column binds `notify::rating` so a rate repaints only that one row, and `update_rating` keeps the property in step with the `brief` the rating sorter reads. The write goes through `worker.update_track`; the inspector's Rating field refreshes with it.
 - [ ] A live drag-sweep across the stars is a natural ergonomic follow-on (the click already sets any value directly, so it is not required).
 
-### Phase 16c — Inline edit + "mixed values" bulk edit
+### Phase 16c — "Mixed values" bulk edit ✅ (v0.1.5)
 
-Upgrade the bulk-edit dialog from "blank means unchanged" to per-field checkboxes with a "mixed values" placeholder when the selection differs (only ticked fields write), then add inline single-click cell editing for the text columns.
+Upgrade the bulk-edit dialog from "blank means unchanged" to the foobar/MusicBee affordance: a checkbox, label, and entry per field, with the shared value pre-filled and differing selections shown as "multiple values".
+
+- [x] Each field pre-fills the value shared across the selection, or reads "multiple values" when the tracks differ (`bulk_edit_commons` collapses each field to a shared value or `None`; the collapse is the pure, unit-tested `common_value`). Album artist / album / year / shelf genre come from the album, track title / artist from the render row, genres / rating from the leaf briefs.
+- [x] Only ticked fields are written, and editing a field ticks it (so a shared value is not silently rewritten). The existing write + move-preview pipeline (`apply_bulk_edit` → `confirm_and_move`) is unchanged.
+- [ ] Inline single-click cell editing for the text columns, and clearing a field to empty (a ticked-but-empty field), are follow-ons (empty currently fails the year/rating parse, so a clear needs a dedicated path).
 
 ### Phase 16d — Smart + Static playlists
 

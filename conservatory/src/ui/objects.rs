@@ -296,7 +296,9 @@ impl EpisodeRow {
         self.with(|r| r.show_title.clone())
     }
 
-    /// Show notes (cleaned to plain text at ingest by `sanitize_notes`, 6c-iii-c).
+    /// Show notes (sanitized at ingest by `sanitize_notes`, 6c-iii-c; since
+    /// 16.5f the stored form keeps the Pango inline subset, rendered through
+    /// `notes_to_markup`).
     pub fn description(&self) -> String {
         self.with(|r| r.description.clone().unwrap_or_default())
     }

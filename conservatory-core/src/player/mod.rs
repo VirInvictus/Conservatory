@@ -41,8 +41,8 @@ pub use handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 pub use host::{AudioDevice, HostEvent, MpvHost};
 pub use item::PlayableItem;
 pub use profile::{
-    MusicProfile, PlaybackConfig, ReplayGain, resolve_book_profile, resolve_episode_profile,
-    resolve_music_profile,
+    MusicProfile, PlaybackConfig, ReplayGain, quick_seek_target, resolve_book_profile,
+    resolve_episode_profile, resolve_music_profile, resolve_skip_amounts,
 };
 pub use session::{SessionAccumulator, SessionOwner};
 pub use sleep::{SleepClock, SleepMode, SleepStatus};

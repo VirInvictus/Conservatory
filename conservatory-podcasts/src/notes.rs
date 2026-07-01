@@ -1,21 +1,25 @@
-//! Show-notes sanitization (Phase 6c-iii-c).
+//! Show-notes sanitization (Phase 6c-iii-c; links preserved since 16.5f).
 //!
 //! Feed `<description>` / `<itunes:summary>` text is HTML, often with markup,
-//! tracking pixels, and the odd `<script>`. Conservatory renders notes in a
-//! plain GTK `Label`, so the notes are cleaned to readable text **at ingest**
-//! ([`crate::refresh`]) and the clean text is what the DB stores: the triage
-//! pane, the Now Playing drawer, and the CLI all read it without re-cleaning.
+//! tracking pixels, and the odd `<script>`. The notes are cleaned **at ingest**
+//! ([`crate::refresh`]) and the clean form is what the DB stores: the triage
+//! pane and the CLI read it without re-cleaning.
 //!
 //! `ammonia` does the load-bearing work (it strips `<script>`/`<style>` bodies
-//! and copes with malformed/nested HTML where a regex tag-strip would not). We
-//! configure it to allow no tags at all, so the output is the text content with
-//! the four structural characters re-escaped; a small pass decodes those and
-//! tidies whitespace.
+//! and copes with malformed/nested HTML where a regex tag-strip would not).
+//! Since 16.5f the allowlist keeps the inline subset Pango can render (`a
+//! href`, bold, italics), so links survive ingest; every other element is
+//! stripped to its text with the structural characters left entity-escaped,
+//! which is exactly what `Label::set_markup` needs. [`notes_to_markup`]
+//! converts the stored subset to Pango markup at render time, and escapes
+//! legacy plain-text rows whole (stored before the format change; they heal on
+//! their next feed refresh, since the episode upsert rewrites `description`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-/// Clean HTML show notes to readable plain text for a GTK `Label`. Empty in →
-/// empty out.
+/// Clean HTML show notes to the stored form: readable text with the Pango
+/// inline subset (`a href` / `b` / `strong` / `i` / `em`) preserved and
+/// everything else stripped. Empty in → empty out.
 pub fn sanitize_notes(html: &str) -> String {
     if html.trim().is_empty() {
         return String::new();
@@ -33,24 +37,96 @@ pub fn sanitize_notes(html: &str) -> String {
         pre = pre.replace(close, "\n");
     }
 
-    // No allowed tags: ammonia drops every element (and `<script>`/`<style>`
-    // bodies), leaving the text content. It decodes named/numeric entities to
-    // their characters while parsing and only re-escapes the four structural
-    // ones on output.
+    // The Pango-renderable inline subset survives; ammonia drops every other
+    // element (and `<script>`/`<style>` bodies), leaving entity-escaped text.
+    // `link_rel(None)` keeps `<a>` down to its bare `href` (Pango rejects
+    // unknown attributes like the default `rel="noopener noreferrer"`).
     let stripped = ammonia::Builder::new()
-        .tags(HashSet::new())
+        .tags(HashSet::from(["a", "b", "strong", "i", "em"]))
+        .tag_attributes(HashMap::from([("a", HashSet::from(["href"]))]))
+        .url_schemes(HashSet::from(["http", "https", "mailto"]))
+        .link_rel(None)
         .clean(&pre)
         .to_string();
 
-    // Decode the four ammonia re-escapes (`&amp;` last so an already-decoded
-    // `&lt;` is not re-processed).
-    let decoded = stripped
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&amp;", "&");
+    collapse_blank_lines(stripped.trim())
+}
 
-    collapse_blank_lines(decoded.trim())
+/// Convert stored notes to Pango markup for `Label::set_markup` (16.5f):
+/// `strong`/`em` map to Pango's `b`/`i`, `a href` and the escaped entities
+/// pass through. A legacy plain-text row (pre-16.5f: raw `&` / `<` characters)
+/// is escaped whole instead, so `set_markup` never sees invalid markup. Pure.
+pub fn notes_to_markup(notes: &str) -> String {
+    if is_stored_markup(notes) {
+        notes
+            .replace("<strong>", "<b>")
+            .replace("</strong>", "</b>")
+            .replace("<em>", "<i>")
+            .replace("</em>", "</i>")
+    } else {
+        escape_text(notes)
+    }
+}
+
+/// Whether `notes` is the post-16.5f stored subset: every `<` opens an allowed
+/// tag and every `&` an entity. Legacy rows (fully decoded text) fail on their
+/// first raw `&` or `<`.
+fn is_stored_markup(notes: &str) -> bool {
+    const ALLOWED_AFTER_LT: [&str; 11] = [
+        "a href=\"",
+        "a>",
+        "/a>",
+        "b>",
+        "/b>",
+        "i>",
+        "/i>",
+        "em>",
+        "/em>",
+        "strong>",
+        "/strong>",
+    ];
+    let bytes = notes.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'<' => {
+                let rest = &notes[i + 1..];
+                if !ALLOWED_AFTER_LT.iter().any(|t| rest.starts_with(t)) {
+                    return false;
+                }
+                // Skip to the tag's closing '>' (ammonia entity-escapes any
+                // '>' inside an attribute value, so this is the real end).
+                match rest.find('>') {
+                    Some(j) => i += j + 2,
+                    None => return false,
+                }
+            }
+            b'&' => {
+                // An entity: short, alphanumeric-or-# body, ';'-terminated.
+                let rest = &notes[i + 1..];
+                match rest.find(';') {
+                    Some(j)
+                        if (1..=8).contains(&j)
+                            && rest[..j]
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || c == '#') =>
+                    {
+                        i += j + 2;
+                    }
+                    _ => return false,
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    true
+}
+
+/// Escape text for Pango markup (the legacy-row path).
+fn escape_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Collapse runs of 3+ newlines down to a paragraph break (2), so notes with
@@ -77,16 +153,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strips_tags_to_text() {
-        assert_eq!(sanitize_notes("<p>Hello <b>world</b></p>"), "Hello world");
+    fn strips_disallowed_tags_keeps_inline_subset() {
+        // Bold survives (16.5f); the paragraph wrapper does not.
+        assert_eq!(
+            sanitize_notes("<p>Hello <b>world</b></p>"),
+            "Hello <b>world</b>"
+        );
+        // A table wrapper strips to text.
+        assert_eq!(
+            sanitize_notes("<table><tr><td>cell</td></tr></table>"),
+            "cell"
+        );
     }
 
     #[test]
-    fn decodes_structural_entities() {
-        // `a < b && c > d` round-trips through ammonia's re-escaping.
+    fn links_survive_with_bare_href() {
+        assert_eq!(
+            sanitize_notes(
+                r#"<p>See <a href="https://x.example/ep" class="btn" target="_blank">the notes</a></p>"#
+            ),
+            r#"See <a href="https://x.example/ep">the notes</a>"#
+        );
+        // Disallowed schemes lose the link but keep the text.
+        let cleaned = sanitize_notes(r#"<a href="javascript:alert(1)">click</a>"#);
+        assert!(cleaned.contains("click"));
+        assert!(!cleaned.contains("javascript"));
+    }
+
+    #[test]
+    fn structural_entities_stay_escaped_for_markup() {
+        // The stored form is Pango-ready: & < > remain entities.
         assert_eq!(
             sanitize_notes("a &lt; b &amp;&amp; c &gt; d"),
-            "a < b && c > d"
+            "a &lt; b &amp;&amp; c &gt; d"
         );
     }
 
@@ -118,11 +217,11 @@ mod tests {
 
     #[test]
     fn survives_malformed_html() {
-        // Unbalanced tags must not panic and must not leak markup.
+        // Unbalanced tags must not panic; ammonia balances the anchor.
         let cleaned = sanitize_notes("<p>Notes <a href=\"http://x\">link</p> trailing");
         assert!(cleaned.contains("Notes"));
         assert!(cleaned.contains("link"));
-        assert!(!cleaned.contains('<'));
+        assert!(cleaned.contains("trailing"));
     }
 
     #[test]
@@ -134,5 +233,32 @@ mod tests {
     fn empty_in_empty_out() {
         assert_eq!(sanitize_notes(""), "");
         assert_eq!(sanitize_notes("   "), "");
+    }
+
+    #[test]
+    fn markup_maps_strong_em_and_passes_links() {
+        assert_eq!(
+            notes_to_markup(
+                r#"<strong>Big</strong> <em>soft</em> <a href="https://x.example">go</a>"#
+            ),
+            r#"<b>Big</b> <i>soft</i> <a href="https://x.example">go</a>"#
+        );
+        // Escaped entities in the stored form pass through untouched.
+        assert_eq!(notes_to_markup("a &lt; b &amp; c"), "a &lt; b &amp; c");
+    }
+
+    #[test]
+    fn markup_escapes_legacy_plain_text_rows() {
+        // Pre-16.5f rows carry raw structural characters; they must never
+        // reach set_markup unescaped.
+        assert_eq!(
+            notes_to_markup("Fish & Chips <3 tonight"),
+            "Fish &amp; Chips &lt;3 tonight"
+        );
+        // A lone raw ampersand mid-URL is the classic legacy shape.
+        assert_eq!(
+            notes_to_markup("see example.com/?a=1&b=2"),
+            "see example.com/?a=1&amp;b=2"
+        );
     }
 }

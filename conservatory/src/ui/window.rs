@@ -611,12 +611,17 @@ impl ConservatoryWindow {
         });
         now_bar.left.add_controller(click);
 
-        // The transport's podcast affordance opens the playing episode's per-show
-        // playback settings (speed / Smart Speed / Voice Boost) right by play/pause.
+        // The transport's spoken-word affordance opens the playing item's
+        // playback settings right by play/pause: the episode's show settings,
+        // or (16.5f) the playing book's per-book settings.
         let weak = self.downgrade();
         now_bar.podcast_btn.connect_clicked(move |btn| {
             if let Some(win) = weak.upgrade() {
-                win.open_playing_show_settings(btn);
+                let kind = win.imp().player.get().map(|p| p.snapshot().kind);
+                match kind {
+                    Some(Some(MediaKind::Audiobook)) => win.open_playing_book_settings(btn),
+                    _ => win.open_playing_show_settings(btn),
+                }
             }
         });
 
@@ -964,7 +969,9 @@ impl ConservatoryWindow {
 
         let eq_group = adw::PreferencesGroup::new();
         eq_group.set_title("Equalizer");
-        eq_group.set_description(Some("Drag a band to hear it change live (dB)."));
+        eq_group.set_description(Some(
+            "Drag a band to hear it change live (dB). Applies to everything you play.",
+        ));
         eq_group.add(&slider_box);
 
         // Preset picker: the named presets plus a trailing "Custom" marker.
@@ -1509,7 +1516,10 @@ impl ConservatoryWindow {
         // --- ReplayGain ---
         let rg_group = adw::PreferencesGroup::new();
         rg_group.set_title("ReplayGain");
-        rg_group.set_description(Some("Volume normalization; applies to the next queue."));
+        rg_group.set_description(Some(
+            "Volume normalization for music (podcasts and audiobooks carry no ReplayGain); \
+             applies to the next queue.",
+        ));
 
         let rg_mode = adw::ComboRow::new();
         rg_mode.set_title("Mode");
@@ -1561,7 +1571,10 @@ impl ConservatoryWindow {
         // --- Dynamics (DSP modules) ---
         let dsp_group = adw::PreferencesGroup::new();
         dsp_group.set_title("Dynamics");
-        dsp_group.set_description(Some("Compressor, brick-wall limiter, and volume leveler."));
+        dsp_group.set_description(Some(
+            "Compressor, brick-wall limiter, and volume leveler. Applies to everything you \
+             play; Smart Speed and Voice Boost live in each show's and book's settings.",
+        ));
 
         // Compressor.
         let comp = adw::ExpanderRow::new();
@@ -3826,6 +3839,9 @@ impl ConservatoryWindow {
                 now.set_cover(abs.as_deref(), accent);
                 // Keep the Now Playing drawer in step with the new item.
                 self.refresh_now_playing(snap.kind, Some(id));
+                // Quick-seek buttons (16.5f): spoken word only, amounts from
+                // the playing episode's show overrides.
+                self.refresh_quick_seek();
                 // Cache the playing track's static tech fields for the status bar
                 // (Phase 11b). Only tracks carry these DB columns; an episode /
                 // book leaves the line blank (channels still folds in per tick).
@@ -3851,9 +3867,12 @@ impl ConservatoryWindow {
         now.set_status(snap.buffering, snap.streaming);
         // Chapter-skip buttons appear only for an item with chapters (6c-iii-b).
         now.set_chapter_nav_visible(snap.chapter_count > 0);
-        // The per-show podcast playback affordance shows only for an episode.
-        now.podcast_btn
-            .set_visible(snap.kind == Some(MediaKind::Episode));
+        // The spoken-word playback affordance: per-show settings for an
+        // episode, per-book settings for an audiobook (16.5f); hidden for music.
+        now.podcast_btn.set_visible(matches!(
+            snap.kind,
+            Some(MediaKind::Episode) | Some(MediaKind::Audiobook)
+        ));
         // Sleep timer (6c-iii-d): the moon button shows whenever something is
         // loaded (the media-agnostic scope decision); its label tracks the timer.
         now.sleep_btn.set_visible(snap.track_id.is_some());
@@ -4160,7 +4179,9 @@ impl ConservatoryWindow {
     /// so the controls live near play/pause where you reach for them.
     #[cfg(feature = "podcasts")]
     fn open_playing_show_settings(&self, anchor: &gtk::Button) {
-        use crate::ui::podcasts::{MAX_SPEED, MIN_SPEED, default_settings, settings_from_form};
+        use crate::ui::podcasts::{
+            MAX_SPEED, MIN_SPEED, default_settings, settings_from_form, skip_override,
+        };
         use conservatory_core::db::{get_episode, get_show, get_show_settings};
 
         let imp = self.imp();
@@ -4181,8 +4202,10 @@ impl ConservatoryWindow {
             .flatten()
             .map(|s| s.title)
             .unwrap_or_else(|| "Show".to_string());
-        let current = get_show_settings(&conn, show_id).ok().flatten();
-        let cur = current.clone().unwrap_or_else(|| default_settings(show_id));
+        let cur = get_show_settings(&conn, show_id)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| default_settings(show_id));
         drop(conn);
 
         let group = adw::PreferencesGroup::new();
@@ -4200,9 +4223,21 @@ impl ConservatoryWindow {
         let voice = adw::SwitchRow::new();
         voice.set_title("Voice Boost");
         voice.set_active(cur.voice_boost);
+        // The Now-bar quick-seek amounts (16.5f), editable right where the
+        // buttons live; 0 inherits the defaults (15 back / 30 forward).
+        let back = adw::SpinRow::with_range(0.0, 300.0, 5.0);
+        back.set_title("Skip back (seconds)");
+        back.set_subtitle("0 uses the default (15)");
+        back.set_value(cur.skip_back.unwrap_or(0) as f64);
+        let fwd = adw::SpinRow::with_range(0.0, 300.0, 5.0);
+        fwd.set_title("Skip forward (seconds)");
+        fwd.set_subtitle("0 uses the default (30)");
+        fwd.set_value(cur.skip_forward.unwrap_or(0) as f64);
         group.add(&speed);
         group.add(&smart);
         group.add(&voice);
+        group.add(&back);
+        group.add(&fwd);
 
         let dialog = adw::AlertDialog::new(Some(&show_title), None);
         dialog.set_extra_child(Some(&group));
@@ -4223,13 +4258,14 @@ impl ConservatoryWindow {
                 return;
             };
             let settings = settings_from_form(
-                current.as_ref(),
                 show_id,
                 speed.value(),
                 smart.is_active(),
                 voice.is_active(),
                 cur.skip_intro,
                 cur.skip_outro,
+                skip_override(back.value()),
+                skip_override(fwd.value()),
                 cur.inbox_policy,
             );
             let _ = rt.block_on(worker.upsert_show_settings(settings));
@@ -4238,6 +4274,8 @@ impl ConservatoryWindow {
             if let Some(player) = imp.player.get() {
                 player.set_spoken(speed.value(), smart.is_active(), voice.is_active());
             }
+            // The quick-seek amounts may have changed for the playing episode.
+            win.refresh_quick_seek();
         });
         dialog.present(Some(anchor));
     }
@@ -4246,6 +4284,126 @@ impl ConservatoryWindow {
     /// so the handler is an inert stub.
     #[cfg(not(feature = "podcasts"))]
     fn open_playing_show_settings(&self, _anchor: &gtk::Button) {}
+
+    /// Resolve and apply the Now-bar quick-seek state for the current item
+    /// (16.5f): visible for spoken word only, amounts from the playing
+    /// episode's show overrides (books and shows without overrides use the
+    /// 15/30 defaults). The episode/show reads are core-owned, so no feature
+    /// gate is needed.
+    fn refresh_quick_seek(&self) {
+        let imp = self.imp();
+        let (Some(player), Some(now)) = (imp.player.get(), imp.now_bar.get()) else {
+            return;
+        };
+        let snap = player.snapshot();
+        let spoken = matches!(
+            snap.kind,
+            Some(MediaKind::Episode) | Some(MediaKind::Audiobook)
+        );
+        let settings = match (snap.kind, snap.track_id) {
+            (Some(MediaKind::Episode), Some(id)) => imp
+                .pool
+                .get()
+                .and_then(|pool| pool.open().ok())
+                .and_then(|conn| {
+                    let ep = conservatory_core::db::get_episode(&conn, id).ok().flatten()?;
+                    conservatory_core::db::get_show_settings(&conn, ep.show_id)
+                        .ok()
+                        .flatten()
+                }),
+            _ => None,
+        };
+        let (back, forward) = conservatory_core::resolve_skip_amounts(settings.as_ref());
+        now.set_quick_seek(spoken, back, forward);
+    }
+
+    /// Open the per-book playback settings for the currently-playing audiobook
+    /// from the Now-bar affordance (16.5f, the `open_playing_show_settings`
+    /// twin): speed / Smart Speed / Voice Boost, written through
+    /// `upsert_book_playback` preserving the resume position and finished
+    /// state, and applied to the playing book immediately via `set_spoken`.
+    #[cfg(feature = "audiobooks")]
+    fn open_playing_book_settings(&self, anchor: &gtk::Button) {
+        use crate::ui::audiobooks::{MAX_SPEED, MIN_SPEED};
+        use conservatory_core::db::{BookPlayback, get_book, get_book_playback};
+
+        let imp = self.imp();
+        let (Some(player), Some(pool)) = (imp.player.get(), imp.pool.get()) else {
+            return;
+        };
+        let snap = player.snapshot();
+        let (Some(MediaKind::Audiobook), Some(book_id)) = (snap.kind, snap.track_id) else {
+            return;
+        };
+        let Ok(conn) = pool.open() else { return };
+        let title = get_book(&conn, book_id)
+            .ok()
+            .flatten()
+            .map(|b| b.title)
+            .unwrap_or_else(|| "Playback settings".to_string());
+        let cur = get_book_playback(&conn, book_id).ok().flatten();
+        drop(conn);
+
+        let group = adw::PreferencesGroup::new();
+        group.set_description(Some(
+            "Smart Speed trims dead air; Voice Boost lifts quiet, uneven narration. \
+             These apply to this book when you play it.",
+        ));
+        let speed = adw::SpinRow::with_range(MIN_SPEED, MAX_SPEED, 0.05);
+        speed.set_title("Playback speed");
+        speed.set_digits(2);
+        speed.set_value(cur.as_ref().and_then(|p| p.speed).unwrap_or(1.0));
+        let smart = adw::SwitchRow::new();
+        smart.set_title("Smart Speed");
+        smart.set_active(cur.as_ref().and_then(|p| p.smart_speed).unwrap_or(false));
+        let voice = adw::SwitchRow::new();
+        voice.set_title("Voice Boost");
+        voice.set_active(cur.as_ref().and_then(|p| p.voice_boost).unwrap_or(false));
+        group.add(&speed);
+        group.add(&smart);
+        group.add(&voice);
+
+        let dialog = adw::AlertDialog::new(Some(&title), None);
+        dialog.set_extra_child(Some(&group));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("save", "Save");
+        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("save"));
+        dialog.set_close_response("cancel");
+
+        let weak = self.downgrade();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "save" {
+                return;
+            }
+            let Some(win) = weak.upgrade() else { return };
+            let imp = win.imp();
+            let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
+                return;
+            };
+            // Only the override columns change; position / finished /
+            // last_played are preserved from the stored row.
+            let playback = BookPlayback {
+                book_id,
+                position: cur.as_ref().map(|p| p.position).unwrap_or(0.0),
+                finished: cur.as_ref().map(|p| p.finished).unwrap_or(false),
+                last_played: cur.as_ref().and_then(|p| p.last_played),
+                speed: Some(speed.value()),
+                smart_speed: Some(smart.is_active()),
+                voice_boost: Some(voice.is_active()),
+            };
+            let _ = rt.block_on(worker.upsert_book_playback(playback));
+            // Heard immediately on the playing book, not only from the next.
+            if let Some(player) = imp.player.get() {
+                player.set_spoken(speed.value(), smart.is_active(), voice.is_active());
+            }
+        });
+        dialog.present(Some(anchor));
+    }
+
+    /// Podcasts-only / music-only builds never show the gear for a book.
+    #[cfg(not(feature = "audiobooks"))]
+    fn open_playing_book_settings(&self, _anchor: &gtk::Button) {}
 
     /// Toggle the bottom Now Playing drawer; when opening, fill it from the
     /// current snapshot so it never shows stale content (v0.0.38). The toggle

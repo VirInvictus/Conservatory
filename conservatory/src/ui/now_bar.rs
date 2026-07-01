@@ -8,13 +8,16 @@
 //! stars. The seek slider drives playback via `change-value` (user drag only),
 //! so the window's programmatic `set_value` during a refresh never loops back.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
 use conservatory_core::db::MediaKind;
 use conservatory_core::player::SleepMode;
-use conservatory_core::{PlayerHandle, SleepStatus};
+use conservatory_core::{quick_seek_target, PlayerHandle, SleepStatus};
 
 use crate::ui::accent::AccentProvider;
 
@@ -41,6 +44,13 @@ pub struct NowBar {
     /// has chapters (`chapter_count > 0`), flanking the item prev/next.
     pub prev_chapter_btn: gtk::Button,
     pub next_chapter_btn: gtk::Button,
+    /// Spoken-word quick-seek (16.5f): skip-back/forward label buttons flanking
+    /// play/pause, shown only for episodes and audiobooks; the amounts follow
+    /// the show's overrides via [`NowBar::set_quick_seek`].
+    pub seek_back_btn: gtk::Button,
+    pub seek_fwd_btn: gtk::Button,
+    /// The `(back, forward)` seconds the quick-seek buttons currently apply.
+    skip_amounts: Rc<Cell<(f64, f64)>>,
     /// Per-show playback (speed / Smart Speed / Voice Boost) for the playing
     /// podcast episode; sits by the transport, hidden unless an episode is playing.
     /// The window wires the click to a per-show settings dialog.
@@ -167,11 +177,22 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         "Speed, Smart Speed & Voice Boost",
     );
     podcast_btn.set_visible(false);
+    // Spoken-word quick-seek (16.5f), flanking play/pause the podcast-app way.
+    // Label buttons: the media-seek-* icons already mean chapter skip here.
+    let seek_back_btn = gtk::Button::with_label("\u{2212}15");
+    let seek_fwd_btn = gtk::Button::with_label("+30");
+    for b in [&seek_back_btn, &seek_fwd_btn] {
+        b.add_css_class("flat");
+        b.set_visible(false);
+    }
+    let skip_amounts: Rc<Cell<(f64, f64)>> = Rc::new(Cell::new((15.0, 30.0)));
     let transport = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     transport.set_valign(gtk::Align::Center);
     transport.append(&prev_chapter_btn);
     transport.append(&prev_btn);
+    transport.append(&seek_back_btn);
     transport.append(&play_btn);
+    transport.append(&seek_fwd_btn);
     transport.append(&next_btn);
     transport.append(&next_chapter_btn);
     transport.append(&podcast_btn);
@@ -225,6 +246,20 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         let p = player.clone();
         next_chapter_btn.connect_clicked(move |_| p.skip_chapter(1));
         let p = player.clone();
+        let amounts = skip_amounts.clone();
+        seek_back_btn.connect_clicked(move |_| {
+            let snap = p.snapshot();
+            let (back, _) = amounts.get();
+            p.seek(quick_seek_target(snap.position, -back, snap.duration));
+        });
+        let p = player.clone();
+        let amounts = skip_amounts.clone();
+        seek_fwd_btn.connect_clicked(move |_| {
+            let snap = p.snapshot();
+            let (_, forward) = amounts.get();
+            p.seek(quick_seek_target(snap.position, forward, snap.duration));
+        });
+        let p = player.clone();
         seek.connect_change_value(move |_, _, value| {
             p.seek(value);
             glib::Propagation::Proceed
@@ -248,6 +283,9 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         play_btn,
         prev_chapter_btn,
         next_chapter_btn,
+        seek_back_btn,
+        seek_fwd_btn,
+        skip_amounts,
         podcast_btn,
         position,
         seek,
@@ -356,8 +394,26 @@ impl NowBar {
         self.set_cover(None, None);
         self.set_status(false, false);
         self.set_chapter_nav_visible(false);
+        self.set_quick_seek(false, 15.0, 30.0);
         self.sleep_btn.set_visible(false);
         self.set_sleep(None);
+    }
+
+    /// Show/hide the spoken-word quick-seek pair and set its amounts (16.5f);
+    /// the labels and tooltips follow the resolved seconds.
+    pub fn set_quick_seek(&self, visible: bool, back: f64, forward: f64) {
+        self.skip_amounts.set((back, forward));
+        self.seek_back_btn.set_visible(visible);
+        self.seek_fwd_btn.set_visible(visible);
+        if visible {
+            let (b, f) = (back.round() as i64, forward.round() as i64);
+            self.seek_back_btn.set_label(&format!("\u{2212}{b}"));
+            self.seek_fwd_btn.set_label(&format!("+{f}"));
+            self.seek_back_btn
+                .set_tooltip_text(Some(&format!("Back {b} seconds")));
+            self.seek_fwd_btn
+                .set_tooltip_text(Some(&format!("Forward {f} seconds")));
+        }
     }
 
     /// Reflect the armed sleep timer (Phase 6c-iii-d): an active duration timer

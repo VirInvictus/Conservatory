@@ -200,11 +200,14 @@ impl Inner {
                 self.title.set_text(&r.title());
                 self.subtitle.set_text(&detail_subtitle(r));
                 let notes = r.description();
-                self.notes.set_text(if notes.trim().is_empty() {
-                    "No show notes."
+                if notes.trim().is_empty() {
+                    self.notes.set_text("No show notes.");
                 } else {
-                    &notes
-                });
+                    // Links stay clickable (16.5f): the stored subset renders
+                    // as Pango markup; legacy plain-text rows are escaped.
+                    self.notes
+                        .set_markup(&conservatory_podcasts::notes_to_markup(&notes));
+                }
                 self.actions.set_sensitive(true);
                 let played = r.played() == PlayedState::PlayedFully;
                 self.played_btn.set_label(if played {
@@ -407,12 +410,12 @@ impl Inner {
     /// `adw::PreferencesGroup` pre-populated from the stored overrides (or the
     /// schema defaults), saved through `upsert_show_settings`.
     fn open_settings_for(self: &Rc<Self>, show_id: i64) {
-        let current = self
+        let cur = self
             .pool
             .open()
             .ok()
-            .and_then(|conn| get_show_settings(&conn, show_id).ok().flatten());
-        let cur = current.clone().unwrap_or_else(|| default_settings(show_id));
+            .and_then(|conn| get_show_settings(&conn, show_id).ok().flatten())
+            .unwrap_or_else(|| default_settings(show_id));
 
         let group = adw::PreferencesGroup::new();
         group.set_description(Some(
@@ -443,6 +446,18 @@ impl Inner {
         outro.set_title("Skip outro (seconds)");
         outro.set_value(cur.skip_outro as f64);
 
+        // The quick-seek amounts (16.5f): the schema fields existed since
+        // Phase 6, the dialog finally exposes them. 0 inherits the defaults.
+        let back = adw::SpinRow::with_range(0.0, 300.0, 5.0);
+        back.set_title("Skip back (seconds)");
+        back.set_subtitle("0 uses the default (15)");
+        back.set_value(cur.skip_back.unwrap_or(0) as f64);
+
+        let fwd = adw::SpinRow::with_range(0.0, 300.0, 5.0);
+        fwd.set_title("Skip forward (seconds)");
+        fwd.set_subtitle("0 uses the default (30)");
+        fwd.set_value(cur.skip_forward.unwrap_or(0) as f64);
+
         let policy = adw::ComboRow::new();
         policy.set_title("New episodes");
         policy.set_model(Some(&gtk::StringList::new(&[
@@ -458,6 +473,8 @@ impl Inner {
             voice.upcast_ref(),
             intro.upcast_ref(),
             outro.upcast_ref(),
+            back.upcast_ref(),
+            fwd.upcast_ref(),
             policy.upcast_ref(),
         ] {
             group.add(row);
@@ -485,13 +502,14 @@ impl Inner {
                 return;
             }
             let settings = settings_from_form(
-                current.as_ref(),
                 show_id,
                 speed.value(),
                 smart.is_active(),
                 voice.is_active(),
                 intro.value() as u32,
                 outro.value() as u32,
+                skip_override(back.value()),
+                skip_override(fwd.value()),
                 inbox_policy_from_index(policy.selected()),
             );
             let _ = inner
@@ -1072,18 +1090,26 @@ fn inbox_policy_from_index(index: u32) -> InboxPolicy {
     }
 }
 
-/// Build the `ShowSettings` to persist from the dialog's field values,
-/// preserving `skip_forward` / `skip_back` from `current` (the panel does not
-/// expose those global-inherit fields, so a save must not clobber them).
+/// A skip SpinRow's value as the stored override: 0 means "inherit the
+/// default", stored as `None` (16.5f). Pure.
+pub(crate) fn skip_override(value: f64) -> Option<u32> {
+    let secs = value as u32;
+    (secs > 0).then_some(secs)
+}
+
+/// Build the `ShowSettings` to persist from the dialog's field values. Since
+/// 16.5f every stored field is on the form (the skip overrides included), so
+/// nothing needs preserving from a prior row.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn settings_from_form(
-    current: Option<&ShowSettings>,
     show_id: i64,
     speed: f64,
     smart_speed: bool,
     voice_boost: bool,
     skip_intro: u32,
     skip_outro: u32,
+    skip_back: Option<u32>,
+    skip_forward: Option<u32>,
     inbox_policy: InboxPolicy,
 ) -> ShowSettings {
     ShowSettings {
@@ -1093,8 +1119,8 @@ pub(crate) fn settings_from_form(
         voice_boost,
         skip_intro,
         skip_outro,
-        skip_forward: current.and_then(|c| c.skip_forward),
-        skip_back: current.and_then(|c| c.skip_back),
+        skip_forward,
+        skip_back,
         inbox_policy,
     }
 }
@@ -1939,46 +1965,32 @@ mod tests {
     }
 
     #[test]
-    fn settings_from_form_applies_edits_and_preserves_skip_fields() {
-        // A stored row carries custom global-inherit skip overrides the panel
-        // does not expose; a save must keep them.
-        let current = ShowSettings {
-            show_id: 7,
-            playback_speed: 1.0,
-            smart_speed: true,
-            voice_boost: false,
-            skip_intro: 0,
-            skip_outro: 0,
-            skip_forward: Some(45),
-            skip_back: Some(15),
-            inbox_policy: InboxPolicy::Inbox,
-        };
+    fn settings_from_form_passes_every_field_through() {
+        // Since 16.5f the skip overrides are on the form; a save writes
+        // exactly what the dialog shows.
         let out = settings_from_form(
-            Some(&current),
             7,
             1.5,
             false,
             true,
             30,
             20,
+            Some(15),
+            Some(45),
             InboxPolicy::AlwaysQueue,
         );
         assert_eq!(out.playback_speed, 1.5);
         assert!(!out.smart_speed);
         assert!(out.voice_boost);
         assert_eq!((out.skip_intro, out.skip_outro), (30, 20));
+        assert_eq!((out.skip_back, out.skip_forward), (Some(15), Some(45)));
         assert_eq!(out.inbox_policy, InboxPolicy::AlwaysQueue);
-        // Untouched, inherited from `current`.
-        assert_eq!(out.skip_forward, Some(45));
-        assert_eq!(out.skip_back, Some(15));
     }
 
     #[test]
-    fn settings_from_form_without_current_leaves_skip_fields_unset() {
-        let out = settings_from_form(None, 3, 1.0, true, false, 0, 0, InboxPolicy::AlwaysArchive);
-        assert_eq!(out.skip_forward, None);
-        assert_eq!(out.skip_back, None);
-        assert_eq!(out.inbox_policy, InboxPolicy::AlwaysArchive);
+    fn skip_override_maps_zero_to_inherit() {
+        assert_eq!(skip_override(0.0), None);
+        assert_eq!(skip_override(20.0), Some(20));
     }
 
     #[test]

@@ -985,11 +985,11 @@ Deferred out of this phase, recorded here so they are not lost: a book list-view
 - [x] A Delete Download verb behind a destructive confirm ("the episodes stay; streaming still works"), riding `retention::apply` so file deletion has exactly one codepath (file removed, `audio_path` cleared).
 - [x] The manager pane, retry surface, and storage dashboard stay deferred.
 
-### Phase 16.5f — Spoken-word playback surfaces (v0.1.14)
+### Phase 16.5f — Spoken-word playback surfaces ✅ (v0.1.14)
 
-- [ ] Skip-back/skip-forward come to both settings dialogs (the schema fields exist since Phase 6); the Now-bar gains −15/+30 quick-seek buttons for episodes and audiobooks (pure resolve + clamp helpers in core).
-- [ ] Show notes keep their links: the ingest sanitizer's allowlist widens (`a href`, bold, italics) and a pure notes-to-Pango-markup renderer makes them clickable; old rows heal on their next feed refresh.
-- [ ] The Sound dialog says which controls apply to music and which to spoken word; the Now-bar settings gear appears for audiobooks too, opening the playing book's settings.
+- [x] Skip-back/skip-forward come to both settings dialogs (the schema fields exist since Phase 6; 0 inherits the 15/30 defaults, `settings_from_form` now passes every field through); the Now-bar gains quick-seek label buttons flanking play/pause for episodes and audiobooks, amounts per show (pure `resolve_skip_amounts` + `quick_seek_target` in core, unit-tested; the clamp stops just short of EOF and the seek reads the ≤250 ms snapshot).
+- [x] Show notes keep their links: the ingest sanitizer's allowlist widens to the Pango inline subset (`a href` bare via `link_rel(None)`, `b`/`strong`, `i`/`em`; schemes http/https/mailto) and the stored form stays entity-escaped, so pure `notes_to_markup` renders it clickable (`strong`/`em` map to Pango `b`/`i`; legacy plain-text rows are detected and escaped whole). Old rows heal on their next feed refresh (the episode upsert rewrites `description`). The only render point is the podcasts detail pane; the CLI never prints episode notes.
+- [x] The Sound dialog says which controls apply to music and which to everything; the Now-bar settings gear appears for audiobooks too, opening the playing book's settings with live `set_spoken` apply (`open_playing_book_settings` + a music-only stub).
 
 ### Phase 16.5g — Audiobook shelf completeness (v0.1.15)
 

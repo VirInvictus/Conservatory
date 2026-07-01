@@ -192,6 +192,27 @@ pub fn resolve_episode_profile(settings: Option<&ShowSettings>) -> MusicProfile 
     }
 }
 
+/// The quick-seek amounts `(back, forward)` in seconds for the Now-bar's
+/// spoken-word skip buttons (16.5f): a show's `skip_back` / `skip_forward`
+/// overrides when set, else the podcast-app defaults (15 back / 30 forward).
+/// Pure.
+pub fn resolve_skip_amounts(settings: Option<&ShowSettings>) -> (f64, f64) {
+    let back = settings.and_then(|s| s.skip_back).unwrap_or(15).max(1) as f64;
+    let forward = settings.and_then(|s| s.skip_forward).unwrap_or(30).max(1) as f64;
+    (back, forward)
+}
+
+/// A quick-seek's target position: `position + delta` (delta negative for a
+/// skip back), floored at 0 and capped just short of a known `duration` so a
+/// forward skip near the end never runs past EOF. Pure.
+pub fn quick_seek_target(position: f64, delta: f64, duration: Option<f64>) -> f64 {
+    let target = (position + delta).max(0.0);
+    match duration {
+        Some(d) if d > 0.0 => target.min((d - 0.5).max(0.0)),
+        _ => target,
+    }
+}
+
 /// A spoken-word profile for audiobook playback (Phase 7c-ii, spec §6.3): the
 /// audiobook analogue of [`resolve_episode_profile`]. An audiobook shares the
 /// same spoken-word chain (no ReplayGain, no gapless, pitch-corrected variable
@@ -460,5 +481,30 @@ mod tests {
             resolve_book_profile(Some(&book_playback(Some(0.0), None, None))).speed,
             MIN_SPEED
         );
+    }
+
+    #[test]
+    fn skip_amounts_default_and_follow_overrides() {
+        assert_eq!(resolve_skip_amounts(None), (15.0, 30.0));
+        let mut s = show_settings(1.0);
+        s.skip_back = Some(10);
+        s.skip_forward = Some(45);
+        assert_eq!(resolve_skip_amounts(Some(&s)), (10.0, 45.0));
+        // A partial override inherits the other default.
+        s.skip_forward = None;
+        assert_eq!(resolve_skip_amounts(Some(&s)), (10.0, 30.0));
+    }
+
+    #[test]
+    fn quick_seek_target_clamps_to_the_item() {
+        // Plain skips move by the delta.
+        assert_eq!(quick_seek_target(100.0, 30.0, Some(3600.0)), 130.0);
+        assert_eq!(quick_seek_target(100.0, -15.0, Some(3600.0)), 85.0);
+        // A back-skip near the start floors at 0.
+        assert_eq!(quick_seek_target(5.0, -15.0, Some(3600.0)), 0.0);
+        // A forward skip near the end stops just short of EOF.
+        assert_eq!(quick_seek_target(3595.0, 30.0, Some(3600.0)), 3599.5);
+        // Unknown duration: only the floor applies.
+        assert_eq!(quick_seek_target(10.0, 30.0, None), 40.0);
     }
 }

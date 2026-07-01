@@ -44,7 +44,7 @@ pub use download::{
 };
 pub use error::{FetchError, Result};
 pub use fetcher::{FetchResult, Fetcher};
-pub use notes::sanitize_notes;
+pub use notes::{notes_to_markup, sanitize_notes};
 pub use opml::{ImportSummary, OpmlSubscription, export_opml, import_opml, parse_opml, write_opml};
 pub use parse::{ChannelMeta, ParsedEpisode, ParsedFeed, parse_feed};
 pub use refresh::{RefreshOutcome, RefreshStatus, add_show, refresh_all, refresh_show};

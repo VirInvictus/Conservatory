@@ -977,8 +977,10 @@ impl Detail {
 
 /// Per-book speed bounds for the settings SpinRow, mirroring `player::profile`'s
 /// `MIN_SPEED` / `MAX_SPEED` (the authoritative clamp is `resolve_book_profile`).
-const MIN_SPEED: f64 = 0.25;
-const MAX_SPEED: f64 = 4.0;
+/// Crate-visible since 16.5f: the window's Now-bar book-settings dialog shares
+/// them.
+pub(crate) const MIN_SPEED: f64 = 0.25;
+pub(crate) const MAX_SPEED: f64 = 4.0;
 
 /// One chapter list row: "NN. Title          m:ss".
 fn chapter_row(ch: &conservatory_core::db::BookChapter) -> gtk::Widget {

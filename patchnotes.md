@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.1.14
+
+Spoken word gets its transport conveniences.
+
+- **Skip back / skip forward on the Now-bar.** Playing an episode or an audiobook, two new buttons flank play/pause: back 15 and forward 30 seconds by default, clamped so a skip never runs past the end. Each show can set its own amounts in its settings (the schema fields existed since Phase 6; the dialogs finally expose them), and the button labels follow.
+- **Show notes keep their links.** Notes used to be flattened to plain text at ingest, destroying every link a feed put in them. The sanitizer now preserves links, bold, and italics (and nothing else); the detail pane renders them clickable. Episodes stored under the old format heal on their next feed refresh.
+- **The gear works for audiobooks too.** The Now-bar's playback-settings button now appears while a book plays, opening its per-book speed / Smart Speed / Voice Boost dialog with live apply, the same as episodes; before this it meant a trip back to the shelf's detail pane.
+- **The Sound page says what applies to what.** The equalizer and dynamics groups note they apply to everything; ReplayGain notes it is music-only (podcasts and audiobooks carry no ReplayGain).
+
 ## v0.1.13
 
 Episode downloads move into the window.

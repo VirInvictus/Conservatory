@@ -12,8 +12,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPerson, BookPlayback, Chapter,
     CompSettings, DspState, Episode, EqPreset, EqState, InboxPolicy, LevelerSettings,
-    LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState, QueueItem,
-    ResamplerQuality, Series, Show, ShowSettings, Tag, Track, VerifyResultRow, EQ_BAND_COUNT,
+    LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState, Playlist,
+    PlaylistKind, PlaylistOrder, QueueItem, ResamplerQuality, Series, Show, ShowSettings, Tag,
+    Track, VerifyResultRow, EQ_BAND_COUNT,
 };
 use crate::errors::Result;
 use crate::verify::VerifyVerdict;
@@ -831,6 +832,102 @@ pub fn search_track_ids(
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params_from_iter(bound), |r| r.get(0))?;
     rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+// --- Playlists (Phase 16d) ---
+
+fn row_to_playlist(r: &rusqlite::Row) -> rusqlite::Result<Playlist> {
+    let kind_s: String = r.get(2)?;
+    let order_s: Option<String> = r.get(5)?;
+    Ok(Playlist {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        kind: PlaylistKind::parse(&kind_s).unwrap_or(PlaylistKind::Static),
+        query: r.get(3)?,
+        limit_n: r.get(4)?,
+        order_by: order_s.and_then(|s| PlaylistOrder::parse(&s)),
+        created_at: r.get(6)?,
+    })
+}
+
+/// Every playlist, newest first (Phase 16d).
+pub fn list_playlists(conn: &Connection) -> Result<Vec<Playlist>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, kind, query, limit_n, order_by, created_at \
+         FROM playlists ORDER BY created_at DESC, id DESC",
+    )?;
+    let rows = stmt.query_map([], row_to_playlist)?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// One playlist by id (Phase 16d).
+pub fn get_playlist(conn: &Connection, id: i64) -> Result<Option<Playlist>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, kind, query, limit_n, order_by, created_at FROM playlists WHERE id = ?1",
+    )?;
+    stmt.query_row([id], row_to_playlist)
+        .optional()
+        .map_err(Into::into)
+}
+
+/// A static playlist's track ids in position order (Phase 16d). Episode / book
+/// entries are skipped here (v1 materialises tracks; the columns exist for later).
+pub fn static_playlist_track_ids(conn: &Connection, playlist_id: i64) -> Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT track_id FROM playlist_entries \
+         WHERE playlist_id = ?1 AND track_id IS NOT NULL ORDER BY position",
+    )?;
+    let rows = stmt.query_map([playlist_id], |r| r.get(0))?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// The smart-playlist SQL path (Phase 16d): `SELECT id FROM tracks WHERE
+/// <where_sql> ORDER BY <order> LIMIT <n>`. `where_sql` + `params` come from the
+/// caller's `conservatory_search::try_translate` (core stays search-free at
+/// runtime); `order` is a fixed whitelist fragment and `limit` an integer, so
+/// there is no injection surface. The eval fallback (regex / fuzzy queries that
+/// do not translate) is the caller's concern, since it needs the grammar.
+pub fn ordered_track_ids(
+    conn: &Connection,
+    where_sql: &str,
+    params: &[SqlParam],
+    order: PlaylistOrder,
+    limit: Option<i64>,
+) -> Result<Vec<i64>> {
+    let limit_sql = match limit {
+        Some(n) if n >= 0 => format!(" LIMIT {n}"),
+        _ => String::new(),
+    };
+    let sql = format!(
+        "SELECT id FROM tracks WHERE {where_sql} ORDER BY {}{limit_sql}",
+        order_sql(order),
+    );
+    let bound: Vec<rusqlite::types::Value> = params
+        .iter()
+        .map(|p| match p {
+            SqlParam::Text(s) => rusqlite::types::Value::Text(s.clone()),
+            SqlParam::Int(n) => rusqlite::types::Value::Integer(*n),
+            SqlParam::Real(x) => rusqlite::types::Value::Real(*x),
+        })
+        .collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(bound), |r| r.get(0))?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// The `ORDER BY` fragment for a smart-playlist order. A fixed whitelist (no user
+/// input), safe to interpolate; `id` is the stable tiebreak. Least-recently-played
+/// sorts never-played (NULL `last_played`) first.
+fn order_sql(order: PlaylistOrder) -> &'static str {
+    match order {
+        PlaylistOrder::Added => "added_at DESC, id ASC",
+        PlaylistOrder::Rating => "rating DESC, added_at DESC, id ASC",
+        PlaylistOrder::LastPlayed => "last_played ASC, added_at DESC, id ASC",
+        PlaylistOrder::Title => "title COLLATE NOCASE ASC, id ASC",
+        PlaylistOrder::Artist => {
+            "(SELECT name FROM artists WHERE id = tracks.artist_id) COLLATE NOCASE ASC, id ASC"
+        }
+    }
 }
 
 /// FTS5 `bm25` scores for a `track_fts MATCH` query, keyed by track id (Phase 3a

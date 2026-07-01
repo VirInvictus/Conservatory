@@ -19,8 +19,8 @@ use tokio::sync::{mpsc, oneshot};
 use crate::db::command::Command;
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
-    Track, VerifyResultRow,
+    EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState, PlaylistKind,
+    PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::db::{connection, migrations, probe, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
@@ -405,6 +405,71 @@ impl WorkerHandle {
     /// Empty the queue.
     pub async fn clear_queue(&self) -> Result<()> {
         self.dispatch(|reply| Command::ClearQueue { reply }).await
+    }
+
+    // --- Playlists (Phase 16d) ---
+
+    pub async fn create_playlist(
+        &self,
+        name: String,
+        kind: PlaylistKind,
+        query: Option<String>,
+        limit_n: Option<i64>,
+        order: Option<PlaylistOrder>,
+        created_at: i64,
+    ) -> Result<i64> {
+        self.dispatch(|reply| Command::CreatePlaylist {
+            name,
+            kind,
+            query,
+            limit_n,
+            order,
+            created_at,
+            reply,
+        })
+        .await
+    }
+
+    pub async fn delete_playlist(&self, id: i64) -> Result<()> {
+        self.dispatch(|reply| Command::DeletePlaylist { id, reply })
+            .await
+    }
+
+    pub async fn rename_playlist(&self, id: i64, name: String) -> Result<()> {
+        self.dispatch(|reply| Command::RenamePlaylist { id, name, reply })
+            .await
+    }
+
+    pub async fn append_playlist_tracks(
+        &self,
+        playlist_id: i64,
+        track_ids: Vec<i64>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::AppendPlaylistTracks {
+            playlist_id,
+            track_ids,
+            reply,
+        })
+        .await
+    }
+
+    pub async fn remove_playlist_entry(&self, playlist_id: i64, position: i64) -> Result<()> {
+        self.dispatch(|reply| Command::RemovePlaylistEntry {
+            playlist_id,
+            position,
+            reply,
+        })
+        .await
+    }
+
+    pub async fn reorder_playlist_entry(&self, playlist_id: i64, from: i64, to: i64) -> Result<()> {
+        self.dispatch(|reply| Command::ReorderPlaylistEntry {
+            playlist_id,
+            from,
+            to,
+            reply,
+        })
+        .await
     }
 
     /// Resolve a show by `feed_url`, creating it on first sight (`podcast add`,
@@ -1067,6 +1132,57 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::ClearQueue { reply } => {
             let _ = reply.send(writes::clear_queue(conn));
+        }
+        Command::CreatePlaylist {
+            name,
+            kind,
+            query,
+            limit_n,
+            order,
+            created_at,
+            reply,
+        } => {
+            let _ = reply.send(writes::create_playlist(
+                conn,
+                &name,
+                kind,
+                query.as_deref(),
+                limit_n,
+                order,
+                created_at,
+            ));
+        }
+        Command::DeletePlaylist { id, reply } => {
+            let _ = reply.send(writes::delete_playlist(conn, id));
+        }
+        Command::RenamePlaylist { id, name, reply } => {
+            let _ = reply.send(writes::rename_playlist(conn, id, &name));
+        }
+        Command::AppendPlaylistTracks {
+            playlist_id,
+            track_ids,
+            reply,
+        } => {
+            let _ = reply.send(writes::append_playlist_tracks(
+                conn,
+                playlist_id,
+                &track_ids,
+            ));
+        }
+        Command::RemovePlaylistEntry {
+            playlist_id,
+            position,
+            reply,
+        } => {
+            let _ = reply.send(writes::remove_playlist_entry(conn, playlist_id, position));
+        }
+        Command::ReorderPlaylistEntry {
+            playlist_id,
+            from,
+            to,
+            reply,
+        } => {
+            let _ = reply.send(writes::reorder_playlist_entry(conn, playlist_id, from, to));
         }
         Command::GetOrCreateShow { show, reply } => {
             let _ = reply.send(writes::get_or_create_show(conn, &show));

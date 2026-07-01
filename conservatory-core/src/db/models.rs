@@ -117,6 +117,81 @@ impl FromStr for MediaKind {
     }
 }
 
+/// A playlist's kind (Phase 16d). `Static` is a frozen, hand-ordered list whose
+/// members live in `playlist_entries`; `Smart` is a live query (with a limit and
+/// order) that materialises on demand and holds no entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlaylistKind {
+    Static,
+    Smart,
+}
+
+impl PlaylistKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PlaylistKind::Static => "static",
+            PlaylistKind::Smart => "smart",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "static" => Some(PlaylistKind::Static),
+            "smart" => Some(PlaylistKind::Smart),
+            _ => None,
+        }
+    }
+}
+
+/// A smart playlist's prioritisation order (Phase 16d, the research trio plus
+/// title/artist). `random` is deferred to the Phase 17 shuffle work; these are
+/// the deterministic keys. `LastPlayed` sorts least-recently-played first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlaylistOrder {
+    Added,
+    Rating,
+    LastPlayed,
+    Title,
+    Artist,
+}
+
+impl PlaylistOrder {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PlaylistOrder::Added => "added",
+            PlaylistOrder::Rating => "rating",
+            PlaylistOrder::LastPlayed => "lastplayed",
+            PlaylistOrder::Title => "title",
+            PlaylistOrder::Artist => "artist",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "added" => Some(PlaylistOrder::Added),
+            "rating" => Some(PlaylistOrder::Rating),
+            "lastplayed" | "last_played" => Some(PlaylistOrder::LastPlayed),
+            "title" => Some(PlaylistOrder::Title),
+            "artist" => Some(PlaylistOrder::Artist),
+            _ => None,
+        }
+    }
+}
+
+/// A playlist row (Phase 16d). `query` / `limit_n` / `order_by` are `Some` only
+/// for a `Smart` playlist; a `Static` playlist carries `None` for all three and
+/// keeps its members in `playlist_entries`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Playlist {
+    pub id: i64,
+    pub name: String,
+    pub kind: PlaylistKind,
+    pub query: Option<String>,
+    pub limit_n: Option<i64>,
+    pub order_by: Option<PlaylistOrder>,
+    pub created_at: i64,
+}
+
 /// One ordered entry in the unified queue (spec §4.3, §6.1). Exactly one of the
 /// id columns is populated, matched to `kind`; `position` is contiguous and
 /// drag-reorderable.

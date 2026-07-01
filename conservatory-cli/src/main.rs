@@ -11,12 +11,13 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    ApeStripRow, Connection, MediaKind, ReadPool, ResamplerQuality, SearchRow, SqlParam,
-    VerifyResultRow, ape_strips, audit_album_rows, audit_track_rows, dedup_rows, fts_rank,
-    get_album, get_episode, get_show_settings, get_track, library_counts, list_perspectives,
-    load_queue, playlist_rows, probe_read, read_playback_state, read_verify_results, search_rows,
-    search_track_ids, spawn_worker, stats_genre_rows, stats_track_rows, track_id_by_path,
-    track_render_rows, writeback_rows,
+    ApeStripRow, Connection, MediaKind, PlaylistKind, PlaylistOrder, ReadPool, ResamplerQuality,
+    SearchRow, SqlParam, VerifyResultRow, ape_strips, audit_album_rows, audit_track_rows,
+    dedup_rows, fts_rank, get_album, get_episode, get_playlist, get_show_settings, get_track,
+    library_counts, list_perspectives, list_playlists, load_queue, ordered_track_ids,
+    playlist_rows, probe_read, read_playback_state, read_verify_results, search_rows,
+    search_track_ids, spawn_worker, static_playlist_track_ids, stats_genre_rows, stats_track_rows,
+    track_id_by_path, track_metadata, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
 use conservatory_core::{
@@ -1037,6 +1038,51 @@ enum PlaylistAction {
         /// Replace the queue instead of appending to it.
         #[arg(long)]
         replace: bool,
+    },
+    /// Create a static (frozen, hand-ordered) playlist (Phase 16d). Prints its id.
+    CreateStatic {
+        db: PathBuf,
+        /// The playlist name.
+        name: String,
+    },
+    /// Create a smart (live-query) playlist (Phase 16d). Prints its id. `query`
+    /// is the search grammar (spec §3.4); `--limit` caps it; `--order` prioritises
+    /// (added / rating / lastplayed / title / artist).
+    CreateSmart {
+        db: PathBuf,
+        /// The playlist name.
+        name: String,
+        /// The search expression the smart playlist tracks.
+        query: String,
+        /// Cap the materialised set at this many tracks.
+        #[arg(long)]
+        limit: Option<i64>,
+        /// Prioritisation: added | rating | lastplayed | title | artist.
+        #[arg(long)]
+        order: Option<String>,
+    },
+    /// Append the tracks matching a selector to a static playlist (Phase 16d).
+    Add {
+        db: PathBuf,
+        /// The target static playlist (its id, or its name).
+        playlist: String,
+        /// A search expression / `vl:NAME` selecting the tracks to append.
+        query: String,
+    },
+    /// List all playlists (Phase 16d).
+    List { db: PathBuf },
+    /// Materialise a playlist and print its tracks (Phase 16d): a static list in
+    /// order, or a smart query resolved with its limit and order.
+    Show {
+        db: PathBuf,
+        /// The playlist (its id, or its name).
+        playlist: String,
+    },
+    /// Delete a playlist (Phase 16d). Its entries cascade away.
+    Delete {
+        db: PathBuf,
+        /// The playlist (its id, or its name).
+        playlist: String,
     },
 }
 
@@ -4370,7 +4416,220 @@ fn playlist(action: PlaylistAction) -> Result<()> {
             root,
             replace,
         } => block_on(run_playlist_import(db, input, root, replace)),
+        PlaylistAction::CreateStatic { db, name } => block_on(run_playlist_create(db, name, None)),
+        PlaylistAction::CreateSmart {
+            db,
+            name,
+            query,
+            limit,
+            order,
+        } => block_on(run_playlist_create(db, name, Some((query, limit, order)))),
+        PlaylistAction::Add {
+            db,
+            playlist,
+            query,
+        } => block_on(run_playlist_add(db, playlist, query)),
+        PlaylistAction::List { db } => run_playlist_list(db),
+        PlaylistAction::Show { db, playlist } => run_playlist_show(db, playlist),
+        PlaylistAction::Delete { db, playlist } => block_on(run_playlist_delete(db, playlist)),
     }
+}
+
+/// Resolve a `playlist` argument (an id, or a name) to a stored playlist.
+fn find_playlist(conn: &Connection, sel: &str) -> Result<conservatory_core::db::Playlist> {
+    if let Ok(id) = sel.parse::<i64>()
+        && let Some(pl) = get_playlist(conn, id).context("reading playlist")?
+    {
+        return Ok(pl);
+    }
+    list_playlists(conn)
+        .context("listing playlists")?
+        .into_iter()
+        .find(|p| p.name.eq_ignore_ascii_case(sel))
+        .ok_or_else(|| anyhow::anyhow!("no playlist matching {sel:?}"))
+}
+
+/// Materialise a playlist to its ordered track ids: a static list in position
+/// order, or a smart query resolved with its limit and order. Smart evaluation
+/// uses the search grammar (core stays free of it), reusing the selector path.
+fn materialize_playlist(pool: &ReadPool, pl: &conservatory_core::db::Playlist) -> Result<Vec<i64>> {
+    match pl.kind {
+        PlaylistKind::Static => {
+            let conn = pool.open().context("opening pool connection")?;
+            static_playlist_track_ids(&conn, pl.id).context("reading static playlist")
+        }
+        PlaylistKind::Smart => {
+            let query = pl.query.as_deref().unwrap_or("");
+            let order = pl.order_by.unwrap_or(PlaylistOrder::Added);
+            materialize_smart(pool, query, order, pl.limit_n)
+        }
+    }
+}
+
+/// The smart-playlist query path: translate to SQL and let core order + limit;
+/// else (regex / fuzzy) match in memory and order best-effort.
+fn materialize_smart(
+    pool: &ReadPool,
+    query: &str,
+    order: PlaylistOrder,
+    limit: Option<i64>,
+) -> Result<Vec<i64>> {
+    let conn = pool.open().context("opening pool connection")?;
+    let today = Utc::now().date_naive();
+    let resolver = DbPerspectiveResolver::load(&conn)?;
+    let parsed = parse_with_resolver(query, &resolver);
+    for w in &parsed.warnings {
+        eprintln!("warning: {w}");
+    }
+    match try_translate(&parsed.expr, today) {
+        Some(clause) => {
+            let params: Vec<SqlParam> = clause.params.iter().map(to_param).collect();
+            ordered_track_ids(&conn, &clause.sql, &params, order, limit)
+                .context("running smart-playlist SQL")
+        }
+        None => {
+            let mut rows: Vec<_> = search_rows(&conn)
+                .context("loading rows")?
+                .into_iter()
+                .filter(|r| conservatory_search::evaluate(&parsed.expr, &to_item(r), today))
+                .collect();
+            sort_search_rows(&mut rows, order);
+            let mut ids: Vec<i64> = rows.into_iter().map(|r| r.track_id).collect();
+            if let Some(n) = limit
+                && n >= 0
+            {
+                ids.truncate(n as usize);
+            }
+            Ok(ids)
+        }
+    }
+}
+
+/// Best-effort order for the eval fallback (regex / fuzzy). `SearchRow` carries no
+/// `last_played`, so `lastplayed` degrades to `added` here; the SQL path is exact.
+fn sort_search_rows(rows: &mut [conservatory_core::db::SearchRow], order: PlaylistOrder) {
+    match order {
+        PlaylistOrder::Added | PlaylistOrder::LastPlayed => {
+            rows.sort_by(|a, b| b.added.cmp(&a.added).then(a.track_id.cmp(&b.track_id)))
+        }
+        PlaylistOrder::Rating => {
+            rows.sort_by(|a, b| b.rating.cmp(&a.rating).then(b.added.cmp(&a.added)))
+        }
+        PlaylistOrder::Title => rows.sort_by_key(|r| r.title.to_lowercase()),
+        PlaylistOrder::Artist => {
+            rows.sort_by_key(|r| r.artist.as_deref().unwrap_or("").to_lowercase())
+        }
+    }
+}
+
+/// Create a static playlist, or a smart one when `smart` is `Some((query, limit,
+/// order))`. Prints the new id.
+async fn run_playlist_create(
+    db: PathBuf,
+    name: String,
+    smart: Option<(String, Option<i64>, Option<String>)>,
+) -> Result<()> {
+    let worker = spawn_worker(db).context("opening database")?;
+    let (kind, query, limit, order) = match smart {
+        Some((q, limit, order_s)) => {
+            let order = match order_s {
+                Some(s) => Some(PlaylistOrder::parse(&s).ok_or_else(|| {
+                    anyhow::anyhow!("unknown order {s:?} (added|rating|lastplayed|title|artist)")
+                })?),
+                None => None,
+            };
+            (PlaylistKind::Smart, Some(q), limit, order)
+        }
+        None => (PlaylistKind::Static, None, None, None),
+    };
+    let created_at = Utc::now().timestamp();
+    let id = worker
+        .create_playlist(name, kind, query, limit, order, created_at)
+        .await
+        .context("creating playlist")?;
+    println!("{id}");
+    worker.shutdown_ack().await.ok();
+    Ok(())
+}
+
+/// Append the tracks matching `query` to a static playlist.
+async fn run_playlist_add(db: PathBuf, playlist: String, query: String) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("opening database")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let pl = {
+        let conn = pool.open().context("opening pool connection")?;
+        find_playlist(&conn, &playlist)?
+    };
+    if pl.kind != PlaylistKind::Static {
+        anyhow::bail!(
+            "{:?} is a smart playlist; add tracks by editing its query",
+            pl.name
+        );
+    }
+    let (ids, _albums) = matched_tracks_and_albums(&pool, &resolve_selector(&pool, &query)?)?;
+    let n = ids.len();
+    worker
+        .append_playlist_tracks(pl.id, ids)
+        .await
+        .context("appending to playlist")?;
+    println!("added {n} track(s) to {:?}", pl.name);
+    worker.shutdown_ack().await.ok();
+    Ok(())
+}
+
+fn run_playlist_list(db: PathBuf) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    for p in list_playlists(&conn).context("listing playlists")? {
+        match p.kind {
+            PlaylistKind::Static => println!("{}\tstatic\t{}", p.id, p.name),
+            PlaylistKind::Smart => println!(
+                "{}\tsmart\t{}\t[{}]{}{}",
+                p.id,
+                p.name,
+                p.query.as_deref().unwrap_or(""),
+                p.limit_n.map(|n| format!(" limit {n}")).unwrap_or_default(),
+                p.order_by
+                    .map(|o| format!(" order {}", o.as_str()))
+                    .unwrap_or_default(),
+            ),
+        }
+    }
+    Ok(())
+}
+
+fn run_playlist_show(db: PathBuf, playlist: String) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let pl = {
+        let conn = pool.open().context("opening pool connection")?;
+        find_playlist(&conn, &playlist)?
+    };
+    let ids = materialize_playlist(&pool, &pl)?;
+    let conn = pool.open().context("opening pool connection")?;
+    for id in &ids {
+        match track_metadata(&conn, *id).context("reading track")? {
+            Some(t) => println!("{id}\t{}\t{}", t.artist.unwrap_or_default(), t.title),
+            None => println!("{id}\t(missing)"),
+        }
+    }
+    eprintln!("{} track(s)", ids.len());
+    Ok(())
+}
+
+async fn run_playlist_delete(db: PathBuf, playlist: String) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("opening database")?;
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let pl = {
+        let conn = pool.open().context("opening pool connection")?;
+        find_playlist(&conn, &playlist)?
+    };
+    worker
+        .delete_playlist(pl.id)
+        .await
+        .context("deleting playlist")?;
+    println!("deleted {:?}", pl.name);
+    worker.shutdown_ack().await.ok();
+    Ok(())
 }
 
 /// Export a selector to a `.m3u`: resolve the matched ids, then walk

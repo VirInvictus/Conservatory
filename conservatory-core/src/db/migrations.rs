@@ -88,6 +88,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 16,
         sql: include_str!("migrations/0016_smart_speed_level.sql"),
     },
+    Migration {
+        version: 17,
+        sql: include_str!("migrations/0017_playlists.sql"),
+    },
 ];
 
 /// The `user_version` a fully-migrated database reaches.

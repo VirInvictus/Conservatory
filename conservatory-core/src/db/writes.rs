@@ -8,8 +8,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, Episode,
-    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track, VerifyResultRow,
-    EQ_BAND_COUNT,
+    EqState, Playback, PlaybackCursor, PlayedState, PlaylistKind, PlaylistOrder, Show,
+    ShowSettings, Track, VerifyResultRow, EQ_BAND_COUNT,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -621,6 +621,145 @@ pub(crate) fn reorder_queue(conn: &mut Connection, from: i64, to: i64) -> Result
 /// Empty the queue.
 pub(crate) fn clear_queue(conn: &Connection) -> Result<()> {
     conn.execute("DELETE FROM queue", [])?;
+    Ok(())
+}
+
+// --- Playlists (Phase 16d) ---
+
+/// Create a playlist, returning its id. `query` / `limit_n` / `order` are `Some`
+/// only for a smart playlist.
+pub(crate) fn create_playlist(
+    conn: &Connection,
+    name: &str,
+    kind: PlaylistKind,
+    query: Option<&str>,
+    limit_n: Option<i64>,
+    order: Option<PlaylistOrder>,
+    created_at: i64,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO playlists (name, kind, query, limit_n, order_by, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            name,
+            kind.as_str(),
+            query,
+            limit_n,
+            order.map(|o| o.as_str()),
+            created_at
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Delete a playlist (its entries cascade).
+pub(crate) fn delete_playlist(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM playlists WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+/// Rename a playlist.
+pub(crate) fn rename_playlist(conn: &Connection, id: i64, name: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE playlists SET name = ?2 WHERE id = ?1",
+        params![id, name],
+    )?;
+    Ok(())
+}
+
+/// Append tracks to a static playlist's tail, keeping `position` contiguous
+/// (the `enqueue_tracks` shape, scoped to one playlist).
+pub(crate) fn append_playlist_tracks(
+    conn: &mut Connection,
+    playlist_id: i64,
+    track_ids: &[i64],
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    let base: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_entries WHERE playlist_id = ?1",
+        params![playlist_id],
+        |r| r.get(0),
+    )?;
+    for (offset, &track_id) in track_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO playlist_entries (playlist_id, position, kind, track_id) \
+             VALUES (?1, ?2, 'track', ?3)",
+            params![playlist_id, base + offset as i64, track_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Remove the entry at `position` from a playlist and close the gap.
+pub(crate) fn remove_playlist_entry(
+    conn: &mut Connection,
+    playlist_id: i64,
+    position: i64,
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    let removed = tx.execute(
+        "DELETE FROM playlist_entries WHERE playlist_id = ?1 AND position = ?2",
+        params![playlist_id, position],
+    )?;
+    if removed > 0 {
+        tx.execute(
+            "UPDATE playlist_entries SET position = position - 1 \
+             WHERE playlist_id = ?1 AND position > ?2",
+            params![playlist_id, position],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Move a playlist entry from `from` to `to`, shifting the rows between them (the
+/// `reorder_queue` transform, scoped to one playlist; `position` is non-unique so
+/// the transient shift does not collide).
+pub(crate) fn reorder_playlist_entry(
+    conn: &mut Connection,
+    playlist_id: i64,
+    from: i64,
+    to: i64,
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    let count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM playlist_entries WHERE playlist_id = ?1",
+        params![playlist_id],
+        |r| r.get(0),
+    )?;
+    if count > 0 {
+        let to = to.clamp(0, count - 1);
+        let rid: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM playlist_entries WHERE playlist_id = ?1 AND position = ?2",
+                params![playlist_id, from],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(rid) = rid {
+            if from < to {
+                tx.execute(
+                    "UPDATE playlist_entries SET position = position - 1 \
+                     WHERE playlist_id = ?1 AND position > ?2 AND position <= ?3",
+                    params![playlist_id, from, to],
+                )?;
+            } else if from > to {
+                tx.execute(
+                    "UPDATE playlist_entries SET position = position + 1 \
+                     WHERE playlist_id = ?1 AND position >= ?3 AND position < ?2",
+                    params![playlist_id, from, to],
+                )?;
+            }
+            if from != to {
+                tx.execute(
+                    "UPDATE playlist_entries SET position = ?1 WHERE id = ?2",
+                    params![to, rid],
+                )?;
+            }
+        }
+    }
+    tx.commit()?;
     Ok(())
 }
 

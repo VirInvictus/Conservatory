@@ -915,7 +915,20 @@ Upgrade the bulk-edit dialog from "blank means unchanged" to the foobar/MusicBee
 
 ### Phase 16d — Smart + Static playlists
 
-Three crisp primitives, kept distinct to avoid Roon's Tags-vs-Bookmarks confusion: Perspective (the existing live saved query), Smart Playlist (query plus a limit and prioritization, new, a live queue source), and Static Playlist (a frozen curated list, new). Migration 0017, a `materialize_smart` over `conservatory-search`, a Playlists sidebar section, and a visual rule builder (so rules are not JSON-only, the Navidrome anti-pattern). Wires the 16a "Add to Playlist" verb.
+Three crisp primitives, kept distinct to avoid Roon's Tags-vs-Bookmarks confusion: Perspective (the existing live saved query), Smart Playlist (query plus a limit and prioritization, new, a live queue source), and Static Playlist (a frozen curated list, new).
+
+**Architecture note:** core is deliberately search-free at runtime (spec §2.2), so smart-playlist *materialisation* (evaluating the query) lives in the CLI / GUI, which depend on the search grammar; core owns the storage and a pure `ordered_track_ids` SQL order/limit primitive. `random` order is deferred to the Phase 17 shuffle work; the deterministic keys (added / rating / lastplayed / title / artist) ship now.
+
+#### Phase 16d-i — Schema + core storage + CLI ✅ (v0.1.6)
+
+- [x] Migration 0017: `playlists` (id, name, kind, query, limit_n, order_by, created_at) and `playlist_entries` (mirroring the queue's synthetic-id + non-unique-position + multi-kind shape, so the reorder shift transfers cleanly). Core models `PlaylistKind` / `PlaylistOrder` / `Playlist`.
+- [x] Core CRUD (create / delete / rename / append / remove-entry / reorder-entry) through the single-writer worker; reads `list_playlists` / `get_playlist` / `static_playlist_track_ids`; the `ordered_track_ids(where_sql, params, order, limit)` SQL primitive (fixed-whitelist ORDER BY, no injection). Unit + integration tests.
+- [x] CLI: `playlist create-static | create-smart | add | list | show | delete`, with smart materialisation glue (translate → `ordered_track_ids`, else eval-fallback + best-effort sort). Verified end-to-end against a fixture library.
+
+#### Phase 16d-ii/iii — GUI (Playlists sidebar + rule builder)
+
+- [ ] A Playlists section in the left sidebar (below Perspectives); activating a playlist enqueues its materialised set; static playlists support in-place drag-reorder.
+- [ ] A visual smart-rule builder (so rules are not query-string-only, the Navidrome anti-pattern) and the 16a "Add to Playlist" context verb.
 
 ## Phases 17–19 — planned (from the UI/UX deep-dive)
 

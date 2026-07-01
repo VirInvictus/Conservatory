@@ -12,8 +12,8 @@ use tokio::sync::oneshot;
 
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, Episode,
-    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track, VerifyResultRow,
-    EQ_BAND_COUNT,
+    EqState, Playback, PlaybackCursor, PlayedState, PlaylistKind, PlaylistOrder, Show,
+    ShowSettings, Track, VerifyResultRow, EQ_BAND_COUNT,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -281,6 +281,43 @@ pub(crate) enum Command {
 
     /// Empty the queue.
     ClearQueue { reply: oneshot::Sender<Result<()>> },
+
+    // --- Playlists (Phase 16d). Storage only; smart materialisation is the
+    // caller's job (it needs the search grammar, which core is free of).
+    CreatePlaylist {
+        name: String,
+        kind: PlaylistKind,
+        query: Option<String>,
+        limit_n: Option<i64>,
+        order: Option<PlaylistOrder>,
+        created_at: i64,
+        reply: oneshot::Sender<Result<i64>>,
+    },
+    DeletePlaylist {
+        id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    RenamePlaylist {
+        id: i64,
+        name: String,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    AppendPlaylistTracks {
+        playlist_id: i64,
+        track_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    RemovePlaylistEntry {
+        playlist_id: i64,
+        position: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    ReorderPlaylistEntry {
+        playlist_id: i64,
+        from: i64,
+        to: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
 
     // --- Podcasts (Phase 6a-i, spec §4.2). The schema is core-owned, so these
     // commands live here; the `conservatory-podcasts` plugin calls the typed
@@ -578,6 +615,12 @@ impl Command {
             Self::RemoveQueueItem { .. } => "remove_queue_item",
             Self::ReorderQueue { .. } => "reorder_queue",
             Self::ClearQueue { .. } => "clear_queue",
+            Self::CreatePlaylist { .. } => "create_playlist",
+            Self::DeletePlaylist { .. } => "delete_playlist",
+            Self::RenamePlaylist { .. } => "rename_playlist",
+            Self::AppendPlaylistTracks { .. } => "append_playlist_tracks",
+            Self::RemovePlaylistEntry { .. } => "remove_playlist_entry",
+            Self::ReorderPlaylistEntry { .. } => "reorder_playlist_entry",
             Self::GetOrCreateShow { .. } => "get_or_create_show",
             Self::UpdateShow { .. } => "update_show",
             Self::DeleteShow { .. } => "delete_show",

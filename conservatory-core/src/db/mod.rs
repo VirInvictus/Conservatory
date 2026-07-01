@@ -24,8 +24,8 @@ pub use models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPerson, BookPlayback, Chapter,
     CompSettings, DspState, EQ_BAND_COUNT, EQ_CENTRES, Episode, EqPreset, EqState, Genre,
     InboxPolicy, LevelerSettings, LimiterSettings, ListeningSession, MediaKind, ModuleState,
-    Perspective, Playback, PlaybackCursor, PlayedState, QueueItem, ResamplerQuality, Series, Show,
-    ShowSettings, Tag, Track, VerifyResultRow,
+    Perspective, Playback, PlaybackCursor, PlayedState, Playlist, PlaylistKind, PlaylistOrder,
+    QueueItem, ResamplerQuality, Series, Show, ShowSettings, Tag, Track, VerifyResultRow,
 };
 pub use pool::ReadPool;
 pub use probe::probe_read;
@@ -39,9 +39,10 @@ pub use reads::{
     get_audio_state, get_book, get_book_playback, get_episode, get_episode_by_guid, get_eq_preset,
     get_eq_state, get_playback, get_show, get_show_settings, get_track, get_tracks, library_counts,
     list_albums, list_all_tags, list_book_rows, list_books, list_chapters, list_episodes_for_show,
-    list_eq_presets, list_perspectives, list_shows, list_tags_for_show, listening_totals,
-    load_queue, load_queue_display, perspective_expression, playlist_rows, read_playback_state,
-    read_verify_results, search_rows, search_track_ids, series_for_book, show_settings_map,
+    get_playlist, list_eq_presets, list_perspectives, list_playlists, list_shows,
+    list_tags_for_show, listening_totals, load_queue, load_queue_display, ordered_track_ids,
+    perspective_expression, playlist_rows, read_playback_state, read_verify_results, search_rows,
+    search_track_ids, series_for_book, show_settings_map, static_playlist_track_ids,
     sort_shelf, stats_genre_rows, stats_track_rows, track_id_by_path, track_metadata,
     track_render_rows, writeback_rows,
 };

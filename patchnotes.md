@@ -1,5 +1,12 @@
 # Patch Notes
 
+## v0.1.6
+
+Playlists arrive, from the command line first.
+
+- **Static and smart playlists (CLI).** A new `playlist` command family creates and manages two new kinds of playlist. A **static** playlist is a frozen, hand-ordered list; a **smart** playlist is a live rule (a search expression, with an optional size cap and a prioritisation order) that resolves fresh every time. These are deliberately distinct from Perspectives, which stay saved *browse* queries: a Perspective filters what you are looking at; a smart playlist is a queue source with its own limit and order. Order keys are added, rating, least-recently-played, title, and artist (a shuffle order arrives with the Phase 17 shuffle work). Use `playlist create-static`, `create-smart`, `add`, `list`, `show`, and `delete`. The graphical Playlists surface (a sidebar section and a visual rule builder) follows next.
+- Under the hood: a new database migration adds the playlist tables (core-owned, so they exist in every build), with the storage and a fast SQL order/limit primitive in the engine and the query evaluation in the CLI, keeping the core engine free of the search grammar by design. Covered by new tests.
+
 ## v0.1.5
 
 The bulk metadata editor shows what you are editing.

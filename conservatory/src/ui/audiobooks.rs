@@ -21,12 +21,13 @@ use gtk4 as gtk;
 use libadwaita as adw;
 
 use conservatory_audiobooks::edit::{
-    parse_opt_index, parse_opt_rating, parse_opt_year, split_people, BookEdit, SeriesEdit,
+    book_edit_commons, parse_opt_index, parse_opt_rating, parse_opt_year, split_people, BookEdit,
+    SeriesEdit,
 };
 use conservatory_audiobooks::{apply_book_edit, apply_book_reorg, plan_book_reorg};
 use conservatory_core::db::{
-    book_chapters, get_book_playback, list_book_rows, sort_shelf, BookListRow, BookPlayback,
-    ReadPool, WorkerHandle,
+    book_chapters, get_book, get_book_playback, list_book_rows, sort_shelf_by, BookListRow,
+    BookPlayback, ReadPool, ShelfSort, WorkerHandle,
 };
 use conservatory_core::mover::MoveMode;
 use conservatory_core::PlayerHandle;
@@ -34,6 +35,11 @@ use conservatory_core::PlayerHandle;
 use crate::book_query::filter_books;
 use crate::query::PoolResolver;
 use crate::ui::objects::BookRow;
+
+/// A rejected bulk-edit attempt's state, for the re-present-prefilled loop
+/// (16.5g): the per-field `(key, ticked, entered text)` triples plus the
+/// Standalone toggle.
+type EditAttempt = (Vec<(String, bool, String)>, bool);
 
 /// The fixed pixel size of a shelf cover tile's artwork.
 const COVER_SIZE: i32 = 132;
@@ -59,6 +65,14 @@ pub fn build_audiobooks_view(
         .hexpand(true)
         .build();
 
+    // The empty-shelf state (16.5g): a call-to-action for a fresh library, or
+    // a "no matches" page while the filter narrows to nothing.
+    let shelf_empty = adw::StatusPage::builder()
+        .icon_name("audio-x-generic-symbolic")
+        .title("No audiobooks yet")
+        .build();
+    let shelf_stack = gtk::Stack::new();
+
     let detail = Detail::new();
     let inner = Rc::new(Inner {
         pool,
@@ -75,6 +89,9 @@ pub fn build_audiobooks_view(
         accent: crate::ui::accent::AccentProvider::new(),
         menu: OnceCell::new(),
         context_pos: Cell::new(None),
+        shelf_stack: shelf_stack.clone(),
+        shelf_empty: shelf_empty.clone(),
+        sort: Cell::new(ShelfSort::InProgress),
     });
 
     // The shelf grid: a cover tile per book.
@@ -188,10 +205,12 @@ pub fn build_audiobooks_view(
         .vexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
+    shelf_stack.add_named(&shelf_scroll, Some("grid"));
+    shelf_stack.add_named(&shelf_empty, Some("empty"));
 
     // The filter bar sits above the shelf, in a toolbar strip (the Music-page
-    // layout); a pencil button on the right opens the bulk-edit dialog over the
-    // current selection (also Ctrl+E). The detail pane is unaffected by it.
+    // layout); a sort picker (16.5g) and a pencil button (bulk edit, also
+    // Ctrl+E) sit on its right. The detail pane is unaffected by them.
     let edit_btn = gtk::Button::from_icon_name("document-edit-symbolic");
     edit_btn.set_tooltip_text(Some("Edit selected book(s) (Ctrl+E)"));
     edit_btn.add_css_class("flat");
@@ -201,13 +220,31 @@ pub fn build_audiobooks_view(
             inner.prompt_bulk_edit(btn.root().and_downcast::<gtk::Window>().as_ref())
         });
     }
+    let sort_dd =
+        gtk::DropDown::from_strings(&["In progress first", "Title", "Author", "Recently played"]);
+    sort_dd.set_tooltip_text(Some("Shelf order"));
+    {
+        let inner = inner.clone();
+        sort_dd.connect_selected_notify(move |dd| {
+            inner.sort.set(match dd.selected() {
+                1 => ShelfSort::Title,
+                2 => ShelfSort::Author,
+                3 => ShelfSort::RecentlyPlayed,
+                _ => ShelfSort::InProgress,
+            });
+            // Re-sort the cached shelf and re-narrow; no DB re-read needed.
+            sort_shelf_by(&mut inner.all_rows.borrow_mut(), inner.sort.get());
+            inner.apply_filter();
+        });
+    }
     let filter_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     filter_bar.add_css_class("toolbar");
     filter_bar.append(&filter);
+    filter_bar.append(&sort_dd);
     filter_bar.append(&edit_btn);
     let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
     left.append(&filter_bar);
-    left.append(&shelf_scroll);
+    left.append(&shelf_stack);
 
     inner.load();
 
@@ -289,6 +326,12 @@ struct Inner {
     /// starts the queue from that book).
     menu: OnceCell<gtk::PopoverMenu>,
     context_pos: Cell<Option<usize>>,
+    /// Swaps the grid for the empty-shelf StatusPage (16.5g), with per-cause
+    /// copy (fresh library vs no filter matches).
+    shelf_stack: gtk::Stack,
+    shelf_empty: adw::StatusPage,
+    /// The active shelf ordering (16.5g); the DropDown drives it.
+    sort: Cell<ShelfSort>,
 }
 
 impl Inner {
@@ -299,7 +342,7 @@ impl Inner {
         let rows = {
             let Ok(conn) = self.pool.open() else { return };
             let mut rows = list_book_rows(&conn).unwrap_or_default();
-            sort_shelf(&mut rows);
+            sort_shelf_by(&mut rows, self.sort.get());
             rows
         };
         self.rebuild_accent_css(&rows);
@@ -325,7 +368,38 @@ impl Inner {
         for row in &kept {
             self.store.append(&BookRow::new(row));
         }
+        // Empty shelf: say why (16.5g). A fresh library points at the import
+        // path (CLI-only until a GUI importer lands); a filtered miss says so.
+        if kept.is_empty() {
+            let filtered = !query.trim().is_empty();
+            if filtered {
+                self.shelf_empty
+                    .set_icon_name(Some("system-search-symbolic"));
+                self.shelf_empty.set_title("No matches");
+                self.shelf_empty
+                    .set_description(Some("No books match the current filter."));
+            } else {
+                self.shelf_empty
+                    .set_icon_name(Some("audio-x-generic-symbolic"));
+                self.shelf_empty.set_title("No audiobooks yet");
+                self.shelf_empty.set_description(Some(
+                    "Import a book from a terminal to start your shelf:\n\
+                     conservatory-cli audiobook import <library.db> <book folder> <library root>",
+                ));
+            }
+            self.shelf_stack.set_visible_child_name("empty");
+        } else {
+            self.shelf_stack.set_visible_child_name("grid");
+        }
         self.detail.clear();
+    }
+
+    /// Route feedback through the window's toast overlay (16.5g, the podcasts
+    /// idiom): the action walks the widget tree, no window handle needed.
+    fn toast(&self, msg: &str) {
+        let _ = self
+            .filter
+            .activate_action("win.toast", Some(&msg.to_variant()));
     }
 
     /// Resolve a root-relative cover path to an absolute file path.
@@ -533,6 +607,7 @@ impl Inner {
             let _ = inner
                 .rt
                 .block_on(inner.worker.upsert_book_playback(playback));
+            inner.toast("Playback settings saved");
         });
         dialog.present(parent);
     }
@@ -564,46 +639,114 @@ impl Inner {
             .and_then(|i| self.store.item(i).and_downcast::<BookRow>())
     }
 
-    /// Open the bulk-edit dialog over the current selection (Phase 7b-iii): a
-    /// labelled-entry grid plus a "Standalone" toggle (the explicit series-clear).
-    /// Blank fields are left unchanged; a bad value rejects the whole set.
+    /// Open the bulk-edit dialog over the current selection (Phase 7b-iii;
+    /// 16.5g brings the Phase 16c music treatment): a checkbox, label, and
+    /// entry per field, pre-filled with the selection's shared value or a
+    /// "multiple values" hint, plus the "Standalone" toggle (the explicit
+    /// series-clear). Only ticked fields write; a bad value rejects the whole
+    /// set and re-presents the dialog with everything intact (the 16.5a idiom).
     fn prompt_bulk_edit(self: &Rc<Self>, parent: Option<&gtk::Window>) {
+        self.prompt_bulk_edit_prefilled(parent, None);
+    }
+
+    fn prompt_bulk_edit_prefilled(
+        self: &Rc<Self>,
+        parent: Option<&gtk::Window>,
+        prefill: Option<EditAttempt>,
+    ) {
         let books = self.selected_books();
         if books.is_empty() {
             return;
         }
+        // The shared-value prefill: rows carry most fields; the shelf genre is
+        // resolved per book (BookListRow does not carry it).
+        let commons = {
+            let rows: Vec<BookListRow> = books.iter().map(|b| b.row()).collect();
+            let shelf_genres: Vec<String> = self
+                .pool
+                .open()
+                .ok()
+                .map(|conn| {
+                    rows.iter()
+                        .map(|r| {
+                            get_book(&conn, r.id)
+                                .ok()
+                                .flatten()
+                                .and_then(|b| b.shelf_genre)
+                                .unwrap_or_default()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            book_edit_commons(&rows, shelf_genres)
+        };
+        let (prefill_fields, prefill_standalone) = match prefill {
+            Some((fields, standalone)) => {
+                let map: std::collections::HashMap<String, (bool, String)> = fields
+                    .into_iter()
+                    .map(|(k, ticked, v)| (k, (ticked, v)))
+                    .collect();
+                (Some(map), standalone)
+            }
+            None => (None, false),
+        };
 
+        let fields: [(&str, &str); 8] = [
+            ("author", "Author(s) (; separated)"),
+            ("narrator", "Narrator(s) (; separated)"),
+            ("series", "Series"),
+            ("series_index", "Series index"),
+            ("title", "Title"),
+            ("year", "Year"),
+            ("shelfgenre", "Shelf genre"),
+            ("rating", "Rating (0-5)"),
+        ];
         let grid = gtk::Grid::builder()
             .row_spacing(6)
             .column_spacing(12)
             .build();
-        let mut row = 0;
-        let mut add = |label: &str| -> gtk::Entry {
-            let lbl = gtk::Label::builder().label(label).xalign(1.0).build();
-            let entry = gtk::Entry::builder()
-                .placeholder_text("unchanged")
-                .hexpand(true)
+        let mut entries: Vec<(String, gtk::CheckButton, gtk::Entry)> = Vec::new();
+        for (r, (key, label)) in fields.iter().enumerate() {
+            let check = gtk::CheckButton::builder()
+                .tooltip_text(
+                    "Write this field to every selected book (overwrites differing values)",
+                )
+                .valign(gtk::Align::Center)
                 .build();
-            grid.attach(&lbl, 0, row, 1, 1);
-            grid.attach(&entry, 1, row, 1, 1);
-            row += 1;
-            entry
-        };
-        let author = add("Author(s) (; separated)");
-        let narrator = add("Narrator(s) (; separated)");
-        let series = add("Series");
-        let series_index = add("Series index");
-        let title = add("Title");
-        let year = add("Year");
-        let shelf_genre = add("Shelf genre");
-        let rating = add("Rating (0-5)");
+            let lbl = gtk::Label::builder().label(*label).xalign(1.0).build();
+            let entry = gtk::Entry::builder().hexpand(true).build();
+            match commons.get(*key).cloned().flatten() {
+                Some(v) if !v.is_empty() => {
+                    entry.set_text(&v);
+                    entry.set_placeholder_text(Some("unchanged"));
+                }
+                Some(_) => entry.set_placeholder_text(Some("unchanged")),
+                None => entry.set_placeholder_text(Some("multiple values")),
+            }
+            let prefilled = prefill_fields.as_ref().and_then(|p| p.get(*key));
+            if let Some((_, value)) = prefilled {
+                entry.set_text(value);
+            }
+            // Editing ticks; connected after the pre-fill so it does not.
+            let check_edit = check.clone();
+            entry.connect_changed(move |_| check_edit.set_active(true));
+            if let Some((ticked, _)) = prefilled {
+                check.set_active(*ticked);
+            }
+            grid.attach(&check, 0, r as i32, 1, 1);
+            grid.attach(&lbl, 1, r as i32, 1, 1);
+            grid.attach(&entry, 2, r as i32, 1, 1);
+            entries.push(((*key).to_string(), check, entry));
+        }
         let standalone = gtk::CheckButton::with_label("Standalone (no series)");
-        grid.attach(&standalone, 1, row, 1, 1);
+        standalone.set_active(prefill_standalone);
+        grid.attach(&standalone, 2, fields.len() as i32, 1, 1);
 
         let dialog = adw::AlertDialog::new(
             Some("Edit book(s)"),
             Some(&format!(
-                "Apply to {} selected book(s). Blank fields are left unchanged.",
+                "Apply to {} selected book(s). Tick a field to write it; shared values are \
+                 shown, differing ones read \u{201c}multiple values\u{201d}.",
                 books.len()
             )),
         );
@@ -620,36 +763,48 @@ impl Inner {
             if resp != "apply" {
                 return;
             }
-            let nonblank = |e: &gtk::Entry| {
-                let t = e.text().to_string();
-                (!t.trim().is_empty()).then_some(t)
-            };
-            let build = || -> Result<BookEdit, String> {
-                let series_edit = if standalone.is_active() {
-                    Some(SeriesEdit::Clear)
-                } else {
-                    nonblank(&series).map(SeriesEdit::Set)
-                };
-                Ok(BookEdit {
-                    title: nonblank(&title),
-                    year: parse_opt_year(&year.text())?,
-                    series: series_edit,
-                    series_index: parse_opt_index(&series_index.text())?,
-                    authors: nonblank(&author).map(|s| split_people(&s)),
-                    narrators: nonblank(&narrator).map(|s| split_people(&s)),
-                    shelf_genre: nonblank(&shelf_genre),
-                    rating: parse_opt_rating(&rating.text())?,
-                    starred: None,
+            let entered: Vec<(String, bool, String)> = entries
+                .iter()
+                .map(|(key, check, entry)| {
+                    (key.clone(), check.is_active(), entry.text().to_string())
                 })
-            };
-            match build() {
-                Ok(edit) => {
-                    let parent = parent_weak.as_ref().and_then(|w| w.upgrade());
-                    this.apply_bulk_edit(&books, edit, parent.as_ref());
-                }
-                // Reject the whole set rather than apply a partly-valid edit.
-                Err(e) => eprintln!("conservatory: edit not applied: {e}"),
+                .collect();
+            let (edit, errors) = build_book_edit(&entered, standalone.is_active());
+            let parent = parent_weak.as_ref().and_then(|w| w.upgrade());
+            if !errors.is_empty() {
+                // Reject the whole set; the error dialog re-presents this one
+                // pre-filled so the fix loses nothing (16.5a / A16).
+                this.present_book_edit_errors(
+                    errors,
+                    entered,
+                    standalone.is_active(),
+                    parent.as_ref(),
+                );
+                return;
             }
+            this.apply_bulk_edit(&books, edit, parent.as_ref());
+        });
+        dialog.present(parent);
+    }
+
+    /// List the parse failures that rejected a book edit, then reopen the edit
+    /// dialog pre-filled with the attempt (16.5g; failures went to stderr).
+    fn present_book_edit_errors(
+        self: &Rc<Self>,
+        errors: Vec<String>,
+        entered: Vec<(String, bool, String)>,
+        standalone: bool,
+        parent: Option<&gtk::Window>,
+    ) {
+        let dialog = adw::AlertDialog::new(Some("Edit not applied"), Some(&errors.join("\n")));
+        dialog.add_response("ok", "Fix Values");
+        dialog.set_default_response(Some("ok"));
+        dialog.set_close_response("ok");
+        let this = self.clone();
+        let parent_weak = parent.map(|w| w.downgrade());
+        dialog.connect_response(None, move |_, _| {
+            let parent = parent_weak.as_ref().and_then(|w| w.upgrade());
+            this.prompt_bulk_edit_prefilled(parent.as_ref(), Some((entered.clone(), standalone)));
         });
         dialog.present(parent);
     }
@@ -663,13 +818,22 @@ impl Inner {
         parent: Option<&gtk::Window>,
     ) {
         if edit.is_empty() {
+            self.toast("No fields ticked; nothing written");
             return;
         }
         let ids: Vec<i64> = books.iter().map(|b| b.id()).collect();
+        let mut failed = 0usize;
         for &id in &ids {
             if let Err(e) = self.rt.block_on(apply_book_edit(&self.worker, id, &edit)) {
+                failed += 1;
                 eprintln!("conservatory: edit failed for book {id}: {e}");
             }
+        }
+        // Edits get the same feedback music edits do (16.5g / A22).
+        if failed > 0 {
+            self.toast(&format!("Edit failed for {failed} book(s); see the log"));
+        } else {
+            self.toast(&format!("Updated {} book(s)", ids.len()));
         }
         if edit.is_path_affecting() {
             match self.root.clone() {
@@ -677,9 +841,7 @@ impl Inner {
                     self.confirm_and_reshelve(ids, root, parent);
                     return;
                 }
-                None => {
-                    eprintln!("conservatory: no library root; cannot re-shelve the edited book(s)")
-                }
+                None => self.toast("No library root; cannot re-shelve the edited book(s)"),
             }
         }
         self.load();
@@ -722,6 +884,7 @@ impl Inner {
         let this = self.clone();
         dialog.connect_response(None, move |_, resp| {
             if resp == "move" {
+                let mut failed = 0usize;
                 for &id in &ids {
                     if let Err(e) = this.rt.block_on(apply_book_reorg(
                         &this.worker,
@@ -730,13 +893,119 @@ impl Inner {
                         &root,
                         MoveMode::Move,
                     )) {
+                        failed += 1;
                         eprintln!("conservatory: re-shelve failed for book {id}: {e}");
                     }
+                }
+                if failed > 0 {
+                    this.toast(&format!(
+                        "Re-shelve failed for {failed} book(s); see the log"
+                    ));
+                } else {
+                    this.toast(&format!("Re-shelved {} book(s)", ids.len()));
                 }
             }
             this.load();
         });
         dialog.present(parent);
+    }
+}
+
+/// Build a `BookEdit` from the dialog's per-field state (16.5g). Only ticked
+/// fields contribute; a ticked-but-blank text field is left unchanged (the
+/// music-editor semantics; the parse helpers treat blank as `None` too); every
+/// parse failure is reported so the caller rejects the whole set. Pure.
+fn build_book_edit(
+    entered: &[(String, bool, String)],
+    standalone: bool,
+) -> (BookEdit, Vec<String>) {
+    let mut errors = Vec::new();
+    let get = |key: &str| -> Option<String> {
+        entered
+            .iter()
+            .find(|(k, ticked, _)| k == key && *ticked)
+            .map(|(_, _, v)| v.clone())
+    };
+    let nonblank = |key: &str| get(key).filter(|v| !v.trim().is_empty());
+
+    let year = match get("year") {
+        Some(v) => parse_opt_year(&v).unwrap_or_else(|e| {
+            errors.push(e);
+            None
+        }),
+        None => None,
+    };
+    let series_index = match get("series_index") {
+        Some(v) => parse_opt_index(&v).unwrap_or_else(|e| {
+            errors.push(e);
+            None
+        }),
+        None => None,
+    };
+    let rating = match get("rating") {
+        Some(v) => parse_opt_rating(&v).unwrap_or_else(|e| {
+            errors.push(e);
+            None
+        }),
+        None => None,
+    };
+    let series = if standalone {
+        Some(SeriesEdit::Clear)
+    } else {
+        nonblank("series").map(SeriesEdit::Set)
+    };
+    let edit = BookEdit {
+        title: nonblank("title"),
+        year,
+        series,
+        series_index,
+        authors: nonblank("author").map(|s| split_people(&s)),
+        narrators: nonblank("narrator").map(|s| split_people(&s)),
+        shelf_genre: nonblank("shelfgenre"),
+        rating,
+        starred: None,
+    };
+    (edit, errors)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(key: &str, ticked: bool, value: &str) -> (String, bool, String) {
+        (key.to_string(), ticked, value.to_string())
+    }
+
+    #[test]
+    fn build_book_edit_honours_ticks_and_collects_errors() {
+        // Unticked fields never write, even with text in them.
+        let (edit, errors) = build_book_edit(
+            &[
+                field("title", false, "ignored"),
+                field("year", true, "2010"),
+            ],
+            false,
+        );
+        assert!(errors.is_empty());
+        assert_eq!(edit.title, None);
+        assert_eq!(edit.year, Some(2010));
+
+        // Bad numerics report; the valid field still parses (the caller
+        // rejects the whole set on any error).
+        let (edit, errors) = build_book_edit(
+            &[
+                field("year", true, "abc"),
+                field("rating", true, "9"),
+                field("title", true, "kept"),
+            ],
+            false,
+        );
+        assert_eq!(errors.len(), 2);
+        assert_eq!(edit.title.as_deref(), Some("kept"));
+
+        // Standalone clears the series regardless of the entry.
+        let (edit, _) = build_book_edit(&[field("series", true, "Stormlight")], true);
+        assert_eq!(edit.series, Some(SeriesEdit::Clear));
     }
 }
 
@@ -752,6 +1021,26 @@ fn tile_factory(inner: Rc<Inner>) -> gtk::SignalListItemFactory {
         cover.set_pixel_size(COVER_SIZE);
         cover.set_size_request(COVER_SIZE, COVER_SIZE);
         cover.add_css_class("book-cover");
+
+        // The cover sits in an overlay so a finished book can badge its corner
+        // (16.5g); the badge is hidden until bind says otherwise.
+        let badge = gtk::Image::from_icon_name("object-select-symbolic");
+        badge.add_css_class("success");
+        badge.set_halign(gtk::Align::End);
+        badge.set_valign(gtk::Align::Start);
+        badge.set_margin_top(4);
+        badge.set_margin_end(4);
+        badge.set_visible(false);
+        badge.set_tooltip_text(Some("Finished"));
+        let cover_overlay = gtk::Overlay::new();
+        cover_overlay.set_child(Some(&cover));
+        cover_overlay.add_overlay(&badge);
+
+        // Listening progress under the cover (16.5g): the shelf answers "how
+        // far am I?" without a trip to the detail pane.
+        let progress = gtk::ProgressBar::new();
+        progress.set_visible(false);
+        progress.add_css_class("osd"); // the thin variant
 
         let title = gtk::Label::builder()
             .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -769,7 +1058,8 @@ fn tile_factory(inner: Rc<Inner>) -> gtk::SignalListItemFactory {
 
         let tile = gtk::Box::new(gtk::Orientation::Vertical, 4);
         tile.set_halign(gtk::Align::Center);
-        tile.append(&cover);
+        tile.append(&cover_overlay);
+        tile.append(&progress);
         tile.append(&title);
         tile.append(&author);
         item.set_child(Some(&tile));
@@ -797,11 +1087,37 @@ fn tile_factory(inner: Rc<Inner>) -> gtk::SignalListItemFactory {
             return;
         };
         let mut child = tile.first_child();
-        // Cover.
-        if let Some(cover) = child.as_ref().and_then(|c| c.downcast_ref::<gtk::Image>()) {
-            match inner.cover_abs(book.cover_path()).filter(|p| p.exists()) {
-                Some(path) => cover.set_from_file(Some(&path)),
-                None => cover.set_icon_name(Some("audio-x-generic-symbolic")),
+        // Cover overlay: the artwork plus the finished badge (16.5g).
+        if let Some(overlay) = child
+            .as_ref()
+            .and_then(|c| c.downcast_ref::<gtk::Overlay>())
+        {
+            if let Some(cover) = overlay.child().and_downcast::<gtk::Image>() {
+                match inner.cover_abs(book.cover_path()).filter(|p| p.exists()) {
+                    Some(path) => cover.set_from_file(Some(&path)),
+                    None => cover.set_icon_name(Some("audio-x-generic-symbolic")),
+                }
+            }
+            // The badge is the overlay child after the main cover.
+            if let Some(badge) = overlay
+                .child()
+                .and_then(|c| c.next_sibling())
+                .and_downcast::<gtk::Image>()
+            {
+                badge.set_visible(book.is_finished());
+            }
+        }
+        // Listening progress (16.5g): shown only mid-book; a finished book
+        // shows the badge instead of a pinned-full bar.
+        child = child.and_then(|c| c.next_sibling());
+        if let Some(bar) = child
+            .as_ref()
+            .and_then(|c| c.downcast_ref::<gtk::ProgressBar>())
+        {
+            let in_progress = book.is_in_progress();
+            bar.set_visible(in_progress);
+            if in_progress {
+                bar.set_fraction(book.progress_fraction());
             }
         }
         // Title + author labels.

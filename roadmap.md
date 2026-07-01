@@ -991,11 +991,11 @@ Deferred out of this phase, recorded here so they are not lost: a book list-view
 - [x] Show notes keep their links: the ingest sanitizer's allowlist widens to the Pango inline subset (`a href` bare via `link_rel(None)`, `b`/`strong`, `i`/`em`; schemes http/https/mailto) and the stored form stays entity-escaped, so pure `notes_to_markup` renders it clickable (`strong`/`em` map to Pango `b`/`i`; legacy plain-text rows are detected and escaped whole). Old rows heal on their next feed refresh (the episode upsert rewrites `description`). The only render point is the podcasts detail pane; the CLI never prints episode notes.
 - [x] The Sound dialog says which controls apply to music and which to everything; the Now-bar settings gear appears for audiobooks too, opening the playing book's settings with live `set_spoken` apply (`open_playing_book_settings` + a music-only stub).
 
-### Phase 16.5g — Audiobook shelf completeness (v0.1.15)
+### Phase 16.5g — Audiobook shelf completeness ✅ (v0.1.15)
 
-- [ ] Tiles show listening progress (a thin bar) and a finished badge; the empty shelf gets a StatusPage with the CLI import hint; a sort picker (in-progress first stays the default).
-- [ ] The book bulk editor gains the Phase 16c checkbox + mixed-values treatment (shared pure commons helper promoted to core), and its parse failures use the 16.5a error/retry dialog instead of stderr.
-- [ ] Book edits and re-shelves toast like music edits do.
+- [x] Tiles show listening progress (a thin bar, in-progress books only) and a finished badge (a cover-corner checkmark via `gtk::Overlay`); the empty shelf gets a StatusPage (fresh library → the CLI import invocation; filtered → "No matches"); a sort picker (core `ShelfSort` + `sort_shelf_by`, integration-tested; in-progress-first stays the default and re-sorts happen on the cached rows without a DB re-read).
+- [x] The book bulk editor gains the Phase 16c checkbox + mixed-values treatment: `common_value` promoted to core (shared with the music editor), new pure `book_edit_commons` in `conservatory-audiobooks` (the people displays convert `", "` to the dialog's `";"` form so a ticked write round-trips `split_people`), and a pure `build_book_edit` honouring ticks; parse failures use the 16.5a error/retry dialog instead of stderr.
+- [x] Book edits, re-shelve moves, and playback-settings saves toast like music edits do (the `win.toast` channel).
 
 ### Phase 16.5h — Audiobook verbs (v0.1.16)
 

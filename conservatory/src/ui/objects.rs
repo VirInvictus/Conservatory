@@ -569,6 +569,24 @@ impl BookRow {
         }
     }
 
+    /// A clone of the underlying row (16.5g: the bulk editor's commons
+    /// collapse reads the whole selection's fields).
+    pub fn row(&self) -> conservatory_core::db::BookListRow {
+        self.with(|r| r.clone())
+    }
+
+    /// Whether the book is finished (16.5g: drives the tile badge).
+    pub fn is_finished(&self) -> bool {
+        self.with(|r| r.finished)
+    }
+
+    /// Whether the book is partway through (16.5g: drives the tile progress
+    /// bar; finished books show the badge instead of a full bar).
+    pub fn is_in_progress(&self) -> bool {
+        use conservatory_core::db::BookState;
+        self.with(|r| r.state() == BookState::InProgress)
+    }
+
     /// A one-line meta string for the detail/grid subtitle: author, then narrator
     /// ("Read by …"), then series, then year, the present parts joined by " · ".
     pub fn meta_line(&self) -> String {

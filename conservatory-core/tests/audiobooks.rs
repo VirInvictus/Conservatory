@@ -435,6 +435,26 @@ async fn shelf_rows_denormalize_and_sort_by_state() {
     let order: Vec<i64> = rows.iter().map(|r| r.id).collect();
     assert_eq!(order, vec![a_id, b_id, c_id], "in-progress, new, finished");
 
+    // The 16.5g sort picker's keys reorder the same rows.
+    use conservatory_core::db::{ShelfSort, sort_shelf_by};
+    sort_shelf_by(&mut rows, ShelfSort::Title);
+    assert_eq!(
+        rows[0].id, c_id,
+        "plain title order ignores state, so AAA Finished leads"
+    );
+    sort_shelf_by(&mut rows, ShelfSort::RecentlyPlayed);
+    assert_eq!(
+        rows.last().unwrap().id,
+        b_id,
+        "the never-played book sorts last under recency"
+    );
+    sort_shelf_by(&mut rows, ShelfSort::InProgress);
+    assert_eq!(
+        rows.iter().map(|r| r.id).collect::<Vec<_>>(),
+        vec![a_id, b_id, c_id],
+        "the default key is sort_shelf itself"
+    );
+
     worker.shutdown_ack().await.unwrap();
 }
 

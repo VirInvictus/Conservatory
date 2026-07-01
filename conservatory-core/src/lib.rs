@@ -50,7 +50,7 @@ pub use dedup::{
 };
 pub use edit::{
     AlbumEdit, Assignment, Field, TrackEdit, any_path_affecting, build_album_edit,
-    build_track_edit, genres_assignment, parse_assignment, replace_in, split_genres,
+    build_track_edit, common_value, genres_assignment, parse_assignment, replace_in, split_genres,
 };
 pub use import::{ImportOptions, ImportReport, import_folder};
 pub use mover::{Conflict, MoveKind, MoveMode, MoveOp, MovePlan, organize_ops, plan};

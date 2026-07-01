@@ -36,7 +36,8 @@ use conservatory_core::db::{
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
     Assignment, Config, ImportMode, PlaybackConfig, PlayerHandle, TagWrite, any_path_affecting,
-    build_album_edit, build_track_edit, genres_assignment, parse_assignment, write_track_tags,
+    build_album_edit, build_track_edit, common_value, genres_assignment, parse_assignment,
+    write_track_tags,
 };
 
 use crate::playqueue::{MixedQueueRow, build_mixed_queue, build_play_queue, fmt_position};
@@ -5348,42 +5349,9 @@ fn import_mode_from_index(index: u32) -> ImportMode {
     }
 }
 
-/// The value shared by every entry in `vals`, or `None` when they differ (the
-/// bulk-edit "multiple values" state, Phase 16c). An empty selection collapses to
-/// a shared empty string. Pure, for testing without a realized dialog.
-fn common_value(mut vals: Vec<String>) -> Option<String> {
-    match vals.pop() {
-        None => Some(String::new()),
-        Some(first) if vals.iter().all(|v| *v == first) => Some(first),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        ImportMode, common_value, import_mode_from_index, import_mode_index, view_page_name,
-    };
-
-    #[test]
-    fn common_value_agrees_or_reports_mixed() {
-        // All the same collapses to that value (the shared prefill).
-        assert_eq!(
-            common_value(vec!["Aphex Twin".into(), "Aphex Twin".into()]),
-            Some("Aphex Twin".into())
-        );
-        // A single track is trivially "shared".
-        assert_eq!(common_value(vec!["Solo".into()]), Some("Solo".into()));
-        // Differing values are "multiple values" (None).
-        assert_eq!(common_value(vec!["A".into(), "B".into()]), None);
-        // All-empty is a shared empty string, not mixed.
-        assert_eq!(
-            common_value(vec![String::new(), String::new()]),
-            Some(String::new())
-        );
-        // An empty selection collapses to empty, not mixed.
-        assert_eq!(common_value(vec![]), Some(String::new()));
-    }
+    use super::{ImportMode, import_mode_from_index, import_mode_index, view_page_name};
 
     #[test]
     fn view_keys_map_to_page_names() {

@@ -1953,6 +1953,45 @@ pub fn sort_shelf(rows: &mut [BookListRow]) {
     });
 }
 
+/// A shelf ordering (16.5g): the spec §3.8 in-progress-first default plus the
+/// simple keys a sort picker offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShelfSort {
+    #[default]
+    InProgress,
+    Title,
+    Author,
+    RecentlyPlayed,
+}
+
+/// Order shelf rows by `key` (16.5g): [`sort_shelf`] for the default, else a
+/// stable case-insensitive sort (author falls back to title within an author;
+/// never-played books sort last under recency). Pure, unit-tested.
+pub fn sort_shelf_by(rows: &mut [BookListRow], key: ShelfSort) {
+    match key {
+        ShelfSort::InProgress => sort_shelf(rows),
+        ShelfSort::Title => {
+            rows.sort_by_key(|r| r.title.to_lowercase());
+        }
+        ShelfSort::Author => rows.sort_by(|a, b| {
+            let name = |r: &BookListRow| {
+                r.author_display
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_lowercase()
+            };
+            name(a)
+                .cmp(&name(b))
+                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+        }),
+        ShelfSort::RecentlyPlayed => rows.sort_by(|a, b| {
+            b.last_played
+                .cmp(&a.last_played)
+                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+        }),
+    }
+}
+
 /// A row-mapper for `verify_results`, shared by the lookup and report reads.
 fn row_to_verify_result(row: &rusqlite::Row) -> rusqlite::Result<VerifyResultRow> {
     let verdict: String = row.get("verdict")?;

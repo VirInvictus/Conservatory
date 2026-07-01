@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.1.15
+
+The audiobook shelf catches up to the rest of the app.
+
+- **Progress and finished state, visible on the shelf.** A book you are partway through shows a thin progress bar under its cover; a finished book wears a small checkmark badge on the cover's corner. Until now both lived only in the detail pane, so the shelf could not answer "how far am I?" at a glance.
+- **The book editor gets the music editor's manners.** Each field now has a checkbox and pre-fills the selection's shared value ("multiple values" when books differ); only ticked fields write. A bad year or rating no longer closes the dialog silently: the errors are listed and the editor reopens with everything you typed intact.
+- **A sort picker for the shelf.** In-progress-first stays the default; Title, Author, and Recently Played join it.
+- **An empty shelf explains itself.** A fresh library shows the exact import command; a filter that matches nothing says so instead of showing a blank grid.
+- **Book actions now toast.** Edits, re-shelve moves, and playback-settings saves all report what happened, like their music counterparts.
+
 ## v0.1.14
 
 Spoken word gets its transport conveniences.

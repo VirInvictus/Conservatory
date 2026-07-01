@@ -199,9 +199,41 @@ pub fn replace_in(current: &str, find: &str, replace: &str) -> String {
     current.replace(find, replace)
 }
 
+/// The value shared by every entry in `vals`, or `None` when they differ (the
+/// bulk-edit "multiple values" state, Phase 16c; promoted to core at 16.5g so
+/// the music and audiobook editors share one collapse). An empty selection
+/// collapses to a shared empty string. Pure.
+pub fn common_value(mut vals: Vec<String>) -> Option<String> {
+    match vals.pop() {
+        None => Some(String::new()),
+        Some(first) if vals.iter().all(|v| *v == first) => Some(first),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn common_value_agrees_or_reports_mixed() {
+        // All the same collapses to that value (the shared prefill).
+        assert_eq!(
+            common_value(vec!["Aphex Twin".into(), "Aphex Twin".into()]),
+            Some("Aphex Twin".into())
+        );
+        // A single row is trivially "shared".
+        assert_eq!(common_value(vec!["Solo".into()]), Some("Solo".into()));
+        // Differing values are "multiple values" (None).
+        assert_eq!(common_value(vec!["A".into(), "B".into()]), None);
+        // All-empty is a shared empty string, not mixed.
+        assert_eq!(
+            common_value(vec![String::new(), String::new()]),
+            Some(String::new())
+        );
+        // An empty selection collapses to empty, not mixed.
+        assert_eq!(common_value(vec![]), Some(String::new()));
+    }
 
     #[test]
     fn field_parse_aliases() {

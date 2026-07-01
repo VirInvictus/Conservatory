@@ -83,6 +83,71 @@ pub fn split_people(value: &str) -> Vec<String> {
     out
 }
 
+/// The value shared across a shelf selection for each bulk-edit field (16.5g,
+/// the music `bulk_edit_commons` twin): `Some(shared)` pre-fills the dialog
+/// entry, `None` reads "multiple values". `shelf_genres` rides alongside
+/// because `BookListRow` does not carry the shelf genre (the caller resolves
+/// it per book). The people displays are `", "`-joined by the read; the
+/// prefill converts to the dialog's `";"`-separated form so a ticked write
+/// round-trips through `split_people`. Pure.
+pub fn book_edit_commons(
+    rows: &[conservatory_core::db::BookListRow],
+    shelf_genres: Vec<String>,
+) -> std::collections::HashMap<&'static str, Option<String>> {
+    use conservatory_core::common_value;
+
+    fn collect(
+        rows: &[conservatory_core::db::BookListRow],
+        f: impl Fn(&conservatory_core::db::BookListRow) -> String,
+    ) -> Vec<String> {
+        rows.iter().map(f).collect()
+    }
+    let people = |s: &Option<String>| s.clone().unwrap_or_default().replace(", ", "; ");
+
+    let mut out = std::collections::HashMap::new();
+    out.insert(
+        "author",
+        common_value(collect(rows, |r| people(&r.author_display))),
+    );
+    out.insert(
+        "narrator",
+        common_value(collect(rows, |r| people(&r.narrator_display))),
+    );
+    out.insert(
+        "series",
+        common_value(collect(rows, |r| r.series_name.clone().unwrap_or_default())),
+    );
+    out.insert(
+        "series_index",
+        common_value(collect(rows, |r| {
+            r.series_sequence.map(fmt_series_index).unwrap_or_default()
+        })),
+    );
+    out.insert("title", common_value(collect(rows, |r| r.title.clone())));
+    out.insert(
+        "year",
+        common_value(collect(rows, |r| {
+            r.year.map(|y| y.to_string()).unwrap_or_default()
+        })),
+    );
+    out.insert("shelfgenre", common_value(shelf_genres));
+    out.insert(
+        "rating",
+        common_value(collect(rows, |r| r.rating.to_string())),
+    );
+    out
+}
+
+/// A series index for display/prefill: whole numbers drop the fraction
+/// (`1`, not `1.0`; `1.5` stays).
+fn fmt_series_index(v: f64) -> String {
+    if v.fract() == 0.0 {
+        format!("{}", v as i64)
+    } else {
+        v.to_string()
+    }
+}
+
 /// Parse an optional year entry: a blank string is "unchanged" (`Ok(None)`), a
 /// valid integer is `Ok(Some(_))`, anything else is an error (for the GTK dialog;
 /// the CLI gets a typed `i32` from clap).
@@ -187,79 +252,106 @@ mod tests {
     }
 
     #[test]
+    fn book_edit_commons_collapses_shared_and_reports_mixed() {
+        use conservatory_core::db::BookListRow;
+        let row = |title: &str, author: Option<&str>, year: Option<i32>| BookListRow {
+            id: 1,
+            title: title.to_string(),
+            subtitle: None,
+            author_display: author.map(str::to_string),
+            narrator_display: Some("Kate Reading, Michael Kramer".into()),
+            series_name: Some("The Stormlight Archive".into()),
+            series_sequence: Some(1.5),
+            year,
+            cover_path: None,
+            accent_rgb: None,
+            rating: 4,
+            starred: false,
+            position: 0.0,
+            finished: false,
+            last_played: None,
+            total_duration: 0.0,
+        };
+        let rows = [
+            row("A", Some("Brandon Sanderson"), Some(2010)),
+            row("B", Some("Brandon Sanderson"), None),
+        ];
+        let commons = book_edit_commons(&rows, vec!["Fantasy".into(), "Fantasy".into()]);
+        // Shared values collapse; the people display converts to the dialog's
+        // ";"-separated form so a ticked write round-trips split_people.
+        assert_eq!(commons["author"], Some("Brandon Sanderson".into()));
+        assert_eq!(
+            commons["narrator"],
+            Some("Kate Reading; Michael Kramer".into())
+        );
+        assert_eq!(commons["series_index"], Some("1.5".into()));
+        assert_eq!(commons["shelfgenre"], Some("Fantasy".into()));
+        assert_eq!(commons["rating"], Some("4".into()));
+        // Differing titles / years read "multiple values".
+        assert_eq!(commons["title"], None);
+        assert_eq!(commons["year"], None);
+    }
+
+    #[test]
+    fn series_index_formats_whole_and_fractional() {
+        assert_eq!(fmt_series_index(1.0), "1");
+        assert_eq!(fmt_series_index(1.5), "1.5");
+    }
+
+    #[test]
     fn path_affecting_matrix() {
-        assert!(
-            BookEdit {
-                title: Some("x".into()),
-                ..Default::default()
-            }
-            .is_path_affecting()
-        );
-        assert!(
-            BookEdit {
-                year: Some(2011),
-                ..Default::default()
-            }
-            .is_path_affecting()
-        );
-        assert!(
-            BookEdit {
-                series: Some(SeriesEdit::Clear),
-                ..Default::default()
-            }
-            .is_path_affecting()
-        );
-        assert!(
-            BookEdit {
-                series_index: Some(2.0),
-                ..Default::default()
-            }
-            .is_path_affecting()
-        );
-        assert!(
-            BookEdit {
-                authors: Some(vec!["A".into()]),
-                ..Default::default()
-            }
-            .is_path_affecting()
-        );
+        assert!(BookEdit {
+            title: Some("x".into()),
+            ..Default::default()
+        }
+        .is_path_affecting());
+        assert!(BookEdit {
+            year: Some(2011),
+            ..Default::default()
+        }
+        .is_path_affecting());
+        assert!(BookEdit {
+            series: Some(SeriesEdit::Clear),
+            ..Default::default()
+        }
+        .is_path_affecting());
+        assert!(BookEdit {
+            series_index: Some(2.0),
+            ..Default::default()
+        }
+        .is_path_affecting());
+        assert!(BookEdit {
+            authors: Some(vec!["A".into()]),
+            ..Default::default()
+        }
+        .is_path_affecting());
         // Not path-affecting (never reach the tree):
-        assert!(
-            !BookEdit {
-                narrators: Some(vec!["N".into()]),
-                ..Default::default()
-            }
-            .is_path_affecting()
-        );
-        assert!(
-            !BookEdit {
-                shelf_genre: Some("SF".into()),
-                ..Default::default()
-            }
-            .is_path_affecting()
-        );
-        assert!(
-            !BookEdit {
-                rating: Some(5),
-                ..Default::default()
-            }
-            .is_path_affecting()
-        );
-        assert!(
-            !BookEdit {
-                starred: Some(true),
-                ..Default::default()
-            }
-            .is_path_affecting()
-        );
+        assert!(!BookEdit {
+            narrators: Some(vec!["N".into()]),
+            ..Default::default()
+        }
+        .is_path_affecting());
+        assert!(!BookEdit {
+            shelf_genre: Some("SF".into()),
+            ..Default::default()
+        }
+        .is_path_affecting());
+        assert!(!BookEdit {
+            rating: Some(5),
+            ..Default::default()
+        }
+        .is_path_affecting());
+        assert!(!BookEdit {
+            starred: Some(true),
+            ..Default::default()
+        }
+        .is_path_affecting());
         assert!(BookEdit::default().is_empty());
-        assert!(
-            !BookEdit {
-                rating: Some(5),
-                ..Default::default()
-            }
-            .is_empty()
-        );
+        assert!(!BookEdit {
+            rating: Some(5),
+            ..Default::default()
+        }
+        .is_empty());
     }
 
     #[test]
@@ -319,10 +411,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(
-            reauthored
-                .to_string_lossy()
-                .starts_with("Audiobooks/Gaiman, Neil/")
-        );
+        assert!(reauthored
+            .to_string_lossy()
+            .starts_with("Audiobooks/Gaiman, Neil/"));
     }
 }

@@ -44,8 +44,8 @@ pub use reads::{
     list_tags_for_show, listening_totals, load_queue, load_queue_display, ordered_track_ids,
     perspective_expression, playlist_rows, read_playback_state, read_verify_results, search_rows,
     search_track_ids, series_for_book, show_settings_map, static_playlist_track_ids,
-    sort_shelf, stats_genre_rows, stats_track_rows, track_id_by_path, track_metadata,
-    track_render_rows, writeback_rows,
+    ShelfSort, sort_shelf, sort_shelf_by, stats_genre_rows, stats_track_rows, track_id_by_path,
+    track_metadata, track_render_rows, writeback_rows,
 };
 pub use worker::{WorkerHandle, spawn_worker};
 

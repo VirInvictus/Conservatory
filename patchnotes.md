@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.1.11
+
+The podcast subscription lifecycle arrives in the window. Until now, subscribing, unsubscribing, refreshing, and OPML were all command-line only; the tab could only browse what the CLI had set up.
+
+- **Subscribe from the app.** A `+` button in the podcast sidebar's new footer toolbar opens a feed-URL dialog. Success lands you on the new show with a toast; a bad URL re-opens the dialog with your URL preserved and the actual error explained.
+- **Unsubscribe, with a real confirm.** The per-show settings dialog gains an Unsubscribe button behind a destructive confirmation that says exactly what happens: episodes leave the library and the queue, downloaded files stay on disk. A playing episode keeps playing.
+- **Refresh on demand.** The footer's refresh button (or `R`) refreshes the selected show, or every subscription when a bucket is selected, and reports a summary toast ("Refreshed 12 shows: 3 new episodes"). Each show's header now says when its feed was last refreshed.
+- **OPML import and export.** The footer menu (and `Ctrl+Shift+O`) imports an OPML file, reports how many subscriptions were new, and refreshes the feeds so episodes arrive in one step; export writes your subscriptions (with tags) back out.
+- **Empty states that point somewhere.** A library with no subscriptions now shows a Subscribe / Import OPML call-to-action instead of bare headers, and an empty Inbox, Queue, or show list explains what would fill it.
+- Show settings saves now toast, and all network work runs off the UI thread (the window stays responsive during a 50-feed refresh).
+
 ## v0.1.10
 
 A round of small answers to "what is this, and why is nothing happening?"

@@ -964,13 +964,13 @@ Deferred out of this phase, recorded here so they are not lost: a book list-view
 - [x] Sidebar rows get full-name tooltips; Edit/Embed header buttons follow the selection (insensitive when nothing is selected, re-derived on every leaf reload).
 - [x] An About dialog (GNOME convention); the "takes effect on the next launch" label sweep (the whole config dialog is a disk-snapshot edit, so every config group carries it); streaming-vs-buffering Now-bar tooltips; opening the Now Playing drawer after the queue ends shows the idle page (the ended-snapshot guard now matches the Now-bar's). Keymap doc: the sidebar Save button is the wired save path (`Ctrl+S` stays deferred).
 
-### Phase 16.5c — Podcast subscription lifecycle in the GUI (v0.1.11)
+### Phase 16.5c — Podcast subscription lifecycle in the GUI ✅ (v0.1.11)
 
-- [ ] Subscribe from the app: a sidebar footer button opens a URL dialog; fetching shows a spinner, failure keeps the URL and explains, success toasts and selects the show. (Introduces the GUI async-network idiom and a `win.toast` action tab modules can fire.)
-- [ ] Unsubscribe from the per-show settings dialog, behind a destructive confirm (downloads stay on disk).
-- [ ] OPML import and export via file dialogs; `Ctrl+Shift+O` wired at last.
-- [ ] Refresh: a footer refresh-all button, `R` for the focused show, a summary toast, and a last-refreshed caption from the existing `shows.last_fetched`.
-- [ ] A no-subscriptions StatusPage with a Subscribe call-to-action; empty buckets get one-liners.
+- [x] Subscribe from the app: a sidebar footer button opens a URL dialog; failure re-presents with the URL preserved and the error explained, success toasts and selects the show. (Introduces the GUI async-network idiom, `glib::spawn_future_local` awaiting a tokio `JoinHandle`, and a `win.toast` / `win.reload-queue` action pair tab modules fire through the widget tree.)
+- [x] Unsubscribe from the per-show settings dialog, behind a destructive confirm (episodes cascade out of library and queue; downloads stay on disk; a playing episode keeps playing and the queue drawer re-reads).
+- [x] OPML import and export via file dialogs; `Ctrl+Shift+O` wired at last; import chains straight into a refresh-all so episodes arrive in one step.
+- [x] Refresh: a footer button + `R` (selected show, or all shows from a bucket), a pure unit-tested `summarize_refresh` toast, and a last-refreshed header caption (pure `fmt_last_refreshed`) from the existing `shows.last_fetched`. Best-effort secret-service creds, the CLI idiom.
+- [x] A no-subscriptions StatusPage with Subscribe / Import OPML calls-to-action; empty buckets and shows get per-source one-liners. The sidebar is rebuilt in place (`rebuild_sidebar`, the row→source map now shared state).
 
 ### Phase 16.5d — Episode-list power (v0.1.12)
 

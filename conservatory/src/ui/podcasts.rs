@@ -24,7 +24,7 @@
 //! thread, the app-wide GUI-write idiom (the worker runs on a dedicated runtime
 //! thread, so this blocks only for a sub-millisecond command round-trip).
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -32,6 +32,7 @@ use gtk4 as gtk;
 use libadwaita as adw;
 
 use adw::prelude::*;
+use chrono::{DateTime, Utc};
 use gtk::gio;
 use gtk::glib;
 
@@ -41,6 +42,7 @@ use conservatory_core::db::{
     episodes_for_show, episodes_for_tag, episodes_in_bucket, get_show, get_show_settings,
     list_all_tags, list_shows, show_settings_map,
 };
+use conservatory_podcasts::{Fetcher, RefreshOutcome, RefreshStatus};
 
 use crate::playqueue::{EpisodeSource, attach_episode_chapters, build_episode_queue};
 use crate::ui::objects::EpisodeRow;
@@ -49,7 +51,7 @@ use crate::ui::objects::EpisodeRow;
 type EpisodeVerb = fn(&Inner);
 
 /// What the episode list is currently showing.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum Source {
     Bucket(TriageBucket),
     Show(i64),
@@ -87,29 +89,60 @@ struct Inner {
     settings_btn: gtk::Button,
     /// The episode right-click menu (Phase 16a), parented to the episode list.
     menu: gtk::PopoverMenu,
+    // --- Subscription lifecycle (16.5c) ---
+    /// Shared HTTP fetcher for subscribe / refresh. `None` when the client
+    /// failed to build; the browse stays usable offline.
+    fetcher: Option<Fetcher>,
+    /// The sidebar list plus its row→source map, shared so subscribe /
+    /// unsubscribe can rebuild the sidebar in place.
+    sidebar_list: gtk::ListBox,
+    sources: RefCell<Vec<Option<Source>>>,
+    /// The selected show's `last_fetched`, for the detail header (P18).
+    show_last_fetched: RefCell<Option<DateTime<Utc>>>,
+    /// Swaps the whole tab for a no-subscriptions StatusPage (P6).
+    view_stack: gtk::Stack,
+    /// Swaps the episode list for a per-source empty page (P6).
+    list_stack: gtk::Stack,
+    list_empty: adw::StatusPage,
+    /// The sidebar-footer refresh button; insensitive while a batch runs.
+    refresh_btn: gtk::Button,
+    refresh_busy: Cell<bool>,
 }
 
 impl Inner {
     fn load(&self, source: Source) {
         *self.current.borrow_mut() = source;
         // The per-show settings affordance and the detail header are only
-        // meaningful for a single show; resolve the show title once here.
-        let show_title = match source {
+        // meaningful for a single show; resolve the show title (and its
+        // last-fetched stamp, 16.5c) once here.
+        let (show_title, show_fetched) = match source {
             Source::Show(id) => self
                 .pool
                 .open()
                 .ok()
                 .and_then(|conn| get_show(&conn, id).ok().flatten())
-                .map(|s| s.title)
+                .map(|s| (s.title, s.last_fetched))
                 .unwrap_or_default(),
-            _ => String::new(),
+            _ => (String::new(), None),
         };
         *self.show_title.borrow_mut() = show_title;
+        *self.show_last_fetched.borrow_mut() = show_fetched;
         self.settings_btn
             .set_visible(matches!(source, Source::Show(_)));
+        let rows = self.read(source);
         self.store.remove_all();
-        for row in &self.read(source) {
+        for row in &rows {
             self.store.append(&EpisodeRow::new(row));
+        }
+        // An empty list explains itself per source (16.5c) instead of showing
+        // bare column headers.
+        if rows.is_empty() {
+            let (title, description) = empty_copy(source);
+            self.list_empty.set_title(title);
+            self.list_empty.set_description(Some(description));
+            self.list_stack.set_visible_child_name("empty");
+        } else {
+            self.list_stack.set_visible_child_name("list");
         }
         self.show_detail(None);
     }
@@ -157,7 +190,13 @@ impl Inner {
             }
             None => {
                 self.title.set_text(&self.show_title.borrow());
-                self.subtitle.set_text("");
+                // For a show header, the subtitle reports feed freshness (P18).
+                let sub = if matches!(*self.current.borrow(), Source::Show(_)) {
+                    fmt_last_refreshed(Utc::now(), *self.show_last_fetched.borrow())
+                } else {
+                    String::new()
+                };
+                self.subtitle.set_text(&sub);
                 self.notes.set_text("Select an episode to read its notes.");
                 self.actions.set_sensitive(false);
             }
@@ -360,6 +399,10 @@ impl Inner {
         let dialog = adw::AlertDialog::new(Some("Show settings"), None);
         dialog.set_extra_child(Some(&group));
         dialog.add_response("cancel", "Cancel");
+        // Unsubscribe lives with the rest of the show's management (16.5c);
+        // it hands off to its own destructive confirm.
+        dialog.add_response("unsubscribe", "Unsubscribe\u{2026}");
+        dialog.set_response_appearance("unsubscribe", adw::ResponseAppearance::Destructive);
         dialog.add_response("save", "Save");
         dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
         dialog.set_default_response(Some("save"));
@@ -367,6 +410,10 @@ impl Inner {
 
         let inner = self.clone();
         dialog.connect_response(None, move |_, resp| {
+            if resp == "unsubscribe" {
+                inner.confirm_unsubscribe(show_id);
+                return;
+            }
             if resp != "save" {
                 return;
             }
@@ -383,8 +430,313 @@ impl Inner {
             let _ = inner
                 .rt
                 .block_on(inner.worker.upsert_show_settings(settings));
+            inner.toast("Show settings saved");
         });
         dialog.present(Some(anchor));
+    }
+
+    // --- Subscription lifecycle (16.5c) ---
+
+    /// Route feedback through the window's toast overlay: the action walks the
+    /// widget tree, so this module needs no window handle.
+    fn toast(&self, msg: &str) {
+        let _ = self
+            .title
+            .activate_action("win.toast", Some(&msg.to_variant()));
+    }
+
+    /// Rebuild the sidebar (triage / shows / tags) from storage, keeping the
+    /// shared row→source map in step, and swap in the no-subscriptions page
+    /// when there is nothing to browse. Selects `select` when it names a row,
+    /// else the Inbox.
+    fn rebuild_sidebar(&self, select: Option<Source>) {
+        let list = &self.sidebar_list;
+        while let Some(child) = list.first_child() {
+            list.remove(&child);
+        }
+        let mut sources: Vec<Option<Source>> = Vec::new();
+
+        list.append(&section_header("Triage"));
+        sources.push(None);
+        for (label, icon, bucket) in [
+            ("Inbox", "mail-unread-symbolic", TriageBucket::Inbox),
+            ("Queue", "view-list-symbolic", TriageBucket::Queue),
+            ("Played", "object-select-symbolic", TriageBucket::Played),
+        ] {
+            list.append(&sidebar_entry(label, icon));
+            sources.push(Some(Source::Bucket(bucket)));
+        }
+
+        let conn = self.pool.open().ok();
+        let shows = conn
+            .as_ref()
+            .and_then(|c| list_shows(c).ok())
+            .unwrap_or_default();
+        if !shows.is_empty() {
+            list.append(&section_header("Shows"));
+            sources.push(None);
+            for show in &shows {
+                list.append(&sidebar_entry(&show.title, "microphone-symbolic"));
+                sources.push(Some(Source::Show(show.id)));
+            }
+        }
+
+        let tags = conn
+            .as_ref()
+            .and_then(|c| list_all_tags(c).ok())
+            .unwrap_or_default();
+        if !tags.is_empty() {
+            list.append(&section_header("Tags"));
+            sources.push(None);
+            for tag in &tags {
+                list.append(&sidebar_entry(&tag.name, "tag-symbolic"));
+                sources.push(Some(Source::Tag(tag.id)));
+            }
+        }
+
+        // The wanted row's index, before the map moves into the shared cell.
+        let index = select
+            .and_then(|want| sources.iter().position(|s| *s == Some(want)))
+            .unwrap_or(1); // Inbox, just after the "Triage" header
+        *self.sources.borrow_mut() = sources;
+
+        self.view_stack.set_visible_child_name(if shows.is_empty() {
+            "empty"
+        } else {
+            "content"
+        });
+        if let Some(row) = list.row_at_index(index as i32) {
+            list.select_row(Some(&row));
+        }
+    }
+
+    /// The subscribe dialog (P1). On a failed fetch it re-presents with the
+    /// URL preserved and the error explained, so a typo costs one keystroke.
+    fn prompt_subscribe(self: &Rc<Self>, prefill: &str, error: Option<&str>) {
+        let entry = gtk::Entry::builder()
+            .hexpand(true)
+            .placeholder_text("https://example.com/feed.xml")
+            .text(prefill)
+            .activates_default(true)
+            .build();
+        let body = match error {
+            Some(e) => format!("The feed could not be added: {e}"),
+            None => "Paste the podcast's feed URL.".to_string(),
+        };
+        let dialog = adw::AlertDialog::new(Some("Subscribe to a podcast"), Some(&body));
+        dialog.set_extra_child(Some(&entry));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("subscribe", "Subscribe");
+        dialog.set_response_appearance("subscribe", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("subscribe"));
+        dialog.set_close_response("cancel");
+        let inner = self.clone();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "subscribe" {
+                return;
+            }
+            let url = entry.text().trim().to_string();
+            if !url.is_empty() {
+                inner.subscribe(url);
+            }
+        });
+        dialog.present(Some(&self.title));
+    }
+
+    /// Fetch + store a new subscription off the GTK thread: the network work
+    /// runs on the tokio runtime, the completion lands back on the GLib main
+    /// context (`spawn_future_local` awaiting the `JoinHandle`).
+    fn subscribe(self: &Rc<Self>, url: String) {
+        let Some(fetcher) = self.fetcher.clone() else {
+            self.toast("Network client unavailable");
+            return;
+        };
+        let worker = self.worker.clone();
+        let pool = self.pool.clone();
+        let task_url = url.clone();
+        let handle = self.rt.spawn(async move {
+            conservatory_podcasts::add_show(&worker, &pool, &fetcher, &task_url).await
+        });
+        self.toast("Subscribing\u{2026}");
+        let inner = self.clone();
+        glib::spawn_future_local(async move {
+            match handle.await {
+                Ok(Ok((id, new, total))) => {
+                    inner.toast(&format!("Subscribed: {new} new of {total} episode(s)"));
+                    inner.rebuild_sidebar(Some(Source::Show(id)));
+                }
+                Ok(Err(e)) => inner.prompt_subscribe(&url, Some(&e.to_string())),
+                Err(e) => inner.toast(&format!("Subscribe task failed: {e}")),
+            }
+        });
+    }
+
+    /// Destructive confirm, then drop the subscription (P2). Episodes,
+    /// settings, sessions, chapters, and queue rows cascade in the worker;
+    /// downloaded files stay on disk (retention owns file deletion). A playing
+    /// episode keeps playing (the engine owns its resolved item), so the queue
+    /// drawer is told to re-read the DB.
+    fn confirm_unsubscribe(self: &Rc<Self>, show_id: i64) {
+        let name = self.show_title.borrow().clone();
+        let body = format!(
+            "Unsubscribe from \u{201c}{name}\u{201d}? Its episodes leave the library and the \
+             queue; downloaded files stay on disk. This cannot be undone."
+        );
+        let dialog = adw::AlertDialog::new(Some("Unsubscribe?"), Some(&body));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("unsubscribe", "Unsubscribe");
+        dialog.set_response_appearance("unsubscribe", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        let inner = self.clone();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "unsubscribe" {
+                return;
+            }
+            let _ = inner.rt.block_on(inner.worker.delete_show(show_id));
+            inner.toast(&format!("Unsubscribed from {name}"));
+            inner.rebuild_sidebar(None);
+            let _ = inner.title.activate_action("win.reload-queue", None);
+        });
+        dialog.present(Some(&self.title));
+    }
+
+    /// Refresh the selected show, or every subscription (P4). One batch at a
+    /// time; the footer button goes insensitive while it runs.
+    fn refresh_current(self: &Rc<Self>) {
+        if self.refresh_busy.get() {
+            return;
+        }
+        let Some(fetcher) = self.fetcher.clone() else {
+            self.toast("Network client unavailable");
+            return;
+        };
+        let show_id = match *self.current.borrow() {
+            Source::Show(id) => Some(id),
+            _ => None,
+        };
+        let worker = self.worker.clone();
+        let pool = self.pool.clone();
+        let handle = self.rt.spawn(async move {
+            // Best-effort creds (the CLI idiom): no secret service just means
+            // private feeds poll anonymously and 401 as a Failed outcome.
+            let creds = conservatory_podcasts::CredentialStore::secret_service()
+                .await
+                .ok();
+            match show_id {
+                Some(id) => {
+                    let show = {
+                        let conn = pool.open()?;
+                        get_show(&conn, id)?.ok_or_else(|| {
+                            conservatory_podcasts::FetchError::Parse(format!("no show {id}"))
+                        })?
+                    };
+                    conservatory_podcasts::refresh_show(&worker, &pool, &fetcher, show, creds.as_ref())
+                        .await
+                        .map(|o| vec![o])
+                }
+                None => conservatory_podcasts::refresh_all(&worker, &pool, &fetcher, creds).await,
+            }
+        });
+        self.refresh_busy.set(true);
+        self.refresh_btn.set_sensitive(false);
+        let inner = self.clone();
+        glib::spawn_future_local(async move {
+            let result = handle.await;
+            inner.refresh_busy.set(false);
+            inner.refresh_btn.set_sensitive(true);
+            match result {
+                Ok(Ok(outcomes)) => {
+                    inner.toast(&summarize_refresh(&outcomes));
+                    inner.reload();
+                }
+                Ok(Err(e)) => inner.toast(&format!("Refresh failed: {e}")),
+                Err(e) => inner.toast(&format!("Refresh task failed: {e}")),
+            }
+        });
+    }
+
+    /// OPML import (P3): file chooser → parse + upsert (network-free) → a
+    /// refresh-all so the new shows' episodes arrive without a second step.
+    fn prompt_import_opml(self: &Rc<Self>) {
+        let Some(win) = self.title.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let filter = gtk::FileFilter::new();
+        filter.add_suffix("opml");
+        filter.add_suffix("xml");
+        filter.set_name(Some("OPML"));
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+        let dialog = gtk::FileDialog::builder()
+            .title("Import OPML")
+            .filters(&filters)
+            .build();
+        let inner = self.clone();
+        dialog.open(Some(&win), gio::Cancellable::NONE, move |res| {
+            let Ok(file) = res else { return }; // cancelled
+            let Some(path) = file.path() else { return };
+            let body = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    inner.toast(&format!("Could not read {}: {e}", path.display()));
+                    return;
+                }
+            };
+            let worker = inner.worker.clone();
+            let pool = inner.pool.clone();
+            let handle = inner
+                .rt
+                .spawn(async move { conservatory_podcasts::import_opml(&worker, &pool, &body).await });
+            let inner = inner.clone();
+            glib::spawn_future_local(async move {
+                match handle.await {
+                    Ok(Ok(summary)) => {
+                        inner.toast(&format!(
+                            "Imported {} subscription(s), {} new; refreshing feeds\u{2026}",
+                            summary.total, summary.created
+                        ));
+                        inner.rebuild_sidebar(None);
+                        inner.refresh_current();
+                    }
+                    Ok(Err(e)) => inner.toast(&format!("OPML import failed: {e}")),
+                    Err(e) => inner.toast(&format!("OPML task failed: {e}")),
+                }
+            });
+        });
+    }
+
+    /// OPML export (P3): every subscription with its tags, to a file.
+    fn prompt_export_opml(self: &Rc<Self>) {
+        let Some(win) = self.title.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let dialog = gtk::FileDialog::builder()
+            .title("Export OPML")
+            .initial_name("conservatory-podcasts.opml")
+            .build();
+        let inner = self.clone();
+        dialog.save(Some(&win), gio::Cancellable::NONE, move |res| {
+            let Ok(file) = res else { return }; // cancelled
+            let Some(path) = file.path() else { return };
+            let pool = inner.pool.clone();
+            let handle = inner
+                .rt
+                .spawn(async move { conservatory_podcasts::export_opml(&pool).await });
+            let inner = inner.clone();
+            glib::spawn_future_local(async move {
+                match handle.await {
+                    Ok(Ok(xml)) => match std::fs::write(&path, xml) {
+                        Ok(()) => {
+                            inner.toast(&format!("Exported subscriptions to {}", path.display()));
+                        }
+                        Err(e) => inner.toast(&format!("Could not write {}: {e}", path.display())),
+                    },
+                    Ok(Err(e)) => inner.toast(&format!("OPML export failed: {e}")),
+                    Err(e) => inner.toast(&format!("OPML task failed: {e}")),
+                }
+            });
+        });
     }
 }
 
@@ -455,6 +807,70 @@ pub(crate) fn settings_from_form(
 /// resolution; this only bounds the input widget.
 pub(crate) const MIN_SPEED: f64 = 0.25;
 pub(crate) const MAX_SPEED: f64 = 4.0;
+
+/// One toast line for a refresh batch (16.5c). Pure, so unit-tested.
+pub(crate) fn summarize_refresh(outcomes: &[RefreshOutcome]) -> String {
+    if outcomes.is_empty() {
+        return "No subscriptions to refresh".to_string();
+    }
+    let mut new_episodes = 0usize;
+    let mut failed = 0usize;
+    for o in outcomes {
+        match &o.status {
+            RefreshStatus::Updated { new, .. } => new_episodes += new,
+            RefreshStatus::NotModified => {}
+            RefreshStatus::Failed(_) => failed += 1,
+        }
+    }
+    let mut out = if outcomes.len() == 1 {
+        format!("Refreshed {}", outcomes[0].show_title)
+    } else {
+        format!("Refreshed {} shows", outcomes.len())
+    };
+    match new_episodes {
+        0 => out.push_str(": no new episodes"),
+        1 => out.push_str(": 1 new episode"),
+        n => out.push_str(&format!(": {n} new episodes")),
+    }
+    if failed > 0 {
+        out.push_str(&format!(" \u{2022} {failed} failed"));
+    }
+    out
+}
+
+/// The show header's feed-freshness line (16.5c). Pure, so unit-tested.
+pub(crate) fn fmt_last_refreshed(now: DateTime<Utc>, last: Option<DateTime<Utc>>) -> String {
+    let Some(last) = last else {
+        return "Never refreshed".to_string();
+    };
+    match (now - last).num_minutes() {
+        m if m < 1 => "Last refreshed just now".to_string(),
+        m if m < 60 => format!("Last refreshed {m} min ago"),
+        m if m < 60 * 24 => format!("Last refreshed {} h ago", m / 60),
+        m => format!("Last refreshed {} day(s) ago", m / (60 * 24)),
+    }
+}
+
+/// The per-source empty-list copy (16.5c): what an empty episode list means
+/// depends on what it is showing.
+fn empty_copy(source: Source) -> (&'static str, &'static str) {
+    match source {
+        Source::Bucket(TriageBucket::Inbox) => (
+            "Inbox is empty",
+            "New episodes land here when feeds refresh.",
+        ),
+        Source::Bucket(TriageBucket::Queue) => (
+            "Queue is empty",
+            "Add episodes from the Inbox or a show (Ctrl+Enter appends).",
+        ),
+        Source::Bucket(TriageBucket::Played) => (
+            "Nothing played yet",
+            "Episodes you finish or archive land here.",
+        ),
+        Source::Show(_) => ("No episodes", "Refresh to fetch this show's episodes."),
+        Source::Tag(_) => ("No episodes", "No episodes carry this tag."),
+    }
+}
 
 fn detail_subtitle(r: &EpisodeRow) -> String {
     let mut parts = vec![r.show_title()];
@@ -600,6 +1016,38 @@ pub fn build_podcasts_view(
     detail.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     detail.append(&notes_scroll);
 
+    // The episode list's per-source empty page (16.5c), swapped in by `load`.
+    let list_empty = adw::StatusPage::builder()
+        .icon_name("microphone-symbolic")
+        .title("No episodes")
+        .build();
+    let list_stack = gtk::Stack::new();
+    list_stack.add_named(&list_scroll, Some("list"));
+    list_stack.add_named(&list_empty, Some("empty"));
+
+    // The sidebar list is populated by `rebuild_sidebar` (16.5c), so subscribe
+    // and unsubscribe can rebuild it in place.
+    let sidebar_list = gtk::ListBox::new();
+    sidebar_list.add_css_class("navigation-sidebar");
+
+    // Sidebar footer: the subscription-lifecycle toolbar (16.5c).
+    let subscribe_btn = gtk::Button::from_icon_name("list-add-symbolic");
+    subscribe_btn.set_tooltip_text(Some("Subscribe to a podcast feed"));
+    let refresh_btn = gtk::Button::from_icon_name("view-refresh-symbolic");
+    refresh_btn.set_tooltip_text(Some("Refresh the selected show, or all shows (R)"));
+    let opml_menu = gio::Menu::new();
+    opml_menu.append(Some("Import OPML\u{2026}"), Some("podcast.import-opml"));
+    opml_menu.append(Some("Export OPML\u{2026}"), Some("podcast.export-opml"));
+    let opml_btn = gtk::MenuButton::builder()
+        .icon_name("view-more-symbolic")
+        .tooltip_text("Import or export subscriptions (OPML)")
+        .menu_model(&opml_menu)
+        .build();
+
+    // Swaps the whole tab for a no-subscriptions call-to-action (16.5c);
+    // children are added below, once the panes are assembled.
+    let view_stack = gtk::Stack::new();
+
     let inner = Rc::new(Inner {
         pool: pool.clone(),
         worker,
@@ -618,6 +1066,15 @@ pub fn build_podcasts_view(
         star_btn: star_btn.clone(),
         settings_btn: settings_btn.clone(),
         menu: episode_menu,
+        fetcher: Fetcher::new().ok(),
+        sidebar_list: sidebar_list.clone(),
+        sources: RefCell::new(Vec::new()),
+        show_last_fetched: RefCell::new(None),
+        view_stack: view_stack.clone(),
+        list_stack: list_stack.clone(),
+        list_empty: list_empty.clone(),
+        refresh_btn: refresh_btn.clone(),
+        refresh_busy: Cell::new(false),
     });
     inner.show_detail(None);
     let _ = ctx.set(inner.clone());
@@ -691,88 +1148,138 @@ pub fn build_podcasts_view(
         });
     }
 
-    // Sidebar: triage buckets, subscribed shows, then tags. `sources` maps a row
-    // index to what it loads (header rows are `None`).
-    let sidebar_list = gtk::ListBox::new();
-    sidebar_list.add_css_class("navigation-sidebar");
-    let mut sources: Vec<Option<Source>> = Vec::new();
-
-    sidebar_list.append(&section_header("Triage"));
-    sources.push(None);
-    for (label, icon, bucket) in [
-        ("Inbox", "mail-unread-symbolic", TriageBucket::Inbox),
-        ("Queue", "view-list-symbolic", TriageBucket::Queue),
-        ("Played", "object-select-symbolic", TriageBucket::Played),
-    ] {
-        sidebar_list.append(&sidebar_entry(label, icon));
-        sources.push(Some(Source::Bucket(bucket)));
-    }
-
-    let conn = pool.open().ok();
-    let shows = conn
-        .as_ref()
-        .and_then(|c| list_shows(c).ok())
-        .unwrap_or_default();
-    if !shows.is_empty() {
-        sidebar_list.append(&section_header("Shows"));
-        sources.push(None);
-        for show in &shows {
-            sidebar_list.append(&sidebar_entry(&show.title, "microphone-symbolic"));
-            sources.push(Some(Source::Show(show.id)));
-        }
-    }
-
-    let tags = conn
-        .as_ref()
-        .and_then(|c| list_all_tags(c).ok())
-        .unwrap_or_default();
-    if !tags.is_empty() {
-        sidebar_list.append(&section_header("Tags"));
-        sources.push(None);
-        for tag in &tags {
-            sidebar_list.append(&sidebar_entry(&tag.name, "tag-symbolic"));
-            sources.push(Some(Source::Tag(tag.id)));
-        }
-    }
-
+    // Row selection reads the shared row→source map (16.5c: the sidebar can be
+    // rebuilt, so the map lives on `Inner`, not in this closure).
     {
         let inner = inner.clone();
         sidebar_list.connect_row_selected(move |_, row| {
             if let Some(row) = row
                 && let Some(Some(source)) = usize::try_from(row.index())
                     .ok()
-                    .and_then(|i| sources.get(i))
+                    .and_then(|i| inner.sources.borrow().get(i).copied())
             {
-                inner.load(*source);
+                inner.load(source);
             }
         });
     }
-    // Open on Inbox (row index 1, just after the "Triage" header).
-    if let Some(first) = sidebar_list.row_at_index(1) {
-        sidebar_list.select_row(Some(&first));
+
+    // The subscription-lifecycle toolbar + its actions (16.5c).
+    {
+        let inner = inner.clone();
+        subscribe_btn.connect_clicked(move |_| inner.prompt_subscribe("", None));
     }
+    {
+        let inner = inner.clone();
+        refresh_btn.connect_clicked(move |_| inner.refresh_current());
+    }
+    {
+        let group = gio::SimpleActionGroup::new();
+        let import = gio::SimpleAction::new("import-opml", None);
+        {
+            let inner = inner.clone();
+            import.connect_activate(move |_, _| inner.prompt_import_opml());
+        }
+        group.add_action(&import);
+        let export = gio::SimpleAction::new("export-opml", None);
+        {
+            let inner = inner.clone();
+            export.connect_activate(move |_, _| inner.prompt_export_opml());
+        }
+        group.add_action(&export);
+        view_stack.insert_action_group("podcast", Some(&group));
+    }
+
+    // View-scoped keys (16.5c, keymap.md): `R` refreshes, `Ctrl+Shift+O`
+    // imports OPML. Scoped to this widget subtree, so dialogs are unaffected
+    // (and the view has no text entry for a bare key to collide with).
+    {
+        let keys = gtk::ShortcutController::new();
+        keys.set_scope(gtk::ShortcutScope::Managed);
+        let inner_r = inner.clone();
+        keys.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("r"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                inner_r.refresh_current();
+                glib::Propagation::Stop
+            })),
+        ));
+        let inner_o = inner.clone();
+        keys.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control><Shift>o"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                inner_o.prompt_import_opml();
+                glib::Propagation::Stop
+            })),
+        ));
+        view_stack.add_controller(keys);
+    }
+
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    footer.add_css_class("toolbar");
+    footer.append(&subscribe_btn);
+    footer.append(&refresh_btn);
+    footer.append(&opml_btn);
+
     let sidebar_scroll = gtk::ScrolledWindow::builder()
         .child(&sidebar_list)
+        .vexpand(true)
         .width_request(200)
         .build();
+    let sidebar_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    sidebar_box.append(&sidebar_scroll);
+    sidebar_box.append(&footer);
 
     // Layout: sidebar | (episode list | detail). Nested `gtk::Paned`, matching
     // the music browse body; an adaptive AdwNavigationSplitView is a later
     // refinement.
     let content = gtk::Paned::new(gtk::Orientation::Horizontal);
-    content.set_start_child(Some(&list_scroll));
+    content.set_start_child(Some(&list_stack));
     content.set_end_child(Some(&detail));
     content.set_resize_start_child(true);
     content.set_resize_end_child(true);
     content.set_position(520);
 
     let root = gtk::Paned::new(gtk::Orientation::Horizontal);
-    root.set_start_child(Some(&sidebar_scroll));
+    root.set_start_child(Some(&sidebar_box));
     root.set_end_child(Some(&content));
     root.set_resize_start_child(false);
     root.set_shrink_start_child(false);
     root.set_position(200);
-    root.upcast()
+
+    // The no-subscriptions call-to-action (16.5c): the whole tab swaps for a
+    // StatusPage until a first feed exists.
+    let cta_subscribe = gtk::Button::with_label("Subscribe\u{2026}");
+    cta_subscribe.add_css_class("suggested-action");
+    cta_subscribe.add_css_class("pill");
+    {
+        let inner = inner.clone();
+        cta_subscribe.connect_clicked(move |_| inner.prompt_subscribe("", None));
+    }
+    let cta_import = gtk::Button::with_label("Import OPML\u{2026}");
+    cta_import.add_css_class("pill");
+    {
+        let inner = inner.clone();
+        cta_import.connect_clicked(move |_| inner.prompt_import_opml());
+    }
+    let cta_box = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    cta_box.set_halign(gtk::Align::Center);
+    cta_box.append(&cta_subscribe);
+    cta_box.append(&cta_import);
+    let empty_view = adw::StatusPage::builder()
+        .icon_name("microphone-symbolic")
+        .title("No podcast subscriptions")
+        .description("Subscribe to a feed to start your podcast library.")
+        .child(&cta_box)
+        .build();
+
+    view_stack.add_named(&root, Some("content"));
+    view_stack.add_named(&empty_view, Some("empty"));
+
+    // First population: fills the sidebar, selects the Inbox (which loads the
+    // episode list), and picks the content-vs-empty page.
+    inner.rebuild_sidebar(None);
+
+    view_stack.upcast()
 }
 
 fn section_header(text: &str) -> gtk::ListBoxRow {
@@ -924,6 +1431,63 @@ fn text_column(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn outcome(title: &str, status: RefreshStatus) -> RefreshOutcome {
+        RefreshOutcome {
+            show_id: 1,
+            show_title: title.to_string(),
+            status,
+        }
+    }
+
+    #[test]
+    fn summarize_refresh_covers_empty_single_and_batch() {
+        assert_eq!(summarize_refresh(&[]), "No subscriptions to refresh");
+        assert_eq!(
+            summarize_refresh(&[outcome("ATP", RefreshStatus::NotModified)]),
+            "Refreshed ATP: no new episodes"
+        );
+        let batch = [
+            outcome("ATP", RefreshStatus::Updated { new: 2, total: 10 }),
+            outcome("Upgrade", RefreshStatus::Updated { new: 1, total: 8 }),
+            outcome("Dead Feed", RefreshStatus::Failed("410 Gone".into())),
+        ];
+        assert_eq!(
+            summarize_refresh(&batch),
+            "Refreshed 3 shows: 3 new episodes \u{2022} 1 failed"
+        );
+    }
+
+    #[test]
+    fn fmt_last_refreshed_buckets_by_age() {
+        let now = DateTime::parse_from_rfc3339("2026-07-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let at = |s: &str| {
+            Some(
+                DateTime::parse_from_rfc3339(s)
+                    .unwrap()
+                    .with_timezone(&Utc),
+            )
+        };
+        assert_eq!(fmt_last_refreshed(now, None), "Never refreshed");
+        assert_eq!(
+            fmt_last_refreshed(now, at("2026-07-01T11:59:40Z")),
+            "Last refreshed just now"
+        );
+        assert_eq!(
+            fmt_last_refreshed(now, at("2026-07-01T11:15:00Z")),
+            "Last refreshed 45 min ago"
+        );
+        assert_eq!(
+            fmt_last_refreshed(now, at("2026-07-01T06:00:00Z")),
+            "Last refreshed 6 h ago"
+        );
+        assert_eq!(
+            fmt_last_refreshed(now, at("2026-06-28T12:00:00Z")),
+            "Last refreshed 3 day(s) ago"
+        );
+    }
 
     #[test]
     fn inbox_policy_index_round_trips() {

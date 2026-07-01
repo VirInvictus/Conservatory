@@ -724,6 +724,27 @@ impl ConservatoryWindow {
             self.install_facet_context_menu();
         }
 
+        // Window-scoped feedback actions (16.5c): the self-contained tab
+        // modules (podcasts / audiobooks) reach the toast overlay and the
+        // queue drawer through the widget tree (`activate_action("win.…")`)
+        // without holding a window reference.
+        let toast_action = gio::SimpleAction::new("toast", Some(glib::VariantTy::STRING));
+        let weak = self.downgrade();
+        toast_action.connect_activate(move |_, param| {
+            if let (Some(win), Some(msg)) = (weak.upgrade(), param.and_then(|p| p.str())) {
+                win.toast(msg);
+            }
+        });
+        self.add_action(&toast_action);
+        let reload_queue = gio::SimpleAction::new("reload-queue", None);
+        let weak = self.downgrade();
+        reload_queue.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.reload_queue_panel();
+            }
+        });
+        self.add_action(&reload_queue);
+
         // The debounced cascade: a burst of selection changes flushes once,
         // recomputing from the earliest changed pane.
         let weak = self.downgrade();

@@ -34,6 +34,31 @@ pub struct Config {
     pub podcasts: PodcastsConfig,
     pub audiobooks: AudiobooksConfig,
     pub browse: BrowseConfig,
+    pub sections: SectionsConfig,
+}
+
+/// `[sections]`: which media tabs are enabled (Phase 16e). Disabling a section
+/// hides its tab and, at the next launch, skips building it entirely: no page is
+/// added and its subsystem is never started (the lazy `::map` init never runs), so
+/// a disabled section costs nothing at runtime. This is a runtime toggle over what
+/// is *compiled in*, distinct from the compile-time plugin features (§2.2): those
+/// decide what is in the binary, this decides what a given launch shows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SectionsConfig {
+    pub music: bool,
+    pub podcasts: bool,
+    pub audiobooks: bool,
+}
+
+impl Default for SectionsConfig {
+    fn default() -> Self {
+        Self {
+            music: true,
+            podcasts: true,
+            audiobooks: true,
+        }
+    }
 }
 
 /// `[library]`: where the managed tree lives and how music is filed into it.

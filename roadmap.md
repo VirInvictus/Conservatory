@@ -933,6 +933,18 @@ Three crisp primitives, kept distinct to avoid Roon's Tags-vs-Bookmarks confusio
 - [x] The 16a "Add to Playlist ▸" context verb is now real: a submenu of the static playlists (rebuilt as playlists change) → `append_playlist_tracks`.
 - [ ] Static-playlist in-place drag-reorder is deferred (the queue-drawer DnD idiom); episode/book playlist entries too (schema supports them; v1 wires tracks).
 
+### Phase 16e — Preferences: enable/disable sections ✅ (v0.1.8)
+
+A runtime toggle over which media tabs a launch shows, distinct from the compile-time plugin features (§2.2): those decide what is in the binary, this decides what shows.
+
+- [x] A `[sections]` config block (`music` / `podcasts` / `audiobooks`, default all true). Disabling a section skips building its tab and starting its subsystem at the next launch: the `attach_*_view` call is gated on the flag, so a disabled section's lazy `::map` init never runs (no page, no fetch worker) — the runtime-skip "carry no code" the user asked for.
+- [x] Music stays as the fallback when nothing else is enabled, so the window is never empty; the view chrome (switcher / bottom bar) installs only when more than one tab actually shows.
+- [x] Preferences → General gains a Sections group of switches (Podcasts / Audiobooks appear only when compiled in); applies next launch, the config idiom.
+
+### Phase 16f — Context-sensitive header buttons ✅ (v0.1.8)
+
+- [x] The music-only header controls (Edit, Embed tags, Properties inspector) are stored in the imp struct and hidden on the Podcasts / Audiobooks tabs, shown only on Music, via `view_stack.connect_visible_child_notify`. Universal controls (playback, prefs, output, menu, switcher) always stay. Only compiled when a second tab exists (a music-only build never switches).
+
 ## Phases 17–19 — planned (from the UI/UX deep-dive)
 
 - **Phase 17 — Player table-stakes:** shuffle and repeat modes (absent from the engine and UI today), context-aware ReplayGain (album gain for whole-album listening, track gain when shuffling), and the queue-vs-playlist verb clarity the research calls out.

@@ -169,6 +169,11 @@ mod imp {
         pub playlist_list: OnceCell<gtk::ListBox>,
         pub playlists: RefCell<Vec<conservatory_core::db::Playlist>>,
         pub add_to_playlist_menu: OnceCell<gio::Menu>,
+        // Music-only header controls (Phase 16f): stored so they can be hidden on
+        // the Podcasts / Audiobooks tabs, where selection-editing and the track
+        // properties inspector do not apply.
+        pub header_edit_group: OnceCell<gtk::Box>,
+        pub header_props_btn: OnceCell<gtk::Button>,
     }
 
     #[glib::object_subclass]
@@ -441,7 +446,20 @@ impl ConservatoryWindow {
         let stack = adw::ViewStack::new();
         stack.set_hexpand(true);
         stack.set_vexpand(true);
-        stack.add_titled_with_icon(&music_page, Some("music"), "Music", "folder-music-symbolic");
+        // Which sections this launch shows (Phase 16e): a runtime toggle over what
+        // is compiled in. A disabled section adds no page; Music stays as the
+        // fallback when nothing else is enabled, so the window is never empty.
+        let podcasts_on = cfg!(feature = "podcasts") && config.sections.podcasts;
+        let audiobooks_on = cfg!(feature = "audiobooks") && config.sections.audiobooks;
+        let show_music = config.sections.music || (!podcasts_on && !audiobooks_on);
+        if show_music {
+            stack.add_titled_with_icon(
+                &music_page,
+                Some("music"),
+                "Music",
+                "folder-music-symbolic",
+            );
+        }
 
         // The bottom Now Playing drawer (v0.0.38): built here so the toolbar
         // content can stack it above the Now-bar (it slides up from the bottom).
@@ -482,6 +500,7 @@ impl ConservatoryWindow {
         panel_group.append(&queue_btn);
         panel_group.append(&props_btn);
         panel_group.append(&info_btn);
+        let _ = imp.header_props_btn.set(props_btn.clone());
 
         let prefs_btn = gtk::Button::from_icon_name("preferences-system-symbolic");
         prefs_btn.set_tooltip_text(Some("Preferences (Ctrl+comma)"));
@@ -519,6 +538,7 @@ impl ConservatoryWindow {
         edit_group.append(&edit_btn);
         edit_group.append(&embed_btn);
         header.pack_start(&edit_group);
+        let _ = imp.header_edit_group.set(edit_group);
 
         // The toolbar content is the view stack with the Now Playing drawer
         // stacked beneath it: the drawer slides up from the bottom of the content
@@ -588,15 +608,36 @@ impl ConservatoryWindow {
         // music-only build (`--no-default-features`) keeps a single-page stack
         // with no switcher: visually unchanged.
         #[cfg(feature = "podcasts")]
-        self.attach_podcasts_view(&stack);
+        if podcasts_on {
+            self.attach_podcasts_view(&stack);
+        }
         #[cfg(feature = "audiobooks")]
-        self.attach_audiobooks_view(&stack);
+        if audiobooks_on {
+            self.attach_audiobooks_view(&stack);
+        }
+        // The view chrome (switcher / bottom bar / breakpoint) is only useful when
+        // more than one tab is actually showing this launch.
         #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
-        self.install_view_chrome(&stack, &header, &toolbar);
+        if podcasts_on || audiobooks_on {
+            self.install_view_chrome(&stack, &header, &toolbar);
+        }
 
         self.set_content(Some(&toolbar));
         let _ = imp.view_stack.set(stack);
         let _ = imp.toast_overlay.set(toast_overlay);
+
+        // Music-only header controls follow the active tab (Phase 16f): only
+        // compiled when a second tab exists (a music-only build never switches).
+        #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
+        if let Some(view_stack) = imp.view_stack.get() {
+            let weak = self.downgrade();
+            view_stack.connect_visible_child_notify(move |_| {
+                if let Some(win) = weak.upgrade() {
+                    win.update_header_for_view();
+                }
+            });
+            self.update_header_for_view();
+        }
 
         *imp.panes.borrow_mut() = panes;
         let _ = imp.leaf.set(leaf);
@@ -1202,6 +1243,49 @@ impl ConservatoryWindow {
         }
         genre_group.add(&unknown);
         page.add(&genre_group);
+
+        // Sections (Phase 16e): which media tabs to show. Disabling one skips
+        // building its tab and starting its subsystem at the next launch. The
+        // Podcasts / Audiobooks toggles appear only when those plugins are compiled
+        // in (a music-only build shows just Music).
+        let sections_group = adw::PreferencesGroup::new();
+        sections_group.set_title("Sections");
+        sections_group.set_description(Some(
+            "Which media tabs to show. Takes effect on the next launch.",
+        ));
+        let music_sw = adw::SwitchRow::new();
+        music_sw.set_title("Music");
+        music_sw.set_active(config.borrow().sections.music);
+        {
+            let config = config.clone();
+            music_sw.connect_active_notify(move |s| {
+                config.borrow_mut().sections.music = s.is_active();
+            });
+        }
+        sections_group.add(&music_sw);
+        #[cfg(feature = "podcasts")]
+        {
+            let podcasts_sw = adw::SwitchRow::new();
+            podcasts_sw.set_title("Podcasts");
+            podcasts_sw.set_active(config.borrow().sections.podcasts);
+            let config = config.clone();
+            podcasts_sw.connect_active_notify(move |s| {
+                config.borrow_mut().sections.podcasts = s.is_active();
+            });
+            sections_group.add(&podcasts_sw);
+        }
+        #[cfg(feature = "audiobooks")]
+        {
+            let audiobooks_sw = adw::SwitchRow::new();
+            audiobooks_sw.set_title("Audiobooks");
+            audiobooks_sw.set_active(config.borrow().sections.audiobooks);
+            let config = config.clone();
+            audiobooks_sw.connect_active_notify(move |s| {
+                config.borrow_mut().sections.audiobooks = s.is_active();
+            });
+            sections_group.add(&audiobooks_sw);
+        }
+        page.add(&sections_group);
 
         page
     }
@@ -3551,6 +3635,27 @@ impl ConservatoryWindow {
             && stack.child_by_name(name).is_some()
         {
             stack.set_visible_child_name(name);
+        }
+    }
+
+    /// Show the music-only header controls (Edit / Embed tags / Properties) on the
+    /// Music tab and hide them on Podcasts / Audiobooks, where selection editing
+    /// and the track-properties inspector do not apply (Phase 16f). Only built when
+    /// a second tab is compiled in (a music-only build never switches views).
+    #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
+    fn update_header_for_view(&self) {
+        let imp = self.imp();
+        let is_music = imp
+            .view_stack
+            .get()
+            .and_then(|s| s.visible_child_name())
+            .map(|n| n == "music")
+            .unwrap_or(true);
+        if let Some(g) = imp.header_edit_group.get() {
+            g.set_visible(is_music);
+        }
+        if let Some(b) = imp.header_props_btn.get() {
+            b.set_visible(is_music);
         }
     }
 

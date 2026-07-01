@@ -1,5 +1,12 @@
 # Patch Notes
 
+## v0.1.8
+
+Turn tabs off, and a header that follows the tab.
+
+- **Enable or disable the Music, Podcasts, and Audiobooks tabs.** Preferences → General has a new Sections group. Turn a section off and, on the next launch, its tab is gone and none of its machinery starts (a disabled Podcasts section never spins up its feed workers, for instance), so the app carries no weight for parts you do not use. Music stays as a fallback so the window is never empty. This is separate from the build-time plugin switch; it is a per-launch preference over what is built in.
+- **The toolbar follows the active tab.** The buttons that only make sense for music (Edit, Embed tags, and the track Properties panel) now hide themselves when you switch to the Podcasts or Audiobooks tab, and come back on Music. The playback, preferences, output, and menu controls stay put everywhere.
+
 ## v0.1.7
 
 Playlists come to the window.

@@ -344,6 +344,22 @@ impl WorkerHandle {
             .await
     }
 
+    /// Remove a track from the library (Phase 16a). DB-only unlink; file stays.
+    pub async fn delete_track(&self, track_id: i64) -> Result<()> {
+        self.dispatch(|reply| Command::DeleteTrack { track_id, reply })
+            .await
+    }
+
+    /// Insert tracks into the queue at `at` (the Play Next path, Phase 16a).
+    pub async fn insert_queue_tracks_at(&self, at: i64, track_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::InsertQueueTracksAt {
+            at,
+            track_ids,
+            reply,
+        })
+        .await
+    }
+
     /// Replace the whole queue with these tracks in order.
     pub async fn replace_queue_with_tracks(&self, track_ids: Vec<i64>) -> Result<()> {
         self.dispatch(|reply| Command::ReplaceQueueWithTracks { track_ids, reply })
@@ -1017,6 +1033,16 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::EnqueueTracks { track_ids, reply } => {
             let _ = reply.send(writes::enqueue_tracks(conn, &track_ids));
+        }
+        Command::DeleteTrack { track_id, reply } => {
+            let _ = reply.send(writes::delete_track(conn, track_id));
+        }
+        Command::InsertQueueTracksAt {
+            at,
+            track_ids,
+            reply,
+        } => {
+            let _ = reply.send(writes::insert_queue_tracks_at(conn, at, &track_ids));
         }
         Command::ReplaceQueueWithTracks { track_ids, reply } => {
             let _ = reply.send(writes::replace_queue_with_tracks(conn, &track_ids));

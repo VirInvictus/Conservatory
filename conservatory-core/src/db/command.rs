@@ -11,9 +11,9 @@
 use tokio::sync::oneshot;
 
 use crate::db::models::{
-    Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings,
-    Track, VerifyResultRow,
+    Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, Episode,
+    EqState, Playback, PlaybackCursor, PlayedState, Show, ShowSettings, Track, VerifyResultRow,
+    EQ_BAND_COUNT,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -217,6 +217,21 @@ pub(crate) enum Command {
 
     /// Append tracks to the unified queue tail (spec §4.3, Phase 4b).
     EnqueueTracks {
+        track_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Remove a track from the library (Phase 16a). DB-only unlink; the file is
+    /// left on disk. Cascades/triggers clean up dependents.
+    DeleteTrack {
+        track_id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Insert tracks into the queue at `at`, shifting later entries up (the Play
+    /// Next path, Phase 16a; mirrors the engine `InsertItems`).
+    InsertQueueTracksAt {
+        at: i64,
         track_ids: Vec<i64>,
         reply: oneshot::Sender<Result<()>>,
     },
@@ -553,6 +568,8 @@ impl Command {
             Self::SavePlaybackState { .. } => "save_playback_state",
             Self::IncrementPlayCount { .. } => "increment_play_count",
             Self::EnqueueTracks { .. } => "enqueue_tracks",
+            Self::DeleteTrack { .. } => "delete_track",
+            Self::InsertQueueTracksAt { .. } => "insert_queue_tracks_at",
             Self::ReplaceQueueWithTracks { .. } => "replace_queue_with_tracks",
             Self::EnqueueEpisodes { .. } => "enqueue_episodes",
             Self::ReplaceQueueWithEpisodes { .. } => "replace_queue_with_episodes",

@@ -24,7 +24,7 @@
 //! thread, the app-wide GUI-write idiom (the worker runs on a dedicated runtime
 //! thread, so this blocks only for a sub-millisecond command round-trip).
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -32,6 +32,7 @@ use gtk4 as gtk;
 use libadwaita as adw;
 
 use adw::prelude::*;
+use gtk::gio;
 use gtk::glib;
 
 use conservatory_core::PlayerHandle;
@@ -43,6 +44,9 @@ use conservatory_core::db::{
 
 use crate::playqueue::{EpisodeSource, attach_episode_chapters, build_episode_queue};
 use crate::ui::objects::EpisodeRow;
+
+/// A context-menu verb: a method on `Inner` taking `&self` (Phase 16a).
+type EpisodeVerb = fn(&Inner);
 
 /// What the episode list is currently showing.
 #[derive(Clone, Copy)]
@@ -81,6 +85,8 @@ struct Inner {
     star_btn: gtk::Button,
     /// Per-show settings affordance, visible only for a show source.
     settings_btn: gtk::Button,
+    /// The episode right-click menu (Phase 16a), parented to the episode list.
+    menu: gtk::PopoverMenu,
 }
 
 impl Inner {
@@ -260,6 +266,31 @@ impl Inner {
         if !items.is_empty() {
             player.append(items);
         }
+    }
+
+    /// Play the currently selected episode (the context-menu Play verb; the row
+    /// is selected by `show_context_menu` first).
+    fn play_selected(&self) {
+        let pos = self.selection.selected();
+        if pos != gtk::INVALID_LIST_POSITION {
+            self.play_from(pos);
+        }
+    }
+
+    /// Pop the episode context menu at the pointer (Phase 16a). Right-clicking a
+    /// row selects it (so the verbs, which act on the selection, target it).
+    fn show_context_menu(&self, pos: u32, x: f64, y: f64, cell: gtk::Widget) {
+        self.selection.set_selected(pos);
+        self.show_detail(self.selected().as_ref());
+        if let Some(parent) = self.menu.parent() {
+            let (cx, cy) = cell
+                .compute_point(&parent, &gtk::graphene::Point::new(x as f32, y as f32))
+                .map(|p| (p.x() as i32, p.y() as i32))
+                .unwrap_or((x as i32, y as i32));
+            self.menu
+                .set_pointing_to(Some(&gtk::gdk::Rectangle::new(cx, cy, 1, 1)));
+        }
+        self.menu.popup();
     }
 
     /// Open the per-show settings dialog for the selected show (Phase
@@ -458,13 +489,52 @@ pub fn build_podcasts_view(
         .can_unselect(true)
         .build();
 
+    // The episode context menu resolves its `Inner` lazily: the columns (with the
+    // right-click gesture) are built before `Inner` exists (Phase 16a).
+    let ctx: Rc<OnceCell<Rc<Inner>>> = Rc::new(OnceCell::new());
+
     let column_view = gtk::ColumnView::new(Some(selection.clone()));
     column_view.add_css_class("data-table");
     column_view.append_column(&state_column());
     column_view.append_column(&download_column());
-    column_view.append_column(&text_column("Episode", true, EpisodeRow::title));
-    column_view.append_column(&text_column("Date", false, EpisodeRow::date_text));
-    column_view.append_column(&text_column("Length", false, EpisodeRow::duration_text));
+    column_view.append_column(&text_column(
+        "Episode",
+        true,
+        ctx.clone(),
+        EpisodeRow::title,
+    ));
+    column_view.append_column(&text_column(
+        "Date",
+        false,
+        ctx.clone(),
+        EpisodeRow::date_text,
+    ));
+    column_view.append_column(&text_column(
+        "Length",
+        false,
+        ctx.clone(),
+        EpisodeRow::duration_text,
+    ));
+
+    // The context menu's PopoverMenu, parented to the episode list. Its actions
+    // (an `episode.` group) are wired after `Inner` exists.
+    let episode_menu = {
+        let menu = gio::Menu::new();
+        let top = gio::Menu::new();
+        top.append(Some("Play"), Some("episode.play"));
+        top.append(Some("Add to Queue"), Some("episode.queue"));
+        menu.append_section(None, &top);
+        let triage = gio::Menu::new();
+        triage.append(Some("Mark Played / Unplayed"), Some("episode.played"));
+        triage.append(Some("Star / Unstar"), Some("episode.star"));
+        triage.append(Some("Archive"), Some("episode.archive"));
+        menu.append_section(None, &triage);
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(&column_view);
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        popover
+    };
     let list_scroll = gtk::ScrolledWindow::builder()
         .child(&column_view)
         .hexpand(true)
@@ -547,8 +617,30 @@ pub fn build_podcasts_view(
         played_btn: played_btn.clone(),
         star_btn: star_btn.clone(),
         settings_btn: settings_btn.clone(),
+        menu: episode_menu,
     });
     inner.show_detail(None);
+    let _ = ctx.set(inner.clone());
+
+    // The episode context-menu actions (Phase 16a): an `episode.` group on the
+    // list, reusing the triage/playback verbs (which act on the selection).
+    {
+        let group = gio::SimpleActionGroup::new();
+        let verbs: [(&str, EpisodeVerb); 5] = [
+            ("play", Inner::play_selected),
+            ("queue", Inner::append_selected),
+            ("played", Inner::toggle_played),
+            ("star", Inner::toggle_star),
+            ("archive", Inner::archive),
+        ];
+        for (name, verb) in verbs {
+            let action = gio::SimpleAction::new(name, None);
+            let inner = inner.clone();
+            action.connect_activate(move |_, _| verb(&inner));
+            group.add_action(&action);
+        }
+        column_view.insert_action_group("episode", Some(&group));
+    }
 
     // The detail-pane gear opens the per-show settings dialog (shown only for a
     // show source; visibility toggled in `load`).
@@ -779,16 +871,35 @@ fn download_column() -> gtk::ColumnViewColumn {
 fn text_column(
     title: &str,
     expand: bool,
+    ctx: Rc<OnceCell<Rc<Inner>>>,
     getter: impl Fn(&EpisodeRow) -> String + 'static,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, item| {
+    factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
         let label = gtk::Label::builder()
             .xalign(0.0)
+            .hexpand(true)
+            .vexpand(true)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
         item.set_child(Some(&label));
+
+        // Secondary-click opens the episode context menu (Phase 16a); the shared
+        // `Inner` is resolved lazily (the columns are built before it exists).
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(gtk::gdk::BUTTON_SECONDARY);
+        let ctx = ctx.clone();
+        let item_weak = item.downgrade();
+        let label_weak = label.downgrade();
+        gesture.connect_pressed(move |_, _, x, y| {
+            if let (Some(inner), Some(item), Some(label)) =
+                (ctx.get(), item_weak.upgrade(), label_weak.upgrade())
+            {
+                inner.show_context_menu(item.position(), x, y, label.upcast::<gtk::Widget>());
+            }
+        });
+        label.add_controller(gesture);
     });
     let getter = Rc::new(getter);
     factory.connect_bind(move |_, item| {

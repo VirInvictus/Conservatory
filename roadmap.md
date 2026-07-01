@@ -878,3 +878,39 @@ Mostly already true; a confirm pass, not new work.
 - [ ] **Full-library move-safety pass:** run the 15a move/undo/crash checks against a working copy of Brandon's real library (the synthetic-only pass covered 0.1.0).
 
 *Usable artifact:* a `v0.1.0` tag that the move logic, the memory budget, and the release scaffolding have all been verified to earn, with the numbers recorded. **(Cut at v0.1.0. The gate was exercised and recorded at v0.0.91: the synthetic passes hold and the one move-safety bug found is fixed. Packaging is dropped from the gate and the two real-library items above are post-0.1.0 follow-ons, not blockers, by decision.)**
+
+---
+
+## Phase 16 — Power-user interaction layer
+
+From the v0.1.2 UI/UX deep-dive: a competitor study against MusicBee, foobar2000, Roon, Plexamp, Quod Libet, and Navidrome, plus the local GTK apps (amberol, g4music, gnome-music, lollypop, deadbeef). The finding was that Conservatory already meets roughly seven of the top eight power-user discriminators (database-owned library, unified interleaved queue, Calibre-grade search grammar, folder-level cover cache and accent, write-back-to-files, the dry-run/undo/crash-safe mover, the labelled ReplayGain chain), and the remaining gaps are interaction, not architecture. This phase closes the biggest ones. The browse surface stays facet-columns only (no album-grid view, by decision); playlists grow to three crisp primitives (Perspective, Smart Playlist, Static Playlist).
+
+### Phase 16a — Context-menu spine + Play Next + Remove from Library ✅ (v0.1.3)
+
+Right-click context menus, the single most glaring gap (before this the only pointer gesture in the app was the Now-bar tap), across all five browse surfaces, plus the two verbs that needed new engine and database plumbing.
+
+- [x] Track-list menu: Play, Play Next, Add to Queue, Edit…, Rating ▸ 0–5, Reveal in Files, Remove from Library. A reusable `RowContextFn` per-cell secondary-click gesture (a `ColumnView` exposes no per-row widget, so the gesture reads `item.position()` at click time and survives re-sorts); right-clicking an unselected row selects just it first.
+- [x] Facet-pane menu: Play / Play Next / Add to Queue over the facet's narrowed set (the popover re-parents to the clicked pane, since the panes are distinct `ColumnView`s).
+- [x] Queue-drawer menu: Remove from Queue / Clear Queue, reusing the keyboard-op methods.
+- [x] Podcast-episode menu (Play, Add to Queue, Mark Played/Unplayed, Star/Unstar, Archive) and audiobook-shelf menu (Play, Add to Queue, Edit…), each a local `gio` action group on the self-contained tab module.
+- [x] **Play Next:** a new `PlayerCommand::InsertItems` with a pure, unit-tested `insert_current_index` helper, mirrored in the database queue by `insert_queue_tracks_at`; it inserts after the current item with the engine and the database queue in lock-step.
+- [x] **Remove from Library:** a database-only unlink (the file stays on disk, re-importable) behind a destructive confirm, riding the schema cascades (`queue.track_id ON DELETE CASCADE`, `playback_state.track_id ON DELETE SET NULL`, the `tracks_ad` FTS trigger).
+- [x] Tests: `queue_insert_at_shifts_later_positions`, `delete_track_removes_it_and_cascades_the_queue`, `engine_play_next_inserts_after_the_current_item`, and the `insert_at_or_before_current_shifts_it_up` unit test; both feature sets build.
+
+### Phase 16b — Click / drag-to-rate
+
+Make the rating column's stars clickable and draggable (Apple's "click or drag in the rating column"), writing a single-track rating through a targeted row repaint rather than a full reload. The rating write path already exists (the 16a Rating submenu reuses the bulk-edit path).
+
+### Phase 16c — Inline edit + "mixed values" bulk edit
+
+Upgrade the bulk-edit dialog from "blank means unchanged" to per-field checkboxes with a "mixed values" placeholder when the selection differs (only ticked fields write), then add inline single-click cell editing for the text columns.
+
+### Phase 16d — Smart + Static playlists
+
+Three crisp primitives, kept distinct to avoid Roon's Tags-vs-Bookmarks confusion: Perspective (the existing live saved query), Smart Playlist (query plus a limit and prioritization, new, a live queue source), and Static Playlist (a frozen curated list, new). Migration 0017, a `materialize_smart` over `conservatory-search`, a Playlists sidebar section, and a visual rule builder (so rules are not JSON-only, the Navidrome anti-pattern). Wires the 16a "Add to Playlist" verb.
+
+## Phases 17–19 — planned (from the UI/UX deep-dive)
+
+- **Phase 17 — Player table-stakes:** shuffle and repeat modes (absent from the engine and UI today), context-aware ReplayGain (album gain for whole-album listening, track gain when shuffling), and the queue-vs-playlist verb clarity the research calls out.
+- **Phase 18 — Grammar and column power:** Quod-Libet-grade grammar extensions (accent-folding, saved-query-by-name reuse), and customizable plus computed columns (the deadbeef Title-Formatting / MusicBee Virtual Tags idea).
+- **Phase 19 — Immersive polish:** a waveform seek bar (the seek bar as the loudness envelope, reusing the PipeWire tap), full-screen Now Playing, drag-drop file import, and richer navigable-credits metadata from local sources.

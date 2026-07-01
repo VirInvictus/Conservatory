@@ -13,6 +13,7 @@ use gtk4 as gtk;
 use conservatory_core::db::{FacetField, FacetRow as CoreFacetRow};
 
 use crate::ui::objects::FacetRow;
+use crate::ui::track_list::RowContextFn;
 
 /// A built pane: its field, the model + selection (for the cascade), and the
 /// widget to place in the window.
@@ -41,7 +42,7 @@ fn facet(obj: &glib::Object) -> FacetRow {
 /// Build a pane for `field`. The column header (`field.title()`) and the
 /// `[All (N <plural>)]` noun (`field.plural()`) come from the field descriptor
 /// (Phase 10c), so the window builds N panes from a config list.
-pub fn build_pane(field: FacetField) -> FacetPane {
+pub fn build_pane(field: FacetField, on_context: RowContextFn) -> FacetPane {
     let title = field.title();
     let plural = field.plural();
     let store = gio::ListStore::new::<FacetRow>();
@@ -53,13 +54,29 @@ pub fn build_pane(field: FacetField) -> FacetPane {
 
     // Value column (expands, ellipsizes).
     let value_factory = gtk::SignalListItemFactory::new();
-    value_factory.connect_setup(|_, item| {
+    value_factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
         let label = gtk::Label::builder()
             .xalign(0.0)
+            .hexpand(true)
+            .vexpand(true)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
         item.set_child(Some(&label));
+
+        // Secondary-click opens the facet context menu (Phase 16a): the window
+        // narrows to this value and offers Play / Play Next / Add to Queue.
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(gtk::gdk::BUTTON_SECONDARY);
+        let on_context = on_context.clone();
+        let item_weak = item.downgrade();
+        let label_weak = label.downgrade();
+        gesture.connect_pressed(move |_, _, x, y| {
+            if let (Some(item), Some(label)) = (item_weak.upgrade(), label_weak.upgrade()) {
+                on_context(item.position(), x, y, label.upcast::<gtk::Widget>());
+            }
+        });
+        label.add_controller(gesture);
     });
     let plural_owned = plural.to_string();
     value_factory.connect_bind(move |_, item| {

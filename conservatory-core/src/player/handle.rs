@@ -30,6 +30,13 @@ pub enum PlayerCommand {
     /// Append items to the queue tail (live; starts playing if the queue was
     /// idle). Mirrors `worker.enqueue_tracks`.
     AppendItems(Vec<PlayableItem>),
+    /// Insert items at `at` (live; Play Next inserts just after the current
+    /// item). Indices at or after `at` shift by `items.len()`; the playing item
+    /// keeps playing. Mirrors `worker.insert_queue_tracks_at`.
+    InsertItems {
+        at: usize,
+        items: Vec<PlayableItem>,
+    },
     Play,
     Pause,
     TogglePause,
@@ -233,6 +240,12 @@ impl PlayerHandle {
     /// Append items to the queue tail (starts playing if the queue was idle).
     pub fn append(&self, items: Vec<PlayableItem>) {
         let _ = self.tx.send(PlayerCommand::AppendItems(items));
+    }
+
+    /// Insert items at `at` (Play Next passes `current + 1`). Starts playing if
+    /// the queue was idle; otherwise the playing item keeps playing.
+    pub fn insert_items(&self, at: usize, items: Vec<PlayableItem>) {
+        let _ = self.tx.send(PlayerCommand::InsertItems { at, items });
     }
 
     pub fn play(&self) {

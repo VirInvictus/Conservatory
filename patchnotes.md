@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.1.3
+
+Right-click context menus arrive, with Play Next and Remove from Library.
+
+- **Context menus everywhere you browse.** Right-clicking (or long-pressing) a row now opens a menu on all five surfaces: the music track list (Play, Play Next, Add to Queue, Edit…, a Rating submenu, Reveal in Files, Remove from Library), the facet panes (Play / Play Next / Add to Queue over the facet's set), the queue drawer (Remove from Queue, Clear Queue), the podcast episode list (Play, Add to Queue, Mark Played/Unplayed, Star/Unstar, Archive), and the audiobook shelf (Play, Add to Queue, Edit…). Right-clicking a row that isn't already selected selects just it first, the familiar file-manager behaviour, and every verb reuses an existing keyboard or button path, so nothing is menu-only.
+- **Play Next.** A new verb that drops the selection into the queue just after whatever is playing, rather than at the tail, so you can cue something up without disturbing the rest of the queue. The live player and the on-disk queue are inserted at the same spot, so they stay in step.
+- **Remove from Library.** Removes tracks from the library from the track-list menu, behind a confirm. It is a database-only unlink: the files stay on disk (so the tracks are re-importable), and the removal cleans up after itself; the queue entries and the playback cursor drop away through the schema's cascades, and search stays in sync.
+- Under the hood: a reusable right-click gesture for list rows, a new engine queue-insert command with a unit-tested index-adjust helper, and a matching database queue-insert plus a track-delete, all covered by new tests. Both the full and music-only builds are green.
+
 ## v0.1.2
 
 Smart Speed gains a level.

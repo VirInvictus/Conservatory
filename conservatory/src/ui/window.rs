@@ -64,6 +64,15 @@ enum QueueKey {
     Clear,
 }
 
+/// A facet-pane context-menu verb (Phase 16a): all three act on the pane's
+/// narrowed track set (the whole leaf after the facet selection cascades).
+#[derive(Clone, Copy)]
+enum FacetVerb {
+    Play,
+    PlayNext,
+    Queue,
+}
+
 mod imp {
     use super::*;
     use std::cell::{Cell, OnceCell, RefCell};
@@ -140,6 +149,19 @@ mod imp {
         // The toast host (Phase 13b): brief, non-modal confirmations for actions
         // that would otherwise complete silently or behind a modal "Done" dialog.
         pub toast_overlay: OnceCell<adw::ToastOverlay>,
+        // The leaf right-click context menu (Phase 16a): a shared PopoverMenu
+        // parented to the leaf ColumnView, and the row position last right-clicked
+        // (so the "Play" verb starts from that row, not the selection anchor).
+        pub track_menu: OnceCell<gtk::PopoverMenu>,
+        pub context_row: Cell<Option<u32>>,
+        // The facet-pane right-click menu (Phase 16a): a shared PopoverMenu
+        // re-parented to the clicked pane's ColumnView (the panes differ), and the
+        // pane index last right-clicked (its verbs act on that pane's narrowing).
+        pub facet_menu: OnceCell<gtk::PopoverMenu>,
+        pub context_pane: Cell<Option<usize>>,
+        // The queue-drawer right-click menu (Phase 16a): parented to the (single,
+        // stable) queue ListView, so no per-click re-parenting is needed.
+        pub queue_menu: OnceCell<gtk::PopoverMenu>,
     }
 
     #[glib::object_subclass]
@@ -259,9 +281,28 @@ impl ConservatoryWindow {
         let panes: Vec<FacetPane> =
             conservatory_core::db::FacetField::panes_from_config(&config.browse.panes)
                 .into_iter()
-                .map(build_pane)
+                .enumerate()
+                .map(|(i, field)| {
+                    let weak = self.downgrade();
+                    build_pane(
+                        field,
+                        Rc::new(move |pos, x, y, cell| {
+                            if let Some(win) = weak.upgrade() {
+                                win.show_facet_context_menu(i, pos, x, y, cell);
+                            }
+                        }),
+                    )
+                })
                 .collect();
-        let leaf = build_leaf(imp.library_root.get().cloned());
+        let weak = self.downgrade();
+        let leaf = build_leaf(
+            imp.library_root.get().cloned(),
+            Rc::new(move |pos, x, y, cell| {
+                if let Some(win) = weak.upgrade() {
+                    win.show_track_context_menu(pos, x, y, cell);
+                }
+            }),
+        );
 
         // Facet panes in a row on top; the track table below (a draggable split,
         // the deadbeef-cui layout).
@@ -321,7 +362,14 @@ impl ConservatoryWindow {
                 win.on_queue_reorder(from, to);
             }
         });
-        let queue_panel = build_queue_panel(queue_current.clone(), on_reorder);
+        let weak = self.downgrade();
+        let on_queue_context: crate::ui::track_list::RowContextFn =
+            Rc::new(move |pos, x, y, cell| {
+                if let Some(win) = weak.upgrade() {
+                    win.show_queue_context_menu(pos, x, y, cell);
+                }
+            });
+        let queue_panel = build_queue_panel(queue_current.clone(), on_reorder, on_queue_context);
 
         // The right-docked track properties inspector (Phase 11a), the twin of
         // the queue drawer; collapsed until toggled.
@@ -521,6 +569,7 @@ impl ConservatoryWindow {
         let _ = imp.queue_current.set(queue_current);
         self.install_queue_keys(&queue_panel.list);
         self.install_view_keys();
+        self.install_queue_context_menu(&queue_panel.list);
         let _ = imp.queue_panel.set(queue_panel);
 
         // Double-click / Enter on a track plays the visible list from that row
@@ -568,6 +617,11 @@ impl ConservatoryWindow {
                 })),
             ));
             leaf.column_view.add_controller(append);
+
+            // The right-click context menus (Phase 16a): actions + the shared
+            // PopoverMenus for the leaf and the facet panes.
+            self.install_track_context_menu();
+            self.install_facet_context_menu();
         }
 
         // The debounced cascade: a burst of selection changes flushes once,
@@ -656,6 +710,18 @@ impl ConservatoryWindow {
                 }
                 if let Some(player) = imp.player.get() {
                     player.shutdown();
+                }
+                // A manually-parented PopoverMenu must be unparented before the
+                // window finalizes, or GTK warns about a disposed widget with a
+                // parent (Phase 16a).
+                if let Some(menu) = imp.track_menu.get() {
+                    menu.unparent();
+                }
+                if let Some(menu) = imp.facet_menu.get() {
+                    menu.unparent();
+                }
+                if let Some(menu) = imp.queue_menu.get() {
+                    menu.unparent();
                 }
             }
             glib::Propagation::Proceed
@@ -2012,6 +2078,66 @@ impl ConservatoryWindow {
         self.reload_queue_panel();
     }
 
+    /// Play Next (Phase 16a): insert the selection just after the current item
+    /// (or at the tail when nothing is playing). The DB queue and the live engine
+    /// queue are inserted at the same index so they stay in lock-step (spec §4.3).
+    fn play_next_selection(&self) {
+        let imp = self.imp();
+        let (Some(pool), Some(leaf), Some(player), Some(root), Some(rt), Some(worker)) = (
+            imp.pool.get(),
+            imp.leaf.get(),
+            imp.player.get(),
+            imp.library_root.get(),
+            imp.runtime.get(),
+            imp.worker.get(),
+        ) else {
+            return;
+        };
+
+        let model = &leaf.selection;
+        let n = model.n_items();
+        let mut ordered_ids = Vec::new();
+        let mut labels = Vec::new();
+        for i in 0..n {
+            if model.is_selected(i)
+                && let Some(row) = model.item(i).and_then(|o| o.downcast::<TrackRow>().ok())
+            {
+                let brief = row.brief();
+                ordered_ids.push(brief.id);
+                labels.push((brief.id, (brief.title, brief.artist.unwrap_or_default())));
+            }
+        }
+        if ordered_ids.is_empty() {
+            return;
+        }
+
+        let Ok(conn) = pool.open() else { return };
+        let tracks = get_tracks(&conn, &ordered_ids).unwrap_or_default();
+        drop(conn);
+        let (items, _start) =
+            build_play_queue(&ordered_ids, 0, &tracks, root, &self.playback_config());
+        if items.is_empty() {
+            return;
+        }
+
+        let snap = player.snapshot();
+        let at = match snap.current_index {
+            Some(i) => i + 1,
+            None => snap.queue_len,
+        };
+
+        let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
+        let _ = rt.block_on(worker.insert_queue_tracks_at(at as i64, queue_ids));
+        {
+            let mut map = imp.now_labels.borrow_mut();
+            for (id, lbl) in labels {
+                map.insert(id, lbl);
+            }
+        }
+        player.insert_items(at, items);
+        self.reload_queue_panel();
+    }
+
     /// The track ids currently selected in the leaf list (display order).
     fn selected_track_ids(&self) -> Vec<i64> {
         let imp = self.imp();
@@ -2029,6 +2155,346 @@ impl ConservatoryWindow {
             }
         }
         ids
+    }
+
+    /// Install the leaf right-click context menu (Phase 16a, spec §3.1: every
+    /// gesture has a keyboard equivalent, so each verb reuses an existing action /
+    /// shortcut path). The `PopoverMenu` is parented to the leaf `ColumnView` once
+    /// and re-pointed per click; the `win.`-prefixed actions drive the verbs.
+    fn install_track_context_menu(&self) {
+        let imp = self.imp();
+        let Some(leaf) = imp.leaf.get() else {
+            return;
+        };
+
+        // Play from the right-clicked row (the deadbeef "play from here"); the row
+        // position is stashed by `show_track_context_menu`.
+        let play = gio::SimpleAction::new("track-play", None);
+        let weak = self.downgrade();
+        play.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                let pos = win.imp().context_row.get().unwrap_or(0);
+                win.play_leaf_from(pos);
+            }
+        });
+        self.add_action(&play);
+
+        let play_next = gio::SimpleAction::new("track-play-next", None);
+        let weak = self.downgrade();
+        play_next.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.play_next_selection();
+            }
+        });
+        self.add_action(&play_next);
+
+        let queue = gio::SimpleAction::new("track-queue", None);
+        let weak = self.downgrade();
+        queue.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.queue_append_selection();
+            }
+        });
+        self.add_action(&queue);
+
+        let edit = gio::SimpleAction::new("track-edit", None);
+        let weak = self.downgrade();
+        edit.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.prompt_bulk_edit();
+            }
+        });
+        self.add_action(&edit);
+
+        // Rating: a parameterised action, 0..=5, applied across the selection.
+        let rate = gio::SimpleAction::new("track-rate", Some(glib::VariantTy::INT32));
+        let weak = self.downgrade();
+        rate.connect_activate(move |_, param| {
+            if let (Some(win), Some(n)) = (weak.upgrade(), param.and_then(|p| p.get::<i32>())) {
+                win.rate_selection(n);
+            }
+        });
+        self.add_action(&rate);
+
+        let reveal = gio::SimpleAction::new("track-reveal", None);
+        let weak = self.downgrade();
+        reveal.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.reveal_selected();
+            }
+        });
+        self.add_action(&reveal);
+
+        let remove = gio::SimpleAction::new("track-remove", None);
+        let weak = self.downgrade();
+        remove.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.prompt_remove_from_library();
+            }
+        });
+        self.add_action(&remove);
+
+        // The model: Play / Add to Queue · Edit + Rating submenu · Reveal.
+        let menu = gio::Menu::new();
+        let top = gio::Menu::new();
+        top.append(Some("Play"), Some("win.track-play"));
+        top.append(Some("Play Next"), Some("win.track-play-next"));
+        top.append(Some("Add to Queue"), Some("win.track-queue"));
+        menu.append_section(None, &top);
+
+        let mid = gio::Menu::new();
+        mid.append(Some("Edit\u{2026}"), Some("win.track-edit"));
+        let ratings = gio::Menu::new();
+        for n in 0i32..=5 {
+            let label = if n == 0 {
+                "No rating".to_string()
+            } else {
+                "\u{2605}".repeat(n as usize)
+            };
+            let item = gio::MenuItem::new(Some(&label), None);
+            item.set_action_and_target_value(Some("win.track-rate"), Some(&n.to_variant()));
+            ratings.append_item(&item);
+        }
+        mid.append_submenu(Some("Rating"), &ratings);
+        menu.append_section(None, &mid);
+
+        let bottom = gio::Menu::new();
+        bottom.append(Some("Reveal in Files"), Some("win.track-reveal"));
+        menu.append_section(None, &bottom);
+
+        // A separate trailing section for the one destructive verb.
+        let danger = gio::Menu::new();
+        danger.append(
+            Some("Remove from Library\u{2026}"),
+            Some("win.track-remove"),
+        );
+        menu.append_section(None, &danger);
+
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(&leaf.column_view);
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        let _ = imp.track_menu.set(popover);
+    }
+
+    /// Pop the leaf context menu at the pointer (Phase 16a). A right-click on a row
+    /// outside the current selection selects just that row first (the familiar
+    /// file-manager behaviour); a right-click inside a multi-selection keeps it.
+    fn show_track_context_menu(&self, pos: u32, x: f64, y: f64, cell: gtk::Widget) {
+        let imp = self.imp();
+        let (Some(leaf), Some(popover)) = (imp.leaf.get(), imp.track_menu.get()) else {
+            return;
+        };
+        imp.context_row.set(Some(pos));
+        if !leaf.selection.is_selected(pos) {
+            leaf.selection.select_item(pos, true);
+        }
+        // The pointer arrives in the clicked cell's space; the popover is parented
+        // to the ColumnView, so translate before pointing.
+        let (cx, cy) = cell
+            .compute_point(
+                &leaf.column_view,
+                &gtk::graphene::Point::new(x as f32, y as f32),
+            )
+            .map(|p| (p.x() as i32, p.y() as i32))
+            .unwrap_or((x as i32, y as i32));
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(cx, cy, 1, 1)));
+        popover.popup();
+    }
+
+    /// Install the facet-pane right-click menu (Phase 16a): Play / Play Next / Add
+    /// to Queue over the facet's narrowed set. The popover is re-parented per click
+    /// (each pane is a distinct ColumnView), so it is built parentless here.
+    fn install_facet_context_menu(&self) {
+        let imp = self.imp();
+
+        let play = gio::SimpleAction::new("facet-play", None);
+        let weak = self.downgrade();
+        play.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.facet_apply(FacetVerb::Play);
+            }
+        });
+        self.add_action(&play);
+
+        let play_next = gio::SimpleAction::new("facet-play-next", None);
+        let weak = self.downgrade();
+        play_next.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.facet_apply(FacetVerb::PlayNext);
+            }
+        });
+        self.add_action(&play_next);
+
+        let queue = gio::SimpleAction::new("facet-queue", None);
+        let weak = self.downgrade();
+        queue.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.facet_apply(FacetVerb::Queue);
+            }
+        });
+        self.add_action(&queue);
+
+        let menu = gio::Menu::new();
+        menu.append(Some("Play"), Some("win.facet-play"));
+        menu.append(Some("Play Next"), Some("win.facet-play-next"));
+        menu.append(Some("Add to Queue"), Some("win.facet-queue"));
+
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        let _ = imp.facet_menu.set(popover);
+    }
+
+    /// Pop the facet context menu at the pointer (Phase 16a). Right-clicking a
+    /// facet value selects just it (so the cascade narrows the leaf to it), then
+    /// the menu's verbs act on that narrowing.
+    fn show_facet_context_menu(&self, pane: usize, pos: u32, x: f64, y: f64, cell: gtk::Widget) {
+        let imp = self.imp();
+        let Some(popover) = imp.facet_menu.get() else {
+            return;
+        };
+        {
+            let panes = imp.panes.borrow();
+            let Some(p) = panes.get(pane) else {
+                return;
+            };
+            if !p.selection.is_selected(pos) {
+                p.selection.select_item(pos, true);
+            }
+        }
+        imp.context_pane.set(Some(pane));
+        // The panes are distinct ColumnViews, so re-parent to the clicked one.
+        if let Some(cv) = cell.ancestor(gtk::ColumnView::static_type()) {
+            popover.unparent();
+            popover.set_parent(&cv);
+            if let Some(pt) =
+                cell.compute_point(&cv, &gtk::graphene::Point::new(x as f32, y as f32))
+            {
+                popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+                    pt.x() as i32,
+                    pt.y() as i32,
+                    1,
+                    1,
+                )));
+            }
+        }
+        popover.popup();
+    }
+
+    /// Apply a facet verb (Phase 16a): narrow the leaf to the right-clicked facet
+    /// value (synchronously, ahead of the debounced cascade), then act on the set.
+    /// Play plays the whole narrowed leaf; the queue verbs select it all first and
+    /// reuse the selection-based paths.
+    fn facet_apply(&self, verb: FacetVerb) {
+        let Some(pane) = self.imp().context_pane.get() else {
+            return;
+        };
+        self.recompute_from(pane);
+        match verb {
+            FacetVerb::Play => self.play_leaf_from(0),
+            FacetVerb::PlayNext => {
+                self.select_all_leaf();
+                self.play_next_selection();
+            }
+            FacetVerb::Queue => {
+                self.select_all_leaf();
+                self.queue_append_selection();
+            }
+        }
+    }
+
+    /// Select every row in the leaf (used by the facet queue verbs, which act on
+    /// the whole narrowed set rather than a manual selection).
+    fn select_all_leaf(&self) {
+        if let Some(leaf) = self.imp().leaf.get() {
+            leaf.selection.select_all();
+        }
+    }
+
+    /// Apply a rating (0..=5) across the selection (Phase 16a). Reuses the bulk-edit
+    /// path, so it goes through the same worker write; rating is not path-affecting,
+    /// so no move is triggered.
+    fn rate_selection(&self, rating: i32) {
+        let ids = self.selected_track_ids();
+        if ids.is_empty() {
+            return;
+        }
+        match parse_assignment(&format!("rating={rating}")) {
+            Ok(a) => self.apply_bulk_edit(&ids, vec![a]),
+            Err(e) => eprintln!("conservatory: rating not applied: {e}"),
+        }
+    }
+
+    /// Open the first selected track's folder in the file manager (Phase 16a).
+    fn reveal_selected(&self) {
+        let imp = self.imp();
+        let (Some(pool), Some(root)) = (imp.pool.get(), imp.library_root.get()) else {
+            return;
+        };
+        let ids = self.selected_track_ids();
+        let Some(&id) = ids.first() else {
+            return;
+        };
+        let Ok(conn) = pool.open() else {
+            return;
+        };
+        let track = get_track(&conn, id).ok().flatten();
+        drop(conn);
+        let Some(track) = track else {
+            return;
+        };
+        let path = root.join(&track.file_path);
+        let target = path.parent().unwrap_or(&path);
+        if let Err(e) = std::process::Command::new("xdg-open").arg(target).spawn() {
+            eprintln!("conservatory: could not reveal {}: {e}", target.display());
+        }
+    }
+
+    /// Confirm and remove the selection from the library (Phase 16a). Destructive
+    /// (drops the DB rows), but the files stay on disk and it is re-importable, so
+    /// the confirm defaults to Cancel rather than blocking hard.
+    fn prompt_remove_from_library(&self) {
+        let ids = self.selected_track_ids();
+        if ids.is_empty() {
+            return;
+        }
+        let body = format!(
+            "Remove {} track(s) from the library? The files stay on disk, so you can re-import them.",
+            ids.len()
+        );
+        let dialog = adw::AlertDialog::new(Some("Remove from library?"), Some(&body));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("remove", "Remove");
+        dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        let weak = self.downgrade();
+        dialog.connect_response(None, move |_, resp| {
+            if resp == "remove"
+                && let Some(win) = weak.upgrade()
+            {
+                win.remove_from_library(&ids);
+            }
+        });
+        dialog.present(Some(self));
+    }
+
+    /// Delete the given tracks from the library through the worker, then refresh.
+    /// The queue rows cascade away (`ON DELETE CASCADE`) and the playback cursor
+    /// nulls (`ON DELETE SET NULL`); a live engine item keeps its own resolved
+    /// path, so playback in progress is unaffected.
+    fn remove_from_library(&self, ids: &[i64]) {
+        let imp = self.imp();
+        let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
+            return;
+        };
+        for &id in ids {
+            let _ = rt.block_on(worker.delete_track(id));
+        }
+        self.toast(&format!("Removed {} track(s) from the library", ids.len()));
+        self.populate_initial();
+        self.reload_queue_panel();
     }
 
     /// The bulk-edit dialog (Phase 5a-ii, spec §3.5): one entry per field, blank
@@ -2440,6 +2906,59 @@ impl ConservatoryWindow {
             }
         }
         self.reload_queue_panel();
+    }
+
+    /// Install the queue-drawer right-click menu (Phase 16a): Remove from Queue /
+    /// Clear Queue, reusing the keyboard-op methods (which read the selection). The
+    /// popover is parented to the single, stable queue `ListView`.
+    fn install_queue_context_menu(&self, list: &gtk::ListView) {
+        let imp = self.imp();
+
+        let remove = gio::SimpleAction::new("queue-remove", None);
+        let weak = self.downgrade();
+        remove.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.queue_remove_selected();
+            }
+        });
+        self.add_action(&remove);
+
+        let clear = gio::SimpleAction::new("queue-clear", None);
+        let weak = self.downgrade();
+        clear.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.queue_clear();
+            }
+        });
+        self.add_action(&clear);
+
+        let menu = gio::Menu::new();
+        menu.append(Some("Remove from Queue"), Some("win.queue-remove"));
+        let danger = gio::Menu::new();
+        danger.append(Some("Clear Queue"), Some("win.queue-clear"));
+        menu.append_section(None, &danger);
+
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(list);
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        let _ = imp.queue_menu.set(popover);
+    }
+
+    /// Pop the queue context menu at the pointer (Phase 16a). Right-clicking a row
+    /// selects it (the reused verbs act on the selection).
+    fn show_queue_context_menu(&self, pos: u32, x: f64, y: f64, cell: gtk::Widget) {
+        let imp = self.imp();
+        let (Some(panel), Some(popover)) = (imp.queue_panel.get(), imp.queue_menu.get()) else {
+            return;
+        };
+        panel.selection.set_selected(pos);
+        let (cx, cy) = cell
+            .compute_point(&panel.list, &gtk::graphene::Point::new(x as f32, y as f32))
+            .map(|p| (p.x() as i32, p.y() as i32))
+            .unwrap_or((x as i32, y as i32));
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(cx, cy, 1, 1)));
+        popover.popup();
     }
 
     /// Wire the queue keyboard shortcuts: `Ctrl+U` toggles the drawer (global);

@@ -285,6 +285,29 @@ impl Engine {
                     self.flush(StateEvent::Seek, false);
                 }
             }
+            PlayerCommand::InsertItems { at, mut items } => {
+                if !items.is_empty() {
+                    let was_idle = self.current.is_none();
+                    let at = at.min(self.queue.len());
+                    let k = items.len();
+                    // Splice `items` in at `at`: [0..at) + items + [at..].
+                    let tail = self.queue.split_off(at);
+                    self.queue.append(&mut items);
+                    self.queue.extend(tail);
+                    if was_idle {
+                        // Inserting into an idle queue starts the first new item.
+                        self.current = Some(at);
+                        self.ended = false;
+                        self.load_current();
+                    } else {
+                        // The playing item keeps playing; its index shifts past
+                        // the inserted block (Play Next inserts after it, so this
+                        // is a no-op there, but a general insert can precede it).
+                        self.current = insert_current_index(self.current, at, k);
+                    }
+                    self.flush(StateEvent::Seek, false);
+                }
+            }
             PlayerCommand::Play => {
                 self.set_paused(false);
                 self.sleep_on_play();
@@ -961,6 +984,14 @@ pub(crate) fn move_current_index(current: Option<usize>, from: usize, to: usize)
     })
 }
 
+/// Where `current` lands after `k` items are inserted at `at` (indices at or
+/// after `at` shift up by `k`; earlier indices are untouched). Pure. The idle
+/// case (no `current`) is handled by the caller, which starts the first new item.
+pub(crate) fn insert_current_index(current: Option<usize>, at: usize, k: usize) -> Option<usize> {
+    let c = current?;
+    Some(if c >= at { c + k } else { c })
+}
+
 /// The result of removing a queue entry: where `current` lands, whether the
 /// engine must reload (the playing item was the one removed and another fell
 /// into its slot), and whether the queue has now ended.
@@ -1043,6 +1074,18 @@ mod tests {
         assert_eq!(move_current_index(Some(1), 3, 5), Some(1));
         assert_eq!(move_current_index(Some(6), 1, 3), Some(6));
         assert_eq!(move_current_index(None, 1, 3), None);
+    }
+
+    #[test]
+    fn insert_at_or_before_current_shifts_it_up() {
+        // Play Next inserts after current: current is untouched.
+        assert_eq!(insert_current_index(Some(2), 3, 2), Some(2));
+        // Inserting exactly at current pushes it past the block.
+        assert_eq!(insert_current_index(Some(2), 2, 3), Some(5));
+        // Inserting before current shifts it up by the block size.
+        assert_eq!(insert_current_index(Some(4), 1, 2), Some(6));
+        // No current (idle) stays None; the caller starts the first new item.
+        assert_eq!(insert_current_index(None, 0, 3), None);
     }
 
     #[test]

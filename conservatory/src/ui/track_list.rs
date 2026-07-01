@@ -5,6 +5,7 @@
 //! from `MultiSelection` (Ctrl/Shift). Rating renders as accent-tinted stars.
 
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use gtk::gio;
 use gtk::glib;
@@ -16,6 +17,12 @@ use conservatory_core::db::{TrackBrief, TrackSort, cmp_tracks};
 
 use crate::ui::covers::CoverCache;
 use crate::ui::objects::TrackRow;
+
+/// Right-click callback for a leaf row (Phase 16a): `(row position, pointer x,
+/// pointer y, the clicked cell widget)`. The window uses it to pop the shared
+/// track context menu, translating the cell-local pointer into the `ColumnView`.
+/// A `ColumnView` exposes no per-row widget, so the gesture lives on each cell.
+pub type RowContextFn = Rc<dyn Fn(u32, f64, f64, gtk::Widget)>;
 
 const MAX_STARS: i32 = 5;
 /// The browse cover thumbnail edge, in px. A 40px cover gives album-art-per-row
@@ -58,15 +65,34 @@ fn text_column(
     xalign: f32,
     key: TrackSort,
     field: fn(&TrackRow) -> String,
+    on_context: RowContextFn,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        // `hexpand`/`vexpand` let the label fill its cell so the whole row width
+        // is right-clickable; `xalign` still governs where the text sits.
         let label = gtk::Label::builder()
             .xalign(xalign)
+            .hexpand(true)
+            .vexpand(true)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
         item.set_child(Some(&label));
+
+        // Secondary-click opens the row context menu (Phase 16a). `item.position()`
+        // is read at click time so it tracks the row even after a re-sort.
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(gtk::gdk::BUTTON_SECONDARY);
+        let on_context = on_context.clone();
+        let item_weak = item.downgrade();
+        let label_weak = label.downgrade();
+        gesture.connect_pressed(move |_, _, x, y| {
+            if let (Some(item), Some(label)) = (item_weak.upgrade(), label_weak.upgrade()) {
+                on_context(item.position(), x, y, label.upcast::<gtk::Widget>());
+            }
+        });
+        label.add_controller(gesture);
     });
     factory.connect_bind(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
@@ -204,7 +230,7 @@ fn rating_column() -> gtk::ColumnViewColumn {
     col
 }
 
-pub fn build_leaf(root: Option<PathBuf>) -> Leaf {
+pub fn build_leaf(root: Option<PathBuf>, on_context: RowContextFn) -> Leaf {
     let store = gio::ListStore::new::<TrackRow>();
     let cover_cache = CoverCache::new();
 
@@ -226,6 +252,7 @@ pub fn build_leaf(root: Option<PathBuf>) -> Leaf {
         0.0,
         TrackSort::Artist,
         TrackRow::artist,
+        on_context.clone(),
     ));
     view.append_column(&text_column(
         "Album",
@@ -233,6 +260,7 @@ pub fn build_leaf(root: Option<PathBuf>) -> Leaf {
         0.0,
         TrackSort::Album,
         TrackRow::album,
+        on_context.clone(),
     ));
     view.append_column(&text_column(
         "Genre",
@@ -240,6 +268,7 @@ pub fn build_leaf(root: Option<PathBuf>) -> Leaf {
         0.0,
         TrackSort::Genre,
         TrackRow::genres,
+        on_context.clone(),
     ));
     view.append_column(&text_column(
         "Title",
@@ -247,6 +276,7 @@ pub fn build_leaf(root: Option<PathBuf>) -> Leaf {
         0.0,
         TrackSort::Title,
         TrackRow::title,
+        on_context.clone(),
     ));
     let duration = text_column(
         "Duration",
@@ -254,6 +284,7 @@ pub fn build_leaf(root: Option<PathBuf>) -> Leaf {
         1.0,
         TrackSort::Duration,
         TrackRow::duration_text,
+        on_context.clone(),
     );
     duration.set_fixed_width(80);
     view.append_column(&duration);

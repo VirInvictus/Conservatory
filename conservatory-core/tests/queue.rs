@@ -1050,6 +1050,121 @@ fn engine_append_and_resume() {
     runtime.block_on(worker.shutdown_ack()).ok();
 }
 
+// --- Phase 16a: Play Next (queue insert-at) and Remove from Library (delete).
+
+#[tokio::test]
+async fn queue_insert_at_shifts_later_positions() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("t.db");
+    let worker = spawn_worker(path.clone()).unwrap();
+    fixtures::generate(&worker, FixtureScale::Small)
+        .await
+        .unwrap();
+    let pool = ReadPool::new(path, 3).unwrap();
+
+    worker.enqueue_tracks(vec![1, 2, 3]).await.unwrap();
+    // Insert [7, 8] at position 1: entries at/after 1 shift up by 2.
+    worker.insert_queue_tracks_at(1, vec![7, 8]).await.unwrap();
+    assert_eq!(queue_track_ids(&pool), vec![1, 7, 8, 2, 3]);
+    assert_positions_contiguous(&pool);
+
+    // Insert past the end clamps to the tail.
+    worker.insert_queue_tracks_at(999, vec![9]).await.unwrap();
+    assert_eq!(queue_track_ids(&pool), vec![1, 7, 8, 2, 3, 9]);
+    assert_positions_contiguous(&pool);
+
+    // Insert at 0 prepends.
+    worker.insert_queue_tracks_at(0, vec![4]).await.unwrap();
+    assert_eq!(queue_track_ids(&pool), vec![4, 1, 7, 8, 2, 3, 9]);
+    assert_positions_contiguous(&pool);
+}
+
+#[tokio::test]
+async fn delete_track_removes_it_and_cascades_the_queue() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("t.db");
+    let worker = spawn_worker(path.clone()).unwrap();
+    fixtures::generate(&worker, FixtureScale::Small)
+        .await
+        .unwrap();
+    let pool = ReadPool::new(path, 3).unwrap();
+
+    worker.enqueue_tracks(vec![1, 2, 3]).await.unwrap();
+    worker.delete_track(2).await.unwrap();
+
+    // The row is gone and its queue entry cascaded away (ON DELETE CASCADE); the
+    // surviving order is intact (the cascade leaves a position gap, which the
+    // position-ordered load tolerates, so this asserts order, not contiguity).
+    let conn = pool.open().unwrap();
+    assert!(get_track(&conn, 2).unwrap().is_none());
+    drop(conn);
+    assert_eq!(queue_track_ids(&pool), vec![1, 3]);
+}
+
+/// Play Next inserts just after the current item without disturbing playback; a
+/// general insert before the current item shifts its index up (Phase 16a). Paused
+/// so the 0.3 s fixtures can't advance under the assertions.
+#[test]
+fn engine_play_next_inserts_after_the_current_item() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+
+    // Synthetic Track items over one real fixture; the ids need not exist (the EOF
+    // persistence is a silent no-op for a missing row, and we never reach EOF).
+    let item = |id: i64| PlayableItem {
+        track_id: id,
+        source: fixtures_dir.join("sample.mp3"),
+        profile: conservatory_core::resolve_episode_profile(None),
+        album_id: None,
+        kind: MediaKind::Track,
+        streaming: false,
+        chapters: [].into(),
+        segments: [].into(),
+    };
+
+    let wait = |player: &PlayerHandle, pred: fn(&PlayerSnapshot) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if pred(&player.snapshot()) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "snapshot condition not met in time"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.play_queue(vec![item(1), item(2)], 0);
+    player.pause();
+    wait(&player, |s| {
+        s.current_index == Some(0) && s.queue_len == 2 && s.paused
+    });
+
+    // Play Next: insert at current + 1 = 1. The playing item keeps its index.
+    player.insert_items(1, vec![item(3)]);
+    wait(&player, |s| s.current_index == Some(0) && s.queue_len == 3);
+
+    // A general insert before the current item shifts its index up by the block.
+    player.insert_items(0, vec![item(4)]);
+    wait(&player, |s| s.current_index == Some(1) && s.queue_len == 4);
+
+    player.shutdown();
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
 // --- helpers
 
 fn queue_track_ids(pool: &ReadPool) -> Vec<i64> {

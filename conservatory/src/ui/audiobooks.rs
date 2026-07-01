@@ -11,7 +11,7 @@
 //! through the worker (`apply_book_edit` / `apply_book_reorg`); the player is
 //! threaded in for 7c but unused now.
 
-use std::cell::RefCell;
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -73,6 +73,8 @@ pub fn build_audiobooks_view(
         all_rows: RefCell::new(Vec::new()),
         detail_book: RefCell::new(None),
         accent: crate::ui::accent::AccentProvider::new(),
+        menu: OnceCell::new(),
+        context_pos: Cell::new(None),
     });
 
     // The shelf grid: a cover tile per book.
@@ -81,6 +83,58 @@ pub fn build_audiobooks_view(
     grid.set_min_columns(2);
     grid.set_single_click_activate(false);
     grid.add_css_class("navigation-sidebar");
+
+    // The book context menu (Phase 16a): Play / Add to Queue / Edit…, reusing the
+    // existing verbs. A `book.` action group on the grid backs a PopoverMenu
+    // parented to it (stashed in `inner` so the tile gesture can pop it).
+    {
+        let menu = gtk::gio::Menu::new();
+        let top = gtk::gio::Menu::new();
+        top.append(Some("Play"), Some("book.play"));
+        top.append(Some("Add to Queue"), Some("book.queue"));
+        menu.append_section(None, &top);
+        let edit = gtk::gio::Menu::new();
+        edit.append(Some("Edit\u{2026}"), Some("book.edit"));
+        menu.append_section(None, &edit);
+
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(&grid);
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        let _ = inner.menu.set(popover);
+
+        let group = gtk::gio::SimpleActionGroup::new();
+        let play = gtk::gio::SimpleAction::new("play", None);
+        {
+            let inner = inner.clone();
+            play.connect_activate(move |_, _| {
+                if let Some(pos) = inner.context_pos.get() {
+                    inner.play_from(pos);
+                }
+            });
+        }
+        group.add_action(&play);
+        let queue = gtk::gio::SimpleAction::new("queue", None);
+        {
+            let inner = inner.clone();
+            queue.connect_activate(move |_, _| inner.append_selected());
+        }
+        group.add_action(&queue);
+        let edit_action = gtk::gio::SimpleAction::new("edit", None);
+        {
+            let inner = inner.clone();
+            edit_action.connect_activate(move |_, _| {
+                let win = inner
+                    .menu
+                    .get()
+                    .and_then(|m| m.root())
+                    .and_downcast::<gtk::Window>();
+                inner.prompt_bulk_edit(win.as_ref());
+            });
+        }
+        group.add_action(&edit_action);
+        grid.insert_action_group("book", Some(&group));
+    }
 
     // Selection drives the detail pane: it follows the first selected book (a
     // plain click selects one, so this is the lone book in the common case).
@@ -230,6 +284,11 @@ struct Inner {
     /// distinct tile colour), but the provider-swap is the same; only the CSS the
     /// shelf hands it carries N rules instead of one.
     accent: crate::ui::accent::AccentProvider,
+    /// The book right-click menu (Phase 16a), parented to the shelf grid (set once
+    /// the grid exists), and the tile position last right-clicked (the Play verb
+    /// starts the queue from that book).
+    menu: OnceCell<gtk::PopoverMenu>,
+    context_pos: Cell<Option<usize>>,
 }
 
 impl Inner {
@@ -380,6 +439,27 @@ impl Inner {
         if !items.is_empty() {
             player.append(items);
         }
+    }
+
+    /// Pop the book context menu at the pointer (Phase 16a). Right-clicking a tile
+    /// selects it (so Edit / Add to Queue target it) and records its position (so
+    /// Play starts the shelf queue from that book).
+    fn show_context_menu(&self, pos: u32, x: f64, y: f64, cell: gtk::Widget) {
+        self.context_pos.set(Some(pos as usize));
+        if !self.selection.is_selected(pos) {
+            self.selection.select_item(pos, true);
+        }
+        let Some(menu) = self.menu.get() else {
+            return;
+        };
+        if let Some(parent) = menu.parent() {
+            let (cx, cy) = cell
+                .compute_point(&parent, &gtk::graphene::Point::new(x as f32, y as f32))
+                .map(|p| (p.x() as i32, p.y() as i32))
+                .unwrap_or((x as i32, y as i32));
+            menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(cx, cy, 1, 1)));
+        }
+        menu.popup();
     }
 
     /// Open the per-book playback settings dialog for the selected book (Phase
@@ -665,7 +745,8 @@ impl Inner {
 fn tile_factory(inner: Rc<Inner>) -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
 
-    factory.connect_setup(|_, item| {
+    let setup_inner = inner.clone();
+    factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
         let cover = gtk::Image::new();
         cover.set_pixel_size(COVER_SIZE);
@@ -692,6 +773,19 @@ fn tile_factory(inner: Rc<Inner>) -> gtk::SignalListItemFactory {
         tile.append(&title);
         tile.append(&author);
         item.set_child(Some(&tile));
+
+        // Secondary-click opens the book context menu (Phase 16a).
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(gtk::gdk::BUTTON_SECONDARY);
+        let inner = setup_inner.clone();
+        let item_weak = item.downgrade();
+        let tile_weak = tile.downgrade();
+        gesture.connect_pressed(move |_, _, x, y| {
+            if let (Some(item), Some(tile)) = (item_weak.upgrade(), tile_weak.upgrade()) {
+                inner.show_context_menu(item.position(), x, y, tile.upcast::<gtk::Widget>());
+            }
+        });
+        tile.add_controller(gesture);
     });
 
     factory.connect_bind(move |_, item| {

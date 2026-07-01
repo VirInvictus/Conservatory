@@ -18,6 +18,7 @@ use conservatory_core::db::MediaKind;
 
 use crate::playqueue::{drop_target_position, DropBias};
 use crate::ui::objects::QueueRow;
+use crate::ui::track_list::RowContextFn;
 
 /// The queue drawer: its backing store (for repopulation), the selection (for
 /// keyboard ops), the list, and the revealer to place.
@@ -47,15 +48,30 @@ fn kind_icon(kind: MediaKind) -> &'static str {
 pub fn build_queue_panel(
     current: Rc<Cell<Option<i64>>>,
     on_reorder: Rc<dyn Fn(usize, usize)>,
+    on_context: RowContextFn,
 ) -> QueuePanel {
     let store = gio::ListStore::new::<QueueRow>();
     let selection = gtk::SingleSelection::new(Some(store.clone()));
 
     let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, item| {
+    factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         row.add_css_class("queue-row");
+
+        // Secondary-click opens the queue context menu (Phase 16a). Read the row's
+        // position at click time from the ListItem (stable across recycle).
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(gdk::BUTTON_SECONDARY);
+        let on_context = on_context.clone();
+        let item_weak = item.downgrade();
+        let row_weak = row.downgrade();
+        gesture.connect_pressed(move |_, _, x, y| {
+            if let (Some(item), Some(row)) = (item_weak.upgrade(), row_weak.upgrade()) {
+                on_context(item.position(), x, y, row.upcast::<gtk::Widget>());
+            }
+        });
+        row.add_controller(gesture);
         let icon = gtk::Image::new();
         icon.add_css_class("dim-label");
         let text = gtk::Box::new(gtk::Orientation::Vertical, 0);

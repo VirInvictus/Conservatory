@@ -521,6 +521,49 @@ pub(crate) fn enqueue_tracks(conn: &mut Connection, track_ids: &[i64]) -> Result
     Ok(())
 }
 
+/// Remove a track from the library (Phase 16a, spec §3.5 context menu). This is a
+/// DB-only unlink: the file is left on disk (re-importable), the row deleted. It
+/// leans on the schema's cascades / triggers so nothing is orphaned: the FTS row
+/// (the `tracks_ad` trigger), the genre links and any queue entries (`ON DELETE
+/// CASCADE`), and the playback cursor (`ON DELETE SET NULL`). Requires
+/// `foreign_keys = ON` (the schema default). The album/artist rows are left even
+/// if now empty; a zero-track album never appears in the track-derived facets.
+pub(crate) fn delete_track(conn: &Connection, track_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM tracks WHERE id = ?1", params![track_id])?;
+    Ok(())
+}
+
+/// Insert `track_ids` into the queue starting at `at`, shifting every entry at or
+/// after `at` up by `track_ids.len()` so positions stay contiguous (the Play Next
+/// path; mirrors the engine `InsertItems`). `at` is clamped to `[0, len]`.
+pub(crate) fn insert_queue_tracks_at(
+    conn: &mut Connection,
+    at: i64,
+    track_ids: &[i64],
+) -> Result<()> {
+    if track_ids.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.transaction()?;
+    let count: i64 = tx.query_row("SELECT COUNT(*) FROM queue", [], |r| r.get(0))?;
+    let at = at.clamp(0, count);
+    let k = track_ids.len() as i64;
+    // Open the gap: push entries at/after `at` up by k (descending-safe: the
+    // UNIQUE-free position column lets a single bulk shift work).
+    tx.execute(
+        "UPDATE queue SET position = position + ?1 WHERE position >= ?2",
+        params![k, at],
+    )?;
+    for (offset, &track_id) in track_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO queue (position, kind, track_id) VALUES (?1, 'track', ?2)",
+            params![at + offset as i64, track_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// Remove the entry at `position` and close the gap (shift everything after it
 /// down by one), keeping positions contiguous.
 pub(crate) fn remove_queue_item(conn: &mut Connection, position: i64) -> Result<()> {

@@ -602,6 +602,93 @@ async fn triage_buckets_partition_episodes() {
     worker.shutdown_ack().await.unwrap();
 }
 
+/// 16.5d: the sidebar badge counts mirror `episodes_in_bucket`'s definitions,
+/// and the headless episode comparator orders by the requested key.
+#[tokio::test]
+async fn sidebar_counts_match_bucket_definitions() {
+    use conservatory_core::db::{
+        EpisodeSort, cmp_episodes, episodes_for_show, podcast_sidebar_counts,
+    };
+
+    let (dir, worker, pool) = fresh().await;
+    let show_id = worker
+        .get_or_create_show(sample_show("cast", "https://feeds.example/cast.xml"))
+        .await
+        .unwrap();
+
+    let played = worker
+        .upsert_episode(sample_episode(show_id, "ep-played", "Played", 4000))
+        .await
+        .unwrap();
+    let queued = worker
+        .upsert_episode(sample_episode(show_id, "ep-queued", "Queued", 3000))
+        .await
+        .unwrap();
+    let in_prog = worker
+        .upsert_episode(sample_episode(show_id, "ep-prog", "In progress", 2000))
+        .await
+        .unwrap();
+    worker
+        .upsert_episode(sample_episode(show_id, "ep-fresh", "Fresh", 1000))
+        .await
+        .unwrap();
+
+    worker
+        .upsert_playback(Playback {
+            episode_id: played,
+            position: 1800.0,
+            played: PlayedState::PlayedFully,
+            last_played: Some(ts(5_000)),
+            play_count: 1,
+            starred: false,
+        })
+        .await
+        .unwrap();
+    worker
+        .upsert_playback(Playback {
+            episode_id: in_prog,
+            position: 60.0,
+            played: PlayedState::InProgress,
+            last_played: Some(ts(5_000)),
+            play_count: 0,
+            starred: false,
+        })
+        .await
+        .unwrap();
+    {
+        let conn = rusqlite::Connection::open(dir.path().join("t.db")).unwrap();
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO queue (position, kind, episode_id) VALUES (0, 'episode', ?1)",
+            [queued],
+        )
+        .unwrap();
+    }
+
+    let conn = pool.open().unwrap();
+    let counts = podcast_sidebar_counts(&conn).unwrap();
+    assert_eq!(counts.played, 1);
+    assert_eq!(counts.queue, 1);
+    assert_eq!(counts.inbox, 2, "in-progress + untouched are Inbox");
+    // Per-show "unplayed" is the unfinished count (< PlayedFully), so the
+    // queued-but-unplayed episode counts too.
+    assert_eq!(counts.unplayed_by_show.get(&show_id), Some(&3));
+
+    // The comparator orders by the requested key, headless.
+    let mut rows = episodes_for_show(&conn, show_id).unwrap();
+    rows.sort_by(|a, b| cmp_episodes(a, b, EpisodeSort::Date));
+    let stamps: Vec<i64> = rows
+        .iter()
+        .map(|r| r.pub_date.unwrap().timestamp())
+        .collect();
+    assert_eq!(stamps, vec![1000, 2000, 3000, 4000]);
+    rows.sort_by(|a, b| cmp_episodes(a, b, EpisodeSort::Title));
+    assert_eq!(rows[0].title, "Fresh");
+
+    worker.shutdown_ack().await.unwrap();
+}
+
 #[tokio::test]
 async fn triage_actions_are_partial_and_tag_filter_works() {
     use conservatory_core::db::{

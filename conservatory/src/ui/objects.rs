@@ -314,6 +314,31 @@ impl EpisodeRow {
         }
     }
 
+    /// The Length cell (16.5d): the duration, plus the resume point for an
+    /// episode in progress ("43:10 \u{2022} 29%"), so partially-heard episodes
+    /// are scannable in the list.
+    pub fn length_text(&self) -> String {
+        use conservatory_core::db::PlayedState;
+        let dur = self.duration_text();
+        let (position, duration, played) =
+            self.with(|r| (r.position, r.duration.unwrap_or(0), r.played));
+        if played != PlayedState::InProgress || position <= 0.0 || duration == 0 {
+            return dur;
+        }
+        let pct = ((position / duration as f64) * 100.0).round() as i64;
+        format!("{dur} \u{2022} {}%", pct.clamp(1, 99))
+    }
+
+    /// Pairwise column comparison over the underlying rows (16.5d): the GTK
+    /// `CustomSorter` delegates to the headless `cmp_episodes`.
+    pub fn cmp_by(
+        &self,
+        other: &Self,
+        key: conservatory_core::db::EpisodeSort,
+    ) -> std::cmp::Ordering {
+        self.with(|a| other.with(|b| conservatory_core::db::cmp_episodes(a, b, key)))
+    }
+
     /// A symbolic icon name for the played state (bundle-safe Adwaita names).
     pub fn state_icon(&self) -> &'static str {
         use conservatory_core::db::PlayedState;
@@ -394,6 +419,28 @@ mod episode_tests {
         let none = EpisodeRow::new(&row(None, PlayedState::InProgress));
         assert_eq!(none.duration_text(), "");
         assert_eq!(none.state_label(), "In progress");
+    }
+
+    #[test]
+    fn length_text_appends_resume_percent_only_in_progress() {
+        // In progress with a position: duration plus the resume percent.
+        let mut r = row(Some(2590), PlayedState::InProgress);
+        r.position = 1555.0; // ~60%
+        assert_eq!(EpisodeRow::new(&r).length_text(), "43:10 \u{2022} 60%");
+
+        // Unplayed / played rows keep the bare duration.
+        assert_eq!(
+            EpisodeRow::new(&row(Some(2590), PlayedState::Unplayed)).length_text(),
+            "43:10"
+        );
+        let mut done = row(Some(2590), PlayedState::PlayedFully);
+        done.position = 2590.0;
+        assert_eq!(EpisodeRow::new(&done).length_text(), "43:10");
+
+        // A sliver of progress never reads as 0% (clamped to 1..=99).
+        let mut sliver = row(Some(2590), PlayedState::InProgress);
+        sliver.position = 5.0;
+        assert_eq!(EpisodeRow::new(&sliver).length_text(), "43:10 \u{2022} 1%");
     }
 }
 

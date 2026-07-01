@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.1.12
+
+The episode list grows up: select many, sort anything, see where you left off.
+
+- **Multi-select triage.** The episode list takes Ctrl+Click and Shift+Click; Mark Played, Archive, Star, and Add to Queue now act on the whole selection, with a toast reporting the batch ("Archived: 12 episodes"). Right-clicking inside a selection keeps it, so the context menu drives batches too.
+- **Sortable columns.** Episode, Date, and Length headers now sort on click (and reverse on a second click); the default order stays what it was, newest first, or queue order in the Queue bucket. Double-click still plays exactly the row you hit, whatever the sort.
+- **Counts in the sidebar.** Inbox, Queue, and Played show their episode counts, and each show carries its unplayed count; the numbers follow every triage action without disturbing your selection.
+- **Resume at a glance.** A partly-heard episode's Length cell reads "43:10 · 29%", so the in-progress state glyph now comes with the actual position.
+- **Keyboard triage, wired.** `Q` queues the selection, `I` marks it unplayed (back to the Inbox), and `Ctrl+1/2/3` jump between the triage buckets, all as keymap.md always promised.
+- **Show settings from anywhere.** The episode right-click menu gains "Show Settings…", opening the episode's show's settings without hunting for the show in the sidebar.
+
 ## v0.1.11
 
 The podcast subscription lifecycle arrives in the window. Until now, subscribing, unsubscribing, refreshing, and OPML were all command-line only; the tab could only browse what the CLI had set up.

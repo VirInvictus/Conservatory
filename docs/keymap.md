@@ -58,9 +58,9 @@
 
 | Key | Action |
 |---|---|
-| `Ctrl+1` / `Ctrl+2` / `Ctrl+3` | Triage lists: Inbox / Queue / Played (within the Podcasts view) |
-| `I` | Move episode to Inbox (not yet wired; arrives with the batch-triage pass, 16.5d) |
-| `Q` | Add episode to the (unified) Queue (not yet wired; arrives with 16.5d) |
+| `Ctrl+1` / `Ctrl+2` / `Ctrl+3` | Triage lists: Inbox / Queue / Played (within the Podcasts view; 16.5d) |
+| `I` | Mark the selected episode(s) unplayed, returning them to the Inbox once unqueued (16.5d) |
+| `Q` | Append the selected episode(s) to the (unified) Queue (16.5d; `Ctrl+Enter` does the same) |
 | `R` | Refresh the selected show, or all shows when a bucket is selected (16.5c; also the sidebar footer button) |
 | `Ctrl+Shift+O` | Import OPML (16.5c; also the sidebar footer menu, next to Export OPML) |
 

@@ -1366,6 +1366,83 @@ impl TriageBucket {
     }
 }
 
+/// A sortable episode-list column (16.5d). The GTK `ColumnView` header drives
+/// this; the comparator lives here so it is testable headless (the CLAUDE.md
+/// rule, the `TrackSort`/`cmp_tracks` twin).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EpisodeSort {
+    Title,
+    Date,
+    Length,
+}
+
+/// Pairwise comparison of two episode rows by `key`. Text is case-insensitive;
+/// a missing date or duration sorts first ascending. Direction inversion is the
+/// caller's (the `ColumnView` toggles its own sort order).
+pub fn cmp_episodes(
+    a: &EpisodeListRow,
+    b: &EpisodeListRow,
+    key: EpisodeSort,
+) -> std::cmp::Ordering {
+    match key {
+        EpisodeSort::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+        EpisodeSort::Date => a.pub_date.cmp(&b.pub_date),
+        EpisodeSort::Length => a.duration.unwrap_or(0).cmp(&b.duration.unwrap_or(0)),
+    }
+}
+
+/// Sidebar badge counts (16.5d): triage-bucket totals plus each show's
+/// unfinished count (unplayed or in progress, the Inbox notion of "not done").
+/// The bucket definitions mirror [`episodes_in_bucket`] exactly.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PodcastSidebarCounts {
+    pub inbox: i64,
+    pub queue: i64,
+    pub played: i64,
+    pub unplayed_by_show: HashMap<i64, i64>,
+}
+
+pub fn podcast_sidebar_counts(conn: &Connection) -> Result<PodcastSidebarCounts> {
+    let inbox = conn.query_row(
+        "SELECT COUNT(*) FROM episodes e
+         LEFT JOIN playback p ON p.episode_id = e.id
+         WHERE COALESCE(p.played, 0) < 2
+           AND NOT EXISTS(SELECT 1 FROM queue q WHERE q.kind = 'episode' AND q.episode_id = e.id)",
+        [],
+        |r| r.get(0),
+    )?;
+    let queue = conn.query_row(
+        "SELECT COUNT(*) FROM queue WHERE kind = 'episode'",
+        [],
+        |r| r.get(0),
+    )?;
+    let played = conn.query_row(
+        "SELECT COUNT(*) FROM episodes e
+         LEFT JOIN playback p ON p.episode_id = e.id
+         WHERE COALESCE(p.played, 0) >= 2",
+        [],
+        |r| r.get(0),
+    )?;
+    let mut unplayed_by_show = HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT e.show_id, COUNT(*) FROM episodes e
+         LEFT JOIN playback p ON p.episode_id = e.id
+         WHERE COALESCE(p.played, 0) < 2
+         GROUP BY e.show_id",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (show, n) = row?;
+        unplayed_by_show.insert(show, n);
+    }
+    Ok(PodcastSidebarCounts {
+        inbox,
+        queue,
+        played,
+        unplayed_by_show,
+    })
+}
+
 // The shared projection for an `EpisodeListRow`: episode display fields, the
 // show title, the played/position/starred state (COALESCEd so an episode with
 // no playback row reads as Unplayed at position 0), and the `in_queue` flag.

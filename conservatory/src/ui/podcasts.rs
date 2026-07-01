@@ -38,9 +38,9 @@ use gtk::glib;
 
 use conservatory_core::PlayerHandle;
 use conservatory_core::db::{
-    EpisodeListRow, InboxPolicy, PlayedState, ReadPool, ShowSettings, TriageBucket, WorkerHandle,
-    episodes_for_show, episodes_for_tag, episodes_in_bucket, get_show, get_show_settings,
-    list_all_tags, list_shows, show_settings_map,
+    EpisodeListRow, EpisodeSort, InboxPolicy, PlayedState, ReadPool, ShowSettings, TriageBucket,
+    WorkerHandle, episodes_for_show, episodes_for_tag, episodes_in_bucket, get_show,
+    get_show_settings, list_all_tags, list_shows, podcast_sidebar_counts, show_settings_map,
 };
 use conservatory_podcasts::{Fetcher, RefreshOutcome, RefreshStatus};
 
@@ -74,7 +74,9 @@ struct Inner {
     player: Option<PlayerHandle>,
     root: Option<PathBuf>,
     store: gtk::gio::ListStore,
-    selection: gtk::SingleSelection,
+    /// Multi-select (16.5d): the triage verbs act on the whole selection, and
+    /// positions resolve through the sort model, never the raw store.
+    selection: gtk::MultiSelection,
     current: RefCell<Source>,
     /// The selected show's title, shown in the detail header when no episode is
     /// selected (empty for bucket/tag sources).
@@ -107,6 +109,9 @@ struct Inner {
     /// The sidebar-footer refresh button; insensitive while a batch runs.
     refresh_btn: gtk::Button,
     refresh_busy: Cell<bool>,
+    /// The sidebar rows' badge labels (16.5d), refreshed in place after triage
+    /// writes so counts follow the data without rebuilding the list.
+    count_labels: RefCell<Vec<(Source, gtk::Label)>>,
 }
 
 impl Inner {
@@ -150,6 +155,7 @@ impl Inner {
     fn reload(&self) {
         let source = *self.current.borrow();
         self.load(source);
+        self.refresh_sidebar_counts();
     }
 
     fn read(&self, source: Source) -> Vec<EpisodeListRow> {
@@ -163,8 +169,19 @@ impl Inner {
         }
     }
 
+    /// The first selected row (drives the detail pane; the anchor for toggles).
     fn selected(&self) -> Option<EpisodeRow> {
-        self.selection.selected_item().and_downcast::<EpisodeRow>()
+        (0..self.selection.n_items())
+            .find(|i| self.selection.is_selected(*i))
+            .and_then(|i| self.selection.item(i).and_downcast::<EpisodeRow>())
+    }
+
+    /// Every selected row, in view order (16.5d: the triage verbs are batches).
+    fn selected_rows(&self) -> Vec<EpisodeRow> {
+        (0..self.selection.n_items())
+            .filter(|i| self.selection.is_selected(*i))
+            .filter_map(|i| self.selection.item(i).and_downcast::<EpisodeRow>())
+            .collect()
     }
 
     fn show_detail(&self, row: Option<&EpisodeRow>) {
@@ -203,39 +220,67 @@ impl Inner {
         }
     }
 
-    /// Toggle the selected episode between played-fully and unplayed.
+    /// Toggle the selection between played-fully and unplayed (16.5d: a batch;
+    /// the first selected row decides the direction for the whole set).
     fn toggle_played(&self) {
-        if let Some(row) = self.selected() {
-            let next = if row.played() == PlayedState::PlayedFully {
-                PlayedState::Unplayed
-            } else {
-                PlayedState::PlayedFully
-            };
-            self.write_played(row.id(), next);
-        }
+        let rows = self.selected_rows();
+        let Some(first) = rows.first() else { return };
+        let next = if first.played() == PlayedState::PlayedFully {
+            PlayedState::Unplayed
+        } else {
+            PlayedState::PlayedFully
+        };
+        self.write_played_batch(&rows, next);
     }
 
     fn archive(&self) {
-        if let Some(row) = self.selected() {
-            self.write_played(row.id(), PlayedState::ArchivedUnlistened);
+        let rows = self.selected_rows();
+        if !rows.is_empty() {
+            self.write_played_batch(&rows, PlayedState::ArchivedUnlistened);
+        }
+    }
+
+    /// Mark the selection unplayed (16.5d, the `I` key): an unplayed episode
+    /// that is not queued lands back in the derived Inbox.
+    fn mark_unplayed_selected(&self) {
+        let rows = self.selected_rows();
+        if !rows.is_empty() {
+            self.write_played_batch(&rows, PlayedState::Unplayed);
         }
     }
 
     fn toggle_star(&self) {
-        if let Some(row) = self.selected() {
-            let starred = !row.starred();
+        let rows = self.selected_rows();
+        let Some(first) = rows.first() else { return };
+        let starred = !first.starred();
+        for row in &rows {
             let _ = self
                 .rt
                 .block_on(self.worker.set_episode_starred(row.id(), starred));
-            self.reload();
         }
+        if rows.len() > 1 {
+            let verb = if starred { "Starred" } else { "Unstarred" };
+            self.toast(&format!("{verb} {} episodes", rows.len()));
+        }
+        self.reload();
     }
 
-    fn write_played(&self, episode_id: i64, state: PlayedState) {
+    fn write_played_batch(&self, rows: &[EpisodeRow], state: PlayedState) {
         let when = (state == PlayedState::PlayedFully).then(now_secs);
-        let _ = self
-            .rt
-            .block_on(self.worker.set_episode_played(episode_id, state, when));
+        for row in rows {
+            let _ = self
+                .rt
+                .block_on(self.worker.set_episode_played(row.id(), state, when));
+        }
+        if rows.len() > 1 {
+            let verb = match state {
+                PlayedState::PlayedFully => "Marked played",
+                PlayedState::Unplayed => "Marked unplayed",
+                PlayedState::ArchivedUnlistened => "Archived",
+                PlayedState::InProgress => "Updated",
+            };
+            self.toast(&format!("{verb}: {} episodes", rows.len()));
+        }
         self.reload();
     }
 
@@ -248,7 +293,9 @@ impl Inner {
         let (Some(player), Some(root)) = (self.player.as_ref(), self.root.as_ref()) else {
             return;
         };
-        let Some(row) = self.store.item(activated).and_downcast::<EpisodeRow>() else {
+        // Positions come from the view, so resolve through the selection model
+        // (which sees the sorted order, 16.5d), never the raw store.
+        let Some(row) = self.selection.item(activated).and_downcast::<EpisodeRow>() else {
             return;
         };
         let source = EpisodeSource {
@@ -283,43 +330,55 @@ impl Inner {
             .unwrap_or_default()
     }
 
-    /// Append the selected episode to the queue tail (Ctrl+Enter).
+    /// Append the selection to the queue tail (Ctrl+Enter / `Q`; a batch since
+    /// 16.5d, in view order).
     fn append_selected(&self) {
-        let (Some(player), Some(root), Some(row)) =
-            (self.player.as_ref(), self.root.as_ref(), self.selected())
-        else {
+        let (Some(player), Some(root)) = (self.player.as_ref(), self.root.as_ref()) else {
             return;
         };
-        let _ = self
-            .rt
-            .block_on(self.worker.enqueue_episodes(vec![row.id()]));
-        let source = EpisodeSource {
-            id: row.id(),
-            show_id: row.show_id(),
-            audio_path: row.audio_path(),
-            audio_url: row.audio_url(),
-        };
-        let settings = self.show_settings_for(std::slice::from_ref(&source));
-        let (mut items, _) = build_episode_queue(std::slice::from_ref(&source), 0, root, &settings);
+        let rows = self.selected_rows();
+        if rows.is_empty() {
+            return;
+        }
+        let ids: Vec<i64> = rows.iter().map(|r| r.id()).collect();
+        let _ = self.rt.block_on(self.worker.enqueue_episodes(ids));
+        let sources: Vec<EpisodeSource> = rows
+            .iter()
+            .map(|row| EpisodeSource {
+                id: row.id(),
+                show_id: row.show_id(),
+                audio_path: row.audio_path(),
+                audio_url: row.audio_url(),
+            })
+            .collect();
+        let settings = self.show_settings_for(&sources);
+        let (mut items, _) = build_episode_queue(&sources, 0, root, &settings);
         attach_episode_chapters(&mut items, &self.pool);
         if !items.is_empty() {
             player.append(items);
         }
+        if rows.len() > 1 {
+            self.toast(&format!("Queued {} episodes", rows.len()));
+        }
+        self.reload();
     }
 
     /// Play the currently selected episode (the context-menu Play verb; the row
     /// is selected by `show_context_menu` first).
     fn play_selected(&self) {
-        let pos = self.selection.selected();
-        if pos != gtk::INVALID_LIST_POSITION {
+        let pos = (0..self.selection.n_items()).find(|i| self.selection.is_selected(*i));
+        if let Some(pos) = pos {
             self.play_from(pos);
         }
     }
 
-    /// Pop the episode context menu at the pointer (Phase 16a). Right-clicking a
-    /// row selects it (so the verbs, which act on the selection, target it).
+    /// Pop the episode context menu at the pointer (Phase 16a). Right-clicking
+    /// an **unselected** row selects just it first; right-clicking inside the
+    /// selection keeps it, so the verbs can act on the whole batch (16.5d).
     fn show_context_menu(&self, pos: u32, x: f64, y: f64, cell: gtk::Widget) {
-        self.selection.set_selected(pos);
+        if !self.selection.is_selected(pos) {
+            self.selection.select_item(pos, true);
+        }
         self.show_detail(self.selected().as_ref());
         if let Some(parent) = self.menu.parent() {
             let (cx, cy) = cell
@@ -332,14 +391,12 @@ impl Inner {
         self.menu.popup();
     }
 
-    /// Open the per-show settings dialog for the selected show (Phase
-    /// 6b-ii-c-3-c): an `adw::PreferencesGroup` pre-populated from the stored
-    /// overrides (or the schema defaults), saved through `upsert_show_settings`.
-    /// `anchor` is the gear button, used to root the dialog on the window.
-    fn open_settings(self: &Rc<Self>, anchor: &gtk::Button) {
-        let Source::Show(show_id) = *self.current.borrow() else {
-            return;
-        };
+    /// Open the per-show settings dialog for `show_id` (Phase 6b-ii-c-3-c;
+    /// since 16.5d also reachable from the episode context menu, so the id is
+    /// a parameter rather than the sidebar selection): an
+    /// `adw::PreferencesGroup` pre-populated from the stored overrides (or the
+    /// schema defaults), saved through `upsert_show_settings`.
+    fn open_settings_for(self: &Rc<Self>, show_id: i64) {
         let current = self
             .pool
             .open()
@@ -432,7 +489,7 @@ impl Inner {
                 .block_on(inner.worker.upsert_show_settings(settings));
             inner.toast("Show settings saved");
         });
-        dialog.present(Some(anchor));
+        dialog.present(Some(&self.title));
     }
 
     // --- Subscription lifecycle (16.5c) ---
@@ -455,6 +512,7 @@ impl Inner {
             list.remove(&child);
         }
         let mut sources: Vec<Option<Source>> = Vec::new();
+        let mut count_labels: Vec<(Source, gtk::Label)> = Vec::new();
 
         list.append(&section_header("Triage"));
         sources.push(None);
@@ -463,8 +521,10 @@ impl Inner {
             ("Queue", "view-list-symbolic", TriageBucket::Queue),
             ("Played", "object-select-symbolic", TriageBucket::Played),
         ] {
-            list.append(&sidebar_entry(label, icon));
+            let (row, count) = sidebar_entry(label, icon);
+            list.append(&row);
             sources.push(Some(Source::Bucket(bucket)));
+            count_labels.push((Source::Bucket(bucket), count));
         }
 
         let conn = self.pool.open().ok();
@@ -476,8 +536,10 @@ impl Inner {
             list.append(&section_header("Shows"));
             sources.push(None);
             for show in &shows {
-                list.append(&sidebar_entry(&show.title, "microphone-symbolic"));
+                let (row, count) = sidebar_entry(&show.title, "microphone-symbolic");
+                list.append(&row);
                 sources.push(Some(Source::Show(show.id)));
+                count_labels.push((Source::Show(show.id), count));
             }
         }
 
@@ -489,7 +551,8 @@ impl Inner {
             list.append(&section_header("Tags"));
             sources.push(None);
             for tag in &tags {
-                list.append(&sidebar_entry(&tag.name, "tag-symbolic"));
+                let (row, _) = sidebar_entry(&tag.name, "tag-symbolic");
+                list.append(&row);
                 sources.push(Some(Source::Tag(tag.id)));
             }
         }
@@ -499,6 +562,8 @@ impl Inner {
             .and_then(|want| sources.iter().position(|s| *s == Some(want)))
             .unwrap_or(1); // Inbox, just after the "Triage" header
         *self.sources.borrow_mut() = sources;
+        *self.count_labels.borrow_mut() = count_labels;
+        self.refresh_sidebar_counts();
 
         self.view_stack.set_visible_child_name(if shows.is_empty() {
             "empty"
@@ -507,6 +572,35 @@ impl Inner {
         });
         if let Some(row) = list.row_at_index(index as i32) {
             list.select_row(Some(&row));
+        }
+    }
+
+    /// Refresh the sidebar badge counts in place (16.5d): bucket totals and
+    /// per-show unplayed counts, without rebuilding the list (rebuilding would
+    /// disturb the selection on every triage write).
+    fn refresh_sidebar_counts(&self) {
+        let Ok(conn) = self.pool.open() else { return };
+        let Ok(counts) = podcast_sidebar_counts(&conn) else {
+            return;
+        };
+        for (source, label) in self.count_labels.borrow().iter() {
+            let n = match source {
+                Source::Bucket(TriageBucket::Inbox) => counts.inbox,
+                Source::Bucket(TriageBucket::Queue) => counts.queue,
+                Source::Bucket(TriageBucket::Played) => counts.played,
+                Source::Show(id) => counts.unplayed_by_show.get(id).copied().unwrap_or(0),
+                Source::Tag(_) => 0,
+            };
+            // Zero renders as empty rather than a wall of "0"s.
+            label.set_text(&if n > 0 { n.to_string() } else { String::new() });
+        }
+    }
+
+    /// Select a triage bucket row by keyboard (16.5d, `Ctrl+1/2/3`): the
+    /// bucket rows sit at indices 1..=3, just after the "Triage" header.
+    fn select_bucket(&self, index: i32) {
+        if let Some(row) = self.sidebar_list.row_at_index(index) {
+            self.sidebar_list.select_row(Some(&row));
         }
     }
 
@@ -577,7 +671,15 @@ impl Inner {
     /// episode keeps playing (the engine owns its resolved item), so the queue
     /// drawer is told to re-read the DB.
     fn confirm_unsubscribe(self: &Rc<Self>, show_id: i64) {
-        let name = self.show_title.borrow().clone();
+        // Resolve the name from the DB: since 16.5d the settings dialog is
+        // reachable for a show that is not the sidebar selection.
+        let name = self
+            .pool
+            .open()
+            .ok()
+            .and_then(|conn| get_show(&conn, show_id).ok().flatten())
+            .map(|s| s.title)
+            .unwrap_or_default();
         let body = format!(
             "Unsubscribe from \u{201c}{name}\u{201d}? Its episodes leave the library and the \
              queue; downloaded files stay on disk. This cannot be undone."
@@ -899,17 +1001,16 @@ pub fn build_podcasts_view(
     root: Option<PathBuf>,
 ) -> gtk::Widget {
     let store = gtk::gio::ListStore::new::<EpisodeRow>();
-    let selection = gtk::SingleSelection::builder()
-        .model(&store)
-        .autoselect(false)
-        .can_unselect(true)
-        .build();
 
     // The episode context menu resolves its `Inner` lazily: the columns (with the
     // right-click gesture) are built before `Inner` exists (Phase 16a).
     let ctx: Rc<OnceCell<Rc<Inner>>> = Rc::new(OnceCell::new());
 
-    let column_view = gtk::ColumnView::new(Some(selection.clone()));
+    // Sortable headers (16.5d): the columns carry `CustomSorter`s over the
+    // headless `cmp_episodes`; the model chain is store → sort → multi-select
+    // (the facet-pane shape), so the default order stays the source's (queue
+    // position / newest-first) until a header is clicked.
+    let column_view = gtk::ColumnView::new(None::<gtk::SelectionModel>);
     column_view.add_css_class("data-table");
     column_view.append_column(&state_column());
     column_view.append_column(&download_column());
@@ -918,19 +1019,26 @@ pub fn build_podcasts_view(
         true,
         ctx.clone(),
         EpisodeRow::title,
+        Some(EpisodeSort::Title),
     ));
     column_view.append_column(&text_column(
         "Date",
         false,
         ctx.clone(),
         EpisodeRow::date_text,
+        Some(EpisodeSort::Date),
     ));
     column_view.append_column(&text_column(
         "Length",
         false,
         ctx.clone(),
-        EpisodeRow::duration_text,
+        EpisodeRow::length_text,
+        Some(EpisodeSort::Length),
     ));
+
+    let sort_model = gtk::SortListModel::new(Some(store.clone()), column_view.sorter());
+    let selection = gtk::MultiSelection::new(Some(sort_model));
+    column_view.set_model(Some(&selection));
 
     // The context menu's PopoverMenu, parented to the episode list. Its actions
     // (an `episode.` group) are wired after `Inner` exists.
@@ -945,6 +1053,11 @@ pub fn build_podcasts_view(
         triage.append(Some("Star / Unstar"), Some("episode.star"));
         triage.append(Some("Archive"), Some("episode.archive"));
         menu.append_section(None, &triage);
+        // The show-level verb (16.5d): settings for the episode's show, so the
+        // dialog is reachable without hunting the sidebar (P16).
+        let show = gio::Menu::new();
+        show.append(Some("Show Settings\u{2026}"), Some("episode.settings"));
+        menu.append_section(None, &show);
         let popover = gtk::PopoverMenu::from_model(Some(&menu));
         popover.set_parent(&column_view);
         popover.set_has_arrow(false);
@@ -1075,6 +1188,7 @@ pub fn build_podcasts_view(
         list_empty: list_empty.clone(),
         refresh_btn: refresh_btn.clone(),
         refresh_busy: Cell::new(false),
+        count_labels: RefCell::new(Vec::new()),
     });
     inner.show_detail(None);
     let _ = ctx.set(inner.clone());
@@ -1096,6 +1210,18 @@ pub fn build_podcasts_view(
             action.connect_activate(move |_, _| verb(&inner));
             group.add_action(&action);
         }
+        // Show Settings… needs the Rc (the dialog holds a clone), so it is
+        // wired directly rather than through the fn-pointer verb table.
+        let settings = gio::SimpleAction::new("settings", None);
+        {
+            let inner = inner.clone();
+            settings.connect_activate(move |_, _| {
+                if let Some(row) = inner.selected() {
+                    inner.open_settings_for(row.show_id());
+                }
+            });
+        }
+        group.add_action(&settings);
         column_view.insert_action_group("episode", Some(&group));
     }
 
@@ -1103,7 +1229,11 @@ pub fn build_podcasts_view(
     // show source; visibility toggled in `load`).
     {
         let inner = inner.clone();
-        settings_btn.connect_clicked(move |btn| inner.open_settings(btn));
+        settings_btn.connect_clicked(move |_| {
+            if let Source::Show(id) = *inner.current.borrow() {
+                inner.open_settings_for(id);
+            }
+        });
     }
 
     // Double-click / Enter plays the visible list from that row; Ctrl+Enter
@@ -1125,12 +1255,12 @@ pub fn build_podcasts_view(
         column_view.add_controller(append);
     }
 
-    // Episode selection drives the detail pane (and the action labels).
+    // Episode selection drives the detail pane (and the action labels); with
+    // multi-select (16.5d) the first selected row is the detail anchor.
     {
         let inner = inner.clone();
-        selection.connect_selected_item_notify(move |sel| {
-            let row = sel.selected_item().and_downcast::<EpisodeRow>();
-            inner.show_detail(row.as_ref());
+        selection.connect_selection_changed(move |_, _, _| {
+            inner.show_detail(inner.selected().as_ref());
         });
     }
 
@@ -1211,6 +1341,35 @@ pub fn build_podcasts_view(
                 glib::Propagation::Stop
             })),
         ));
+        // Triage keys (16.5d, keymap.md): `Q` queues the selection, `I` marks
+        // it unplayed (back to the derived Inbox once unqueued), `Ctrl+1/2/3`
+        // jump between the triage buckets.
+        let inner_q = inner.clone();
+        keys.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("q"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                inner_q.append_selected();
+                glib::Propagation::Stop
+            })),
+        ));
+        let inner_i = inner.clone();
+        keys.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("i"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                inner_i.mark_unplayed_selected();
+                glib::Propagation::Stop
+            })),
+        ));
+        for (trigger, index) in [("<Control>1", 1), ("<Control>2", 2), ("<Control>3", 3)] {
+            let inner_b = inner.clone();
+            keys.add_shortcut(gtk::Shortcut::new(
+                gtk::ShortcutTrigger::parse_string(trigger),
+                Some(gtk::CallbackAction::new(move |_, _| {
+                    inner_b.select_bucket(index);
+                    glib::Propagation::Stop
+                })),
+            ));
+        }
         view_stack.add_controller(keys);
     }
 
@@ -1298,7 +1457,9 @@ fn section_header(text: &str) -> gtk::ListBoxRow {
     row
 }
 
-fn sidebar_entry(text: &str, icon: &str) -> gtk::ListBoxRow {
+/// A sidebar row plus its right-aligned badge label (16.5d): bucket totals /
+/// per-show unplayed counts, filled by `refresh_sidebar_counts` (empty at 0).
+fn sidebar_entry(text: &str, icon: &str) -> (gtk::ListBoxRow, gtk::Label) {
     let row = gtk::ListBoxRow::new();
     let b = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     b.set_margin_start(6);
@@ -1314,8 +1475,14 @@ fn sidebar_entry(text: &str, icon: &str) -> gtk::ListBoxRow {
             .hexpand(true)
             .build(),
     );
+    let count = gtk::Label::builder()
+        .xalign(1.0)
+        .css_classes(["dim-label", "caption", "numeric"])
+        .build();
+    b.append(&count);
     row.set_child(Some(&b));
-    row
+    row.set_tooltip_text(Some(text));
+    (row, count)
 }
 
 /// The played-state glyph column.
@@ -1380,6 +1547,7 @@ fn text_column(
     expand: bool,
     ctx: Rc<OnceCell<Rc<Inner>>>,
     getter: impl Fn(&EpisodeRow) -> String + 'static,
+    sort: Option<EpisodeSort>,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(move |_, item| {
@@ -1420,6 +1588,24 @@ fn text_column(
     });
     let col = gtk::ColumnViewColumn::new(Some(title), Some(factory));
     col.set_expand(expand);
+    // Click-to-sort (16.5d): the header drives the headless comparator; the
+    // ColumnView owns the ascending/descending toggle.
+    if let Some(key) = sort {
+        let sorter = gtk::CustomSorter::new(move |a, b| {
+            let (Some(a), Some(b)) = (
+                a.downcast_ref::<EpisodeRow>(),
+                b.downcast_ref::<EpisodeRow>(),
+            ) else {
+                return gtk::Ordering::Equal;
+            };
+            match a.cmp_by(b, key) {
+                std::cmp::Ordering::Less => gtk::Ordering::Smaller,
+                std::cmp::Ordering::Equal => gtk::Ordering::Equal,
+                std::cmp::Ordering::Greater => gtk::Ordering::Larger,
+            }
+        });
+        col.set_sorter(Some(&sorter));
+    }
     col
 }
 

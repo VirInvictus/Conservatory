@@ -972,12 +972,12 @@ Deferred out of this phase, recorded here so they are not lost: a book list-view
 - [x] Refresh: a footer button + `R` (selected show, or all shows from a bucket), a pure unit-tested `summarize_refresh` toast, and a last-refreshed header caption (pure `fmt_last_refreshed`) from the existing `shows.last_fetched`. Best-effort secret-service creds, the CLI idiom.
 - [x] A no-subscriptions StatusPage with Subscribe / Import OPML calls-to-action; empty buckets and shows get per-source one-liners. The sidebar is rebuilt in place (`rebuild_sidebar`, the row→source map now shared state).
 
-### Phase 16.5d — Episode-list power (v0.1.12)
+### Phase 16.5d — Episode-list power ✅ (v0.1.12)
 
-- [ ] Multi-select episodes; the triage verbs (played / star / archive / queue) act on the whole selection with batch toasts.
-- [ ] Sortable episode columns over a pure core comparator (play-from must resolve through the sort model, the leaf precedent).
-- [ ] Unplayed-count badges on the sidebar buckets and shows (new core read, integration-tested).
-- [ ] `Q` (queue) and `I` (mark unplayed) wired; a "Show settings…" context verb; an in-progress episode shows its resume point ("43:10 · 29%").
+- [x] Multi-select episodes (`MultiSelection`); the triage verbs (played / star / archive / queue) act on the whole selection with batch toasts, the first selected row deciding a toggle's direction; right-click inside the selection keeps it.
+- [x] Sortable episode columns (Episode / Date / Length) over the pure core `cmp_episodes` + `EpisodeSort`; the model chain is store → sort → selection, so `play_from` resolves positions through the view and the default order stays the source's.
+- [x] Count badges on the sidebar: bucket totals + per-show unplayed (the new core `podcast_sidebar_counts`, mirroring `episodes_in_bucket`'s definitions, integration-tested), refreshed in place after every triage write.
+- [x] `Q` (queue selection) and `I` (mark unplayed) wired, plus `Ctrl+1/2/3` bucket jumps; a "Show Settings…" context verb (`open_settings_for` now takes the show id); an in-progress episode's Length cell reads "43:10 · 29%" (pure `length_text`, unit-tested).
 
 ### Phase 16.5e — Downloads, scoped (v0.1.13)
 

@@ -897,9 +897,13 @@ Right-click context menus, the single most glaring gap (before this the only poi
 - [x] **Remove from Library:** a database-only unlink (the file stays on disk, re-importable) behind a destructive confirm, riding the schema cascades (`queue.track_id ON DELETE CASCADE`, `playback_state.track_id ON DELETE SET NULL`, the `tracks_ad` FTS trigger).
 - [x] Tests: `queue_insert_at_shifts_later_positions`, `delete_track_removes_it_and_cascades_the_queue`, `engine_play_next_inserts_after_the_current_item`, and the `insert_at_or_before_current_shifts_it_up` unit test; both feature sets build.
 
-### Phase 16b — Click / drag-to-rate
+### Phase 16b — Click-to-rate ✅ (v0.1.4)
 
-Make the rating column's stars clickable and draggable (Apple's "click or drag in the rating column"), writing a single-track rating through a targeted row repaint rather than a full reload. The rating write path already exists (the 16a Rating submenu reuses the bulk-edit path).
+The rating column's stars are now clickable (Apple's "click in the rating column"), writing a single-track rating through a targeted row repaint rather than a full reload.
+
+- [x] A primary-click gesture on the star row maps the pointer x across the five stars to a 1–5 rating; clicking the current top star clears it to 0 (the Apple toggle). The geometry is a pure `rating_from_click` helper with unit tests, and the press is claimed so it does not also select or activate (double-click play) the row.
+- [x] `TrackRow` gains a `rating` glib property (the `playing`-glyph precedent); the star column binds `notify::rating` so a rate repaints only that one row, and `update_rating` keeps the property in step with the `brief` the rating sorter reads. The write goes through `worker.update_track`; the inspector's Rating field refreshes with it.
+- [ ] A live drag-sweep across the stars is a natural ergonomic follow-on (the click already sets any value directly, so it is not required).
 
 ### Phase 16c — Inline edit + "mixed values" bulk edit
 

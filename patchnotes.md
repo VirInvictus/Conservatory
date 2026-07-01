@@ -1,5 +1,11 @@
 # Patch Notes
 
+## v0.1.4
+
+Click a star to rate.
+
+- **Click-to-rate in the track list.** The rating column's stars are now interactive: click where you want the rating to land and it fills to there (one through five), and clicking the star it already fills to clears the rating back to zero. The rating is written immediately, and only that one row repaints, so it stays instant on a large library. The properties inspector's rating follows along when it is open. The context-menu Rating submenu from v0.1.3 still works for whole selections.
+
 ## v0.1.3
 
 Right-click context menus arrive, with Play Next and Remove from Library.

@@ -295,11 +295,17 @@ impl ConservatoryWindow {
                 })
                 .collect();
         let weak = self.downgrade();
+        let ctx_weak = weak.clone();
         let leaf = build_leaf(
             imp.library_root.get().cloned(),
             Rc::new(move |pos, x, y, cell| {
-                if let Some(win) = weak.upgrade() {
+                if let Some(win) = ctx_weak.upgrade() {
                     win.show_track_context_menu(pos, x, y, cell);
+                }
+            }),
+            Rc::new(move |pos, rating| {
+                if let Some(win) = weak.upgrade() {
+                    win.set_row_rating(pos, rating);
                 }
             }),
         );
@@ -2424,6 +2430,30 @@ impl ConservatoryWindow {
             Ok(a) => self.apply_bulk_edit(&ids, vec![a]),
             Err(e) => eprintln!("conservatory: rating not applied: {e}"),
         }
+    }
+
+    /// Set one row's rating from a click on the star column (Phase 16b): write it
+    /// through the worker and repaint just that row via its `rating` property, with
+    /// no full reload. (The context-menu / bulk path stays `rate_selection`.)
+    fn set_row_rating(&self, pos: u32, rating: u8) {
+        let imp = self.imp();
+        let (Some(leaf), Some(rt), Some(worker)) =
+            (imp.leaf.get(), imp.runtime.get(), imp.worker.get())
+        else {
+            return;
+        };
+        let Some(row) = leaf.selection.item(pos).and_downcast::<TrackRow>() else {
+            return;
+        };
+        let id = row.brief().id;
+        let Ok(a) = parse_assignment(&format!("rating={rating}")) else {
+            return;
+        };
+        let edit = build_track_edit(&[a]);
+        let _ = rt.block_on(worker.update_track(id, edit));
+        row.update_rating(rating);
+        // Keep the inspector's Rating field in step if it is showing this row.
+        self.refresh_inspector();
     }
 
     /// Open the first selected track's folder in the file manager (Phase 16a).

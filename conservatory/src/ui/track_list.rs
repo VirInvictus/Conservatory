@@ -24,6 +24,9 @@ use crate::ui::objects::TrackRow;
 /// A `ColumnView` exposes no per-row widget, so the gesture lives on each cell.
 pub type RowContextFn = Rc<dyn Fn(u32, f64, f64, gtk::Widget)>;
 
+/// Click-to-rate callback (Phase 16b): `(row position, new rating 0..=5)`.
+pub type RowRateFn = Rc<dyn Fn(u32, u8)>;
+
 const MAX_STARS: i32 = 5;
 /// The browse cover thumbnail edge, in px. A 40px cover gives album-art-per-row
 /// (the deadbeef look) while keeping the table reasonably dense.
@@ -194,9 +197,40 @@ fn cover_column(root: Option<PathBuf>, cache: CoverCache) -> gtk::ColumnViewColu
     col
 }
 
+/// Map a click at `x` across a stars row of pixel `width` to a new rating, given
+/// the row's `current` rating: the star under the pointer (1..=5), or 0 when that
+/// star is already the top one (the Apple click-to-clear toggle). Pure, so the
+/// geometry is unit-tested without a realized widget.
+fn rating_from_click(x: f64, width: f64, current: i32) -> u8 {
+    let star_w = width.max(1.0) / f64::from(MAX_STARS);
+    let idx = (x.max(0.0) / star_w).floor() as i32;
+    let clicked = (idx + 1).clamp(1, MAX_STARS);
+    (if current == clicked { 0 } else { clicked }) as u8
+}
+
+/// Fill the star `Box` to `rating` (the shared paint for bind and the live
+/// click-to-rate / notify repaint).
+fn paint_stars(row: &gtk::Box, rating: i32) {
+    let mut star = row.first_child();
+    let mut i = 0;
+    while let Some(child) = star {
+        let img = child.downcast_ref::<gtk::Image>().expect("Image");
+        img.set_icon_name(Some(if i < rating {
+            "starred-symbolic"
+        } else {
+            "non-starred-symbolic"
+        }));
+        star = child.next_sibling();
+        i += 1;
+    }
+}
+
 /// The Rating column: a fixed row of five symbolic stars, filled to the row's
-/// rating. Symbolic icons come from the icon theme (font-independent).
-fn rating_column() -> gtk::ColumnViewColumn {
+/// rating. Symbolic icons come from the icon theme (font-independent). Clicking a
+/// star sets the rating (Phase 16b): the pointer x across the row maps to 1..=5,
+/// and clicking the current top star clears to 0 (the Apple toggle); the write and
+/// a targeted repaint go through `on_rate`.
+fn rating_column(on_rate: RowRateFn) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
@@ -206,22 +240,52 @@ fn rating_column() -> gtk::ColumnViewColumn {
             row.append(&gtk::Image::from_icon_name("non-starred-symbolic"));
         }
         item.set_child(Some(&row));
+
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(gtk::gdk::BUTTON_PRIMARY);
+        let on_rate = on_rate.clone();
+        let item_weak = item.downgrade();
+        let row_weak = row.downgrade();
+        gesture.connect_pressed(move |g, _, x, _| {
+            let (Some(item), Some(row)) = (item_weak.upgrade(), row_weak.upgrade()) else {
+                return;
+            };
+            let Some(track) = item.item().and_downcast::<TrackRow>() else {
+                return;
+            };
+            let new = rating_from_click(x, f64::from(row.width()), i32::from(track.rating()));
+            // Claim the press so the row is not also activated (double-click play)
+            // or dragged; rating a row is a distinct interaction.
+            g.set_state(gtk::EventSequenceState::Claimed);
+            on_rate(item.position(), new);
+        });
+        row.add_controller(gesture);
     });
     factory.connect_bind(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
-        let rating = i32::from(track(&item.item().expect("item")).rating());
+        let track = track(&item.item().expect("item"));
         let row = item.child().and_downcast::<gtk::Box>().expect("Box");
-        let mut star = row.first_child();
-        let mut i = 0;
-        while let Some(child) = star {
-            let img = child.downcast_ref::<gtk::Image>().expect("Image");
-            img.set_icon_name(Some(if i < rating {
-                "starred-symbolic"
-            } else {
-                "non-starred-symbolic"
-            }));
-            star = child.next_sibling();
-            i += 1;
+        paint_stars(&row, i32::from(track.rating()));
+        // Repaint just this row's stars when its `rating` property changes (the
+        // glyph column's targeted-notify idiom; no full-store rebind).
+        let row_weak = row.downgrade();
+        let handler = track.connect_rating_notify(move |t| {
+            if let Some(row) = row_weak.upgrade() {
+                paint_stars(&row, i32::from(t.rating()));
+            }
+        });
+        unsafe {
+            row.set_data("rating-handler", handler);
+        }
+    });
+    factory.connect_unbind(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        if let Some(row) = item.child().and_downcast::<gtk::Box>()
+            && let Some(handler) =
+                unsafe { row.steal_data::<glib::SignalHandlerId>("rating-handler") }
+            && let Some(obj) = item.item()
+        {
+            track(&obj).disconnect(handler);
         }
     });
     let col = gtk::ColumnViewColumn::new(Some("Rating"), Some(factory));
@@ -230,7 +294,7 @@ fn rating_column() -> gtk::ColumnViewColumn {
     col
 }
 
-pub fn build_leaf(root: Option<PathBuf>, on_context: RowContextFn) -> Leaf {
+pub fn build_leaf(root: Option<PathBuf>, on_context: RowContextFn, on_rate: RowRateFn) -> Leaf {
     let store = gio::ListStore::new::<TrackRow>();
     let cover_cache = CoverCache::new();
 
@@ -288,7 +352,7 @@ pub fn build_leaf(root: Option<PathBuf>, on_context: RowContextFn) -> Leaf {
     );
     duration.set_fixed_width(80);
     view.append_column(&duration);
-    view.append_column(&rating_column());
+    view.append_column(&rating_column(on_rate));
 
     sort_model.set_sorter(view.sorter().as_ref());
 
@@ -345,5 +409,31 @@ impl Leaf {
         } else {
             self.stack.set_visible_child_name("list");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rating_from_click;
+
+    // A 100 px stars row: 20 px per star, so [0,20)=1 … [80,100)=5.
+    #[test]
+    fn click_maps_x_to_the_star_under_it() {
+        assert_eq!(rating_from_click(10.0, 100.0, 0), 1);
+        assert_eq!(rating_from_click(50.0, 100.0, 0), 3);
+        assert_eq!(rating_from_click(90.0, 100.0, 0), 5);
+        // The left edge is the first star; past the right edge clamps to five.
+        assert_eq!(rating_from_click(0.0, 100.0, 0), 1);
+        assert_eq!(rating_from_click(250.0, 100.0, 0), 5);
+    }
+
+    #[test]
+    fn clicking_the_current_top_star_clears_to_zero() {
+        // Apple's toggle: re-clicking the filled-to-here star unsets it.
+        assert_eq!(rating_from_click(50.0, 100.0, 3), 0);
+        assert_eq!(rating_from_click(90.0, 100.0, 5), 0);
+        // Clicking a different star sets that rating, not zero.
+        assert_eq!(rating_from_click(30.0, 100.0, 3), 2);
+        assert_eq!(rating_from_click(70.0, 100.0, 3), 4);
     }
 }

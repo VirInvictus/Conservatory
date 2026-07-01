@@ -94,6 +94,12 @@ mod track_imp {
         // the whole (50k-row) store.
         #[property(get, set)]
         pub playing: Cell<u8>,
+        // The rating (0..=5), a glib property so click-to-rate (Phase 16b) can
+        // repaint just the one row via `notify::rating` instead of a full reload.
+        // Kept in lock-step with `brief.rating` (which the rating sorter reads)
+        // through `update_rating`; initialised from the brief in `new`.
+        #[property(get, set)]
+        pub rating: Cell<u8>,
     }
 
     #[glib::object_subclass]
@@ -114,7 +120,18 @@ impl TrackRow {
     pub fn new(brief: &TrackBrief) -> Self {
         let obj: Self = glib::Object::new();
         obj.imp().brief.replace(Some(brief.clone()));
+        // Seed the rating property directly (no notify: nothing is bound yet).
+        obj.imp().rating.set(brief.rating);
         obj
+    }
+
+    /// Set the rating (0..=5), updating both the `brief` (the sort key's source of
+    /// truth) and the `rating` property (which notifies bound rows to repaint).
+    pub fn update_rating(&self, rating: u8) {
+        if let Some(brief) = self.imp().brief.borrow_mut().as_mut() {
+            brief.rating = rating;
+        }
+        self.set_rating(rating);
     }
 
     fn with<R>(&self, f: impl FnOnce(&TrackBrief) -> R) -> R {
@@ -140,10 +157,6 @@ impl TrackRow {
 
     pub fn genres(&self) -> String {
         self.with(|b| b.genres.clone())
-    }
-
-    pub fn rating(&self) -> u8 {
-        self.with(|b| b.rating)
     }
 
     /// The album cover, root-relative (Phase 12b); `None` when absent on disk.

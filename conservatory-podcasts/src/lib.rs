@@ -39,7 +39,9 @@ pub mod slug;
 
 pub use chapters::{fetch_chapters, parse_chapters_json};
 pub use credentials::{BasicAuth, CredentialStore};
-pub use download::download_episode;
+pub use download::{
+    ProgressFn, download_episode, download_episode_with_progress, download_fraction,
+};
 pub use error::{FetchError, Result};
 pub use fetcher::{FetchResult, Fetcher};
 pub use notes::sanitize_notes;

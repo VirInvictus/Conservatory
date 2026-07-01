@@ -8,6 +8,7 @@
 //! download is never mistaken for a complete one.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use conservatory_core::db::{Episode, WorkerHandle};
 use reqwest::Client;
@@ -15,6 +16,12 @@ use tokio::io::AsyncWriteExt;
 
 use crate::credentials::BasicAuth;
 use crate::error::{FetchError, Result};
+
+/// A progress observer for a running download (16.5e): called per chunk with
+/// `(bytes written so far, expected total)`. The total comes from the response
+/// `Content-Length` when the server sends one, else the feed's enclosure size,
+/// else `None`. Crosses into the tokio task, hence `Send + Sync`.
+pub type ProgressFn = Arc<dyn Fn(u64, Option<u64>) + Send + Sync>;
 
 /// Download an episode's audio, recording its `audio_path`. Reuses the caller's
 /// `reqwest::Client` (so it shares the [`Fetcher`](crate::Fetcher) pool).
@@ -26,6 +33,19 @@ pub async fn download_episode(
     root: &Path,
     episode: &Episode,
     auth: Option<&BasicAuth>,
+) -> Result<PathBuf> {
+    download_episode_with_progress(client, worker, root, episode, auth, None).await
+}
+
+/// [`download_episode`] with an optional per-chunk progress callback (16.5e:
+/// the GUI's download indicator; the CLI passes `None` through the plain fn).
+pub async fn download_episode_with_progress(
+    client: &Client,
+    worker: &WorkerHandle,
+    root: &Path,
+    episode: &Episode,
+    auth: Option<&BasicAuth>,
+    progress: Option<ProgressFn>,
 ) -> Result<PathBuf> {
     let url = episode
         .audio_url
@@ -50,6 +70,9 @@ pub async fn download_episode(
     // touch the filesystem.
     tracing::debug!(target: "conservatory::net", url, episode = episode.id, "download: GET");
     let mut response = req.send().await?.error_for_status()?;
+    // Content-Length is authoritative when present; feeds routinely carry a
+    // stale enclosure length, so it is only the fallback for progress.
+    let expected = response.content_length().or(episode.file_size);
 
     // Stream to a sibling temp file, fsync, then rename atomically (same dir).
     let tmp = part_path(&dst);
@@ -62,6 +85,9 @@ pub async fn download_episode(
             .await
             .map_err(|e| FetchError::Download(format!("writing {}: {e}", tmp.display())))?;
         written += chunk.len() as u64;
+        if let Some(p) = &progress {
+            p(written, expected);
+        }
     }
     file.sync_all()
         .await
@@ -86,6 +112,16 @@ pub async fn download_episode(
 
     worker.set_episode_audio_path(episode.id, rel).await?;
     Ok(dst)
+}
+
+/// A running download's completed fraction (16.5e): `None` when the total is
+/// unknown (or zero), else `written / expected` clamped to `0.0..=1.0` (a
+/// stale enclosure size must never push the bar past full). Pure.
+pub fn download_fraction(written: u64, expected: Option<u64>) -> Option<f64> {
+    match expected {
+        Some(total) if total > 0 => Some((written as f64 / total as f64).clamp(0.0, 1.0)),
+        _ => None,
+    }
 }
 
 /// The URL's last path segment when it looks like a filename, else a name
@@ -147,6 +183,15 @@ mod tests {
             "episode.m4a"
         );
         assert_eq!(filename_for("https://cdn.example/x", None), "episode.bin");
+    }
+
+    #[test]
+    fn download_fraction_clamps_and_handles_unknown_totals() {
+        assert_eq!(download_fraction(50, Some(200)), Some(0.25));
+        // A stale enclosure size smaller than reality never reads past full.
+        assert_eq!(download_fraction(300, Some(200)), Some(1.0));
+        assert_eq!(download_fraction(50, None), None);
+        assert_eq!(download_fraction(50, Some(0)), None);
     }
 
     #[test]

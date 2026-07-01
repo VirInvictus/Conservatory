@@ -237,11 +237,20 @@ impl QueueRow {
 #[cfg(feature = "podcasts")]
 mod episode_imp {
     use super::*;
+    use gtk::prelude::*;
+
     use conservatory_core::db::EpisodeListRow;
 
-    #[derive(Default)]
+    #[derive(glib::Properties, Default)]
+    #[properties(wrapper_type = super::EpisodeRow)]
     pub struct EpisodeRow {
         pub row: RefCell<Option<EpisodeListRow>>,
+        // A running download's completed fraction (16.5e): 0.0 idle, else
+        // 0.01..=1.0 while in flight. A glib property so the download column
+        // binds `notify::download-fraction` and repaints only the affected
+        // row on each tick (the `playing`-glyph targeted-repaint idiom).
+        #[property(get, set)]
+        pub download_fraction: std::cell::Cell<f64>,
     }
 
     #[glib::object_subclass]
@@ -250,6 +259,7 @@ mod episode_imp {
         type Type = super::EpisodeRow;
     }
 
+    #[glib::derived_properties]
     impl ObjectImpl for EpisodeRow {}
 }
 

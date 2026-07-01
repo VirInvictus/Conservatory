@@ -25,8 +25,10 @@
 //! thread, so this blocks only for a sub-millisecond command round-trip).
 
 use std::cell::{Cell, OnceCell, RefCell};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use gtk4 as gtk;
 use libadwaita as adw;
@@ -112,6 +114,14 @@ struct Inner {
     /// The sidebar rows' badge labels (16.5d), refreshed in place after triage
     /// writes so counts follow the data without rebuilding the list.
     count_labels: RefCell<Vec<(Source, gtk::Label)>>,
+    // --- Downloads (16.5e) ---
+    /// In-flight downloads: episode id → completed fraction. Written from the
+    /// tokio download tasks (hence `Arc<Mutex<…>>`), drained into the rows'
+    /// `download-fraction` properties by the 500 ms ticker.
+    downloads: Arc<Mutex<HashMap<i64, f64>>>,
+    /// Whether the progress ticker is installed (it stops itself when the
+    /// downloads map drains).
+    download_ticker: Cell<bool>,
 }
 
 impl Inner {
@@ -808,6 +818,191 @@ impl Inner {
         });
     }
 
+    // --- Downloads (16.5e) ---
+
+    /// Download the selected episodes (the opt-in path; `auto_download` stays
+    /// off by default, spec §5.3). Progress flows from the tokio tasks through
+    /// the shared map into each row's `download-fraction` property.
+    fn download_selected(self: &Rc<Self>) {
+        let Some(root) = self.root.clone() else {
+            self.toast("No library root configured");
+            return;
+        };
+        let Some(fetcher) = self.fetcher.clone() else {
+            self.toast("Network client unavailable");
+            return;
+        };
+        let selected = self.selected_rows();
+        if selected.is_empty() {
+            return;
+        }
+        let rows: Vec<EpisodeRow> = selected
+            .into_iter()
+            .filter(|r| r.audio_path().is_none())
+            .collect();
+        if rows.is_empty() {
+            self.toast("Already downloaded");
+            return;
+        }
+        for row in rows {
+            let id = row.id();
+            {
+                let mut map = self.downloads.lock().expect("downloads lock");
+                if map.contains_key(&id) {
+                    continue; // already in flight
+                }
+                map.insert(id, 0.0);
+            }
+            let episode = self
+                .pool
+                .open()
+                .ok()
+                .and_then(|conn| conservatory_core::db::get_episode(&conn, id).ok().flatten());
+            let Some(episode) = episode else {
+                self.downloads.lock().expect("downloads lock").remove(&id);
+                continue;
+            };
+            let client = fetcher.client();
+            let worker = self.worker.clone();
+            let map = self.downloads.clone();
+            let task_root = root.clone();
+            let handle = self.rt.spawn(async move {
+                let progress: conservatory_podcasts::ProgressFn = {
+                    let map = map.clone();
+                    Arc::new(move |written, expected| {
+                        // An unknown total still reads "in flight" (>0).
+                        let frac = conservatory_podcasts::download_fraction(written, expected)
+                            .unwrap_or(0.0)
+                            .max(0.01);
+                        if let Ok(mut m) = map.lock() {
+                            m.insert(id, frac);
+                        }
+                    })
+                };
+                conservatory_podcasts::download_episode_with_progress(
+                    &client,
+                    &worker,
+                    &task_root,
+                    &episode,
+                    None,
+                    Some(progress),
+                )
+                .await
+            });
+            let title = row.title();
+            let inner = self.clone();
+            glib::spawn_future_local(async move {
+                let result = handle.await;
+                inner.downloads.lock().expect("downloads lock").remove(&id);
+                match result {
+                    Ok(Ok(_)) => {
+                        inner.toast(&format!("Downloaded {title}"));
+                        inner.reload();
+                    }
+                    Ok(Err(e)) => inner.toast(&format!("Download failed: {e}")),
+                    Err(e) => inner.toast(&format!("Download task failed: {e}")),
+                }
+            });
+        }
+        self.ensure_download_ticker();
+    }
+
+    /// Push download fractions into the visible rows twice a second while any
+    /// download runs; the source stops itself when the map drains.
+    fn ensure_download_ticker(self: &Rc<Self>) {
+        if self.download_ticker.get() {
+            return;
+        }
+        self.download_ticker.set(true);
+        let inner = self.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+            let snapshot: HashMap<i64, f64> = inner
+                .downloads
+                .lock()
+                .map(|m| m.clone())
+                .unwrap_or_default();
+            for i in 0..inner.store.n_items() {
+                let Some(row) = inner.store.item(i).and_downcast::<EpisodeRow>() else {
+                    continue;
+                };
+                let want = snapshot.get(&row.id()).copied().unwrap_or(0.0);
+                if row.download_fraction() != want {
+                    row.set_download_fraction(want);
+                }
+            }
+            if snapshot.is_empty() {
+                inner.download_ticker.set(false);
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+    }
+
+    /// Delete the selected episodes' downloaded files behind a confirm; the
+    /// episodes stay in the library (streaming still works). Rides
+    /// `retention::apply`, the same remove + clear-`audio_path` path the
+    /// keep-N pruning uses, so there is exactly one file-deletion codepath.
+    fn delete_download_selected(self: &Rc<Self>) {
+        let Some(root) = self.root.clone() else {
+            self.toast("No library root configured");
+            return;
+        };
+        let selected = self.selected_rows();
+        if selected.is_empty() {
+            return;
+        }
+        let prunes: Vec<conservatory_podcasts::RetentionPrune> = selected
+            .iter()
+            .filter(|r| r.audio_path().is_some())
+            .map(|r| conservatory_podcasts::RetentionPrune {
+                episode_id: r.id(),
+                show_id: r.show_id(),
+                show_title: r.show_title(),
+                episode_title: r.title(),
+                audio_path: r.audio_path().expect("filtered to Some"),
+            })
+            .collect();
+        if prunes.is_empty() {
+            self.toast("Nothing downloaded in the selection");
+            return;
+        }
+        let body = format!(
+            "Delete {} downloaded file(s)? The episodes stay in the library and can still stream.",
+            prunes.len()
+        );
+        let dialog = adw::AlertDialog::new(Some("Delete downloads?"), Some(&body));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("delete", "Delete");
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        let inner = self.clone();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "delete" {
+                return;
+            }
+            let worker = inner.worker.clone();
+            let root = root.clone();
+            let prunes = prunes.clone();
+            let handle = inner.rt.spawn(async move {
+                conservatory_podcasts::retention::apply(&worker, &root, &prunes).await
+            });
+            let inner = inner.clone();
+            glib::spawn_future_local(async move {
+                match handle.await {
+                    Ok(Ok(n)) => {
+                        inner.toast(&format!("Deleted {n} download(s)"));
+                        inner.reload();
+                    }
+                    Ok(Err(e)) => inner.toast(&format!("Delete failed: {e}")),
+                    Err(e) => inner.toast(&format!("Delete task failed: {e}")),
+                }
+            });
+        });
+        dialog.present(Some(&self.title));
+    }
+
     /// OPML export (P3): every subscription with its tags, to a file.
     fn prompt_export_opml(self: &Rc<Self>) {
         let Some(win) = self.title.root().and_downcast::<gtk::Window>() else {
@@ -1048,6 +1243,11 @@ pub fn build_podcasts_view(
         top.append(Some("Play"), Some("episode.play"));
         top.append(Some("Add to Queue"), Some("episode.queue"));
         menu.append_section(None, &top);
+        // Media verbs (16.5e): the opt-in download and its undo.
+        let media = gio::Menu::new();
+        media.append(Some("Download"), Some("episode.download"));
+        media.append(Some("Delete Download\u{2026}"), Some("episode.delete-download"));
+        menu.append_section(None, &media);
         let triage = gio::Menu::new();
         triage.append(Some("Mark Played / Unplayed"), Some("episode.played"));
         triage.append(Some("Star / Unstar"), Some("episode.star"));
@@ -1189,6 +1389,8 @@ pub fn build_podcasts_view(
         refresh_btn: refresh_btn.clone(),
         refresh_busy: Cell::new(false),
         count_labels: RefCell::new(Vec::new()),
+        downloads: Arc::new(Mutex::new(HashMap::new())),
+        download_ticker: Cell::new(false),
     });
     inner.show_detail(None);
     let _ = ctx.set(inner.clone());
@@ -1222,6 +1424,19 @@ pub fn build_podcasts_view(
             });
         }
         group.add_action(&settings);
+        // The download verbs (16.5e) also hold Rc clones (async completions).
+        let download = gio::SimpleAction::new("download", None);
+        {
+            let inner = inner.clone();
+            download.connect_activate(move |_, _| inner.download_selected());
+        }
+        group.add_action(&download);
+        let delete_dl = gio::SimpleAction::new("delete-download", None);
+        {
+            let inner = inner.clone();
+            delete_dl.connect_activate(move |_, _| inner.delete_download_selected());
+        }
+        group.add_action(&delete_dl);
         column_view.insert_action_group("episode", Some(&group));
     }
 
@@ -1507,9 +1722,10 @@ fn state_column() -> gtk::ColumnViewColumn {
     col
 }
 
-/// A glyph column for the episode's media availability (v0.0.38): a downloaded
-/// episode (a local `audio_path`) vs a stream-only one. ("Downloading" is not a
-/// state yet — there is no GUI-triggered download.)
+/// A glyph column for the episode's media availability (v0.0.38; 16.5e adds
+/// the in-flight state): downloaded / downloading (with a live percent
+/// tooltip, repainted via `notify::download-fraction`, the play-glyph
+/// targeted-repaint idiom) / stream-only.
 fn download_column() -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| {
@@ -1518,27 +1734,54 @@ fn download_column() -> gtk::ColumnViewColumn {
     });
     factory.connect_bind(|_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
-        if let (Some(row), Some(img)) = (
+        let (Some(row), Some(img)) = (
             item.item().and_downcast::<EpisodeRow>(),
             item.child().and_downcast::<gtk::Image>(),
-        ) {
-            let downloaded = row.audio_path().is_some();
-            img.set_icon_name(Some(if downloaded {
-                "folder-download-symbolic"
-            } else {
-                "network-wireless-symbolic"
-            }));
-            img.set_tooltip_text(Some(if downloaded {
-                "Downloaded"
-            } else {
-                "Stream only"
-            }));
-            img.add_css_class("dim-label");
+        ) else {
+            return;
+        };
+        paint_download(&img, &row);
+        // Repaint this row when its fraction ticks; the handler is stashed so
+        // unbind can disconnect it on recycle (the glyph-column idiom).
+        let img_weak = img.downgrade();
+        let handler = row.connect_download_fraction_notify(move |row| {
+            if let Some(img) = img_weak.upgrade() {
+                paint_download(&img, row);
+            }
+        });
+        unsafe {
+            img.set_data("download-handler", handler);
+        }
+    });
+    factory.connect_unbind(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        if let Some(img) = item.child().and_downcast::<gtk::Image>()
+            && let Some(handler) =
+                unsafe { img.steal_data::<glib::SignalHandlerId>("download-handler") }
+            && let Some(row) = item.item().and_downcast::<EpisodeRow>()
+        {
+            row.disconnect(handler);
         }
     });
     let col = gtk::ColumnViewColumn::new(Some(""), Some(factory));
     col.set_fixed_width(36);
     col
+}
+
+/// The download glyph's shared paint, for bind and the live notify repaint.
+fn paint_download(img: &gtk::Image, row: &EpisodeRow) {
+    let frac = row.download_fraction();
+    if frac > 0.0 {
+        img.set_icon_name(Some("emblem-synchronizing-symbolic"));
+        img.set_tooltip_text(Some(&format!("Downloading\u{2026} {:.0}%", frac * 100.0)));
+    } else if row.audio_path().is_some() {
+        img.set_icon_name(Some("folder-download-symbolic"));
+        img.set_tooltip_text(Some("Downloaded"));
+    } else {
+        img.set_icon_name(Some("network-wireless-symbolic"));
+        img.set_tooltip_text(Some("Stream only"));
+    }
+    img.add_css_class("dim-label");
 }
 
 /// A text column rendering `getter(row)` into an ellipsized label.

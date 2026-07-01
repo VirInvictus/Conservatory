@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.1.13
+
+Episode downloads move into the window.
+
+- **Download from the right-click menu.** Episodes have always streamed, and the CLI could download them; now the episode context menu can too, for one episode or a whole selection. Downloads stay opt-in (no auto-download by default, as ever).
+- **Live progress.** While a download runs, the episode's availability glyph turns into a syncing icon whose tooltip tracks the percentage; completion toasts and flips the row to Downloaded. Failures toast the actual error, and running the verb again retries.
+- **Delete Download.** The counterpart verb removes the selected episodes' files behind a confirmation that says what it means: the files go, the episodes stay, streaming still works. It rides the same deletion path as the keep-N retention pruning, so there is exactly one way files get removed.
+
 ## v0.1.12
 
 The episode list grows up: select many, sort anything, see where you left off.

@@ -979,11 +979,11 @@ Deferred out of this phase, recorded here so they are not lost: a book list-view
 - [x] Count badges on the sidebar: bucket totals + per-show unplayed (the new core `podcast_sidebar_counts`, mirroring `episodes_in_bucket`'s definitions, integration-tested), refreshed in place after every triage write.
 - [x] `Q` (queue selection) and `I` (mark unplayed) wired, plus `Ctrl+1/2/3` bucket jumps; a "Show Settings…" context verb (`open_settings_for` now takes the show id); an in-progress episode's Length cell reads "43:10 · 29%" (pure `length_text`, unit-tested).
 
-### Phase 16.5e — Downloads, scoped (v0.1.13)
+### Phase 16.5e — Downloads, scoped ✅ (v0.1.13)
 
-- [ ] A Download context verb for undownloaded episodes; per-row progress via a targeted-repaint property (the click-to-rate idiom); completion and failure toast.
-- [ ] A Delete Download verb behind a confirm, riding `retention::apply` (file removed, `audio_path` cleared).
-- [ ] The manager pane, retry surface, and storage dashboard stay deferred.
+- [x] A Download context verb for undownloaded episodes (batch over the selection, double-start guarded); `download_episode_with_progress` grows an optional per-chunk callback in `conservatory-podcasts` (the CLI path unchanged), progress lands in an `Arc<Mutex<HashMap>>` drained by a self-stopping 500 ms ticker into each row's new `download-fraction` glib property (the click-to-rate targeted-repaint idiom); the availability glyph shows a syncing icon with a live percent tooltip; completion and failure toast. Pure `download_fraction` (clamped; stale enclosure sizes never read past full), unit-tested.
+- [x] A Delete Download verb behind a destructive confirm ("the episodes stay; streaming still works"), riding `retention::apply` so file deletion has exactly one codepath (file removed, `audio_path` cleared).
+- [x] The manager pane, retry surface, and storage dashboard stay deferred.
 
 ### Phase 16.5f — Spoken-word playback surfaces (v0.1.14)
 

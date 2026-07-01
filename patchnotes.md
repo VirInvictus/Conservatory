@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.1.7
+
+Playlists come to the window.
+
+- **A Playlists section in the sidebar.** The left sidebar now has two labelled parts: Perspectives on top (saved searches, unchanged; the save button there saves your current filter as one) and Playlists underneath. Playlists list your static and smart playlists; clicking one plays it, filling the queue with its tracks in order.
+- **Create playlists from the app.** A `+` button offers New Static Playlist (a hand-curated list) and New Smart Playlist. The smart-playlist dialog pre-fills its query from whatever is in the filter bar, so it doubles as "save this search as a playlist", and lets you set an optional size cap and a prioritisation order (newest, highest-rated, least-recently-played, title, or artist). A trash button deletes the selected playlist.
+- **Add to Playlist, by right-click.** The track right-click menu gains an "Add to Playlist" submenu listing your static playlists; pick one to append the selected tracks. (Smart playlists are rules, so they are not shown there.)
+
 ## v0.1.6
 
 Playlists arrive, from the command line first.

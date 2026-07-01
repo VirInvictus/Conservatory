@@ -10,8 +10,8 @@ use std::collections::HashSet;
 use chrono::NaiveDate;
 
 use conservatory_core::db::{
-    FacetFilter, ReadPool, SearchRow, SqlParam, TrackBrief, facet_tracks, perspective_expression,
-    search_rows, search_track_ids,
+    FacetFilter, PlaylistOrder, ReadPool, SearchRow, SqlParam, TrackBrief, facet_tracks,
+    ordered_track_ids, perspective_expression, search_rows, search_track_ids,
 };
 use conservatory_search::{
     PerspectiveResolver, SearchItem, SqlValue, evaluate, parse_with_resolver, try_translate,
@@ -68,6 +68,61 @@ pub fn query_leaf(
     };
     tracks.retain(|t| matched.contains(&t.id));
     (tracks, parsed.warnings)
+}
+
+/// Materialise a smart playlist to ordered, limited track ids (Phase 16d-ii). The
+/// SQL fast path lets core order + limit in one query; a regex / fuzzy query that
+/// does not translate falls back to in-memory eval + a best-effort sort. Mirrors
+/// the CLI's `materialize_smart`; core stays free of the search grammar (spec §2.2).
+pub fn materialize_smart(
+    pool: &ReadPool,
+    query: &str,
+    order: PlaylistOrder,
+    limit: Option<i64>,
+    today: NaiveDate,
+) -> Vec<i64> {
+    let Ok(conn) = pool.open() else {
+        return Vec::new();
+    };
+    let parsed = parse_with_resolver(query, &PoolResolver(pool));
+    match try_translate(&parsed.expr, today) {
+        Some(clause) => {
+            let params: Vec<SqlParam> = clause.params.iter().map(to_param).collect();
+            ordered_track_ids(&conn, &clause.sql, &params, order, limit).unwrap_or_default()
+        }
+        None => {
+            let mut rows: Vec<SearchRow> = search_rows(&conn)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|r| evaluate(&parsed.expr, &to_item(r), today))
+                .collect();
+            sort_search_rows(&mut rows, order);
+            let mut ids: Vec<i64> = rows.into_iter().map(|r| r.track_id).collect();
+            if let Some(n) = limit
+                && n >= 0
+            {
+                ids.truncate(n as usize);
+            }
+            ids
+        }
+    }
+}
+
+/// Best-effort order for the eval fallback (regex / fuzzy). `SearchRow` carries no
+/// `last_played`, so `lastplayed` degrades to `added` here; the SQL path is exact.
+fn sort_search_rows(rows: &mut [SearchRow], order: PlaylistOrder) {
+    match order {
+        PlaylistOrder::Added | PlaylistOrder::LastPlayed => {
+            rows.sort_by(|a, b| b.added.cmp(&a.added).then(a.track_id.cmp(&b.track_id)))
+        }
+        PlaylistOrder::Rating => {
+            rows.sort_by(|a, b| b.rating.cmp(&a.rating).then(b.added.cmp(&a.added)))
+        }
+        PlaylistOrder::Title => rows.sort_by_key(|r| r.title.to_lowercase()),
+        PlaylistOrder::Artist => {
+            rows.sort_by_key(|r| r.artist.as_deref().unwrap_or("").to_lowercase())
+        }
+    }
 }
 
 fn to_param(value: &SqlValue) -> SqlParam {

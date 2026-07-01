@@ -925,10 +925,13 @@ Three crisp primitives, kept distinct to avoid Roon's Tags-vs-Bookmarks confusio
 - [x] Core CRUD (create / delete / rename / append / remove-entry / reorder-entry) through the single-writer worker; reads `list_playlists` / `get_playlist` / `static_playlist_track_ids`; the `ordered_track_ids(where_sql, params, order, limit)` SQL primitive (fixed-whitelist ORDER BY, no injection). Unit + integration tests.
 - [x] CLI: `playlist create-static | create-smart | add | list | show | delete`, with smart materialisation glue (translate → `ordered_track_ids`, else eval-fallback + best-effort sort). Verified end-to-end against a fixture library.
 
-#### Phase 16d-ii/iii — GUI (Playlists sidebar + rule builder)
+#### Phase 16d-ii — GUI (Playlists sidebar + rule builder) ✅ (v0.1.7)
 
-- [ ] A Playlists section in the left sidebar (below Perspectives); activating a playlist enqueues its materialised set; static playlists support in-place drag-reorder.
-- [ ] A visual smart-rule builder (so rules are not query-string-only, the Navidrome anti-pattern) and the 16a "Add to Playlist" context verb.
+- [x] The left sidebar is split into two labeled sections: **Perspectives** on top (the existing saved-search list, its save button already saves the current filter), **Playlists** below. New imp fields + `refresh_playlists` mirror the perspectives pattern; each shares the vertical space.
+- [x] Activating a playlist plays it (materialise → replace the queue → play): static via `static_playlist_track_ids`, smart via a new GUI `materialize_smart` in `query.rs` (the CLI's dual-path mirrored, since core stays search-free).
+- [x] Create from a `+` menu: **New Static…** (name) and **New Smart…** → a rule-builder dialog (name, a query pre-filled from the current filter so it doubles as "save current search", an optional limit, an order picker). Delete from the trash button.
+- [x] The 16a "Add to Playlist ▸" context verb is now real: a submenu of the static playlists (rebuilt as playlists change) → `append_playlist_tracks`.
+- [ ] Static-playlist in-place drag-reorder is deferred (the queue-drawer DnD idiom); episode/book playlist entries too (schema supports them; v1 wires tracks).
 
 ## Phases 17–19 — planned (from the UI/UX deep-dive)
 

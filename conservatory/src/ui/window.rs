@@ -27,11 +27,11 @@ use gtk::gio;
 use gtk::glib;
 
 use conservatory_core::db::{
-    EQ_CENTRES, EqState, FacetField, FacetFilter, MediaKind, Perspective, ReadPool,
-    ResamplerQuality, WorkerHandle, facet_rows, get_album, get_artist, get_audio_state,
-    get_eq_preset, get_eq_state, get_track, get_tracks, list_eq_presets, list_perspectives,
-    load_queue_display, read_playback_state, show_settings_map, spawn_worker, track_render_rows,
-    writeback_rows,
+    EQ_CENTRES, EqState, FacetField, FacetFilter, MediaKind, Perspective, Playlist, PlaylistKind,
+    PlaylistOrder, ReadPool, ResamplerQuality, WorkerHandle, facet_rows, get_album, get_artist,
+    get_audio_state, get_eq_preset, get_eq_state, get_track, get_tracks, list_eq_presets,
+    list_perspectives, list_playlists, load_queue_display, read_playback_state, show_settings_map,
+    spawn_worker, static_playlist_track_ids, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
@@ -40,7 +40,7 @@ use conservatory_core::{
 };
 
 use crate::playqueue::{MixedQueueRow, build_mixed_queue, build_play_queue, fmt_position};
-use crate::query::query_leaf;
+use crate::query::{materialize_smart, query_leaf};
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
 use crate::ui::fields::inspector_fields;
@@ -162,6 +162,13 @@ mod imp {
         // The queue-drawer right-click menu (Phase 16a): parented to the (single,
         // stable) queue ListView, so no per-click re-parenting is needed.
         pub queue_menu: OnceCell<gtk::PopoverMenu>,
+        // The Playlists sidebar section (Phase 16d-ii): the list widget and the
+        // cached rows (parallel to `sidebar_list` / `perspectives`), plus the
+        // dynamic "Add to Playlist" submenu of the track context menu, repopulated
+        // from the static playlists whenever the playlist set changes.
+        pub playlist_list: OnceCell<gtk::ListBox>,
+        pub playlists: RefCell<Vec<conservatory_core::db::Playlist>>,
+        pub add_to_playlist_menu: OnceCell<gio::Menu>,
     }
 
     #[glib::object_subclass]
@@ -199,6 +206,33 @@ fn perspective_row(name: &str) -> gtk::ListBoxRow {
         .build();
     let row = gtk::ListBoxRow::new();
     row.set_child(Some(&label));
+    row
+}
+
+/// A Playlists-sidebar row (Phase 16d-ii): a kind icon (static list vs smart
+/// query) beside the name.
+fn playlist_row(name: &str, is_smart: bool) -> gtk::ListBoxRow {
+    let icon = gtk::Image::from_icon_name(if is_smart {
+        "system-search-symbolic"
+    } else {
+        "view-list-symbolic"
+    });
+    icon.add_css_class("dim-label");
+    let label = gtk::Label::builder()
+        .label(name)
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .hexpand(true)
+        .build();
+    let bx = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    bx.set_margin_top(6);
+    bx.set_margin_bottom(6);
+    bx.set_margin_start(12);
+    bx.set_margin_end(12);
+    bx.append(&icon);
+    bx.append(&label);
+    let row = gtk::ListBoxRow::new();
+    row.set_child(Some(&bx));
     row
 }
 
@@ -736,6 +770,7 @@ impl ConservatoryWindow {
         if imp.pool.get().is_some() {
             self.populate_initial();
             self.refresh_perspectives();
+            self.refresh_playlists();
         }
         // Debug mode (Phase 14): a one-shot RSS sample once the library is loaded,
         // then a periodic sampler, so `--debug` can be checked against the spec §13
@@ -2240,7 +2275,18 @@ impl ConservatoryWindow {
         });
         self.add_action(&remove);
 
-        // The model: Play / Add to Queue · Edit + Rating submenu · Reveal.
+        // Add to Playlist: a parameterised action (the target is the playlist id).
+        let add_to_playlist =
+            gio::SimpleAction::new("track-add-to-playlist", Some(glib::VariantTy::INT64));
+        let weak = self.downgrade();
+        add_to_playlist.connect_activate(move |_, param| {
+            if let (Some(win), Some(id)) = (weak.upgrade(), param.and_then(|p| p.get::<i64>())) {
+                win.append_selection_to_playlist(id);
+            }
+        });
+        self.add_action(&add_to_playlist);
+
+        // The model: Play / Add to Queue · Edit + Rating + Add to Playlist · Reveal.
         let menu = gio::Menu::new();
         let top = gio::Menu::new();
         top.append(Some("Play"), Some("win.track-play"));
@@ -2262,6 +2308,11 @@ impl ConservatoryWindow {
             ratings.append_item(&item);
         }
         mid.append_submenu(Some("Rating"), &ratings);
+        // The Add-to-Playlist submenu is repopulated by `refresh_playlists`; stash
+        // the gio::Menu so it can be rebuilt as playlists come and go.
+        let add_menu = gio::Menu::new();
+        mid.append_submenu(Some("Add to Playlist"), &add_menu);
+        let _ = imp.add_to_playlist_menu.set(add_menu);
         menu.append_section(None, &mid);
 
         let bottom = gio::Menu::new();
@@ -4164,8 +4215,88 @@ impl ConservatoryWindow {
         sidebar.append(&heading);
         sidebar.append(&list_scroller);
         sidebar.append(&actions);
-
         let _ = self.imp().sidebar_list.set(list);
+
+        // --- Playlists section (Phase 16d-ii): below Perspectives, sharing the
+        // vertical space. Static + smart playlists; activating one plays it. ---
+        sidebar.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+
+        let pl_heading = gtk::Label::builder()
+            .label("Playlists")
+            .xalign(0.0)
+            .margin_top(8)
+            .margin_bottom(4)
+            .margin_start(12)
+            .margin_end(12)
+            .css_classes(["heading"])
+            .build();
+
+        let pl_list = gtk::ListBox::new();
+        pl_list.add_css_class("navigation-sidebar");
+        pl_list.set_selection_mode(gtk::SelectionMode::Single);
+        let weak = self.downgrade();
+        pl_list.connect_row_activated(move |_, row| {
+            if let Some(win) = weak.upgrade() {
+                win.on_playlist_activated(row.index());
+            }
+        });
+        let pl_scroller = gtk::ScrolledWindow::builder()
+            .vexpand(true)
+            .child(&pl_list)
+            .build();
+
+        // The "+" create menu and a delete button.
+        let new_static = gio::SimpleAction::new("playlist-new-static", None);
+        let weak = self.downgrade();
+        new_static.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.prompt_new_static_playlist();
+            }
+        });
+        self.add_action(&new_static);
+        let new_smart = gio::SimpleAction::new("playlist-new-smart", None);
+        let weak = self.downgrade();
+        new_smart.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.prompt_new_smart_playlist();
+            }
+        });
+        self.add_action(&new_smart);
+
+        let create_menu = gio::Menu::new();
+        create_menu.append(
+            Some("New Static Playlist\u{2026}"),
+            Some("win.playlist-new-static"),
+        );
+        create_menu.append(
+            Some("New Smart Playlist\u{2026}"),
+            Some("win.playlist-new-smart"),
+        );
+        let pl_create = gtk::MenuButton::builder()
+            .icon_name("list-add-symbolic")
+            .tooltip_text("New playlist")
+            .menu_model(&create_menu)
+            .hexpand(true)
+            .build();
+        let pl_del = gtk::Button::from_icon_name("user-trash-symbolic");
+        pl_del.set_tooltip_text(Some("Delete the selected playlist"));
+        pl_del.set_hexpand(true);
+        let weak = self.downgrade();
+        pl_del.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.delete_selected_playlist();
+            }
+        });
+        let pl_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        pl_actions.add_css_class("toolbar");
+        pl_actions.append(&pl_create);
+        pl_actions.append(&pl_del);
+
+        sidebar.append(&pl_heading);
+        sidebar.append(&pl_scroller);
+        sidebar.append(&pl_actions);
+        let _ = self.imp().playlist_list.set(pl_list);
+
         sidebar.upcast()
     }
 
@@ -4320,6 +4451,309 @@ impl ConservatoryWindow {
             list.append(&perspective_row(&p.name));
         }
         *imp.perspectives.borrow_mut() = perspectives;
+    }
+
+    // --- Playlists sidebar (Phase 16d-ii) ---
+
+    /// Reload the Playlists list from storage (the `refresh_perspectives` twin).
+    /// Also repopulates the track menu's "Add to Playlist" submenu so new static
+    /// playlists appear there.
+    fn refresh_playlists(&self) {
+        let imp = self.imp();
+        let (Some(pool), Some(list)) = (imp.pool.get(), imp.playlist_list.get()) else {
+            return;
+        };
+        let playlists = pool
+            .open()
+            .ok()
+            .and_then(|conn| list_playlists(&conn).ok())
+            .unwrap_or_default();
+        while let Some(child) = list.first_child() {
+            list.remove(&child);
+        }
+        for p in &playlists {
+            list.append(&playlist_row(&p.name, p.kind == PlaylistKind::Smart));
+        }
+        *imp.playlists.borrow_mut() = playlists;
+        self.rebuild_add_to_playlist_menu();
+    }
+
+    /// Activating a playlist row plays it: materialise its tracks and replace the
+    /// queue (the `play_leaf_from` path, from an id list rather than the leaf).
+    fn on_playlist_activated(&self, index: i32) {
+        if index < 0 {
+            return;
+        }
+        let pl = self.imp().playlists.borrow().get(index as usize).cloned();
+        if let Some(pl) = pl {
+            self.play_playlist(&pl);
+        }
+    }
+
+    /// A playlist's ordered track ids: static from its entries, smart from the
+    /// query (through the GUI materialiser, which has the search grammar).
+    fn materialize_playlist_ids(&self, pl: &Playlist) -> Vec<i64> {
+        let Some(pool) = self.imp().pool.get() else {
+            return Vec::new();
+        };
+        match pl.kind {
+            PlaylistKind::Static => pool
+                .open()
+                .ok()
+                .and_then(|conn| static_playlist_track_ids(&conn, pl.id).ok())
+                .unwrap_or_default(),
+            PlaylistKind::Smart => {
+                let order = pl.order_by.unwrap_or(PlaylistOrder::Added);
+                let today = chrono::Utc::now().date_naive();
+                materialize_smart(
+                    pool,
+                    pl.query.as_deref().unwrap_or(""),
+                    order,
+                    pl.limit_n,
+                    today,
+                )
+            }
+        }
+    }
+
+    fn play_playlist(&self, pl: &Playlist) {
+        let imp = self.imp();
+        let (Some(pool), Some(player), Some(root)) =
+            (imp.pool.get(), imp.player.get(), imp.library_root.get())
+        else {
+            return;
+        };
+        let ids = self.materialize_playlist_ids(pl);
+        if ids.is_empty() {
+            return;
+        }
+        let Ok(conn) = pool.open() else {
+            return;
+        };
+        let tracks = get_tracks(&conn, &ids).unwrap_or_default();
+        drop(conn);
+        let (items, start) = build_play_queue(&ids, 0, &tracks, root, &self.playback_config());
+        if items.is_empty() {
+            return;
+        }
+        let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
+        if let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) {
+            let _ = rt.block_on(worker.replace_queue_with_tracks(queue_ids));
+        }
+        // The Now-bar resolves title/artist from the DB on item change, so no
+        // `now_labels` seeding is needed here.
+        imp.last_shown.set(None);
+        imp.last_index.set(None);
+        if let Some(cur) = imp.queue_current.get() {
+            cur.set(Some(start as i64));
+        }
+        player.play_queue(items, start);
+        self.reload_queue_panel();
+    }
+
+    /// Create a playlist through the worker, then refresh the sidebar.
+    fn create_playlist(
+        &self,
+        name: String,
+        kind: PlaylistKind,
+        query: Option<String>,
+        limit: Option<i64>,
+        order: Option<PlaylistOrder>,
+    ) {
+        let imp = self.imp();
+        let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
+            return;
+        };
+        let now = chrono::Utc::now().timestamp();
+        let _ = rt.block_on(worker.create_playlist(name, kind, query, limit, order, now));
+        self.refresh_playlists();
+    }
+
+    fn prompt_new_static_playlist(&self) {
+        if self.imp().worker.get().is_none() {
+            return;
+        }
+        let name_entry = gtk::Entry::builder()
+            .placeholder_text("Playlist name")
+            .activates_default(true)
+            .build();
+        let dialog = adw::AlertDialog::new(
+            Some("New Static Playlist"),
+            Some(
+                "A frozen, hand-ordered list. Add tracks with the right-click \u{201c}Add to \
+                 Playlist\u{201d} menu.",
+            ),
+        );
+        dialog.set_extra_child(Some(&name_entry));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("create", "Create");
+        dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("create"));
+        dialog.set_close_response("cancel");
+        let weak = self.downgrade();
+        let entry_weak = name_entry.downgrade();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "create" {
+                return;
+            }
+            let (Some(win), Some(e)) = (weak.upgrade(), entry_weak.upgrade()) else {
+                return;
+            };
+            let name = e.text().trim().to_string();
+            if !name.is_empty() {
+                win.create_playlist(name, PlaylistKind::Static, None, None, None);
+            }
+        });
+        dialog.present(Some(self));
+    }
+
+    /// The smart-playlist rule builder: name, a query pre-filled from the current
+    /// filter (so it doubles as "save current search"), an optional limit, and an
+    /// order picker. Not a full condition-row builder yet, but not query-only-JSON.
+    fn prompt_new_smart_playlist(&self) {
+        let imp = self.imp();
+        if imp.worker.get().is_none() {
+            return;
+        }
+        let current_filter = imp
+            .filter_entry
+            .get()
+            .map(|e| e.text().to_string())
+            .unwrap_or_default();
+
+        let name_entry = gtk::Entry::builder()
+            .placeholder_text("Playlist name")
+            .build();
+        let query_entry = gtk::Entry::builder()
+            .placeholder_text("rating:>=4 AND genre:jazz")
+            .text(&current_filter)
+            .hexpand(true)
+            .build();
+        let limit_entry = gtk::Entry::builder().placeholder_text("no limit").build();
+        let orders = [
+            "Added (newest first)",
+            "Rating (highest first)",
+            "Least recently played",
+            "Title",
+            "Artist",
+        ];
+        let order_dd = gtk::DropDown::from_strings(&orders);
+
+        let grid = gtk::Grid::builder()
+            .row_spacing(6)
+            .column_spacing(12)
+            .build();
+        for (r, (label, widget)) in [
+            ("Name", name_entry.clone().upcast::<gtk::Widget>()),
+            ("Query", query_entry.clone().upcast()),
+            ("Limit", limit_entry.clone().upcast()),
+            ("Order", order_dd.clone().upcast()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let lbl = gtk::Label::builder().label(label).xalign(1.0).build();
+            grid.attach(&lbl, 0, r as i32, 1, 1);
+            grid.attach(&widget, 1, r as i32, 1, 1);
+        }
+
+        let dialog = adw::AlertDialog::new(
+            Some("New Smart Playlist"),
+            Some(
+                "A live rule: a search that resolves fresh each time, with an optional limit and order.",
+            ),
+        );
+        dialog.set_extra_child(Some(&grid));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("create", "Create");
+        dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("create"));
+        dialog.set_close_response("cancel");
+        let weak = self.downgrade();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "create" {
+                return;
+            }
+            let Some(win) = weak.upgrade() else {
+                return;
+            };
+            let name = name_entry.text().trim().to_string();
+            let query = query_entry.text().trim().to_string();
+            if name.is_empty() || query.is_empty() {
+                return;
+            }
+            let limit = limit_entry
+                .text()
+                .trim()
+                .parse::<i64>()
+                .ok()
+                .filter(|n| *n > 0);
+            let order = match order_dd.selected() {
+                1 => PlaylistOrder::Rating,
+                2 => PlaylistOrder::LastPlayed,
+                3 => PlaylistOrder::Title,
+                4 => PlaylistOrder::Artist,
+                _ => PlaylistOrder::Added,
+            };
+            win.create_playlist(name, PlaylistKind::Smart, Some(query), limit, Some(order));
+        });
+        dialog.present(Some(self));
+    }
+
+    fn delete_selected_playlist(&self) {
+        let imp = self.imp();
+        let (Some(rt), Some(worker), Some(list)) =
+            (imp.runtime.get(), imp.worker.get(), imp.playlist_list.get())
+        else {
+            return;
+        };
+        let Some(row) = list.selected_row() else {
+            return;
+        };
+        let index = row.index();
+        if index < 0 {
+            return;
+        }
+        let id = imp.playlists.borrow().get(index as usize).map(|p| p.id);
+        if let Some(id) = id {
+            let _ = rt.block_on(worker.delete_playlist(id));
+            self.refresh_playlists();
+        }
+    }
+
+    /// Repopulate the track menu's "Add to Playlist" submenu from the static
+    /// playlists (smart playlists can't be hand-added to).
+    fn rebuild_add_to_playlist_menu(&self) {
+        let imp = self.imp();
+        let Some(menu) = imp.add_to_playlist_menu.get() else {
+            return;
+        };
+        menu.remove_all();
+        for p in imp.playlists.borrow().iter() {
+            if p.kind == PlaylistKind::Static {
+                let item = gio::MenuItem::new(Some(&p.name), None);
+                item.set_action_and_target_value(
+                    Some("win.track-add-to-playlist"),
+                    Some(&p.id.to_variant()),
+                );
+                menu.append_item(&item);
+            }
+        }
+    }
+
+    /// Append the track-list selection to a static playlist (the context verb).
+    fn append_selection_to_playlist(&self, playlist_id: i64) {
+        let ids = self.selected_track_ids();
+        if ids.is_empty() {
+            return;
+        }
+        let imp = self.imp();
+        let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
+            return;
+        };
+        let n = ids.len();
+        let _ = rt.block_on(worker.append_playlist_tracks(playlist_id, ids));
+        self.toast(&format!("Added {n} track(s) to the playlist"));
     }
 
     fn recompute_from(&self, earliest: usize) {

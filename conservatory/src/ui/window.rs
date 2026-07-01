@@ -198,7 +198,17 @@ glib::wrapper! {
                     gtk::ShortcutManager;
 }
 
-/// One sidebar row: a left-aligned, ellipsized name label.
+/// The filter entry's resting tooltip (16.5b): a grammar primer, swapped for
+/// the parser's live warnings while a query degrades (`refresh_leaf`).
+const FILTER_GRAMMAR_TIP: &str = "Search grammar: field:value with AND / OR / NOT.\n\
+    Fields: artist: album: title: genre: shelfgenre: year: added: rating: bitrate: \
+    duration: format: is:played is:starred is:queued vl:Perspective\n\
+    Examples: genre:jazz rating:>=4 · year:1990..1999 · artist:~^aphex · \
+    ambient NOT genre:rock sort:-added\n\
+    Bare text searches title, artist, and album.";
+
+/// One sidebar row: a left-aligned, ellipsized name label. The tooltip carries
+/// the full name, since the narrow sidebar ellipsizes long ones (16.5b).
 fn perspective_row(name: &str) -> gtk::ListBoxRow {
     let label = gtk::Label::builder()
         .label(name)
@@ -211,6 +221,7 @@ fn perspective_row(name: &str) -> gtk::ListBoxRow {
         .build();
     let row = gtk::ListBoxRow::new();
     row.set_child(Some(&label));
+    row.set_tooltip_text(Some(name));
     row
 }
 
@@ -238,6 +249,7 @@ fn playlist_row(name: &str, is_smart: bool) -> gtk::ListBoxRow {
     bx.append(&label);
     let row = gtk::ListBoxRow::new();
     row.set_child(Some(&bx));
+    row.set_tooltip_text(Some(name));
     row
 }
 
@@ -389,6 +401,7 @@ impl ConservatoryWindow {
         // The always-on filter bar (spec §3.4); Ctrl+F focuses it, no search mode.
         let filter = gtk::SearchEntry::builder()
             .placeholder_text("Filter: genre:ambient  rating:>=4  vl:Favourites")
+            .tooltip_text(FILTER_GRAMMAR_TIP)
             .hexpand(true)
             .build();
         let filter_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -526,7 +539,9 @@ impl ConservatoryWindow {
             }
         });
         let embed_btn = gtk::Button::from_icon_name("document-save-symbolic");
-        embed_btn.set_tooltip_text(Some("Embed metadata into selected files"));
+        embed_btn.set_tooltip_text(Some(
+            "Write library metadata into the selected audio files on disk",
+        ));
         let weak = self.downgrade();
         embed_btn.connect_clicked(move |_| {
             if let Some(win) = weak.upgrade() {
@@ -537,6 +552,9 @@ impl ConservatoryWindow {
         edit_group.add_css_class("linked");
         edit_group.append(&edit_btn);
         edit_group.append(&embed_btn);
+        // Both verbs act on the selection, so they start insensitive and follow
+        // it (16.5b); before this they silently no-opped with nothing selected.
+        edit_group.set_sensitive(false);
         header.pack_start(&edit_group);
         let _ = imp.header_edit_group.set(edit_group);
 
@@ -670,6 +688,7 @@ impl ConservatoryWindow {
                 if let Some(win) = weak.upgrade() {
                     win.refresh_inspector();
                     win.refresh_status_aggregate();
+                    win.refresh_edit_sensitivity();
                 }
             });
 
@@ -1155,8 +1174,10 @@ impl ConservatoryWindow {
 
         let lib_group = adw::PreferencesGroup::new();
         lib_group.set_title("Library");
+        // The dialog edits config.toml on disk; the running app keeps its
+        // startup snapshot, so every config-backed setting is next-launch.
         lib_group.set_description(Some(
-            "Changes to the library root take effect on the next launch.",
+            "These settings take effect on the next launch.",
         ));
 
         let root_row = adw::ActionRow::new();
@@ -1232,6 +1253,7 @@ impl ConservatoryWindow {
 
         let genre_group = adw::PreferencesGroup::new();
         genre_group.set_title("Genre");
+        genre_group.set_description(Some("Takes effect on the next launch."));
         let unknown = adw::EntryRow::new();
         unknown.set_title("Default unknown genre");
         unknown.set_text(&config.borrow().genre.default_unknown);
@@ -1345,6 +1367,7 @@ impl ConservatoryWindow {
 
         let pod_group = adw::PreferencesGroup::new();
         pod_group.set_title("Podcasts");
+        pod_group.set_description(Some("Takes effect on the next launch."));
 
         let pod_subdir = adw::EntryRow::new();
         pod_subdir.set_title("Library subfolder");
@@ -1371,6 +1394,7 @@ impl ConservatoryWindow {
 
         let book_group = adw::PreferencesGroup::new();
         book_group.set_title("Audiobooks");
+        book_group.set_description(Some("Takes effect on the next launch."));
 
         let book_subdir = adw::EntryRow::new();
         book_subdir.set_title("Library subfolder");
@@ -3853,6 +3877,15 @@ impl ConservatoryWindow {
     /// Refresh the status bar's right-hand aggregate (Phase 11b): the selection
     /// total when two or more leaf rows are selected, else the whole view's
     /// cached total. The selection sum walks only the selected rows.
+    /// Edit/Embed act on the selection, so they follow it: insensitive when
+    /// nothing is selected (16.5b; they used to silently no-op).
+    fn refresh_edit_sensitivity(&self) {
+        let imp = self.imp();
+        if let Some(g) = imp.header_edit_group.get() {
+            g.set_sensitive(!self.selected_track_ids().is_empty());
+        }
+    }
+
     fn refresh_status_aggregate(&self) {
         let imp = self.imp();
         let (Some(leaf), Some(label)) = (imp.leaf.get(), imp.status_right.get()) else {
@@ -4014,11 +4047,22 @@ impl ConservatoryWindow {
         });
         self.add_action(&shortcuts);
 
+        // About (16.5b): the GNOME-convention dialog, version from the crate.
+        let about = gio::SimpleAction::new("show-about", None);
+        let weak = self.downgrade();
+        about.connect_activate(move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.show_about_dialog();
+            }
+        });
+        self.add_action(&about);
+
         let menu = gio::Menu::new();
         menu.append(Some("Stop After Current"), Some("win.stop-after-current"));
         menu.append(Some("Jump to Current Track"), Some("win.jump-to-current"));
         let help = gio::Menu::new();
         help.append(Some("Keyboard Shortcuts"), Some("win.show-shortcuts"));
+        help.append(Some("About Conservatory"), Some("win.show-about"));
         menu.append_section(None, &help);
 
         gtk::MenuButton::builder()
@@ -4026,6 +4070,24 @@ impl ConservatoryWindow {
             .tooltip_text("Menu")
             .menu_model(&menu)
             .build()
+    }
+
+    /// The About dialog (16.5b): version from the crate, GPL-3.0-or-later (the
+    /// librubberband chain, spec §11), repo link.
+    fn show_about_dialog(&self) {
+        let about = adw::AboutDialog::builder()
+            .application_name("Conservatory")
+            .application_icon("audio-x-generic")
+            .version(env!("CARGO_PKG_VERSION"))
+            .developer_name("Brandon LaRocque")
+            .license_type(gtk::License::Gpl30)
+            .website("https://github.com/VirInvictus/Conservatory")
+            .comments(
+                "Calibre for audio: a library manager and player for music, \
+                 podcasts, and audiobooks that owns its files.",
+            )
+            .build();
+        about.present(Some(self));
     }
 
     /// Toggle stop-after-current (Phase 11d, `Ctrl+M`): the engine finishes the
@@ -4180,7 +4242,11 @@ impl ConservatoryWindow {
             && let Some(player) = imp.player.get()
         {
             let snap = player.snapshot();
-            self.refresh_now_playing(snap.kind, snap.track_id);
+            // Mirror the Now-bar's ended guard (16.5b): opening the drawer
+            // after the queue finished shows the idle page, not the last item
+            // dressed up as "Now Playing".
+            let id = if snap.ended { None } else { snap.track_id };
+            self.refresh_now_playing(snap.kind, id);
         }
     }
 
@@ -4999,15 +5065,23 @@ impl ConservatoryWindow {
         imp.view_total
             .set(crate::statusbar::view_aggregate(&tracks));
         self.refresh_status_aggregate();
+        // A reload rebuilds the selection model, so re-derive the header
+        // Edit/Embed sensitivity rather than trust the last signal (16.5b).
+        self.refresh_edit_sensitivity();
         // The fresh rows default to no glyph; force the play-status column to
         // re-apply so the playing track (if any) is marked in the new view.
         imp.last_play_state.set((None, false));
         self.refresh_play_glyphs();
         if let Some(entry) = imp.filter_entry.get() {
+            // The yellow tint alone said nothing about *what* degraded (16.5b):
+            // the tooltip carries the parser's warnings while they exist, and
+            // reverts to the grammar hint when the query is clean again.
             if warnings.is_empty() {
                 entry.remove_css_class("filter-warn");
+                entry.set_tooltip_text(Some(FILTER_GRAMMAR_TIP));
             } else {
                 entry.add_css_class("filter-warn");
+                entry.set_tooltip_text(Some(&warnings.join("\n")));
             }
         }
     }

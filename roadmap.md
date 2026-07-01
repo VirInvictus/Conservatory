@@ -957,12 +957,12 @@ Deferred out of this phase, recorded here so they are not lost: a book list-view
 - [x] Bulk-edit parse failures surface in a dialog (they went to stderr while the dialog closed silently); the editor re-presents pre-filled with the entered values and tick states, so a fix loses nothing. The collection loop is a pure `collect_assignments` with unit tests.
 - [x] The mixed-values checkbox tooltip spells out the overwrite semantics.
 
-### Phase 16.5b — Feedback + discoverability micro-fixes (v0.1.10)
+### Phase 16.5b — Feedback + discoverability micro-fixes ✅ (v0.1.10)
 
-- [ ] Filter-bar warnings become readable (tooltip with the actual parser warnings, not just the yellow tint); a grammar tooltip on the filter entry.
-- [ ] Empty-library StatusPage points at the CLI import; inspector marks itself read-only; an empty facet pane explains itself; the embed-tags tooltip says it writes into the files.
-- [ ] Sidebar rows get full-name tooltips; Edit/Embed header buttons follow the selection (insensitive when nothing is selected).
-- [ ] An About dialog (GNOME convention); the "takes effect on the next launch" label sweep; streaming-vs-buffering Now-bar tooltips; the Now Playing drawer titles itself honestly when idle. Keymap doc: the sidebar Save button is the wired save path (`Ctrl+S` stays deferred).
+- [x] Filter-bar warnings become readable (tooltip with the actual parser warnings, not just the yellow tint); a grammar tooltip on the filter entry.
+- [x] Empty-library StatusPage points at the CLI import; inspector marks itself read-only; an empty facet pane explains itself; the embed-tags tooltip says it writes into the files.
+- [x] Sidebar rows get full-name tooltips; Edit/Embed header buttons follow the selection (insensitive when nothing is selected, re-derived on every leaf reload).
+- [x] An About dialog (GNOME convention); the "takes effect on the next launch" label sweep (the whole config dialog is a disk-snapshot edit, so every config group carries it); streaming-vs-buffering Now-bar tooltips; opening the Now Playing drawer after the queue ends shows the idle page (the ended-snapshot guard now matches the Now-bar's). Keymap doc: the sidebar Save button is the wired save path (`Ctrl+S` stays deferred).
 
 ### Phase 16.5c — Podcast subscription lifecycle in the GUI (v0.1.11)
 

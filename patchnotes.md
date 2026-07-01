@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.1.10
+
+A round of small answers to "what is this, and why is nothing happening?"
+
+- **The filter bar explains itself.** Hovering it shows a search-grammar primer (fields, operators, examples), and when a query degrades the yellow tint now comes with the parser's actual warnings in the tooltip instead of a colour and a shrug.
+- **An About dialog** joins the header menu, and the empty-library screen now shows the exact import command instead of vaguely suggesting you import music.
+- **Buttons that need a selection say so.** Edit and Embed grey out when nothing is selected rather than silently doing nothing, and the Embed tooltip now says it writes tags into the audio files on disk.
+- **Honest labels everywhere else.** The properties inspector marks itself read-only (edit with Ctrl+E); an empty facet column explains that nothing matches the selection; long Perspective and playlist names get full-name tooltips; every config-backed Preferences group is labelled "takes effect on the next launch"; the Now-bar's streaming icon says the episode is simply not downloaded (it was reading like a stall warning); and opening the Now Playing drawer after the queue has finished shows the idle page instead of the last item dressed up as playing.
+
 ## v0.1.9
 
 Deleting asks first, and a failed edit explains itself.

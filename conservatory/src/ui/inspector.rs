@@ -35,6 +35,13 @@ pub fn build_inspector() -> Inspector {
         .css_classes(["title-4"])
         .label("Track properties")
         .build();
+    // The grid looks editable but is display-only; say so up front rather than
+    // let a click land on nothing (16.5b).
+    let readonly = gtk::Label::builder()
+        .xalign(0.0)
+        .css_classes(["dim-label", "caption"])
+        .label("Read-only \u{2022} edit with Ctrl+E")
+        .build();
 
     let cover = gtk::Image::builder()
         .pixel_size(210)
@@ -58,6 +65,7 @@ pub fn build_inspector() -> Inspector {
     body.set_margin_start(12);
     body.set_margin_end(12);
     body.append(&title);
+    body.append(&readonly);
     body.append(&cover_frame);
     body.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     body.append(&grid);

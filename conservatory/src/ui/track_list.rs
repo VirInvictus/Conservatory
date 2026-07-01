@@ -402,8 +402,12 @@ impl Leaf {
             } else {
                 self.empty_page.set_icon_name(Some(COVER_PLACEHOLDER));
                 self.empty_page.set_title("No tracks yet");
-                self.empty_page
-                    .set_description(Some("Import music to start your library."));
+                // Import is CLI-only until the Phase 19 drag-drop lands, so the
+                // empty state points at the actual path in (16.5b).
+                self.empty_page.set_description(Some(
+                    "Import music from a terminal to start your library:\n\
+                     conservatory-cli import <library.db> <source folder> <library root>",
+                ));
             }
             self.stack.set_visible_child_name("empty");
         } else {

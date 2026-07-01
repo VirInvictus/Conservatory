@@ -1,6 +1,6 @@
 # Keymap
 
-> **Status: substantially wired.** The in-window playback and navigation keys are live as of Phase 13e (v0.0.86 to v0.0.88): **`Space`** plays / pauses (everywhere except while typing in the filter, the foobar2000 rule), **`Ctrl+→/←`** skip next / previous, **`Ctrl+↑/↓`** change volume, **`Ctrl+0`** mutes, **`Ctrl+L`** clears the filter, **`Ctrl+Q`** quits, and **`F1`** opens the shortcuts reference (also in the header menu). **Double-click / Enter** now plays a track *or* a facet value (Phase 13e-i). Earlier-wired: `Ctrl+F` (filter), `Ctrl+Enter` (append), `Ctrl+U/I/P` (panels), `Ctrl+,` (preferences), `Ctrl+E` (edit), `Ctrl+M` (stop-after), `Ctrl+J` (jump), `Ctrl+Shift+→/←` (chapters), `S` (sleep), `Alt+1/2/3` (views), the queue keys (`Alt+↑/↓`, `Delete`, `Ctrl+Shift+C`), and media keys via MPRIS2. **Deliberately deferred** (marked below): bare `→/←` and `Shift+→/←` seek (the arrows navigate the browse columns, so they are intentionally unbound, as in deadbeef-cui), `Ctrl+S` (save Perspective) and `Delete` = remove-from-library (both need a confirmation flow), and `Ctrl+Shift+J` (a jobs surface that does not exist yet). The keymap encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** GNOME/libadwaita conventions are followed where one exists.
+> **Status: substantially wired.** The in-window playback and navigation keys are live as of Phase 13e (v0.0.86 to v0.0.88): **`Space`** plays / pauses (everywhere except while typing in the filter, the foobar2000 rule), **`Ctrl+→/←`** skip next / previous, **`Ctrl+↑/↓`** change volume, **`Ctrl+0`** mutes, **`Ctrl+L`** clears the filter, **`Ctrl+Q`** quits, and **`F1`** opens the shortcuts reference (also in the header menu). **Double-click / Enter** now plays a track *or* a facet value (Phase 13e-i). Earlier-wired: `Ctrl+F` (filter), `Ctrl+Enter` (append), `Ctrl+U/I/P` (panels), `Ctrl+,` (preferences), `Ctrl+E` (edit), `Ctrl+M` (stop-after), `Ctrl+J` (jump), `Ctrl+Shift+→/←` (chapters), `S` (sleep), `Alt+1/2/3` (views), the queue keys (`Alt+↑/↓`, `Delete`, `Ctrl+Shift+C`), and media keys via MPRIS2. **Deliberately deferred** (marked below): bare `→/←` and `Shift+→/←` seek (the arrows navigate the browse columns, so they are intentionally unbound, as in deadbeef-cui), the `Ctrl+S` and `Delete` *bindings* (their actions exist elsewhere: the sidebar save button saves a Perspective, and the right-click menu removes from library behind a confirm since 16a), and `Ctrl+Shift+J` (a jobs surface that does not exist yet). The keymap encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** GNOME/libadwaita conventions are followed where one exists.
 
 ## Global
 
@@ -23,9 +23,9 @@
 | `Ctrl+Click` / `Shift+Click` | Multi-select (aggregate facets; range-select rows) |
 | `Double-click` / `Enter` | Play the track, or the facet value under the cursor, replacing the queue (the deadbeef-cui activate-to-play, Phase 13e-i) |
 | `Ctrl+Enter` | Append the selection to the queue |
-| `Ctrl+S` | Save the current filter as a Perspective (proposed; not wired) |
+| `Ctrl+S` | Save the current filter as a Perspective (the binding is deferred; the sidebar's save button is the wired path, Phase 3c) |
 | `Ctrl+E` | Edit metadata for the selection (bulk editor, Phase 5) |
-| `Delete` | Remove from library (proposed; not wired, pending a confirmation flow; never deletes files without the move/undo job) |
+| `Delete` | Remove from library (the key stays unbound; the right-click menu's Remove from Library is the confirmed path since Phase 16a, and files always stay on disk) |
 
 ## Playback
 

@@ -164,6 +164,16 @@ impl FacetPane {
         for r in rows {
             self.store.append(&FacetRow::value_row(&r.value, r.count));
         }
+        // A pane narrowed to nothing shows only `[All (0)]`, which says nothing
+        // about *why*; the tooltip explains the empty cascade (16.5b).
+        if rows.is_empty() {
+            self.view.set_tooltip_text(Some(&format!(
+                "No {} match the current facet selection and filter",
+                self.field.plural().to_lowercase()
+            )));
+        } else {
+            self.view.set_tooltip_text(None);
+        }
         // Select the [All] row wherever it sorts (it is pinned to the top).
         let n = self.selection.n_items();
         for i in 0..n {

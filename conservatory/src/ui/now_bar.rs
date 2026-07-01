@@ -129,10 +129,12 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     // until the snapshot says otherwise (v0.0.38).
     let spinner = gtk::Spinner::new();
     spinner.set_visible(false);
-    spinner.set_tooltip_text(Some("Buffering"));
+    spinner.set_tooltip_text(Some("Buffering from the network\u{2026}"));
     let streaming_icon = gtk::Image::from_icon_name("network-wireless-symbolic");
     streaming_icon.set_visible(false);
-    streaming_icon.set_tooltip_text(Some("Streaming"));
+    // "Streaming" alone read as a stall warning; say what it actually means
+    // (playing from the network because there is no download) (16.5b).
+    streaming_icon.set_tooltip_text(Some("Streaming (this episode is not downloaded)"));
     let status = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     status.set_valign(gtk::Align::Center);
     status.append(&spinner);

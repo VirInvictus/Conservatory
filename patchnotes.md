@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.1.9
+
+Deleting asks first, and a failed edit explains itself.
+
+- **Delete confirmations for Perspectives and playlists.** The sidebar trash buttons now ask before deleting, naming what you are about to remove. Both deletions are permanent (a curated playlist is not reconstructible), so they get the same destructive-confirm treatment Remove from Library already had.
+- **The bulk editor surfaces bad values instead of swallowing them.** Entering an invalid value (a non-numeric year, a rating above 5) used to close the dialog and silently apply nothing, with the reason buried in the terminal. Now a dialog lists exactly what was wrong, and the editor reopens with everything you typed and ticked still in place, so fixing one field never means re-entering seven.
+- The bulk editor's checkboxes also explain themselves: the tooltip now spells out that a ticked field is written to every selected track, overwriting differing values.
+
 ## v0.1.8
 
 Turn tabs off, and a header that follows the tab.

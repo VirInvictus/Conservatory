@@ -9,7 +9,7 @@
 use std::path::Path;
 
 use conservatory_core::db::{Album, Track};
-use conservatory_core::format_size;
+use conservatory_core::{format_size, parse_assignment, Assignment};
 
 use crate::playqueue::fmt_secs;
 
@@ -27,6 +27,28 @@ pub(crate) fn push(out: &mut Vec<(String, String)>, label: &str, value: impl Int
     if !value.is_empty() {
         out.push((label.to_string(), value));
     }
+}
+
+/// Collect the bulk-edit dialog's per-field state (key, ticked, entered text)
+/// into parsed assignments (Phase 16.5a). Unticked fields are skipped;
+/// ticked-but-empty fields are left for the "clear a field" follow-on; every
+/// parse failure is reported so the caller can reject the whole set rather
+/// than apply a partly-valid edit. Pure, so unit-tested directly.
+pub(crate) fn collect_assignments(
+    fields: &[(String, bool, String)],
+) -> (Vec<Assignment>, Vec<String>) {
+    let mut assignments = Vec::new();
+    let mut errors = Vec::new();
+    for (key, ticked, value) in fields {
+        if !*ticked || value.trim().is_empty() {
+            continue;
+        }
+        match parse_assignment(&format!("{key}={value}")) {
+            Ok(a) => assignments.push(a),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+    (assignments, errors)
 }
 
 /// The property rows for the selected `track` plus its `album` context and the
@@ -115,6 +137,35 @@ pub fn inspector_fields(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collect_assignments_skips_unticked_and_empty_fields() {
+        let fields = vec![
+            ("title".to_string(), true, "Xtal".to_string()),
+            ("album".to_string(), false, "ignored".to_string()),
+            ("year".to_string(), true, "   ".to_string()),
+        ];
+        let (assignments, errors) = collect_assignments(&fields);
+        assert!(errors.is_empty());
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments[0].value, "Xtal");
+    }
+
+    #[test]
+    fn collect_assignments_reports_every_parse_failure() {
+        let fields = vec![
+            ("year".to_string(), true, "abc".to_string()),
+            ("rating".to_string(), true, "9".to_string()),
+            ("title".to_string(), true, "kept".to_string()),
+        ];
+        let (assignments, errors) = collect_assignments(&fields);
+        // The valid field still parses; the caller rejects the whole set on
+        // any error, so both failures must be reported.
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(errors.len(), 2);
+        assert!(errors[0].contains("year"));
+        assert!(errors[1].contains("rating"));
+    }
 
     fn track() -> Track {
         Track {

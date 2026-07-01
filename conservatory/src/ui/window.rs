@@ -43,7 +43,7 @@ use crate::playqueue::{MixedQueueRow, build_mixed_queue, build_play_queue, fmt_p
 use crate::query::{materialize_smart, query_leaf};
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
-use crate::ui::fields::inspector_fields;
+use crate::ui::fields::{collect_assignments, inspector_fields};
 use crate::ui::inspector::{Inspector, build_inspector};
 use crate::ui::now_bar::{NowBar, build_now_bar};
 use crate::ui::now_playing_panel::{NowPlayingPanel, build_now_playing_panel};
@@ -2747,11 +2747,23 @@ impl ConservatoryWindow {
     /// editing a field ticks it. Path-affecting edits are confirmed with a move
     /// preview after the values are written.
     fn prompt_bulk_edit(&self) {
+        self.prompt_bulk_edit_prefilled(None);
+    }
+
+    /// The dialog body, optionally pre-filled from a rejected attempt (Phase
+    /// 16.5a): after a parse failure the dialog re-presents with the entered
+    /// values and tick states intact, so fixing one bad field loses nothing.
+    fn prompt_bulk_edit_prefilled(&self, prefill: Option<Vec<(String, bool, String)>>) {
         let ids = self.selected_track_ids();
         if ids.is_empty() {
             return;
         }
         let commons = self.bulk_edit_commons(&ids);
+        let prefill: Option<std::collections::HashMap<String, (bool, String)>> = prefill.map(|p| {
+            p.into_iter()
+                .map(|(key, ticked, value)| (key, (ticked, value)))
+                .collect()
+        });
 
         // (field key as `edit::Field::parse` accepts it, display label).
         let fields: [(&str, &str); 8] = [
@@ -2771,7 +2783,7 @@ impl ConservatoryWindow {
         let mut entries: Vec<(String, gtk::CheckButton, gtk::Entry)> = Vec::new();
         for (r, (key, label)) in fields.iter().enumerate() {
             let check = gtk::CheckButton::builder()
-                .tooltip_text("Write this field")
+                .tooltip_text("Write this field to every selected track (overwrites differing values)")
                 .valign(gtk::Align::Center)
                 .build();
             let lbl = gtk::Label::builder().label(*label).xalign(1.0).build();
@@ -2785,10 +2797,20 @@ impl ConservatoryWindow {
                 Some(_) => entry.set_placeholder_text(Some("unchanged")),
                 None => entry.set_placeholder_text(Some("multiple values")),
             }
+            // A rejected attempt's entered text overrides the shared value.
+            let prefilled = prefill.as_ref().and_then(|p| p.get(*key));
+            if let Some((_, value)) = prefilled {
+                entry.set_text(value);
+            }
             // Editing a field ticks its checkbox. Connected after the pre-fill so
             // the initial `set_text` does not tick it.
             let check_edit = check.clone();
             entry.connect_changed(move |_| check_edit.set_active(true));
+            // Restore the attempt's tick state (after the changed hook, so an
+            // untouched-but-prefilled field stays authoritative either way).
+            if let Some((ticked, _)) = prefilled {
+                check.set_active(*ticked);
+            }
             grid.attach(&check, 0, r as i32, 1, 1);
             grid.attach(&lbl, 1, r as i32, 1, 1);
             grid.attach(&entry, 2, r as i32, 1, 1);
@@ -2816,30 +2838,37 @@ impl ConservatoryWindow {
                 return;
             }
             let Some(win) = weak.upgrade() else { return };
-            let mut assignments = Vec::new();
-            let mut errors = Vec::new();
-            for (key, check, entry) in &entries {
-                // Only ticked fields write; a ticked-but-empty field is left for a
-                // later "clear a field" follow-on (empty fails year/rating parse).
-                if !check.is_active() {
-                    continue;
-                }
-                let val = entry.text().to_string();
-                if val.trim().is_empty() {
-                    continue;
-                }
-                match parse_assignment(&format!("{key}={val}")) {
-                    Ok(a) => assignments.push(a),
-                    Err(e) => errors.push(e.to_string()),
-                }
-            }
+            let entered: Vec<(String, bool, String)> = entries
+                .iter()
+                .map(|(key, check, entry)| {
+                    (key.clone(), check.is_active(), entry.text().to_string())
+                })
+                .collect();
+            let (assignments, errors) = collect_assignments(&entered);
             if !errors.is_empty() {
-                // Reject the whole set rather than apply a partly-valid edit.
-                eprintln!("conservatory: edit not applied: {}", errors.join("; "));
+                // Reject the whole set rather than apply a partly-valid edit;
+                // the error dialog re-presents this one pre-filled (16.5a).
+                win.present_bulk_edit_errors(errors, entered);
                 return;
             }
             if !assignments.is_empty() {
                 win.apply_bulk_edit(&ids, assignments);
+            }
+        });
+        dialog.present(Some(self));
+    }
+
+    /// List the parse failures that rejected a bulk edit, then reopen the edit
+    /// dialog pre-filled with the attempt so the fix loses nothing (16.5a).
+    fn present_bulk_edit_errors(&self, errors: Vec<String>, entered: Vec<(String, bool, String)>) {
+        let dialog = adw::AlertDialog::new(Some("Edit not applied"), Some(&errors.join("\n")));
+        dialog.add_response("ok", "Fix Values");
+        dialog.set_default_response(Some("ok"));
+        dialog.set_close_response("ok");
+        let weak = self.downgrade();
+        dialog.connect_response(None, move |_, _| {
+            if let Some(win) = weak.upgrade() {
+                win.prompt_bulk_edit_prefilled(Some(entered.clone()));
             }
         });
         dialog.present(Some(self));
@@ -4511,11 +4540,11 @@ impl ConservatoryWindow {
         self.refresh_perspectives();
     }
 
+    /// Confirm, then delete the selected Perspective (16.5a: deletion is
+    /// permanent, so it gets the destructive-confirm idiom).
     fn delete_selected_perspective(&self) {
         let imp = self.imp();
-        let (Some(rt), Some(worker), Some(list)) =
-            (imp.runtime.get(), imp.worker.get(), imp.sidebar_list.get())
-        else {
+        let Some(list) = imp.sidebar_list.get() else {
             return;
         };
         let Some(row) = list.selected_row() else {
@@ -4525,15 +4554,36 @@ impl ConservatoryWindow {
         if index <= 0 {
             return; // Default is not deletable
         }
-        let id = imp
+        let Some((id, name)) = imp
             .perspectives
             .borrow()
             .get((index - 1) as usize)
-            .map(|p| p.id);
-        if let Some(id) = id {
-            let _ = rt.block_on(worker.delete_perspective(id));
-            self.refresh_perspectives();
-        }
+            .map(|p| (p.id, p.name.clone()))
+        else {
+            return;
+        };
+        let body =
+            format!("Delete the Perspective \u{201c}{name}\u{201d}? This cannot be undone.");
+        let dialog = adw::AlertDialog::new(Some("Delete Perspective?"), Some(&body));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("delete", "Delete");
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        let weak = self.downgrade();
+        dialog.connect_response(None, move |_, resp| {
+            if resp == "delete"
+                && let Some(win) = weak.upgrade()
+            {
+                let imp = win.imp();
+                let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
+                    return;
+                };
+                let _ = rt.block_on(worker.delete_perspective(id));
+                win.refresh_perspectives();
+            }
+        });
+        dialog.present(Some(self));
     }
 
     /// Reload the sidebar from storage: Default on top, then saved Perspectives.
@@ -4805,11 +4855,11 @@ impl ConservatoryWindow {
         dialog.present(Some(self));
     }
 
+    /// Confirm, then delete the selected playlist (16.5a: a curated static
+    /// playlist is not reconstructible, so it gets the destructive confirm).
     fn delete_selected_playlist(&self) {
         let imp = self.imp();
-        let (Some(rt), Some(worker), Some(list)) =
-            (imp.runtime.get(), imp.worker.get(), imp.playlist_list.get())
-        else {
+        let Some(list) = imp.playlist_list.get() else {
             return;
         };
         let Some(row) = list.selected_row() else {
@@ -4819,11 +4869,35 @@ impl ConservatoryWindow {
         if index < 0 {
             return;
         }
-        let id = imp.playlists.borrow().get(index as usize).map(|p| p.id);
-        if let Some(id) = id {
-            let _ = rt.block_on(worker.delete_playlist(id));
-            self.refresh_playlists();
-        }
+        let Some((id, name)) = imp
+            .playlists
+            .borrow()
+            .get(index as usize)
+            .map(|p| (p.id, p.name.clone()))
+        else {
+            return;
+        };
+        let body = format!("Delete the playlist \u{201c}{name}\u{201d}? This cannot be undone.");
+        let dialog = adw::AlertDialog::new(Some("Delete Playlist?"), Some(&body));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("delete", "Delete");
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        let weak = self.downgrade();
+        dialog.connect_response(None, move |_, resp| {
+            if resp == "delete"
+                && let Some(win) = weak.upgrade()
+            {
+                let imp = win.imp();
+                let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
+                    return;
+                };
+                let _ = rt.block_on(worker.delete_playlist(id));
+                win.refresh_playlists();
+            }
+        });
+        dialog.present(Some(self));
     }
 
     /// Repopulate the track menu's "Add to Playlist" submenu from the static

@@ -945,6 +945,69 @@ A runtime toggle over which media tabs a launch shows, distinct from the compile
 
 - [x] The music-only header controls (Edit, Embed tags, Properties inspector) are stored in the imp struct and hidden on the Podcasts / Audiobooks tabs, shown only on Music, via `view_stack.connect_visible_child_notify`. Universal controls (playback, prefs, output, menu, switcher) always stay. Only compiled when a second tab exists (a music-only build never switches).
 
+## Phase 16.5 — UX completeness pass
+
+From the 2026-07-01 per-tab UI/UX audit (three parallel sweeps over Music, Podcasts + playback surfaces, and Audiobooks + app chrome at v0.1.8), distinct from the competitor deep-dive that produced Phases 16 to 19: this one audited the shipped GUI section by section. Roughly 45 findings, clustered as safety/feedback gaps, cross-tab parity gaps (audiobooks lag music's Phase 16 polish), the podcast subscription lifecycle (entirely CLI-only), and episode/book power UX. Nine shippable sub-phases; zero migrations and zero new dependencies (every candidate turned out to have plumbing already: `shows.last_fetched` since 0006, the `delete_show` cascade, `retention::apply` for delete-download).
+
+Deferred out of this phase, recorded here so they are not lost: a book list-view alternative to the shelf grid, a Continue Listening row, audiobook bookmarks, a download-manager pane with retry and storage usage, and the `Ctrl+S` save-Perspective binding.
+
+### Phase 16.5a — Destructive confirms + bulk-edit error surfacing ✅ (v0.1.9)
+
+- [x] Delete Perspective and Delete Playlist confirm first, naming the target, with the destructive-appearance response and Cancel as the default (the Remove-from-Library idiom).
+- [x] Bulk-edit parse failures surface in a dialog (they went to stderr while the dialog closed silently); the editor re-presents pre-filled with the entered values and tick states, so a fix loses nothing. The collection loop is a pure `collect_assignments` with unit tests.
+- [x] The mixed-values checkbox tooltip spells out the overwrite semantics.
+
+### Phase 16.5b — Feedback + discoverability micro-fixes (v0.1.10)
+
+- [ ] Filter-bar warnings become readable (tooltip with the actual parser warnings, not just the yellow tint); a grammar tooltip on the filter entry.
+- [ ] Empty-library StatusPage points at the CLI import; inspector marks itself read-only; an empty facet pane explains itself; the embed-tags tooltip says it writes into the files.
+- [ ] Sidebar rows get full-name tooltips; Edit/Embed header buttons follow the selection (insensitive when nothing is selected).
+- [ ] An About dialog (GNOME convention); the "takes effect on the next launch" label sweep; streaming-vs-buffering Now-bar tooltips; the Now Playing drawer titles itself honestly when idle. Keymap doc: the sidebar Save button is the wired save path (`Ctrl+S` stays deferred).
+
+### Phase 16.5c — Podcast subscription lifecycle in the GUI (v0.1.11)
+
+- [ ] Subscribe from the app: a sidebar footer button opens a URL dialog; fetching shows a spinner, failure keeps the URL and explains, success toasts and selects the show. (Introduces the GUI async-network idiom and a `win.toast` action tab modules can fire.)
+- [ ] Unsubscribe from the per-show settings dialog, behind a destructive confirm (downloads stay on disk).
+- [ ] OPML import and export via file dialogs; `Ctrl+Shift+O` wired at last.
+- [ ] Refresh: a footer refresh-all button, `R` for the focused show, a summary toast, and a last-refreshed caption from the existing `shows.last_fetched`.
+- [ ] A no-subscriptions StatusPage with a Subscribe call-to-action; empty buckets get one-liners.
+
+### Phase 16.5d — Episode-list power (v0.1.12)
+
+- [ ] Multi-select episodes; the triage verbs (played / star / archive / queue) act on the whole selection with batch toasts.
+- [ ] Sortable episode columns over a pure core comparator (play-from must resolve through the sort model, the leaf precedent).
+- [ ] Unplayed-count badges on the sidebar buckets and shows (new core read, integration-tested).
+- [ ] `Q` (queue) and `I` (mark unplayed) wired; a "Show settings…" context verb; an in-progress episode shows its resume point ("43:10 · 29%").
+
+### Phase 16.5e — Downloads, scoped (v0.1.13)
+
+- [ ] A Download context verb for undownloaded episodes; per-row progress via a targeted-repaint property (the click-to-rate idiom); completion and failure toast.
+- [ ] A Delete Download verb behind a confirm, riding `retention::apply` (file removed, `audio_path` cleared).
+- [ ] The manager pane, retry surface, and storage dashboard stay deferred.
+
+### Phase 16.5f — Spoken-word playback surfaces (v0.1.14)
+
+- [ ] Skip-back/skip-forward come to both settings dialogs (the schema fields exist since Phase 6); the Now-bar gains −15/+30 quick-seek buttons for episodes and audiobooks (pure resolve + clamp helpers in core).
+- [ ] Show notes keep their links: the ingest sanitizer's allowlist widens (`a href`, bold, italics) and a pure notes-to-Pango-markup renderer makes them clickable; old rows heal on their next feed refresh.
+- [ ] The Sound dialog says which controls apply to music and which to spoken word; the Now-bar settings gear appears for audiobooks too, opening the playing book's settings.
+
+### Phase 16.5g — Audiobook shelf completeness (v0.1.15)
+
+- [ ] Tiles show listening progress (a thin bar) and a finished badge; the empty shelf gets a StatusPage with the CLI import hint; a sort picker (in-progress first stays the default).
+- [ ] The book bulk editor gains the Phase 16c checkbox + mixed-values treatment (shared pure commons helper promoted to core), and its parse failures use the 16.5a error/retry dialog instead of stderr.
+- [ ] Book edits and re-shelves toast like music edits do.
+
+### Phase 16.5h — Audiobook verbs (v0.1.16)
+
+- [ ] Core grows the kind-generic queue insert (`insert_queue_books_at`) and `delete_book` (cascades verified against migrations 0011/0013), both worker-routed and integration-tested.
+- [ ] The book context menu reaches music parity: Play Next, Reveal in Files, Mark Finished/Unfinished (also a detail-pane button), and Remove from Library behind the destructive confirm (files stay on disk).
+
+### Phase 16.5i — App chrome (v0.1.17)
+
+- [ ] The window title reflects the playing item (and reverts when idle), via a pure title formatter.
+- [ ] The status bar reports per-tab (episode and book counts, not just tracks), swapped with the tab like the header buttons.
+- [ ] A narrow-width pass over the status bar under the 550sp breakpoint.
+
 ## Phases 17–19 — planned (from the UI/UX deep-dive)
 
 - **Phase 17 — Player table-stakes:** shuffle and repeat modes (absent from the engine and UI today), context-aware ReplayGain (album gain for whole-album listening, track gain when shuffling), and the queue-vs-playlist verb clarity the research calls out.

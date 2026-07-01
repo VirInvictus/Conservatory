@@ -95,7 +95,7 @@ const MIGRATIONS: &[Migration] = &[
 ];
 
 /// The `user_version` a fully-migrated database reaches.
-pub const CURRENT_VERSION: i32 = 16;
+pub const CURRENT_VERSION: i32 = 17;
 
 /// Apply any unapplied migrations. Idempotent: running this on a
 /// fully-migrated database is a no-op.

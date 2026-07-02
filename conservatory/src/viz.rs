@@ -18,8 +18,8 @@
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use conservatory_core::player::spectrum::{SpectrumAnalyzer, FFT_SIZE};
 use conservatory_core::player::AUDIO_CLIENT_NAME;
+use conservatory_core::player::spectrum::{FFT_SIZE, SpectrumAnalyzer};
 
 use pipewire as pw;
 use pw::spa;

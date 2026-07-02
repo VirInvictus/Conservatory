@@ -300,58 +300,78 @@ mod tests {
 
     #[test]
     fn path_affecting_matrix() {
-        assert!(BookEdit {
-            title: Some("x".into()),
-            ..Default::default()
-        }
-        .is_path_affecting());
-        assert!(BookEdit {
-            year: Some(2011),
-            ..Default::default()
-        }
-        .is_path_affecting());
-        assert!(BookEdit {
-            series: Some(SeriesEdit::Clear),
-            ..Default::default()
-        }
-        .is_path_affecting());
-        assert!(BookEdit {
-            series_index: Some(2.0),
-            ..Default::default()
-        }
-        .is_path_affecting());
-        assert!(BookEdit {
-            authors: Some(vec!["A".into()]),
-            ..Default::default()
-        }
-        .is_path_affecting());
+        assert!(
+            BookEdit {
+                title: Some("x".into()),
+                ..Default::default()
+            }
+            .is_path_affecting()
+        );
+        assert!(
+            BookEdit {
+                year: Some(2011),
+                ..Default::default()
+            }
+            .is_path_affecting()
+        );
+        assert!(
+            BookEdit {
+                series: Some(SeriesEdit::Clear),
+                ..Default::default()
+            }
+            .is_path_affecting()
+        );
+        assert!(
+            BookEdit {
+                series_index: Some(2.0),
+                ..Default::default()
+            }
+            .is_path_affecting()
+        );
+        assert!(
+            BookEdit {
+                authors: Some(vec!["A".into()]),
+                ..Default::default()
+            }
+            .is_path_affecting()
+        );
         // Not path-affecting (never reach the tree):
-        assert!(!BookEdit {
-            narrators: Some(vec!["N".into()]),
-            ..Default::default()
-        }
-        .is_path_affecting());
-        assert!(!BookEdit {
-            shelf_genre: Some("SF".into()),
-            ..Default::default()
-        }
-        .is_path_affecting());
-        assert!(!BookEdit {
-            rating: Some(5),
-            ..Default::default()
-        }
-        .is_path_affecting());
-        assert!(!BookEdit {
-            starred: Some(true),
-            ..Default::default()
-        }
-        .is_path_affecting());
+        assert!(
+            !BookEdit {
+                narrators: Some(vec!["N".into()]),
+                ..Default::default()
+            }
+            .is_path_affecting()
+        );
+        assert!(
+            !BookEdit {
+                shelf_genre: Some("SF".into()),
+                ..Default::default()
+            }
+            .is_path_affecting()
+        );
+        assert!(
+            !BookEdit {
+                rating: Some(5),
+                ..Default::default()
+            }
+            .is_path_affecting()
+        );
+        assert!(
+            !BookEdit {
+                starred: Some(true),
+                ..Default::default()
+            }
+            .is_path_affecting()
+        );
         assert!(BookEdit::default().is_empty());
-        assert!(!BookEdit {
-            rating: Some(5),
-            ..Default::default()
-        }
-        .is_empty());
+        assert!(
+            !BookEdit {
+                rating: Some(5),
+                ..Default::default()
+            }
+            .is_empty()
+        );
     }
 
     #[test]
@@ -411,8 +431,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(reauthored
-            .to_string_lossy()
-            .starts_with("Audiobooks/Gaiman, Neil/"));
+        assert!(
+            reauthored
+                .to_string_lossy()
+                .starts_with("Audiobooks/Gaiman, Neil/")
+        );
     }
 }

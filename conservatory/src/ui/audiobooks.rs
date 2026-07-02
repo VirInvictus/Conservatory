@@ -21,16 +21,16 @@ use gtk4 as gtk;
 use libadwaita as adw;
 
 use conservatory_audiobooks::edit::{
-    book_edit_commons, parse_opt_index, parse_opt_rating, parse_opt_year, split_people, BookEdit,
-    SeriesEdit,
+    BookEdit, SeriesEdit, book_edit_commons, parse_opt_index, parse_opt_rating, parse_opt_year,
+    split_people,
 };
 use conservatory_audiobooks::{apply_book_edit, apply_book_reorg, plan_book_reorg};
+use conservatory_core::PlayerHandle;
 use conservatory_core::db::{
-    book_chapters, get_book, get_book_playback, list_book_rows, sort_shelf_by, BookListRow,
-    BookPlayback, ReadPool, ShelfSort, WorkerHandle,
+    BookListRow, BookPlayback, ReadPool, ShelfSort, WorkerHandle, book_chapters, get_book,
+    get_book_playback, list_book_rows, sort_shelf_by,
 };
 use conservatory_core::mover::MoveMode;
-use conservatory_core::PlayerHandle;
 
 use crate::book_query::filter_books;
 use crate::query::PoolResolver;
@@ -1140,47 +1140,6 @@ fn build_book_edit(
     (edit, errors)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn field(key: &str, ticked: bool, value: &str) -> (String, bool, String) {
-        (key.to_string(), ticked, value.to_string())
-    }
-
-    #[test]
-    fn build_book_edit_honours_ticks_and_collects_errors() {
-        // Unticked fields never write, even with text in them.
-        let (edit, errors) = build_book_edit(
-            &[
-                field("title", false, "ignored"),
-                field("year", true, "2010"),
-            ],
-            false,
-        );
-        assert!(errors.is_empty());
-        assert_eq!(edit.title, None);
-        assert_eq!(edit.year, Some(2010));
-
-        // Bad numerics report; the valid field still parses (the caller
-        // rejects the whole set on any error).
-        let (edit, errors) = build_book_edit(
-            &[
-                field("year", true, "abc"),
-                field("rating", true, "9"),
-                field("title", true, "kept"),
-            ],
-            false,
-        );
-        assert_eq!(errors.len(), 2);
-        assert_eq!(edit.title.as_deref(), Some("kept"));
-
-        // Standalone clears the series regardless of the entry.
-        let (edit, _) = build_book_edit(&[field("series", true, "Stormlight")], true);
-        assert_eq!(edit.series, Some(SeriesEdit::Clear));
-    }
-}
-
 /// The shelf cover-tile factory: a framed cover above the title and author. The
 /// accent class is (re)set on bind so recycled tiles always match their book.
 fn tile_factory(inner: Rc<Inner>) -> gtk::SignalListItemFactory {
@@ -1531,5 +1490,46 @@ fn chapter_duration(duration: Option<f64>) -> String {
 fn clear_list(list: &gtk::ListBox) {
     while let Some(child) = list.first_child() {
         list.remove(&child);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(key: &str, ticked: bool, value: &str) -> (String, bool, String) {
+        (key.to_string(), ticked, value.to_string())
+    }
+
+    #[test]
+    fn build_book_edit_honours_ticks_and_collects_errors() {
+        // Unticked fields never write, even with text in them.
+        let (edit, errors) = build_book_edit(
+            &[
+                field("title", false, "ignored"),
+                field("year", true, "2010"),
+            ],
+            false,
+        );
+        assert!(errors.is_empty());
+        assert_eq!(edit.title, None);
+        assert_eq!(edit.year, Some(2010));
+
+        // Bad numerics report; the valid field still parses (the caller
+        // rejects the whole set on any error).
+        let (edit, errors) = build_book_edit(
+            &[
+                field("year", true, "abc"),
+                field("rating", true, "9"),
+                field("title", true, "kept"),
+            ],
+            false,
+        );
+        assert_eq!(errors.len(), 2);
+        assert_eq!(edit.title.as_deref(), Some("kept"));
+
+        // Standalone clears the series regardless of the entry.
+        let (edit, _) = build_book_edit(&[field("series", true, "Stormlight")], true);
+        assert_eq!(edit.series, Some(SeriesEdit::Clear));
     }
 }

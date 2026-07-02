@@ -18,10 +18,10 @@
 //! Speed is **not** a stage: mpv auto-inserts `scaletempo2` on `--speed`
 //! (`audio-pitch-correction`), so it stays a flat property on the host.
 
-use crate::db::models::{DspState, EqState, EQ_CENTRES};
+use crate::db::models::{DspState, EQ_CENTRES, EqState};
 use crate::player::dsp::{comp_stage, leveler_stage, limiter_stage};
 use crate::player::profile::MusicProfile;
-use crate::player::spoken::{smart_speed_stage, voice_boost_stages, SmartSpeedLevel};
+use crate::player::spoken::{SmartSpeedLevel, smart_speed_stage, voice_boost_stages};
 
 /// Build the mpv `af` chain string for `profile` + the active `eq` + the `dsp`
 /// modules + the Smart Speed `level`. Returns `""` when no stages are active
@@ -103,7 +103,7 @@ pub(crate) fn fmt_db(db: f64) -> String {
 mod tests {
     use super::*;
     use crate::db::models::{
-        CompSettings, LevelerSettings, LimiterSettings, ModuleState, EQ_BAND_COUNT,
+        CompSettings, EQ_BAND_COUNT, LevelerSettings, LimiterSettings, ModuleState,
     };
 
     fn profile(replaygain_db: Option<f64>) -> MusicProfile {
@@ -128,26 +128,49 @@ mod tests {
     #[test]
     fn replaygain_head_stage_is_emitted() {
         assert_eq!(
-            build_af_chain(&profile(Some(-6.0)), &flat(), &off(), SmartSpeedLevel::default()),
+            build_af_chain(
+                &profile(Some(-6.0)),
+                &flat(),
+                &off(),
+                SmartSpeedLevel::default()
+            ),
             "@rg:lavfi=[volume=-6dB]"
         );
         assert_eq!(
-            build_af_chain(&profile(Some(-6.5)), &flat(), &off(), SmartSpeedLevel::default()),
+            build_af_chain(
+                &profile(Some(-6.5)),
+                &flat(),
+                &off(),
+                SmartSpeedLevel::default()
+            ),
             "@rg:lavfi=[volume=-6.5dB]"
         );
     }
 
     #[test]
     fn no_replaygain_and_flat_eq_is_an_empty_chain() {
-        assert_eq!(build_af_chain(&profile(None), &flat(), &off(), SmartSpeedLevel::default()), "");
+        assert_eq!(
+            build_af_chain(&profile(None), &flat(), &off(), SmartSpeedLevel::default()),
+            ""
+        );
     }
 
     #[test]
     fn different_gains_produce_different_chains() {
         // The per-track recompute that fixes mpv #8267: each item's head volume
         // is its own, so two tracks with different gains never share a chain.
-        let a = build_af_chain(&profile(Some(-6.0)), &flat(), &off(), SmartSpeedLevel::default());
-        let b = build_af_chain(&profile(Some(-3.0)), &flat(), &off(), SmartSpeedLevel::default());
+        let a = build_af_chain(
+            &profile(Some(-6.0)),
+            &flat(),
+            &off(),
+            SmartSpeedLevel::default(),
+        );
+        let b = build_af_chain(
+            &profile(Some(-3.0)),
+            &flat(),
+            &off(),
+            SmartSpeedLevel::default(),
+        );
         assert_ne!(a, b);
         assert_eq!(b, "@rg:lavfi=[volume=-3dB]");
     }
@@ -156,7 +179,12 @@ mod tests {
     fn float_noise_is_rounded_out() {
         // -6.9 + 0.1 style arithmetic should not leak a long decimal.
         assert_eq!(
-            build_af_chain(&profile(Some(-6.9 + 0.1)), &flat(), &off(), SmartSpeedLevel::default()),
+            build_af_chain(
+                &profile(Some(-6.9 + 0.1)),
+                &flat(),
+                &off(),
+                SmartSpeedLevel::default()
+            ),
             "@rg:lavfi=[volume=-6.8dB]"
         );
     }
@@ -195,7 +223,12 @@ mod tests {
     fn rg_and_eq_compose_in_order() {
         let mut eq = EqState::flat();
         eq.bands[4] = 3.0;
-        let chain = build_af_chain(&profile(Some(-6.0)), &eq, &off(), SmartSpeedLevel::default());
+        let chain = build_af_chain(
+            &profile(Some(-6.0)),
+            &eq,
+            &off(),
+            SmartSpeedLevel::default(),
+        );
         // @rg precedes @eq (signal-flow order).
         let rg = chain.find("@rg").unwrap();
         let e = chain.find("@eq").unwrap();
@@ -238,7 +271,12 @@ mod tests {
 
     #[test]
     fn disabled_dsp_adds_nothing_to_the_chain() {
-        let chain = build_af_chain(&profile(Some(-6.0)), &flat(), &off(), SmartSpeedLevel::default());
+        let chain = build_af_chain(
+            &profile(Some(-6.0)),
+            &flat(),
+            &off(),
+            SmartSpeedLevel::default(),
+        );
         assert_eq!(chain, "@rg:lavfi=[volume=-6dB]");
     }
 
@@ -263,7 +301,12 @@ mod tests {
     fn music_profile_emits_no_spoken_word_stages() {
         // The no-regression guard: a music profile leaves the flags false, so the
         // chain is exactly the 5.5 chain (no @ss / @vb).
-        let chain = build_af_chain(&profile(Some(-6.0)), &flat(), &off(), SmartSpeedLevel::default());
+        let chain = build_af_chain(
+            &profile(Some(-6.0)),
+            &flat(),
+            &off(),
+            SmartSpeedLevel::default(),
+        );
         assert!(!chain.contains("@ss"), "{chain}");
         assert!(!chain.contains("@vb"), "{chain}");
         assert_eq!(chain, "@rg:lavfi=[volume=-6dB]");

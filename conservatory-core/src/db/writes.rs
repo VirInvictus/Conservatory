@@ -4,12 +4,12 @@
 //! update/delete land with the editor and mover in later phases. Reads never
 //! come through here: they use the read pool (`reads.rs`).
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
-    Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter, Episode,
-    EqState, Playback, PlaybackCursor, PlayedState, PlaylistKind, PlaylistOrder, Show,
-    ShowSettings, Track, VerifyResultRow, EQ_BAND_COUNT,
+    Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
+    EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState, PlaylistKind,
+    PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;

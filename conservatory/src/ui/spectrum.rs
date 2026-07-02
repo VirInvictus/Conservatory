@@ -22,7 +22,7 @@ use gtk4 as gtk;
 
 use conservatory_core::player::spectrum::SpectrumSmoother;
 
-use crate::viz::{SpectrumTap, N_BANDS};
+use crate::viz::{N_BANDS, SpectrumTap};
 
 /// The visualizer's natural height; it expands past this via `vexpand` to fill
 /// the full-bleed drawer, but keeps a sane floor.

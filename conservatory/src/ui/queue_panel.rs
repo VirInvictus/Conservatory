@@ -16,7 +16,7 @@ use gtk4 as gtk;
 
 use conservatory_core::db::MediaKind;
 
-use crate::playqueue::{drop_target_position, DropBias};
+use crate::playqueue::{DropBias, drop_target_position};
 use crate::ui::objects::QueueRow;
 use crate::ui::track_list::RowContextFn;
 

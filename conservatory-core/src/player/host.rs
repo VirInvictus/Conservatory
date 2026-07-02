@@ -208,8 +208,12 @@ impl MpvHost {
         let Some(profile) = self.current_profile else {
             return Ok(());
         };
-        let af =
-            crate::player::chain::build_af_chain(&profile, &self.eq, &self.dsp, self.smart_speed_level);
+        let af = crate::player::chain::build_af_chain(
+            &profile,
+            &self.eq,
+            &self.dsp,
+            self.smart_speed_level,
+        );
         self.mpv
             .set_property("af", af.as_str())
             .map_err(|e| Error::Player(format!("rebuilding af chain: {e}")))
@@ -243,8 +247,12 @@ impl MpvHost {
         // track — the fix for mpv #8267, where the built-in `--replaygain` (now
         // dropped) sat after the chain and inherited the first track's gain. An
         // empty string clears any prior chain.
-        let af =
-            crate::player::chain::build_af_chain(profile, &self.eq, &self.dsp, self.smart_speed_level);
+        let af = crate::player::chain::build_af_chain(
+            profile,
+            &self.eq,
+            &self.dsp,
+            self.smart_speed_level,
+        );
         self.mpv
             .set_property("af", af.as_str())
             .map_err(|e| Error::Player(format!("setting af chain: {e}")))?;

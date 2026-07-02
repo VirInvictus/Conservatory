@@ -103,11 +103,22 @@ pub fn window_title(playing: Option<(&str, &str)>) -> String {
 }
 
 /// The Podcasts tab's right-hand footer line (16.5i): the triage totals. Pure.
+/// The music-only build compiles no tab switcher (its caller is cfg-gated), so
+/// it allows the dead code there; the tests cover it in every build.
+#[cfg_attr(
+    not(any(feature = "podcasts", feature = "audiobooks")),
+    allow(dead_code)
+)]
 pub fn podcast_status(inbox: i64, queue: i64, played: i64) -> String {
     format!("{inbox} in Inbox · {queue} queued · {played} played")
 }
 
-/// The Audiobooks tab's right-hand footer line (16.5i). Pure.
+/// The Audiobooks tab's right-hand footer line (16.5i; the music-only note on
+/// [`podcast_status`] applies). Pure.
+#[cfg_attr(
+    not(any(feature = "podcasts", feature = "audiobooks")),
+    allow(dead_code)
+)]
 pub fn book_status(total: usize, finished: usize) -> String {
     let noun = if total == 1 { "book" } else { "books" };
     if finished > 0 {
@@ -122,11 +133,7 @@ pub fn book_status(total: usize, finished: usize) -> String {
 /// episode / book) and its id matches.
 pub fn play_state(row_id: i64, playing_id: Option<i64>, is_track: bool, paused: bool) -> u8 {
     if is_track && playing_id == Some(row_id) {
-        if paused {
-            2
-        } else {
-            1
-        }
+        if paused { 2 } else { 1 }
     } else {
         0
     }

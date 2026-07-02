@@ -62,10 +62,11 @@ impl SmartSpeedLevel {
 /// `silenceremove` changes stream duration on the fly, so the timeline is
 /// non-linear: the time-saved accounting (6c-ii) and the seek math account for it.
 ///
-/// The gate comes from `level`. The original `-40dB / 1s` was measured (silenceremove
-/// + silencedetect over real podcasts) to remove *nothing*: mastered speech "silence"
-/// is room tone / breaths / music beds around -25 to -30 dB, not below -40 dB, and
-/// pauses are shorter than 1 s. The tiers here actually trigger on real speech.
+/// The gate comes from `level`. The original `-40dB / 1s` was measured (with
+/// silenceremove plus silencedetect over real podcasts) to remove *nothing*:
+/// mastered speech "silence" is room tone / breaths / music beds around -25 to
+/// -30 dB, not below -40 dB, and pauses are shorter than 1 s. The tiers here
+/// actually trigger on real speech.
 pub fn smart_speed_stage(enabled: bool, level: SmartSpeedLevel) -> Option<String> {
     enabled.then(|| {
         let (dur, threshold, silence) = level.gate();

@@ -7,14 +7,14 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, TimeZone, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPerson, BookPlayback, Chapter,
-    CompSettings, DspState, Episode, EqPreset, EqState, InboxPolicy, LevelerSettings,
-    LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState, Playlist,
-    PlaylistKind, PlaylistOrder, QueueItem, ResamplerQuality, Series, Show, ShowSettings, Tag,
-    Track, VerifyResultRow, EQ_BAND_COUNT,
+    CompSettings, DspState, EQ_BAND_COUNT, Episode, EqPreset, EqState, InboxPolicy,
+    LevelerSettings, LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState,
+    Playlist, PlaylistKind, PlaylistOrder, QueueItem, ResamplerQuality, Series, Show, ShowSettings,
+    Tag, Track, VerifyResultRow,
 };
 use crate::errors::Result;
 use crate::verify::VerifyVerdict;

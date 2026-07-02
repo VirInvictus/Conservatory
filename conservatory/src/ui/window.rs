@@ -1208,9 +1208,7 @@ impl ConservatoryWindow {
         lib_group.set_title("Library");
         // The dialog edits config.toml on disk; the running app keeps its
         // startup snapshot, so every config-backed setting is next-launch.
-        lib_group.set_description(Some(
-            "These settings take effect on the next launch.",
-        ));
+        lib_group.set_description(Some("These settings take effect on the next launch."));
 
         let root_row = adw::ActionRow::new();
         root_row.set_title("Library root");
@@ -2845,7 +2843,9 @@ impl ConservatoryWindow {
         let mut entries: Vec<(String, gtk::CheckButton, gtk::Entry)> = Vec::new();
         for (r, (key, label)) in fields.iter().enumerate() {
             let check = gtk::CheckButton::builder()
-                .tooltip_text("Write this field to every selected track (overwrites differing values)")
+                .tooltip_text(
+                    "Write this field to every selected track (overwrites differing values)",
+                )
                 .valign(gtk::Align::Center)
                 .build();
             let lbl = gtk::Label::builder().label(*label).xalign(1.0).build();
@@ -3753,11 +3753,9 @@ impl ConservatoryWindow {
         // on each switch (two cheap pool reads; the reads are core-owned).
         if is_music {
             self.refresh_status_aggregate();
-        } else if let (Some(stack), Some(label), Some(pool)) = (
-            imp.view_stack.get(),
-            imp.status_right.get(),
-            imp.pool.get(),
-        ) {
+        } else if let (Some(stack), Some(label), Some(pool)) =
+            (imp.view_stack.get(), imp.status_right.get(), imp.pool.get())
+        {
             let name = stack.visible_child_name().unwrap_or_default();
             let text = match (name.as_str(), pool.open()) {
                 ("podcasts", Ok(conn)) => conservatory_core::db::podcast_sidebar_counts(&conn)
@@ -3788,8 +3786,7 @@ impl ConservatoryWindow {
         // targets our own mpv output node, which exists only while audio flows, so
         // the visualizer reacts to Conservatory alone and never the microphone.
         if let Some(panel) = imp.now_playing.get() {
-            let playing =
-                snap.track_id.is_some() && !snap.paused && !snap.ended && !snap.buffering;
+            let playing = snap.track_id.is_some() && !snap.paused && !snap.ended && !snap.buffering;
             panel.set_playing(playing);
         }
 
@@ -4341,7 +4338,9 @@ impl ConservatoryWindow {
                 .get()
                 .and_then(|pool| pool.open().ok())
                 .and_then(|conn| {
-                    let ep = conservatory_core::db::get_episode(&conn, id).ok().flatten()?;
+                    let ep = conservatory_core::db::get_episode(&conn, id)
+                        .ok()
+                        .flatten()?;
                     conservatory_core::db::get_show_settings(&conn, ep.show_id)
                         .ok()
                         .flatten()
@@ -4452,9 +4451,7 @@ impl ConservatoryWindow {
         };
         let opening = !panel.is_open();
         panel.toggle();
-        if opening
-            && let Some(player) = imp.player.get()
-        {
+        if opening && let Some(player) = imp.player.get() {
             let snap = player.snapshot();
             // Mirror the Now-bar's ended guard (16.5b): opening the drawer
             // after the queue finished shows the idle page, not the last item
@@ -4842,8 +4839,7 @@ impl ConservatoryWindow {
         else {
             return;
         };
-        let body =
-            format!("Delete the Perspective \u{201c}{name}\u{201d}? This cannot be undone.");
+        let body = format!("Delete the Perspective \u{201c}{name}\u{201d}? This cannot be undone.");
         let dialog = adw::AlertDialog::new(Some("Delete Perspective?"), Some(&body));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("delete", "Delete");

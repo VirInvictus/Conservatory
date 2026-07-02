@@ -17,7 +17,7 @@ use gtk4 as gtk;
 
 use conservatory_core::db::MediaKind;
 use conservatory_core::player::SleepMode;
-use conservatory_core::{quick_seek_target, PlayerHandle, SleepStatus};
+use conservatory_core::{PlayerHandle, SleepStatus, quick_seek_target};
 
 use crate::ui::accent::AccentProvider;
 

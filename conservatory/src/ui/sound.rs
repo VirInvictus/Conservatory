@@ -8,7 +8,7 @@
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use conservatory_core::db::{EqPreset, EQ_BAND_COUNT};
+use conservatory_core::db::{EQ_BAND_COUNT, EqPreset};
 
 /// The "no named preset matches" label shown in the preset picker.
 pub const CUSTOM_LABEL: &str = "Custom";

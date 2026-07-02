@@ -362,8 +362,12 @@ impl WorkerHandle {
 
     /// Insert audiobooks into the queue at `at` (16.5h: the book Play Next).
     pub async fn insert_queue_books_at(&self, at: i64, book_ids: Vec<i64>) -> Result<()> {
-        self.dispatch(|reply| Command::InsertQueueBooksAt { at, book_ids, reply })
-            .await
+        self.dispatch(|reply| Command::InsertQueueBooksAt {
+            at,
+            book_ids,
+            reply,
+        })
+        .await
     }
 
     /// Remove a book from the library (16.5h). DB-only unlink; files stay.
@@ -1121,7 +1125,11 @@ fn handle(conn: &mut Connection, command: Command) {
         } => {
             let _ = reply.send(writes::insert_queue_tracks_at(conn, at, &track_ids));
         }
-        Command::InsertQueueBooksAt { at, book_ids, reply } => {
+        Command::InsertQueueBooksAt {
+            at,
+            book_ids,
+            reply,
+        } => {
             let _ = reply.send(writes::insert_queue_books_at(conn, at, &book_ids));
         }
         Command::DeleteBook { book_id, reply } => {

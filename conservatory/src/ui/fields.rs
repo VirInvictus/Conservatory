@@ -9,7 +9,7 @@
 use std::path::Path;
 
 use conservatory_core::db::{Album, Track};
-use conservatory_core::{format_size, parse_assignment, Assignment};
+use conservatory_core::{Assignment, format_size, parse_assignment};
 
 use crate::playqueue::fmt_secs;
 

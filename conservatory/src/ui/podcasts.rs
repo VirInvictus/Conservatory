@@ -593,11 +593,8 @@ impl Inner {
         *self.count_labels.borrow_mut() = count_labels;
         self.refresh_sidebar_counts();
 
-        self.view_stack.set_visible_child_name(if shows.is_empty() {
-            "empty"
-        } else {
-            "content"
-        });
+        self.view_stack
+            .set_visible_child_name(if shows.is_empty() { "empty" } else { "content" });
         if let Some(row) = list.row_at_index(index as i32) {
             list.select_row(Some(&row));
         }
@@ -761,9 +758,15 @@ impl Inner {
                             conservatory_podcasts::FetchError::Parse(format!("no show {id}"))
                         })?
                     };
-                    conservatory_podcasts::refresh_show(&worker, &pool, &fetcher, show, creds.as_ref())
-                        .await
-                        .map(|o| vec![o])
+                    conservatory_podcasts::refresh_show(
+                        &worker,
+                        &pool,
+                        &fetcher,
+                        show,
+                        creds.as_ref(),
+                    )
+                    .await
+                    .map(|o| vec![o])
                 }
                 None => conservatory_podcasts::refresh_all(&worker, &pool, &fetcher, creds).await,
             }
@@ -815,9 +818,9 @@ impl Inner {
             };
             let worker = inner.worker.clone();
             let pool = inner.pool.clone();
-            let handle = inner
-                .rt
-                .spawn(async move { conservatory_podcasts::import_opml(&worker, &pool, &body).await });
+            let handle = inner.rt.spawn(async move {
+                conservatory_podcasts::import_opml(&worker, &pool, &body).await
+            });
             let inner = inner.clone();
             glib::spawn_future_local(async move {
                 match handle.await {
@@ -1272,7 +1275,10 @@ pub fn build_podcasts_view(
         // Media verbs (16.5e): the opt-in download and its undo.
         let media = gio::Menu::new();
         media.append(Some("Download"), Some("episode.download"));
-        media.append(Some("Delete Download\u{2026}"), Some("episode.delete-download"));
+        media.append(
+            Some("Delete Download\u{2026}"),
+            Some("episode.delete-download"),
+        );
         menu.append_section(None, &media);
         let triage = gio::Menu::new();
         triage.append(Some("Mark Played / Unplayed"), Some("episode.played"));
@@ -1918,13 +1924,7 @@ mod tests {
         let now = DateTime::parse_from_rfc3339("2026-07-01T12:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let at = |s: &str| {
-            Some(
-                DateTime::parse_from_rfc3339(s)
-                    .unwrap()
-                    .with_timezone(&Utc),
-            )
-        };
+        let at = |s: &str| Some(DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc));
         assert_eq!(fmt_last_refreshed(now, None), "Never refreshed");
         assert_eq!(
             fmt_last_refreshed(now, at("2026-07-01T11:59:40Z")),

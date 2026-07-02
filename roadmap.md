@@ -1002,11 +1002,13 @@ Deferred out of this phase, recorded here so they are not lost: a book list-view
 - [x] Core grows the kind-generic queue insert (a private `insert_queue_items_at` re-expressing `insert_queue_tracks_at` and backing the new `insert_queue_books_at`) and `delete_book` (the `delete_track` twin; cascades verified against migrations 0011/0013), both worker-routed and integration-tested (`queue_insert_books_at_shifts_positions`, `delete_book_cascades_queue_playback_and_fts`).
 - [x] The book context menu reaches music parity: Play Next (engine/DB lock-step, ids derived from the built items), Reveal in Files (`xdg-open` on `books.folder_path`), Mark Finished/Unfinished (batch; also a detail-pane button whose label follows the shown book; unfinishing preserves resume + overrides), and Remove from Library behind the destructive confirm (files stay on disk; the queue drawer re-reads).
 
-### Phase 16.5i — App chrome (v0.1.17)
+### Phase 16.5i — App chrome ✅ (v0.1.17)
 
-- [ ] The window title reflects the playing item (and reverts when idle), via a pure title formatter.
-- [ ] The status bar reports per-tab (episode and book counts, not just tracks), swapped with the tab like the header buttons.
-- [ ] A narrow-width pass over the status bar under the 550sp breakpoint.
+- [x] The window title reflects the playing item (any kind; "Title - Artist - Conservatory") and reverts when idle, via a pure unit-tested `window_title` set from `refresh_now_bar`'s item-change and clear branches.
+- [x] The status bar reports per-tab: Music keeps the live aggregate; Podcasts shows the triage totals (pure `podcast_status` over `podcast_sidebar_counts`) and Audiobooks the shelf summary (pure `book_status`), recomputed in `update_header_for_view` on each switch.
+- [x] The narrow-width pass: the right status label ellipsizes like the left, so neither line can force the window wide under the 550sp breakpoint.
+
+**Phase 16.5 complete.** All nine sub-phases shipped, v0.1.9 through v0.1.17: zero migrations, zero new dependencies, roughly 45 audit findings closed or explicitly deferred (the deferred list is at the top of this phase).
 
 ## Phases 17–19 — planned (from the UI/UX deep-dive)
 

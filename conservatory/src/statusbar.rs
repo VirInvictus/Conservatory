@@ -90,12 +90,43 @@ pub fn tech_line(
     parts.join(" · ")
 }
 
+/// The window title (16.5i): the playing item leads, the app name trails (the
+/// player convention); idle is just the app name. Pure.
+pub fn window_title(playing: Option<(&str, &str)>) -> String {
+    match playing {
+        Some((title, artist)) if !artist.trim().is_empty() => {
+            format!("{title} - {artist} - Conservatory")
+        }
+        Some((title, _)) => format!("{title} - Conservatory"),
+        None => "Conservatory".to_string(),
+    }
+}
+
+/// The Podcasts tab's right-hand footer line (16.5i): the triage totals. Pure.
+pub fn podcast_status(inbox: i64, queue: i64, played: i64) -> String {
+    format!("{inbox} in Inbox · {queue} queued · {played} played")
+}
+
+/// The Audiobooks tab's right-hand footer line (16.5i). Pure.
+pub fn book_status(total: usize, finished: usize) -> String {
+    let noun = if total == 1 { "book" } else { "books" };
+    if finished > 0 {
+        format!("{total} {noun} · {finished} finished")
+    } else {
+        format!("{total} {noun}")
+    }
+}
+
 /// The play-status state for a leaf row: `0` none, `1` playing, `2` paused. A
 /// row is "the current track" only when the playing item is a track (not an
 /// episode / book) and its id matches.
 pub fn play_state(row_id: i64, playing_id: Option<i64>, is_track: bool, paused: bool) -> u8 {
     if is_track && playing_id == Some(row_id) {
-        if paused { 2 } else { 1 }
+        if paused {
+            2
+        } else {
+            1
+        }
     } else {
         0
     }
@@ -203,6 +234,28 @@ mod tests {
         assert_eq!(play_glyph(1), Some("media-playback-start-symbolic"));
         assert_eq!(play_glyph(2), Some("media-playback-pause-symbolic"));
         assert_eq!(play_glyph(0), None);
+    }
+
+    #[test]
+    fn window_title_reflects_playing_item() {
+        assert_eq!(window_title(None), "Conservatory");
+        assert_eq!(
+            window_title(Some(("Xtal", "Aphex Twin"))),
+            "Xtal - Aphex Twin - Conservatory"
+        );
+        // No artist (some episodes / books): no dangling separator.
+        assert_eq!(window_title(Some(("Ep 12", ""))), "Ep 12 - Conservatory");
+        assert_eq!(window_title(Some(("Ep 12", "  "))), "Ep 12 - Conservatory");
+    }
+
+    #[test]
+    fn per_tab_status_lines() {
+        assert_eq!(
+            podcast_status(5, 2, 40),
+            "5 in Inbox · 2 queued · 40 played"
+        );
+        assert_eq!(book_status(1, 0), "1 book");
+        assert_eq!(book_status(12, 3), "12 books · 3 finished");
     }
 
     #[test]

@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.1.17
+
+The chrome learns what tab you are on and what is playing. This closes Phase 16.5, the UX completeness pass.
+
+- **The window title follows playback.** Playing anything, the title bar reads "Title - Artist - Conservatory" (a track, an episode's show, or a book's author), so the task switcher and window list finally say what is on. Idle reverts to plain "Conservatory".
+- **The status bar reports per tab.** Music keeps its live count-and-playtime aggregate; the Podcasts tab now shows the triage totals ("5 in Inbox · 2 queued · 40 played") and the Audiobooks tab its shelf summary ("12 books · 3 finished"), each refreshed when you switch to it.
+- The status bar's right side now ellipsizes like its left, so narrow windows never get forced wider by a long readout.
+
 ## v0.1.16
 
 The book right-click menu reaches parity with the track menu.

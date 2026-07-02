@@ -575,8 +575,11 @@ impl ConservatoryWindow {
             .margin_start(12)
             .css_classes(["caption", "dim-label", "tech"])
             .build();
+        // Ellipsized like the left side (16.5i): under the 550sp breakpoint the
+        // two lines share one row, so neither may force the window wider.
         let status_right = gtk::Label::builder()
             .xalign(1.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
             .margin_end(12)
             .css_classes(["caption", "dim-label"])
             .build();
@@ -3745,6 +3748,31 @@ impl ConservatoryWindow {
         if let Some(b) = imp.header_props_btn.get() {
             b.set_visible(is_music);
         }
+        // The status bar's right side follows the tab (16.5i): Music keeps its
+        // live view aggregate; the other tabs report coarse counts, recomputed
+        // on each switch (two cheap pool reads; the reads are core-owned).
+        if is_music {
+            self.refresh_status_aggregate();
+        } else if let (Some(stack), Some(label), Some(pool)) = (
+            imp.view_stack.get(),
+            imp.status_right.get(),
+            imp.pool.get(),
+        ) {
+            let name = stack.visible_child_name().unwrap_or_default();
+            let text = match (name.as_str(), pool.open()) {
+                ("podcasts", Ok(conn)) => conservatory_core::db::podcast_sidebar_counts(&conn)
+                    .map(|c| crate::statusbar::podcast_status(c.inbox, c.queue, c.played))
+                    .unwrap_or_default(),
+                ("audiobooks", Ok(conn)) => conservatory_core::db::list_book_rows(&conn)
+                    .map(|rows| {
+                        let finished = rows.iter().filter(|r| r.finished).count();
+                        crate::statusbar::book_status(rows.len(), finished)
+                    })
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
+            label.set_text(&text);
+        }
     }
 
     /// Refresh the Now-bar from the player snapshot (the 250 ms poll). Title and
@@ -3784,6 +3812,8 @@ impl ConservatoryWindow {
                 if let Some(label) = imp.status_left.get() {
                     label.set_text("");
                 }
+                // The title follows playback (16.5i); idle reverts to the app.
+                self.set_title(Some(&crate::statusbar::window_title(None)));
             }
             return;
         }
@@ -3833,6 +3863,10 @@ impl ConservatoryWindow {
                     &artist,
                     album.as_deref(),
                 ));
+                // The window title reflects the playing item (16.5i).
+                self.set_title(Some(&crate::statusbar::window_title(Some((
+                    &title, &artist,
+                )))));
                 let abs = match (imp.library_root.get(), cover) {
                     (Some(root), Some(cp)) => Some(root.join(cp)),
                     _ => None,

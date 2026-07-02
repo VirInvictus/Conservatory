@@ -108,11 +108,24 @@ pub fn build_audiobooks_view(
         let menu = gtk::gio::Menu::new();
         let top = gtk::gio::Menu::new();
         top.append(Some("Play"), Some("book.play"));
+        top.append(Some("Play Next"), Some("book.play-next"));
         top.append(Some("Add to Queue"), Some("book.queue"));
         menu.append_section(None, &top);
         let edit = gtk::gio::Menu::new();
         edit.append(Some("Edit\u{2026}"), Some("book.edit"));
+        edit.append(
+            Some("Mark Finished / Unfinished"),
+            Some("book.toggle-finished"),
+        );
         menu.append_section(None, &edit);
+        // Music-parity verbs (16.5h): the same bottom sections the track
+        // menu carries.
+        let files = gtk::gio::Menu::new();
+        files.append(Some("Reveal in Files"), Some("book.reveal"));
+        menu.append_section(None, &files);
+        let remove = gtk::gio::Menu::new();
+        remove.append(Some("Remove from Library\u{2026}"), Some("book.remove"));
+        menu.append_section(None, &remove);
 
         let popover = gtk::PopoverMenu::from_model(Some(&menu));
         popover.set_parent(&grid);
@@ -150,7 +163,39 @@ pub fn build_audiobooks_view(
             });
         }
         group.add_action(&edit_action);
+        // The 16.5h verbs: Play Next / Mark Finished / Reveal / Remove.
+        let play_next = gtk::gio::SimpleAction::new("play-next", None);
+        {
+            let inner = inner.clone();
+            play_next.connect_activate(move |_, _| inner.play_next_selected());
+        }
+        group.add_action(&play_next);
+        let toggle_finished = gtk::gio::SimpleAction::new("toggle-finished", None);
+        {
+            let inner = inner.clone();
+            toggle_finished.connect_activate(move |_, _| inner.toggle_finished_selected());
+        }
+        group.add_action(&toggle_finished);
+        let reveal = gtk::gio::SimpleAction::new("reveal", None);
+        {
+            let inner = inner.clone();
+            reveal.connect_activate(move |_, _| inner.reveal_selected());
+        }
+        group.add_action(&reveal);
+        let remove_action = gtk::gio::SimpleAction::new("remove", None);
+        {
+            let inner = inner.clone();
+            remove_action.connect_activate(move |_, _| inner.prompt_remove_from_library());
+        }
+        group.add_action(&remove_action);
         grid.insert_action_group("book", Some(&group));
+    }
+
+    // The detail pane's Mark Finished button shares the context verb (16.5h).
+    {
+        let inner = inner.clone();
+        let btn = inner.detail.finished.clone();
+        btn.connect_clicked(move |_| inner.toggle_finished_selected());
     }
 
     // Selection drives the detail pane: it follows the first selected book (a
@@ -513,6 +558,133 @@ impl Inner {
         if !items.is_empty() {
             player.append(items);
         }
+    }
+
+    /// Insert the selected books after the playing item (16.5h Play Next): the
+    /// engine and the DB queue move in lock-step (the 16a invariant), so the
+    /// inserted ids are derived from the built items, never the raw selection
+    /// (a book that fails to build must not desync the two).
+    fn play_next_selected(&self) {
+        let (Some(player), Some(root)) = (self.player.as_ref(), self.root.as_ref()) else {
+            return;
+        };
+        let ids: Vec<i64> = self.selected_books().iter().map(|b| b.id()).collect();
+        if ids.is_empty() {
+            return;
+        }
+        let (items, _) = crate::playqueue::build_audiobook_queue(&self.pool, &ids, 0, root);
+        if items.is_empty() {
+            return;
+        }
+        let snap = player.snapshot();
+        let at = match snap.current_index {
+            Some(i) => i + 1,
+            None => snap.queue_len,
+        };
+        let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
+        let _ = self
+            .rt
+            .block_on(self.worker.insert_queue_books_at(at as i64, queue_ids));
+        player.insert_items(at, items);
+        let _ = self.filter.activate_action("win.reload-queue", None);
+    }
+
+    /// Toggle Finished across the selection (16.5h); the first selected book
+    /// decides the direction. Finishing rides the same worker verb a natural
+    /// end-of-book uses; unfinishing preserves the resume position and the
+    /// per-book overrides.
+    fn toggle_finished_selected(&self) {
+        let books = self.selected_books();
+        let Some(first) = books.first() else { return };
+        let finish = !first.is_finished();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .ok();
+        for book in &books {
+            let id = book.id();
+            if finish {
+                let _ = self.rt.block_on(self.worker.complete_book(id, now));
+            } else {
+                let cur = self
+                    .pool
+                    .open()
+                    .ok()
+                    .and_then(|conn| get_book_playback(&conn, id).ok().flatten());
+                let playback = BookPlayback {
+                    book_id: id,
+                    position: cur.as_ref().map(|p| p.position).unwrap_or(0.0),
+                    finished: false,
+                    last_played: cur.as_ref().and_then(|p| p.last_played),
+                    speed: cur.as_ref().and_then(|p| p.speed),
+                    smart_speed: cur.as_ref().and_then(|p| p.smart_speed),
+                    voice_boost: cur.as_ref().and_then(|p| p.voice_boost),
+                };
+                let _ = self.rt.block_on(self.worker.upsert_book_playback(playback));
+            }
+        }
+        self.toast(&format!(
+            "Marked {} book(s) {}",
+            books.len(),
+            if finish { "finished" } else { "unfinished" }
+        ));
+        self.load();
+    }
+
+    /// Open the first selected book's folder in the file manager (16.5h, the
+    /// music Reveal idiom).
+    fn reveal_selected(&self) {
+        let Some(root) = self.root.as_ref() else {
+            return;
+        };
+        let Some(book) = self.first_selected() else {
+            return;
+        };
+        let folder = self
+            .pool
+            .open()
+            .ok()
+            .and_then(|conn| get_book(&conn, book.id()).ok().flatten())
+            .map(|b| b.folder_path);
+        let Some(folder) = folder else { return };
+        let target = root.join(folder);
+        if let Err(e) = std::process::Command::new("xdg-open").arg(&target).spawn() {
+            eprintln!("conservatory: could not reveal {}: {e}", target.display());
+        }
+    }
+
+    /// Confirm and remove the selected books from the library (16.5h): a
+    /// DB-only unlink behind the destructive confirm; the files stay on disk
+    /// (the music Remove contract). A playing book keeps playing (the engine
+    /// owns its resolved item), so the queue drawer is told to re-read.
+    fn prompt_remove_from_library(self: &Rc<Self>) {
+        let ids: Vec<i64> = self.selected_books().iter().map(|b| b.id()).collect();
+        if ids.is_empty() {
+            return;
+        }
+        let body = format!(
+            "Remove {} book(s) from the library? The files stay on disk, so you can re-import them.",
+            ids.len()
+        );
+        let dialog = adw::AlertDialog::new(Some("Remove from library?"), Some(&body));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("remove", "Remove");
+        dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        let this = self.clone();
+        dialog.connect_response(None, move |_, resp| {
+            if resp != "remove" {
+                return;
+            }
+            for &id in &ids {
+                let _ = this.rt.block_on(this.worker.delete_book(id));
+            }
+            this.toast(&format!("Removed {} book(s) from the library", ids.len()));
+            let _ = this.filter.activate_action("win.reload-queue", None);
+            this.load();
+        });
+        dialog.present(Some(&self.filter));
     }
 
     /// Pop the book context menu at the pointer (Phase 16a). Right-clicking a tile
@@ -1157,6 +1329,8 @@ struct Detail {
     placeholder: gtk::Label,
     /// Per-book playback settings (Phase 7c-iii): shown only with a book selected.
     settings: gtk::Button,
+    /// Mark Finished / Unfinished (16.5h): label follows the shown book.
+    finished: gtk::Button,
 }
 
 impl Detail {
@@ -1191,6 +1365,16 @@ impl Detail {
             .css_classes(["flat"])
             .visible(false)
             .build();
+        // Mark Finished / Unfinished (16.5h): the quick toggle podcasts have
+        // had since 6b-ii-b; the label follows the shown book's state.
+        let finished = gtk::Button::builder()
+            .halign(gtk::Align::Start)
+            .css_classes(["flat"])
+            .visible(false)
+            .build();
+        let action_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        action_row.append(&settings);
+        action_row.append(&finished);
 
         let chapters = gtk::ListBox::new();
         chapters.set_selection_mode(gtk::SelectionMode::None);
@@ -1219,7 +1403,7 @@ impl Detail {
         root.append(&title);
         root.append(&meta);
         root.append(&state);
-        root.append(&settings);
+        root.append(&action_row);
         root.append(&progress);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         root.append(&chapters_scroll);
@@ -1235,6 +1419,7 @@ impl Detail {
             chapters,
             placeholder,
             settings,
+            finished,
         };
         detail.clear();
         detail
@@ -1247,6 +1432,7 @@ impl Detail {
         self.meta.set_visible(false);
         self.state.set_visible(false);
         self.settings.set_visible(false);
+        self.finished.set_visible(false);
         self.progress.set_visible(false);
         clear_list(&self.chapters);
         self.chapters.set_visible(false);
@@ -1282,6 +1468,12 @@ impl Detail {
         ));
         self.state.set_visible(true);
         self.settings.set_visible(true);
+        self.finished.set_label(if book.is_finished() {
+            "Mark Unfinished"
+        } else {
+            "Mark Finished"
+        });
+        self.finished.set_visible(true);
 
         clear_list(&self.chapters);
         for ch in chapters {

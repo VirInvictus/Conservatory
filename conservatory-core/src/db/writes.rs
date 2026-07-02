@@ -533,35 +533,56 @@ pub(crate) fn delete_track(conn: &Connection, track_id: i64) -> Result<()> {
     Ok(())
 }
 
-/// Insert `track_ids` into the queue starting at `at`, shifting every entry at or
-/// after `at` up by `track_ids.len()` so positions stay contiguous (the Play Next
-/// path; mirrors the engine `InsertItems`). `at` is clamped to `[0, len]`.
-pub(crate) fn insert_queue_tracks_at(
+/// Insert queue rows of one `kind` starting at `at`, shifting every entry at
+/// or after `at` up so positions stay contiguous (the Play Next path; mirrors
+/// the engine `InsertItems`). `at` is clamped to `[0, len]`. The kind-specific
+/// wrappers below keep the `(kind, id column)` pairing impossible to mismatch
+/// (the queue CHECK enforces it anyway).
+fn insert_queue_items_at(
     conn: &mut Connection,
     at: i64,
-    track_ids: &[i64],
+    kind: &str,
+    id_column: &str,
+    ids: &[i64],
 ) -> Result<()> {
-    if track_ids.is_empty() {
+    if ids.is_empty() {
         return Ok(());
     }
     let tx = conn.transaction()?;
     let count: i64 = tx.query_row("SELECT COUNT(*) FROM queue", [], |r| r.get(0))?;
     let at = at.clamp(0, count);
-    let k = track_ids.len() as i64;
+    let k = ids.len() as i64;
     // Open the gap: push entries at/after `at` up by k (descending-safe: the
     // UNIQUE-free position column lets a single bulk shift work).
     tx.execute(
         "UPDATE queue SET position = position + ?1 WHERE position >= ?2",
         params![k, at],
     )?;
-    for (offset, &track_id) in track_ids.iter().enumerate() {
-        tx.execute(
-            "INSERT INTO queue (position, kind, track_id) VALUES (?1, 'track', ?2)",
-            params![at + offset as i64, track_id],
-        )?;
+    // `kind` / `id_column` come from the fixed wrappers below, never input.
+    let sql = format!("INSERT INTO queue (position, kind, {id_column}) VALUES (?1, '{kind}', ?2)");
+    for (offset, &id) in ids.iter().enumerate() {
+        tx.execute(&sql, params![at + offset as i64, id])?;
     }
     tx.commit()?;
     Ok(())
+}
+
+/// Insert `track_ids` into the queue at `at` (Phase 16a Play Next).
+pub(crate) fn insert_queue_tracks_at(
+    conn: &mut Connection,
+    at: i64,
+    track_ids: &[i64],
+) -> Result<()> {
+    insert_queue_items_at(conn, at, "track", "track_id", track_ids)
+}
+
+/// Insert `book_ids` into the queue at `at` (16.5h: the audiobook Play Next).
+pub(crate) fn insert_queue_books_at(
+    conn: &mut Connection,
+    at: i64,
+    book_ids: &[i64],
+) -> Result<()> {
+    insert_queue_items_at(conn, at, "audiobook", "book_id", book_ids)
 }
 
 /// Remove the entry at `position` and close the gap (shift everything after it
@@ -1225,6 +1246,16 @@ pub(crate) fn get_or_create_series(conn: &Connection, name: &str) -> Result<i64>
 /// Insert a book and return its id. The `books_ai` trigger seeds its `book_fts`
 /// row (title + series); the author/narrator FTS columns fill in as the links
 /// are added (`link_book_author` / `link_book_narrator`).
+/// Remove a book from the library (16.5h, the `delete_track` twin): a DB-only
+/// unlink, files stay on disk (re-importable). The schema cascades clean up
+/// dependents: author/narrator links, chapters, and `book_playback` (`ON
+/// DELETE CASCADE`, migration 0011), the FTS row (`books_ad`), queue entries
+/// (`queue.book_id CASCADE`), and the playback cursor (`SET NULL`, 0013).
+pub(crate) fn delete_book(conn: &Connection, book_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM books WHERE id = ?1", params![book_id])?;
+    Ok(())
+}
+
 pub(crate) fn insert_book(conn: &Connection, book: &Book) -> Result<i64> {
     conn.execute(
         "INSERT INTO books (

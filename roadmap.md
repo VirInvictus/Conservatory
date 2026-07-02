@@ -997,10 +997,10 @@ Deferred out of this phase, recorded here so they are not lost: a book list-view
 - [x] The book bulk editor gains the Phase 16c checkbox + mixed-values treatment: `common_value` promoted to core (shared with the music editor), new pure `book_edit_commons` in `conservatory-audiobooks` (the people displays convert `", "` to the dialog's `";"` form so a ticked write round-trips `split_people`), and a pure `build_book_edit` honouring ticks; parse failures use the 16.5a error/retry dialog instead of stderr.
 - [x] Book edits, re-shelve moves, and playback-settings saves toast like music edits do (the `win.toast` channel).
 
-### Phase 16.5h — Audiobook verbs (v0.1.16)
+### Phase 16.5h — Audiobook verbs ✅ (v0.1.16)
 
-- [ ] Core grows the kind-generic queue insert (`insert_queue_books_at`) and `delete_book` (cascades verified against migrations 0011/0013), both worker-routed and integration-tested.
-- [ ] The book context menu reaches music parity: Play Next, Reveal in Files, Mark Finished/Unfinished (also a detail-pane button), and Remove from Library behind the destructive confirm (files stay on disk).
+- [x] Core grows the kind-generic queue insert (a private `insert_queue_items_at` re-expressing `insert_queue_tracks_at` and backing the new `insert_queue_books_at`) and `delete_book` (the `delete_track` twin; cascades verified against migrations 0011/0013), both worker-routed and integration-tested (`queue_insert_books_at_shifts_positions`, `delete_book_cascades_queue_playback_and_fts`).
+- [x] The book context menu reaches music parity: Play Next (engine/DB lock-step, ids derived from the built items), Reveal in Files (`xdg-open` on `books.folder_path`), Mark Finished/Unfinished (batch; also a detail-pane button whose label follows the shown book; unfinishing preserves resume + overrides), and Remove from Library behind the destructive confirm (files stay on disk; the queue drawer re-reads).
 
 ### Phase 16.5i — App chrome (v0.1.17)
 

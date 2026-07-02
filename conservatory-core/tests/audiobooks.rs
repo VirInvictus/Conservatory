@@ -523,3 +523,106 @@ async fn queue_gained_the_book_foreign_key() {
 
     worker.shutdown_ack().await.unwrap();
 }
+
+/// 16.5h: the book Play Next mirrors the track path — inserting at a position
+/// shifts later entries up and keeps positions contiguous.
+#[tokio::test]
+async fn queue_insert_books_at_shifts_positions() {
+    let (_dir, worker, pool) = fresh().await;
+    let a = worker
+        .insert_book(sample_book("Book A", "Audiobooks/A/Standalone/a"))
+        .await
+        .unwrap();
+    let b = worker
+        .insert_book(sample_book("Book B", "Audiobooks/B/Standalone/b"))
+        .await
+        .unwrap();
+    let c = worker
+        .insert_book(sample_book("Book C", "Audiobooks/C/Standalone/c"))
+        .await
+        .unwrap();
+
+    worker.enqueue_books(vec![a, b]).await.unwrap();
+    worker.insert_queue_books_at(1, vec![c]).await.unwrap();
+
+    let conn = pool.open().unwrap();
+    let rows: Vec<(i64, i64, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT position, book_id, kind FROM queue ORDER BY position")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    };
+    assert_eq!(
+        rows.iter().map(|(p, _, _)| *p).collect::<Vec<_>>(),
+        vec![0, 1, 2],
+        "positions stay contiguous after the shift"
+    );
+    assert_eq!(
+        rows.iter().map(|(_, id, _)| *id).collect::<Vec<_>>(),
+        vec![a, c, b],
+        "the insert lands between the existing entries"
+    );
+    assert!(rows.iter().all(|(_, _, k)| k == "audiobook"));
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+/// 16.5h: Remove from Library for a book is a DB-only unlink riding the 0011 /
+/// 0013 cascades — chapters, playback, credits, the queue row, and the FTS row
+/// all go with it.
+#[tokio::test]
+async fn delete_book_cascades_queue_playback_and_fts() {
+    let (_dir, worker, pool) = fresh().await;
+    let book_id = worker
+        .insert_book(sample_book(
+            "Doomed Book",
+            "Audiobooks/D/Standalone/Doomed Book",
+        ))
+        .await
+        .unwrap();
+    worker
+        .replace_book_chapters(book_id, vec![chapter(0, "One", "d1.m4b")])
+        .await
+        .unwrap();
+    worker
+        .upsert_book_playback(BookPlayback {
+            book_id,
+            position: 120.0,
+            finished: false,
+            last_played: Some(ts(1_700_000_500)),
+            speed: None,
+            smart_speed: None,
+            voice_boost: None,
+        })
+        .await
+        .unwrap();
+    worker.enqueue_books(vec![book_id]).await.unwrap();
+
+    worker.delete_book(book_id).await.unwrap();
+
+    let conn = pool.open().unwrap();
+    let count = |sql: &str| -> i64 { conn.query_row(sql, [book_id], |r| r.get(0)).unwrap() };
+    assert_eq!(count("SELECT COUNT(*) FROM books WHERE id = ?1"), 0);
+    assert_eq!(
+        count("SELECT COUNT(*) FROM book_chapters WHERE book_id = ?1"),
+        0
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM book_playback WHERE book_id = ?1"),
+        0
+    );
+    assert_eq!(count("SELECT COUNT(*) FROM queue WHERE book_id = ?1"), 0);
+    let fts: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM book_fts WHERE book_fts MATCH ?1",
+            ["Doomed"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(fts, 0, "the books_ad trigger dropped the FTS row");
+
+    worker.shutdown_ack().await.unwrap();
+}

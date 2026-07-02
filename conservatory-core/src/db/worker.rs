@@ -360,6 +360,18 @@ impl WorkerHandle {
         .await
     }
 
+    /// Insert audiobooks into the queue at `at` (16.5h: the book Play Next).
+    pub async fn insert_queue_books_at(&self, at: i64, book_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::InsertQueueBooksAt { at, book_ids, reply })
+            .await
+    }
+
+    /// Remove a book from the library (16.5h). DB-only unlink; files stay.
+    pub async fn delete_book(&self, book_id: i64) -> Result<()> {
+        self.dispatch(|reply| Command::DeleteBook { book_id, reply })
+            .await
+    }
+
     /// Replace the whole queue with these tracks in order.
     pub async fn replace_queue_with_tracks(&self, track_ids: Vec<i64>) -> Result<()> {
         self.dispatch(|reply| Command::ReplaceQueueWithTracks { track_ids, reply })
@@ -1108,6 +1120,12 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::insert_queue_tracks_at(conn, at, &track_ids));
+        }
+        Command::InsertQueueBooksAt { at, book_ids, reply } => {
+            let _ = reply.send(writes::insert_queue_books_at(conn, at, &book_ids));
+        }
+        Command::DeleteBook { book_id, reply } => {
+            let _ = reply.send(writes::delete_book(conn, book_id));
         }
         Command::ReplaceQueueWithTracks { track_ids, reply } => {
             let _ = reply.send(writes::replace_queue_with_tracks(conn, &track_ids));

@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.1.16
+
+The book right-click menu reaches parity with the track menu.
+
+- **Play Next.** Insert the selected books right after what is playing, with the engine and the saved queue moving in lock-step, exactly like tracks.
+- **Mark Finished / Unfinished.** A quick toggle in the context menu and as a button in the detail pane. Finishing uses the same path a natural end-of-book does; unfinishing keeps your resume position and per-book playback settings. The shelf badge follows immediately.
+- **Reveal in Files.** Open the book's folder in your file manager.
+- **Remove from Library.** Behind the same destructive confirmation as tracks, with the same contract: the database rows go (chapters, progress, queue entries, search index, all via the schema's cascades), the files stay on disk, and a playing book keeps playing.
+
 ## v0.1.15
 
 The audiobook shelf catches up to the rest of the app.

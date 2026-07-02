@@ -236,6 +236,20 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Insert audiobooks into the queue at `at` (16.5h: the book Play Next).
+    InsertQueueBooksAt {
+        at: i64,
+        book_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Remove a book from the library (16.5h). DB-only unlink; the files are
+    /// left on disk. Cascades/triggers clean up dependents.
+    DeleteBook {
+        book_id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Replace the whole queue with these tracks in order ("play these now").
     ReplaceQueueWithTracks {
         track_ids: Vec<i64>,
@@ -607,6 +621,8 @@ impl Command {
             Self::EnqueueTracks { .. } => "enqueue_tracks",
             Self::DeleteTrack { .. } => "delete_track",
             Self::InsertQueueTracksAt { .. } => "insert_queue_tracks_at",
+            Self::InsertQueueBooksAt { .. } => "insert_queue_books_at",
+            Self::DeleteBook { .. } => "delete_book",
             Self::ReplaceQueueWithTracks { .. } => "replace_queue_with_tracks",
             Self::EnqueueEpisodes { .. } => "enqueue_episodes",
             Self::ReplaceQueueWithEpisodes { .. } => "replace_queue_with_episodes",

@@ -1,5 +1,11 @@
 # Patch Notes
 
+## v0.1.21
+
+Seeks are now sample-exact.
+
+- **Every seek lands where it says** (`hr-seek=yes` on the libmpv host). mpv's default seeks snap to the nearest seek point, which on hour-scale audiobook and podcast files can be seconds away: a chapter jump could land mid-sentence before the chapter, and the 15-second skip-back could overshoot. Chapter navigation, the Now-bar skip buttons, scrubbing, and resume-on-launch all become exact. Audio-only decode makes the accuracy essentially free.
+
 ## v0.1.20
 
 Subscribing to a podcast no longer floods the Inbox with its back catalog.

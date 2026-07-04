@@ -107,6 +107,13 @@ impl MpvHost {
             // sink, so other apps' audio does not move the bars). Surfaces as the
             // node's application.name; see `crate::player::AUDIO_CLIENT_NAME`.
             init.set_property("audio-client-name", crate::player::AUDIO_CLIENT_NAME)?;
+            // Exact (sample-accurate) seeks instead of keyframe snapping. mpv's
+            // default `hr-seek=default` is keyframe-fast for plain seeks, which
+            // on long spoken-word files (hour-scale M4B/MP3 with sparse seek
+            // points) can land a chapter jump or a 15 s skip seconds off
+            // target; audio-only decode makes exact seeks cheap, so resume,
+            // scrubbing, and chapter navigation all take the accuracy.
+            init.set_property("hr-seek", "yes")?;
             if silent {
                 init.set_property("ao", "null")?;
             }
@@ -467,5 +474,16 @@ mod tests {
         assert_eq!(quote_arg("/m/a b.mp3"), "\"/m/a b.mp3\"");
         assert_eq!(quote_arg(r#"/m/a"b.mp3"#), r#""/m/a\"b.mp3""#);
         assert_eq!(quote_arg(r"/m/a\b.mp3"), r#""/m/a\\b.mp3""#);
+    }
+
+    #[test]
+    fn seeks_are_configured_exact() {
+        // Keyframe snapping on hour-scale spoken-word files puts chapter jumps
+        // and skip buttons seconds off target; the host must pin hr-seek on.
+        let host = MpvHost::new_null().unwrap();
+        assert_eq!(
+            host.mpv.get_property::<String>("hr-seek").as_deref(),
+            Ok("yes")
+        );
     }
 }

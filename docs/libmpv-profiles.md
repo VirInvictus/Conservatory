@@ -16,6 +16,8 @@ struct PlayableItem {
 
 This single abstraction is what lets one queue, one Now-bar, one MPRIS surface, and one set of media keys serve all three media types.
 
+Host-global (profile-independent) options set at init: audio-only (`vo=null`, `vid=no`), the stable PipeWire client name for the visualizer tap, and `hr-seek=yes` (v0.1.21): every seek is sample-exact rather than keyframe-snapped, which matters most for chapter jumps and skip buttons on hour-scale spoken-word files where seek points are sparse. Audio-only decode makes exact seeks cheap enough to take everywhere.
+
 ## DSP chain discipline (build once, mutate via `af-command`)
 
 mpv routes every libavfilter filter through one `lavfi` wrapper, and `af-command` reaches only the filters whose ffmpeg implementation supports runtime commands. The rules that fall out (Phase 5.5):

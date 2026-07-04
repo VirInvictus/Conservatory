@@ -263,8 +263,66 @@ async fn always_archive_routes_the_new_episode_out_of_inbox() {
         .map(|r| r.id)
         .collect();
     assert!(!inbox.contains(&ep3), "an archived episode is out of Inbox");
-    // ep-1/ep-2 (no policy applied at add) remain in Inbox.
-    assert_eq!(inbox.len(), 2, "the pre-policy episodes stay in Inbox");
+    // Only ep-2 (newest at add) is in Inbox: ep-1 was archived as back
+    // catalog by the first-fetch convention, and the policy archived ep-3.
+    assert_eq!(
+        inbox.len(),
+        1,
+        "only the subscribe-time newest stays in Inbox"
+    );
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+/// Subscribing pulls the whole back catalog as rows, but only the newest
+/// episode lands in Inbox: the rest arrive `ArchivedUnlistened` (the Castro /
+/// Overcast convention), so a ten-year feed cannot flood the Inbox. A later
+/// refresh is not a first fetch, so its genuinely-new episode routes normally.
+#[tokio::test]
+async fn first_fetch_archives_the_back_catalog() {
+    let (_dir, worker, pool) = fresh();
+    let server = MockServer::start().await;
+    let fetcher = Fetcher::new().unwrap();
+
+    let show_id = add_two_then_serve_three(&worker, &pool, &fetcher, &server).await;
+    let ep1 = episode_id(&pool, show_id, "ep-1");
+    let ep2 = episode_id(&pool, show_id, "ep-2");
+    {
+        let conn = pool.open().unwrap();
+        // ep-2 is the newest by pubDate: routed per the default Inbox policy
+        // (no playback row). ep-1 is back catalog: archived.
+        assert!(get_playback(&conn, ep2).unwrap().is_none());
+        assert_eq!(
+            get_playback(&conn, ep1).unwrap().unwrap().played,
+            PlayedState::ArchivedUnlistened,
+            "back catalog arrives archived"
+        );
+        let inbox: Vec<i64> = episodes_in_bucket(&conn, TriageBucket::Inbox)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(inbox, vec![ep2], "only the newest lands in Inbox");
+    }
+
+    // The next refresh (ep-3 arrives) is not a first fetch: the new episode
+    // routes normally into Inbox and the archived back catalog stays put.
+    refresh_all(&worker, &pool, &fetcher, None).await.unwrap();
+    let ep3 = episode_id(&pool, show_id, "ep-3");
+    let conn = pool.open().unwrap();
+    assert!(get_playback(&conn, ep3).unwrap().is_none());
+    let inbox: Vec<i64> = episodes_in_bucket(&conn, TriageBucket::Inbox)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(inbox.len(), 2, "newest-at-add plus the new arrival");
+    assert!(inbox.contains(&ep2) && inbox.contains(&ep3));
+    assert_eq!(
+        get_playback(&conn, ep1).unwrap().unwrap().played,
+        PlayedState::ArchivedUnlistened,
+        "a refresh never re-routes the archived back catalog"
+    );
 
     worker.shutdown_ack().await.unwrap();
 }

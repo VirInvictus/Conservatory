@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.1.20
+
+Subscribing to a podcast no longer floods the Inbox with its back catalog.
+
+- **Only the newest episode enters the Inbox on subscribe** (the Castro / Overcast convention). The rest of the back catalog still arrives as browsable rows under the show, but archived, so a decade-old feed adds one Inbox entry instead of four hundred, and the sidebar badge stays meaningful. Ties and date-less feeds fall back to feed order, so exactly one episode routes either way.
+- **Chapter prefetch skips the archived back catalog.** Chapters were fetched "on first sight" for every new episode, which at subscribe time meant one HTTP request per back-catalog episode, sequentially, before the subscribe finished. Now only the routed episode prefetches; later refreshes fetch chapters for genuinely-new episodes exactly as before.
+- Later refreshes are unchanged: a genuinely-new episode routes through the show's inbox policy (Inbox / queue / archive), and nothing ever re-routes an episode you have moved by hand.
+
 ## v0.1.19
 
 The move journal gets an inspection surface, closing the sweep's second finding: a wedged move job could block every organize and import forever with no way out.

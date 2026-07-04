@@ -275,6 +275,29 @@ async fn apply_feed(
             .collect()
     };
 
+    // First contact with this feed (no stored episodes): every back-catalog
+    // episode counts as "new", which would flood the Inbox with years of
+    // entries and prefetch chapters for all of them. Follow the Castro /
+    // Overcast subscribe convention instead: only the **newest** episode
+    // routes through the inbox policy; the rest arrive `ArchivedUnlistened`
+    // (browsable under the show, out of Inbox) and skip the chapter prefetch.
+    // Ties and missing pub dates fall back to feed order (newest-first by
+    // convention), so a date-less feed still routes exactly one episode.
+    let backfill = existing.is_empty();
+    let newest_guid: Option<String> = if backfill {
+        parsed
+            .episodes
+            .iter()
+            .enumerate()
+            .max_by(|(ia, a), (ib, b)| match a.pub_date.cmp(&b.pub_date) {
+                std::cmp::Ordering::Equal => ib.cmp(ia),
+                other => other,
+            })
+            .map(|(_, e)| e.guid.clone())
+    } else {
+        None
+    };
+
     let total = parsed.episodes.len();
     let mut new = 0;
     let client = fetcher.client();
@@ -283,9 +306,10 @@ async fn apply_feed(
         if is_new {
             new += 1;
         }
-        // Keep the chapters URL alongside the id: `to_episode` consumes `pe`, and
-        // the Episode model carries no chapters field (chapters live in their own
-        // table, populated separately).
+        // Keep the guid and chapters URL alongside the id: `to_episode`
+        // consumes `pe`, and the Episode model carries no chapters field
+        // (chapters live in their own table, populated separately).
+        let guid = pe.guid.clone();
         let chapters_url = pe.chapters_url.clone();
         let episode_id = worker
             .upsert_episode(to_episode(show_id, &show_slug, pe))
@@ -295,6 +319,14 @@ async fn apply_feed(
         // un-archive one they archived by hand. Inbox needs no write (the §4.2
         // derivation puts a row-less, un-queued episode in Inbox).
         if is_new {
+            if backfill && newest_guid.as_deref() != Some(guid.as_str()) {
+                // Back-catalog episode on first fetch: archived, no chapter
+                // prefetch (see the subscribe convention above).
+                worker
+                    .set_episode_played(episode_id, PlayedState::ArchivedUnlistened, None)
+                    .await?;
+                continue;
+            }
             match policy {
                 InboxPolicy::Inbox => {}
                 InboxPolicy::AlwaysQueue => worker.enqueue_episodes(vec![episode_id]).await?,

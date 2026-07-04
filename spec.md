@@ -201,7 +201,7 @@ The unified queue (§6.1) is the spine. The Now-bar persists across Music and Po
 
 ### 3.7 Podcasts Tab
 
-Belfry's Inbox → Queue → Played triage, intact (Belfry §3.3–3.4): a sidebar of triage lists, shows, and tags; an episode list; a detail/now-playing pane. Per-show overrides for speed, Smart Speed, Voice Boost, skip, retention, and inbox policy. The only structural change from Belfry is that the **Queue is the shared unified queue**, so an episode and an album track can sit next to each other in it.
+Belfry's Inbox → Queue → Played triage, intact (Belfry §3.3–3.4): a sidebar of triage lists, shows, and tags; an episode list; a detail/now-playing pane. Per-show overrides for speed, Smart Speed, Voice Boost, skip, retention, and inbox policy. The only structural change from Belfry is that the **Queue is the shared unified queue**, so an episode and an album track can sit next to each other in it. Subscribing pulls the full back catalog as rows, but only the **newest** episode enters the Inbox (the Castro/Overcast convention, v0.1.20); the rest arrive archived, browsable under the show, so a decade-old feed cannot flood the triage surfaces.
 
 ### 3.8 Audiobooks Tab
 

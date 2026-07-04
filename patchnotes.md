@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.1.22
+
+Gapless playback is now actually gapless.
+
+- **Album transitions no longer gap.** `gapless-audio` was set all along, but the engine advanced by reacting to end-of-file and issuing a fresh load, which tears the decoder down; mpv can only decode across a boundary it knows about in advance. The engine now prefetches: when the next queue item is also a gapless track, it is appended to mpv's internal playlist ahead of time, mpv crosses the boundary seamlessly, and the engine syncs its bookkeeping (play counts, cursor, Now-bar) at the event instead of reloading. The end-to-end engine test now drives three prefetched hand-offs across four codecs.
+- **Everything that changes "what plays next" resyncs the prefetch.** Play Next, queue reorders and removals, appends, stop-after-current, and the end-of-item sleep timer all drop and re-derive the appended entry; the stop-at-boundary features refuse the hand-off outright, so they still pause exactly at the boundary (verified by the existing boundary tests).
+- **Spoken word keeps the explicit load path.** Episodes and audiobooks never hand off gaplessly: they carry listening sessions, resume seeks, and per-show chains, and gapless between speech items is meaningless anyway.
+- One caveat, documented in `docs/libmpv-profiles.md`: the per-track ReplayGain head swaps at the transition event, so with *track* gain mode a large gain step can bleed for the buffered fraction of a second. Album gain within one album is identical, so the common gapless case (an album played in order) is artifact-free.
+
 ## v0.1.21
 
 Seeks are now sample-exact.

@@ -226,10 +226,11 @@ impl MpvHost {
             .map_err(|e| Error::Player(format!("rebuilding af chain: {e}")))
     }
 
-    /// Apply `profile` and start playing `path`. The profile properties are set
-    /// before the load so they take effect for this item (spec §6.1: the engine
-    /// applies the item's profile before playing).
-    pub fn load(&mut self, path: &str, profile: &MusicProfile) -> Result<()> {
+    /// Apply `profile`'s playback properties to the live instance without
+    /// (re)loading anything: the gapless hand-off path (the engine calls this at
+    /// the transition into a prefetched next track instead of `load`, which
+    /// would tear the stream down). Also the shared front half of [`Self::load`].
+    pub fn apply_profile(&mut self, profile: &MusicProfile) -> Result<()> {
         // Gapless: `weak` preserves the source rate across a mixed-rate library
         // (spec §6.2); `no` for single items (episodes).
         self.mpv
@@ -263,6 +264,17 @@ impl MpvHost {
         self.mpv
             .set_property("af", af.as_str())
             .map_err(|e| Error::Player(format!("setting af chain: {e}")))?;
+        // Remember the profile so a live EQ change can rebuild the chain.
+        self.current_profile = Some(*profile);
+        Ok(())
+    }
+
+    /// Apply `profile` and start playing `path`. The profile properties are set
+    /// before the load so they take effect for this item (spec §6.1: the engine
+    /// applies the item's profile before playing). `loadfile` in its default
+    /// replace mode also clears any prefetched playlist entry.
+    pub fn load(&mut self, path: &str, profile: &MusicProfile) -> Result<()> {
+        self.apply_profile(profile)?;
         // libmpv2's `command` builds a single command *string* (no array form),
         // so an unescaped path with spaces would split into multiple args. mpv's
         // command parser reads a double-quoted token (with backslash escapes) as
@@ -271,9 +283,33 @@ impl MpvHost {
         self.mpv
             .command("loadfile", &[&quote_arg(path)])
             .map_err(|e| Error::Player(format!("loadfile: {e}")))?;
-        // Remember the profile so a live EQ change can rebuild the chain.
-        self.current_profile = Some(*profile);
         Ok(())
+    }
+
+    /// Append `path` to mpv's internal playlist after the current entry (the
+    /// gapless prefetch): with the next file known in advance, mpv decodes
+    /// straight across the boundary instead of tearing down and reloading,
+    /// which is what makes an album transition truly seamless. The engine owns
+    /// the decision of *what* (and whether) to append.
+    pub fn append_next(&mut self, path: &str) -> Result<()> {
+        self.mpv
+            .command("loadfile", &[&quote_arg(path), "append"])
+            .map_err(|e| Error::Player(format!("loadfile append: {e}")))
+    }
+
+    /// Drop every internal-playlist entry except the playing one (mpv
+    /// `playlist-clear`): the prefetch resync path when the queue mutates and
+    /// the appended "next" may no longer be right.
+    pub fn clear_prefetch(&self) -> Result<()> {
+        self.mpv
+            .command("playlist-clear", &[])
+            .map_err(|e| Error::Player(format!("playlist-clear: {e}")))
+    }
+
+    /// The internal playlist length (current entry included). Test/diagnostic
+    /// visibility for the prefetch state; playback decisions never read it.
+    pub fn playlist_count(&self) -> Option<i64> {
+        self.mpv.get_property::<i64>("playlist-count").ok()
     }
 
     /// Stop playback and unload the current file (mpv `stop`). Used when the
@@ -485,5 +521,58 @@ mod tests {
             host.mpv.get_property::<String>("hr-seek").as_deref(),
             Ok("yes")
         );
+    }
+
+    #[test]
+    fn append_next_hands_off_at_eof_without_a_reload() {
+        // The gapless-prefetch mechanics (v0.1.22): an appended entry sits in
+        // mpv's internal playlist, and at the current file's EOF mpv advances
+        // into it by itself — no `loadfile`, no decoder teardown. This is the
+        // hand-off `Engine::advance_into_prefetched` books against.
+        use std::time::{Duration, Instant};
+        let fixtures =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+        let a = fixtures.join("sample.flac");
+        let b = fixtures.join("sample.mp3");
+
+        let mut host = MpvHost::new_null().unwrap();
+        let profile = MusicProfile {
+            gapless: true,
+            replaygain_db: None,
+            speed: 1.0,
+            pitch_correction: false,
+            smart_speed: false,
+            voice_boost: false,
+        };
+        host.load(&a.to_string_lossy(), &profile).unwrap();
+        host.append_next(&b.to_string_lossy()).unwrap();
+
+        // Both entries are in the internal playlist once the load settles.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while host.playlist_count() != Some(2) {
+            assert!(Instant::now() < deadline, "append never reached mpv");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Pump to the first file's natural EOF, then observe mpv playing the
+        // appended entry on its own (playlist position 1).
+        loop {
+            match host.pump(0.5) {
+                HostEvent::Ended(EndReason::Eof) => break,
+                _ => assert!(Instant::now() < deadline, "first file never ended"),
+            }
+        }
+        while host.mpv.get_property::<i64>("playlist-pos") != Ok(1) {
+            assert!(
+                Instant::now() < deadline,
+                "mpv did not advance into the appended entry"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // And `playlist-clear` drops a stale prefetch without touching the
+        // playing entry (the resync path).
+        host.clear_prefetch().unwrap();
+        assert_eq!(host.playlist_count(), Some(1));
     }
 }

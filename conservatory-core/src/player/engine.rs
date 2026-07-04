@@ -123,6 +123,13 @@ struct Engine {
     /// the current item instead of playing on, then disarms. Consulted at the
     /// EOF boundary alongside the `EndOfItem` sleep mode.
     stop_after_current: bool,
+    /// The next queue item is appended to mpv's internal playlist (the gapless
+    /// prefetch, v0.1.22): at the current track's EOF mpv decodes straight into
+    /// it and the engine advances bookkeeping instead of reloading
+    /// ([`Self::advance_into_prefetched`]). Only ever true for a track→track
+    /// boundary with gapless profiles and no stop-at-boundary armed
+    /// ([`should_prefetch`]); every queue mutation resyncs it.
+    prefetched: bool,
 }
 
 impl Engine {
@@ -155,6 +162,7 @@ impl Engine {
             sleep_tick: Instant::now(),
             book_segment: 0,
             stop_after_current: false,
+            prefetched: false,
         }
     }
 
@@ -283,6 +291,10 @@ impl Engine {
                     self.ended = false;
                     self.load_current();
                     self.flush(StateEvent::Seek, false);
+                } else {
+                    // The tail grew: a playing last item may now have a next
+                    // worth prefetching.
+                    self.resync_prefetch();
                 }
             }
             PlayerCommand::InsertItems { at, mut items } => {
@@ -304,6 +316,8 @@ impl Engine {
                         // the inserted block (Play Next inserts after it, so this
                         // is a no-op there, but a general insert can precede it).
                         self.current = insert_current_index(self.current, at, k);
+                        // Play Next changes what follows the playing item.
+                        self.resync_prefetch();
                     }
                     self.flush(StateEvent::Seek, false);
                 }
@@ -354,6 +368,8 @@ impl Engine {
                     self.queue.insert(to, item);
                     // The playing item keeps playing; only its index moves.
                     self.current = move_current_index(self.current, from, to);
+                    // A reorder can change which item follows the playing one.
+                    self.resync_prefetch();
                     self.flush(StateEvent::Seek, false);
                 }
             }
@@ -368,11 +384,18 @@ impl Engine {
                         self.close_session();
                         self.ended = true;
                         self.set_paused(false);
+                        // mpv `stop` clears its internal playlist, prefetch
+                        // entry included.
+                        self.prefetched = false;
                         let _ = self.host.stop();
                     } else if outcome.reload {
                         // The playing item was removed; play what fell into its slot.
                         self.ended = false;
                         self.load_current();
+                    } else {
+                        // A neighbour was removed: what follows the playing
+                        // item may have changed.
+                        self.resync_prefetch();
                     }
                     self.flush(StateEvent::Seek, false);
                 }
@@ -383,6 +406,9 @@ impl Engine {
                 self.current = None;
                 self.ended = true;
                 self.paused = false;
+                // mpv `stop` clears its internal playlist, prefetch entry
+                // included.
+                self.prefetched = false;
                 let _ = self.host.stop();
             }
             PlayerCommand::SetAudioDevice(name) => {
@@ -432,9 +458,15 @@ impl Engine {
                 // last timer.
                 self.sleep = mode.map(SleepClock::new);
                 self.sleep_tick = Instant::now();
+                // An EndOfItem boundary must not hand off gaplessly (the next
+                // track would start sounding before the pause); cancelling
+                // re-arms the prefetch.
+                self.resync_prefetch();
             }
             PlayerCommand::SetStopAfterCurrent(on) => {
                 self.stop_after_current = on;
+                // Same boundary rule as the EndOfItem sleep mode above.
+                self.resync_prefetch();
             }
             PlayerCommand::Stop => {
                 self.set_paused(true);
@@ -483,8 +515,16 @@ impl Engine {
                 );
                 // Stop-after-current (Phase 11d) shares the EndOfItem boundary
                 // behaviour: cue the next item but pause there, then disarm.
+                // (Arming either clears the prefetch, so the branches below
+                // never race a hand-off that has already started sounding.)
                 let stop_after_current = self.stop_after_current;
-                self.advance_after_end();
+                if self.prefetched {
+                    // mpv already crossed into the appended next track
+                    // gaplessly; sync bookkeeping instead of reloading.
+                    self.advance_into_prefetched();
+                } else {
+                    self.advance_after_end();
+                }
                 if stop_after_item || stop_after_current {
                     if stop_after_item {
                         self.sleep = None;
@@ -499,13 +539,96 @@ impl Engine {
             // The current item is unplayable: skip it (no play count), don't stall.
             EndReason::Errored => {
                 self.close_session();
-                self.advance_after_end();
+                if self.prefetched {
+                    // An errored end still advances mpv into the appended next
+                    // entry; same bookkeeping hand-off as the natural EOF.
+                    self.advance_into_prefetched();
+                } else {
+                    self.advance_after_end();
+                }
             }
             // Self-initiated (our own `load`/stop) or the host shutting down:
             // these are not item completions, so do nothing here.
             EndReason::Stopped | EndReason::Redirect | EndReason::Quit => {}
         }
         self.refresh_snapshot();
+    }
+
+    /// Append the next queue item to mpv's internal playlist when the coming
+    /// boundary qualifies for a gapless hand-off ([`should_prefetch`]). A
+    /// failed append just leaves the reactive `load_current` path in charge.
+    fn maybe_prefetch_next(&mut self) {
+        if self.prefetched {
+            return;
+        }
+        let stop_boundary = self.stop_after_current
+            || matches!(
+                self.sleep.as_ref().map(|c| c.mode()),
+                Some(SleepMode::EndOfItem)
+            );
+        let (current, next) = match self.current {
+            Some(i) => (self.queue.get(i), self.queue.get(i + 1)),
+            None => (None, None),
+        };
+        if !should_prefetch(current, next, stop_boundary) {
+            return;
+        }
+        let path = next
+            .expect("should_prefetch requires a next item")
+            .source
+            .to_string_lossy()
+            .into_owned();
+        match self.host.append_next(&path) {
+            Ok(()) => {
+                tracing::debug!(source = %path, "player: prefetched next track (gapless)");
+                self.prefetched = true;
+            }
+            Err(e) => tracing::warn!(error = %e, path, "player: prefetch append failed"),
+        }
+    }
+
+    /// Re-derive the prefetch after anything that may have changed what "next"
+    /// means (a queue mutation, a stop-at-boundary toggle): drop the appended
+    /// entry, then re-append if the new boundary still qualifies. Idempotent
+    /// and cheap, so callers use it unconditionally.
+    fn resync_prefetch(&mut self) {
+        if self.prefetched {
+            let _ = self.host.clear_prefetch();
+            self.prefetched = false;
+        }
+        self.maybe_prefetch_next();
+    }
+
+    /// The prefetched next track is already sounding (mpv crossed the file
+    /// boundary gaplessly on its own): advance the engine's bookkeeping to
+    /// match and apply the new track's profile — notably its `@rg` ReplayGain
+    /// head — to the live stream instead of reloading it (the reload is what
+    /// used to make every album transition audibly gap). The counterpart of
+    /// [`Self::advance_after_end`] for the prefetched case.
+    fn advance_into_prefetched(&mut self) {
+        self.prefetched = false;
+        let next = self.current.map_or(0, |i| i + 1);
+        if next >= self.queue.len() {
+            // Defensive: a prefetch should imply a next item; fall back to the
+            // reactive path rather than strand the engine.
+            self.advance_after_end();
+            return;
+        }
+        self.current = Some(next);
+        self.ended = false;
+        self.book_segment = 0;
+        if let Some(profile) = self.queue.get(next).map(|i| i.profile)
+            && let Err(e) = self.host.apply_profile(&profile)
+        {
+            tracing::warn!(error = %e, "player: profile hand-off failed at gapless boundary");
+        }
+        // Only track→track boundaries prefetch, so there is no spoken-word
+        // session to open; the ended item's was closed by the caller.
+        self.session = None;
+        self.session_tick = Instant::now();
+        self.paused = false;
+        self.flush(StateEvent::Seek, false);
+        self.maybe_prefetch_next();
     }
 
     /// Step to the next item after an end-of-file / error. At the end of the
@@ -603,6 +726,9 @@ impl Engine {
         // (Phase 6c-ii). Idempotent, so a boundary that already closed (EOF) is a
         // no-op here.
         self.close_session();
+        // The replace-mode loadfile below clears mpv's internal playlist, so any
+        // prefetched entry is gone with it; re-derived at the end of this load.
+        self.prefetched = false;
         // A freshly-loaded item starts at the head of its file list: `source` is
         // the first segment for a book (Phase 7c), so loading it below loads file
         // zero; reset the segment cursor to match. The resume path (7c-ii) seeks
@@ -652,6 +778,8 @@ impl Engine {
             MediaKind::Track => None,
         };
         self.session_tick = Instant::now();
+        // With the new item playing, line up the gapless hand-off for its end.
+        self.maybe_prefetch_next();
     }
 
     /// On a book file's EOF: if another file follows, load it (an internal file
@@ -1051,6 +1179,32 @@ pub(crate) fn remove_current_index(
     }
 }
 
+/// Whether the coming item boundary qualifies for the gapless prefetch
+/// (v0.1.22): both sides must be gapless-profile **tracks** (spoken word never
+/// hands off gaplessly: episodes and books carry sessions, resume seeks, and
+/// their own chains, and gapless between speech items is meaningless), and no
+/// stop-at-boundary (stop-after-current / end-of-item sleep) may be armed,
+/// because a prefetched hand-off would start the next track sounding before
+/// the engine pauses it. Pure.
+pub(crate) fn should_prefetch(
+    current: Option<&PlayableItem>,
+    next: Option<&PlayableItem>,
+    stop_boundary: bool,
+) -> bool {
+    if stop_boundary {
+        return false;
+    }
+    match (current, next) {
+        (Some(c), Some(n)) => {
+            c.kind == MediaKind::Track
+                && n.kind == MediaKind::Track
+                && c.profile.gapless
+                && n.profile.gapless
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1123,5 +1277,58 @@ mod tests {
         let o = remove_current_index(Some(0), 0, 0);
         assert_eq!(o.current, None);
         assert!(!o.reload && o.ended);
+    }
+
+    fn item(kind: MediaKind, gapless: bool) -> PlayableItem {
+        use crate::player::profile::MusicProfile;
+        PlayableItem {
+            track_id: 1,
+            source: std::path::PathBuf::from("/m/x.flac"),
+            profile: MusicProfile {
+                gapless,
+                replaygain_db: None,
+                speed: 1.0,
+                pitch_correction: false,
+                smart_speed: false,
+                voice_boost: false,
+            },
+            album_id: None,
+            kind,
+            streaming: false,
+            chapters: Vec::new().into(),
+            segments: Vec::new().into(),
+        }
+    }
+
+    #[test]
+    fn prefetch_wants_a_gapless_track_to_track_boundary() {
+        let t = item(MediaKind::Track, true);
+        assert!(should_prefetch(Some(&t), Some(&t), false));
+    }
+
+    #[test]
+    fn prefetch_refuses_spoken_word_and_gapless_off() {
+        let t = item(MediaKind::Track, true);
+        let e = item(MediaKind::Episode, false);
+        let b = item(MediaKind::Audiobook, false);
+        let plain = item(MediaKind::Track, false);
+        // Any spoken-word side disqualifies the boundary.
+        assert!(!should_prefetch(Some(&t), Some(&e), false));
+        assert!(!should_prefetch(Some(&e), Some(&t), false));
+        assert!(!should_prefetch(Some(&t), Some(&b), false));
+        // Gapless off (either side) disqualifies it too.
+        assert!(!should_prefetch(Some(&plain), Some(&t), false));
+        assert!(!should_prefetch(Some(&t), Some(&plain), false));
+    }
+
+    #[test]
+    fn prefetch_refuses_boundaries_that_must_stop() {
+        let t = item(MediaKind::Track, true);
+        // Stop-after-current / EndOfItem sleep: the hand-off would start the
+        // next track sounding before the engine pauses it.
+        assert!(!should_prefetch(Some(&t), Some(&t), true));
+        // No next (or nothing playing): nothing to prefetch.
+        assert!(!should_prefetch(Some(&t), None, false));
+        assert!(!should_prefetch(None, Some(&t), false));
     }
 }

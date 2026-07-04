@@ -398,8 +398,17 @@ fn engine_unpauses_a_newly_loaded_item_after_a_pause() {
     player.play_queue(vec![item()], 0);
     std::thread::sleep(Duration::from_millis(120));
     player.toggle_pause();
-    std::thread::sleep(Duration::from_millis(80));
-    assert!(player.snapshot().paused, "the engine should now be paused");
+    // Poll rather than fixed-sleep: the engine drains commands only between
+    // event pumps (PUMP_TIMEOUT = 100ms), so a toggle can take a full pump to
+    // land. A fixed 80ms wait was phase-locked red on CI runners.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !player.snapshot().paused {
+        assert!(
+            Instant::now() < deadline,
+            "the engine never reported paused"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 
     // The regression path: a fresh queue while mpv is paused must play.
     player.play_queue(vec![item()], 0);

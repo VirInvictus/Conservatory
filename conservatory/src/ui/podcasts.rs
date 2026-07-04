@@ -720,7 +720,15 @@ impl Inner {
             if resp != "unsubscribe" {
                 return;
             }
+            // Engine indexes of the show's queued episodes, read before the
+            // cascade deletes the rows: the live engine queue drops them too,
+            // so it stays in lock-step with the DB queue (the 16a invariant).
+            let doomed =
+                crate::playqueue::engine_indexes_where(&inner.pool, |r| r.show_id == Some(show_id));
             let _ = inner.rt.block_on(inner.worker.delete_show(show_id));
+            if let Some(player) = inner.player.as_ref() {
+                crate::playqueue::remove_engine_items(player, &doomed);
+            }
             inner.toast(&format!("Unsubscribed from {name}"));
             inner.rebuild_sidebar(None);
             let _ = inner.title.activate_action("win.reload-queue", None);

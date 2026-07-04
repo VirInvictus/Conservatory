@@ -655,8 +655,9 @@ impl Inner {
 
     /// Confirm and remove the selected books from the library (16.5h): a
     /// DB-only unlink behind the destructive confirm; the files stay on disk
-    /// (the music Remove contract). A playing book keeps playing (the engine
-    /// owns its resolved item), so the queue drawer is told to re-read.
+    /// (the music Remove contract). The live engine queue drops the books'
+    /// entries too, so it stays in lock-step with the DB queue (the 16a
+    /// invariant); deleting the playing book advances to the next entry.
     fn prompt_remove_from_library(self: &Rc<Self>) {
         let ids: Vec<i64> = self.selected_books().iter().map(|b| b.id()).collect();
         if ids.is_empty() {
@@ -677,8 +678,16 @@ impl Inner {
             if resp != "remove" {
                 return;
             }
+            // Engine indexes of the doomed queue rows, read before the
+            // cascade deletes them out from under us.
+            let doomed = crate::playqueue::engine_indexes_where(&this.pool, |r| {
+                r.book_id.map(|b| ids.contains(&b)).unwrap_or(false)
+            });
             for &id in &ids {
                 let _ = this.rt.block_on(this.worker.delete_book(id));
+            }
+            if let Some(player) = this.player.as_ref() {
+                crate::playqueue::remove_engine_items(player, &doomed);
             }
             this.toast(&format!("Removed {} book(s) from the library", ids.len()));
             let _ = this.filter.activate_action("win.reload-queue", None);

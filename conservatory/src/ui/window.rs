@@ -2707,15 +2707,32 @@ impl ConservatoryWindow {
 
     /// Delete the given tracks from the library through the worker, then refresh.
     /// The queue rows cascade away (`ON DELETE CASCADE`) and the playback cursor
-    /// nulls (`ON DELETE SET NULL`); a live engine item keeps its own resolved
-    /// path, so playback in progress is unaffected.
+    /// nulls (`ON DELETE SET NULL`). The live engine queue drops the same
+    /// entries so it stays in lock-step with the DB queue (the 16a invariant
+    /// every index-for-position call relies on); deleting the playing track
+    /// advances playback to the next entry. The files themselves stay on disk.
     fn remove_from_library(&self, ids: &[i64]) {
         let imp = self.imp();
         let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
             return;
         };
+        // Engine indexes of the doomed queue rows, read before the cascade
+        // deletes them out from under us.
+        let doomed = imp
+            .pool
+            .get()
+            .map(|pool| {
+                crate::playqueue::engine_indexes_where(pool, |r| {
+                    r.kind == MediaKind::Track
+                        && r.track_id.map(|t| ids.contains(&t)).unwrap_or(false)
+                })
+            })
+            .unwrap_or_default();
         for &id in ids {
             let _ = rt.block_on(worker.delete_track(id));
+        }
+        if let Some(player) = imp.player.get() {
+            crate::playqueue::remove_engine_items(player, &doomed);
         }
         self.toast(&format!("Removed {} track(s) from the library", ids.len()));
         self.populate_initial();

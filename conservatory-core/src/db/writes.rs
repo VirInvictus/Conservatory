@@ -528,8 +528,61 @@ pub(crate) fn enqueue_tracks(conn: &mut Connection, track_ids: &[i64]) -> Result
 /// CASCADE`), and the playback cursor (`ON DELETE SET NULL`). Requires
 /// `foreign_keys = ON` (the schema default). The album/artist rows are left even
 /// if now empty; a zero-track album never appears in the track-derived facets.
-pub(crate) fn delete_track(conn: &Connection, track_id: i64) -> Result<()> {
-    conn.execute("DELETE FROM tracks WHERE id = ?1", params![track_id])?;
+/// The cascade leaves holes in `queue.position` / `playlist_entries.position`,
+/// so the delete and the renumber commit as one transaction (the contiguity
+/// invariant every position-keyed op relies on; see [`compact_positions`]).
+pub(crate) fn delete_track(conn: &mut Connection, track_id: i64) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM tracks WHERE id = ?1", params![track_id])?;
+    compact_positions(&tx)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Renumber `queue.position` to `0..n-1` and each playlist's
+/// `playlist_entries.position` to `0..len-1`, preserving order. A cascade
+/// delete (track / book / show removal) deletes queue and playlist rows
+/// without closing the gaps, but every position-keyed write
+/// ([`insert_queue_items_at`], [`remove_queue_item`], [`reorder_queue`],
+/// [`remove_playlist_entry`], [`reorder_playlist_entry`]) and the GUI's
+/// index-for-position calls assume contiguity: with a gap they address the
+/// wrong row or silently no-op, and the DB queue drifts out of lock-step with
+/// the live engine queue (the Phase 16a invariant). Renumbered row-by-row in
+/// Rust: a correlated `UPDATE ... (SELECT COUNT(*) ...)` re-reads rows it has
+/// already rewritten mid-statement, so its result depends on scan order.
+fn compact_positions(tx: &Connection) -> Result<()> {
+    let ids: Vec<i64> = {
+        let mut stmt = tx.prepare("SELECT id FROM queue ORDER BY position")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for (pos, id) in ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE queue SET position = ?1 WHERE id = ?2 AND position <> ?1",
+            params![pos as i64, id],
+        )?;
+    }
+
+    let entries: Vec<(i64, i64)> = {
+        let mut stmt = tx.prepare(
+            "SELECT id, playlist_id FROM playlist_entries ORDER BY playlist_id, position",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let mut pos = 0i64;
+    let mut current_playlist = None;
+    for (id, playlist_id) in entries {
+        if current_playlist != Some(playlist_id) {
+            current_playlist = Some(playlist_id);
+            pos = 0;
+        }
+        tx.execute(
+            "UPDATE playlist_entries SET position = ?1 WHERE id = ?2 AND position <> ?1",
+            params![pos, id],
+        )?;
+        pos += 1;
+    }
     Ok(())
 }
 
@@ -887,9 +940,14 @@ pub(crate) fn update_show(conn: &Connection, show: &Show) -> Result<()> {
 
 /// Delete a subscription (`podcast remove`). The FK `ON DELETE CASCADE` chain
 /// removes its episodes, playback, settings, sessions, chapters, tag links, and
-/// any unified-queue entries (the episode FK added in migration 0006).
-pub(crate) fn delete_show(conn: &Connection, id: i64) -> Result<()> {
-    conn.execute("DELETE FROM shows WHERE id = ?1", params![id])?;
+/// any unified-queue entries (the episode FK added in migration 0006). The
+/// cascade can hole queue / playlist positions, so the delete and the renumber
+/// commit together ([`compact_positions`]).
+pub(crate) fn delete_show(conn: &mut Connection, id: i64) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM shows WHERE id = ?1", params![id])?;
+    compact_positions(&tx)?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -1243,19 +1301,24 @@ pub(crate) fn get_or_create_series(conn: &Connection, name: &str) -> Result<i64>
     Ok(id)
 }
 
-/// Insert a book and return its id. The `books_ai` trigger seeds its `book_fts`
-/// row (title + series); the author/narrator FTS columns fill in as the links
-/// are added (`link_book_author` / `link_book_narrator`).
 /// Remove a book from the library (16.5h, the `delete_track` twin): a DB-only
 /// unlink, files stay on disk (re-importable). The schema cascades clean up
 /// dependents: author/narrator links, chapters, and `book_playback` (`ON
 /// DELETE CASCADE`, migration 0011), the FTS row (`books_ad`), queue entries
-/// (`queue.book_id CASCADE`), and the playback cursor (`SET NULL`, 0013).
-pub(crate) fn delete_book(conn: &Connection, book_id: i64) -> Result<()> {
-    conn.execute("DELETE FROM books WHERE id = ?1", params![book_id])?;
+/// (`queue.book_id CASCADE`), and the playback cursor (`SET NULL`, 0013). The
+/// cascade can hole queue / playlist positions, so the delete and the renumber
+/// commit together ([`compact_positions`]).
+pub(crate) fn delete_book(conn: &mut Connection, book_id: i64) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM books WHERE id = ?1", params![book_id])?;
+    compact_positions(&tx)?;
+    tx.commit()?;
     Ok(())
 }
 
+/// Insert a book and return its id. The `books_ai` trigger seeds its `book_fts`
+/// row (title + series); the author/narrator FTS columns fill in as the links
+/// are added (`link_book_author` / `link_book_narrator`).
 pub(crate) fn insert_book(conn: &Connection, book: &Book) -> Result<i64> {
     conn.execute(
         "INSERT INTO books (

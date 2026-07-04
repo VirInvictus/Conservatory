@@ -329,6 +329,39 @@ pub fn drop_target_position(from: usize, dest: usize, bias: DropBias, count: usi
     to.min(count.saturating_sub(1))
 }
 
+/// Engine-queue indexes of the DB queue rows matching `pred`, in ascending
+/// order. The engine mirrors the DB queue row-for-row (the Phase 16a lock-step
+/// invariant), so a row's index in the position-ordered read *is* its engine
+/// index. Read this *before* a library delete cascades the rows away, then
+/// hand the result to [`remove_engine_items`] after, so the live engine queue
+/// drops the same entries the DB just lost.
+pub fn engine_indexes_where(
+    pool: &conservatory_core::db::ReadPool,
+    pred: impl Fn(&conservatory_core::db::QueueDisplayRow) -> bool,
+) -> Vec<usize> {
+    pool.open()
+        .ok()
+        .and_then(|conn| conservatory_core::db::load_queue_display(&conn).ok())
+        .map(|rows| {
+            rows.iter()
+                .enumerate()
+                .filter(|(_, r)| pred(r))
+                .map(|(i, _)| i)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Remove `indexes` (ascending, as [`engine_indexes_where`] returns them) from
+/// the live engine queue, applied highest-first so the earlier removals don't
+/// shift the later targets. Removing the playing item advances playback to
+/// whatever falls into its slot (the engine's `RemoveItem` semantics).
+pub fn remove_engine_items(player: &conservatory_core::PlayerHandle, indexes: &[usize]) {
+    for &idx in indexes.iter().rev() {
+        player.remove_item(idx);
+    }
+}
+
 /// Format a number of seconds as `m:ss` (e.g. `3:07`); negatives clamp to 0.
 pub fn fmt_secs(secs: f64) -> String {
     let total = secs.max(0.0) as u64;

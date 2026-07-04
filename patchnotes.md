@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.1.18
+
+A bug-sweep release: the queue can no longer drift out of sync after a library delete.
+
+- **Deleting library items now keeps the queue honest.** Removing a track, a book, or a whole podcast subscription used to leave holes in the saved queue's position numbering (and a playlist's, if the track was in one). Every position-keyed operation after that (Play Next, removing or reordering a queue row) could then address the wrong row or silently do nothing, and the saved queue drifted out of lock-step with the live one, so the order visibly changed on the next launch. The delete and the renumbering now commit as one transaction, with a regression test asserting the queue and playlist positions stay dense.
+- **The live queue follows the library.** Removing tracks or books from the library, or unsubscribing from a show, now also drops those entries from the playing queue instead of leaving ghosts the queue drawer could not see. Behavior change, deliberate: if the item you delete is the one playing, playback advances to the next queue entry rather than continuing to play something the library says is gone (v0.1.16 kept it playing).
+- Internal: `insert_book`'s doc comment had been fused onto `delete_book`; re-attached.
+
 ## v0.1.17
 
 The chrome learns what tab you are on and what is playing. This closes Phase 16.5, the UX completeness pass.

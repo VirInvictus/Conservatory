@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
-    Episode, MediaKind, PlayedState, ReadPool, Show, get_playback, get_track, load_queue,
-    read_playback_state, search_rows, spawn_worker,
+    Episode, MediaKind, PlayedState, PlaylistKind, ReadPool, Show, get_playback, get_track,
+    load_queue, read_playback_state, search_rows, spawn_worker,
 };
 use conservatory_core::player;
 use conservatory_core::{
@@ -1092,13 +1092,69 @@ async fn delete_track_removes_it_and_cascades_the_queue() {
     worker.enqueue_tracks(vec![1, 2, 3]).await.unwrap();
     worker.delete_track(2).await.unwrap();
 
-    // The row is gone and its queue entry cascaded away (ON DELETE CASCADE); the
-    // surviving order is intact (the cascade leaves a position gap, which the
-    // position-ordered load tolerates, so this asserts order, not contiguity).
+    // The row is gone and its queue entry cascaded away (ON DELETE CASCADE);
+    // the surviving order is intact and the positions renumber to a dense
+    // 0..n-1 (the delete compacts the cascade's gap in the same transaction).
     let conn = pool.open().unwrap();
     assert!(get_track(&conn, 2).unwrap().is_none());
     drop(conn);
     assert_eq!(queue_track_ids(&pool), vec![1, 3]);
+    assert_positions_contiguous(&pool);
+}
+
+#[tokio::test]
+async fn delete_track_compacts_queue_and_playlist_positions() {
+    // The regression behind the compaction: a cascade delete used to leave a
+    // hole in `queue.position`, after which every position-keyed op (Play Next
+    // insert, remove, reorder — all driven by contiguous engine/list indexes)
+    // addressed the wrong row or silently no-op'd, and the DB queue drifted
+    // out of lock-step with the live engine queue.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("t.db");
+    let worker = spawn_worker(path.clone()).unwrap();
+    fixtures::generate(&worker, FixtureScale::Small)
+        .await
+        .unwrap();
+    let pool = ReadPool::new(path, 3).unwrap();
+
+    worker.enqueue_tracks(vec![1, 2, 3, 4]).await.unwrap();
+    let playlist_id = worker
+        .create_playlist("mix".into(), PlaylistKind::Static, None, None, None, 0)
+        .await
+        .unwrap();
+    worker
+        .append_playlist_tracks(playlist_id, vec![1, 2, 3])
+        .await
+        .unwrap();
+
+    worker.delete_track(2).await.unwrap();
+    assert_eq!(queue_track_ids(&pool), vec![1, 3, 4]);
+    assert_positions_contiguous(&pool);
+
+    // The playlist's positions renumber as well (its entry for track 2 also
+    // cascaded away).
+    let conn = pool.open().unwrap();
+    let entries: Vec<(i64, i64)> = conn
+        .prepare(
+            "SELECT position, track_id FROM playlist_entries \
+             WHERE playlist_id = ?1 ORDER BY position",
+        )
+        .unwrap()
+        .query_map([playlist_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(entries, vec![(0, 1), (1, 3)]);
+    drop(conn);
+
+    // Position-keyed ops land where the index says they should: a Play Next
+    // insert at 1 and a removal at 2 hit exactly those rows.
+    worker.insert_queue_tracks_at(1, vec![5]).await.unwrap();
+    assert_eq!(queue_track_ids(&pool), vec![1, 5, 3, 4]);
+    assert_positions_contiguous(&pool);
+    worker.remove_queue_item(2).await.unwrap();
+    assert_eq!(queue_track_ids(&pool), vec![1, 5, 4]);
+    assert_positions_contiguous(&pool);
 }
 
 /// Play Next inserts just after the current item without disturbing playback; a

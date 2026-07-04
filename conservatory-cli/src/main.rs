@@ -19,7 +19,7 @@ use conservatory_core::db::{
     search_track_ids, spawn_worker, static_playlist_track_ids, stats_genre_rows, stats_track_rows,
     track_id_by_path, track_metadata, track_render_rows, writeback_rows,
 };
-use conservatory_core::mover::{self, MoveKind, MoveMode, organize_ops};
+use conservatory_core::mover::{self, MoveKind, MoveMode, journal, organize_ops};
 use conservatory_core::{
     AlbumEdit, Assignment, AuditOptions, AuditReport, DEFAULT_TARGET_LUFS, DedupOptions,
     DuplicateReport, Field, GenreVocab, ImportOptions, ImportReport, LibraryStats, M3uTrack,
@@ -174,6 +174,13 @@ enum Command {
         /// Undo a previously-applied job by id instead of organizing.
         #[arg(long, value_name = "JOB_ID")]
         undo: Option<i64>,
+        /// List move jobs (id, state, progress) instead of organizing.
+        #[arg(long, conflicts_with_all = ["apply", "copy", "undo", "cancel_job"])]
+        jobs: bool,
+        /// Mark a stuck in-progress job as failed so recovery stops retrying
+        /// it (the escape hatch when a job's files can never roll forward).
+        #[arg(long, value_name = "JOB_ID", conflicts_with_all = ["apply", "copy", "undo"])]
+        cancel_job: Option<i64>,
         #[arg(long, value_enum, default_value_t = Format::Tsv)]
         format: Format,
     },
@@ -1166,8 +1173,10 @@ fn main() -> Result<()> {
             apply,
             copy,
             undo,
+            jobs,
+            cancel_job,
             format,
-        }) => organize(db, root, apply, copy, undo, format),
+        }) => organize(db, root, apply, copy, undo, jobs, cancel_job, format),
         Some(Command::ShelfGenreSet {
             db,
             album_id,
@@ -1496,7 +1505,7 @@ async fn run_audiobook_import(
     let worker = spawn_worker(db.clone()).context("spawning worker")?;
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
     // Heal any job interrupted by a previous crash before starting a new one.
-    mover::recover(&worker, &pool).await.context("recovery")?;
+    mover::recover(&worker, &pool).await.context("recovery (a stuck job? `organize --jobs` lists it, `organize --cancel-job <ID>` clears it)")?;
 
     let opts = BookImportOptions {
         library_root: root,
@@ -2545,7 +2554,7 @@ async fn run_import(
     let worker = spawn_worker(db.clone()).context("spawning worker")?;
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
     // Heal any job interrupted by a previous crash before starting a new one.
-    mover::recover(&worker, &pool).await.context("recovery")?;
+    mover::recover(&worker, &pool).await.context("recovery (a stuck job? `organize --jobs` lists it, `organize --cancel-job <ID>` clears it)")?;
 
     let opts = ImportOptions {
         library_root: root,
@@ -2622,27 +2631,112 @@ fn print_import_report(r: &ImportReport, format: Format) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn organize(
     db: PathBuf,
     root: PathBuf,
     apply: bool,
     copy: bool,
     undo: Option<i64>,
+    jobs: bool,
+    cancel_job: Option<i64>,
     format: Format,
 ) -> Result<()> {
-    block_on(run_organize(db, root, apply, copy, undo, format))
+    block_on(run_organize(
+        db, root, apply, copy, undo, jobs, cancel_job, format,
+    ))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_organize(
     db: PathBuf,
     root: PathBuf,
     apply: bool,
     copy: bool,
     undo: Option<i64>,
+    jobs: bool,
+    cancel_job: Option<i64>,
     format: Format,
 ) -> Result<()> {
     let worker = spawn_worker(db.clone()).context("spawning worker")?;
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
+
+    // The journal-inspection surfaces run *without* the recovery gate: they
+    // exist precisely for when recovery itself cannot succeed.
+    if jobs {
+        let summaries = {
+            let conn = pool.open().context("opening pool connection")?;
+            journal::list_jobs(&conn).context("listing move jobs")?
+        };
+        match format {
+            Format::Json => {
+                let rows: Vec<String> = summaries
+                    .iter()
+                    .map(|s| {
+                        format!(
+                            "{{\"id\":{},\"kind\":\"{}\",\"mode\":\"{}\",\"state\":\"{}\",\
+                             \"ops_done\":{},\"ops_total\":{},\"created_at\":{}}}",
+                            s.job.id,
+                            s.job.kind,
+                            s.job.mode,
+                            s.job.state.as_str(),
+                            s.ops_done,
+                            s.ops_total,
+                            s.job.created_at
+                        )
+                    })
+                    .collect();
+                println!("[{}]", rows.join(","));
+            }
+            Format::Tsv => {
+                for s in &summaries {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}/{}\t{}",
+                        s.job.id,
+                        s.job.kind,
+                        s.job.mode,
+                        s.job.state.as_str(),
+                        s.ops_done,
+                        s.ops_total,
+                        s.job.created_at
+                    );
+                }
+            }
+            Format::Human => {
+                if summaries.is_empty() {
+                    println!("no move jobs");
+                }
+                for s in &summaries {
+                    println!(
+                        "job {}: {} ({}), {}; {}/{} operation(s) applied",
+                        s.job.id,
+                        s.job.kind,
+                        s.job.mode,
+                        s.job.state.as_str(),
+                        s.ops_done,
+                        s.ops_total
+                    );
+                }
+            }
+        }
+        worker.shutdown_ack().await.context("shutdown ack")?;
+        return Ok(());
+    }
+
+    if let Some(job_id) = cancel_job {
+        mover::cancel(&worker, &pool, job_id)
+            .await
+            .with_context(|| format!("cancelling job {job_id}"))?;
+        match format {
+            Format::Json => println!("{{\"cancelled\":{job_id}}}"),
+            _ => println!(
+                "cancelled job {job_id} (marked failed; recovery will no longer retry it; \
+                 `organize --undo {job_id}` can still revert its applied operations)"
+            ),
+        }
+        worker.shutdown_ack().await.context("shutdown ack")?;
+        return Ok(());
+    }
 
     if let Some(job_id) = undo {
         mover::undo(&worker, &pool, job_id)
@@ -2681,7 +2775,7 @@ async fn run_organize(
     };
 
     if apply {
-        let recovered = mover::recover(&worker, &pool).await.context("recovery")?;
+        let recovered = mover::recover(&worker, &pool).await.context("recovery (a stuck job? `organize --jobs` lists it, `organize --cancel-job <ID>` clears it)")?;
         if recovered > 0 {
             println!("recovered {recovered} interrupted job(s)");
         }
@@ -2884,7 +2978,7 @@ async fn run_tag_set(
 
     let worker = spawn_worker(db.clone()).context("spawning worker")?;
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
-    mover::recover(&worker, &pool).await.context("recovery")?;
+    mover::recover(&worker, &pool).await.context("recovery (a stuck job? `organize --jobs` lists it, `organize --cancel-job <ID>` clears it)")?;
 
     let ids = resolve_selector(&pool, &query)?;
     if ids.is_empty() {
@@ -2958,7 +3052,7 @@ async fn run_tag_replace(
 
     let worker = spawn_worker(db.clone()).context("spawning worker")?;
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
-    mover::recover(&worker, &pool).await.context("recovery")?;
+    mover::recover(&worker, &pool).await.context("recovery (a stuck job? `organize --jobs` lists it, `organize --cancel-job <ID>` clears it)")?;
 
     let ids = resolve_selector(&pool, &query)?;
     if ids.is_empty() {

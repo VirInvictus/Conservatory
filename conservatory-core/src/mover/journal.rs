@@ -23,7 +23,9 @@ pub enum JobState {
 }
 
 impl JobState {
-    pub(crate) fn as_str(self) -> &'static str {
+    /// The TEXT value stored in `move_jobs.state` (public so the CLI's
+    /// `organize --jobs` listing can print it).
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::InProgress => "in_progress",
             Self::Completed => "completed",
@@ -249,6 +251,39 @@ pub(crate) fn set_job_state(conn: &Connection, job_id: i64, state: JobState) -> 
 }
 
 // --- Reads (read pool) ---
+
+/// A [`MoveJobRow`] with its operation progress (the `organize --jobs`
+/// listing): `ops_done` of `ops_total` operations have been applied to disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoveJobSummary {
+    pub job: MoveJobRow,
+    pub ops_done: i64,
+    pub ops_total: i64,
+}
+
+/// Every job with its progress, newest first. The inspection surface behind
+/// `organize --jobs`: a job stuck `in_progress` (its files unrecoverable) is
+/// visible here and clearable with [`crate::mover::cancel`].
+pub fn list_jobs(conn: &Connection) -> Result<Vec<MoveJobSummary>> {
+    let mut stmt = conn.prepare(
+        "SELECT j.id, j.kind, j.mode, j.library_root, j.state, j.created_at,
+                COALESCE(SUM(o.state = 'done'), 0) AS ops_done,
+                COUNT(o.id) AS ops_total
+         FROM move_jobs j
+         LEFT JOIN move_operations o ON o.job_id = j.id
+         GROUP BY j.id ORDER BY j.id DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let ops_done: i64 = row.get("ops_done")?;
+        let ops_total: i64 = row.get("ops_total")?;
+        Ok(row_to_job(row)?.map(|job| MoveJobSummary {
+            job,
+            ops_done,
+            ops_total,
+        }))
+    })?;
+    rows.map(|r| r?).collect()
+}
 
 /// All jobs still `in_progress` (interrupted by a crash), oldest first.
 pub fn in_progress_jobs(conn: &Connection) -> Result<Vec<MoveJobRow>> {

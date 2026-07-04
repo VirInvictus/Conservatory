@@ -378,3 +378,96 @@ async fn tree_and_db_stay_consistent_after_move() {
 
     fx.worker.shutdown_ack().await.unwrap();
 }
+
+#[tokio::test]
+async fn cancel_marks_a_stuck_job_failed_and_recovery_skips_it() {
+    let fx = fixture().await;
+    let (album, tracks) = seed(&fx, 2).await;
+    let ops: Vec<MoveOp> = tracks
+        .iter()
+        .map(|(id, old, new)| op(&fx.root, *id, album, old, new))
+        .collect();
+
+    // Journal the job, then wedge it: a source gone with no destination in
+    // place can never roll forward, so every recovery attempt fails.
+    let job = fx
+        .worker
+        .create_move_job(
+            MoveKind::Organize,
+            MoveMode::Move,
+            fx.root.to_string_lossy().into_owned(),
+            0,
+            ops.clone(),
+        )
+        .await
+        .unwrap();
+    fs::remove_file(&ops[0].src).unwrap();
+    assert!(mover::recover(&fx.worker, &fx.pool).await.is_err());
+    assert_eq!(job_state(&fx, job), JobState::InProgress);
+
+    // Cancel is the escape hatch: the job goes failed, recovery stops
+    // retrying it, and the still-present source file is untouched.
+    mover::cancel(&fx.worker, &fx.pool, job).await.unwrap();
+    assert_eq!(job_state(&fx, job), JobState::Failed);
+    assert_eq!(mover::recover(&fx.worker, &fx.pool).await.unwrap(), 0);
+    assert!(fx.root.join(&tracks[1].1).exists());
+
+    // Only a stuck in-progress job can be cancelled; a second cancel and an
+    // unknown id both refuse.
+    assert!(mover::cancel(&fx.worker, &fx.pool, job).await.is_err());
+    assert!(mover::cancel(&fx.worker, &fx.pool, 9999).await.is_err());
+
+    fx.worker.shutdown_ack().await.unwrap();
+}
+
+#[tokio::test]
+async fn list_jobs_reports_progress_newest_first() {
+    let fx = fixture().await;
+    let (album, tracks) = seed(&fx, 2).await;
+    let ops: Vec<MoveOp> = tracks
+        .iter()
+        .map(|(id, old, new)| op(&fx.root, *id, album, old, new))
+        .collect();
+
+    // Job 1 runs to completion; job 2 is journaled but never driven.
+    let done_job = mover::apply(
+        &fx.worker,
+        &fx.pool,
+        MoveKind::Organize,
+        MoveMode::Move,
+        &fx.root,
+        0,
+        ops,
+    )
+    .await
+    .unwrap();
+    let pending_ops: Vec<MoveOp> = tracks
+        .iter()
+        .map(|(id, _, new)| op(&fx.root, *id, album, new, &format!("third/{id}.flac")))
+        .collect();
+    let pending_job = fx
+        .worker
+        .create_move_job(
+            MoveKind::Organize,
+            MoveMode::Move,
+            fx.root.to_string_lossy().into_owned(),
+            1,
+            pending_ops,
+        )
+        .await
+        .unwrap();
+
+    // Newest first, with per-job applied/total operation counts.
+    let conn = fx.pool.open().unwrap();
+    let summaries = journal::list_jobs(&conn).unwrap();
+    drop(conn);
+    assert_eq!(summaries.len(), 2);
+    assert_eq!(summaries[0].job.id, pending_job);
+    assert_eq!(summaries[0].job.state, JobState::InProgress);
+    assert_eq!((summaries[0].ops_done, summaries[0].ops_total), (0, 2));
+    assert_eq!(summaries[1].job.id, done_job);
+    assert_eq!(summaries[1].job.state, JobState::Completed);
+    assert_eq!((summaries[1].ops_done, summaries[1].ops_total), (2, 2));
+
+    fx.worker.shutdown_ack().await.unwrap();
+}

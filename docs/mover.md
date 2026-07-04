@@ -11,6 +11,8 @@ Moving the user's files is the headline risk: a move bug damages a real library 
 3. **Execute** (off-worker): for each operation, `fsops::relocate` moves the file, then `complete_operation` (one transaction) marks the op `done` and applies the DB path it implies (`tracks.file_path`, and `albums.folder_path` = the new parent).
 4. **Finalize**: the job is set `completed`.
 
+A job that can never roll forward (a source gone with nothing at its destination) would otherwise fail the recovery gate forever, blocking every later `import`/`organize`. The escape hatch (v0.1.19): `organize --jobs` lists every job with its state and applied/total operation counts (`journal::list_jobs`), and `organize --cancel-job <ID>` marks a stuck `in_progress` job `failed` (`mover::cancel`), which recovery then skips. Cancel touches no files and no DB paths; only an `in_progress` job can be cancelled, and `organize --undo <ID>` still reverts whatever operations the failed job had applied. Both surfaces deliberately run without the recovery gate.
+
 ## The crash-safety contract
 
 The ordering is the guarantee:

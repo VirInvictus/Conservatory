@@ -3026,7 +3026,16 @@ impl ConservatoryWindow {
         else {
             return;
         };
-        let _ = rt.block_on(mover::recover(worker, pool));
+        // A failed recovery used to be swallowed silently; surface it and stop
+        // rather than journal a new move on top of a wedged one (the CLI's
+        // `organize --jobs` / `--cancel-job` can inspect and clear it).
+        if let Err(e) = rt.block_on(mover::recover(worker, pool)) {
+            self.toast(&format!(
+                "Move recovery failed, files not moved: {e} (see `conservatory organize --jobs`)"
+            ));
+            self.populate_initial();
+            return;
+        }
 
         let preview = mover::plan(self.build_scoped_ops(albums, &root));
         if preview.ops.is_empty() {

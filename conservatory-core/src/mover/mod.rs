@@ -236,6 +236,25 @@ pub async fn recover(worker: &WorkerHandle, pool: &ReadPool) -> Result<usize> {
     Ok(n)
 }
 
+/// Cancel a stuck `in_progress` job: mark it `failed` so [`recover`] stops
+/// retrying it (recovery only drives `in_progress` jobs). The escape hatch for
+/// a job that can never roll forward (a source file gone with no destination
+/// in place): without it, every recovery gate fails on the same job forever.
+/// Touches no files and no DB paths; operations already applied stay applied,
+/// and [`undo`] still works on the failed job (it reverts only `done` ops).
+/// Refuses any other state: completed / undone / failed jobs block nothing.
+pub async fn cancel(worker: &WorkerHandle, pool: &ReadPool, job_id: i64) -> Result<()> {
+    let job = read_job(pool, job_id)?;
+    if job.state != JobState::InProgress {
+        return Err(Error::Move(format!(
+            "job {job_id} is {}, not in_progress; only a stuck in-progress job can be cancelled",
+            job.state.as_str()
+        )));
+    }
+    worker.set_job_state(job_id, JobState::Failed).await?;
+    Ok(())
+}
+
 /// Undo a job: revert each `done` operation in reverse, then mark the job
 /// `undone`. Idempotent.
 pub async fn undo(worker: &WorkerHandle, pool: &ReadPool, job_id: i64) -> Result<()> {

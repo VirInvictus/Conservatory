@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.1.19
+
+The move journal gets an inspection surface, closing the sweep's second finding: a wedged move job could block every organize and import forever with no way out.
+
+- **`organize --jobs`.** Lists every move job, newest first, with its kind, mode, state, and applied/total operation counts, in all three output formats. Runs without the recovery gate, so it works precisely when recovery cannot.
+- **`organize --cancel-job <ID>`.** The escape hatch for a job that can never roll forward (a source file gone with nothing at its destination): marks the stuck in-progress job failed, which recovery then skips. Touches no files and no database paths; `organize --undo <ID>` still reverts whatever the failed job had applied. This is the first use of the `failed` job state the schema has carried since migration 0002. Only an in-progress job can be cancelled; anything else refuses with an explanation.
+- **Recovery failures now say what to do.** The five CLI recovery gates point at `organize --jobs` instead of a bare "recovery" error, and the GUI no longer swallows a failed recovery silently: a path-affecting edit that cannot recover the journal toasts the error and leaves the files unmoved rather than journaling a new move on top of a wedged one.
+
 ## v0.1.18
 
 A bug-sweep release: the queue can no longer drift out of sync after a library delete.

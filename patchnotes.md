@@ -1,5 +1,38 @@
 # Patch Notes
 
+## v0.1.26
+
+Queue-vs-playlist clarity (Phase 17d, closing the Phase 17 set).
+
+- **The track right-click menu now separates the queue from playlists.** "Play", "Play Next", and "Add to Queue" sit under a "Play queue" heading (they all act on the now-playing queue); "Add to Playlist" sits under its own "Playlists" heading (a saved, named list). Previously "Add to Playlist" was tucked in next to Edit and Rating, where it read as just another flavour of "Add to Queue". A short "queue vs. playlists" explainer joins the keymap doc.
+
+## v0.1.25
+
+Context-aware ReplayGain (Phase 17c, the third of the Phase 17 set).
+
+- **ReplayGain now follows how you are listening.** Playing an album in order uses *album* gain, which preserves the quiet-to-loud dynamics the artist intended across the record. Turn on shuffle and each track is judged on its own with *track* gain, so a quiet album cut does not arrive jarringly soft next to a loud single. The switch is instant: toggling shuffle re-levels the currently-playing track without a gap.
+- This only applies in the default album ReplayGain mode; if you have pinned the mode to track or off, it stays exactly as set. Podcasts and audiobooks are unaffected (they carry no ReplayGain).
+- A track that only has one of the two gains keeps using it in both contexts, so nothing ever loses normalization.
+
+## v0.1.24
+
+Shuffle (Phase 17b, the second of the Phase 17 "player table-stakes" set).
+
+- **A shuffle button on the Now-bar, and `Ctrl+K`.** Shuffle reorders the queue *in place*: the upcoming tail is shuffled while the played and currently-playing items stay put, so what you see in the queue is still exactly what plays (Conservatory keeps the queue as the source of truth, never a hidden play order behind it). Turning shuffle off leaves the order as-is; it just stops governing new plays.
+- **Playing something new while shuffle is on plays it shuffled.** Double-clicking a track, playing a facet, or playing a playlist puts the item you picked first and shuffles the rest.
+- **Shuffle composes with repeat-all:** each lap around the queue is a fresh shuffle.
+- **It is remembered across restarts,** on the same settings row as repeat. A resumed queue keeps its saved order (it is not reshuffled out from under you on launch); the flag simply governs the next thing you play.
+- Under the hood, the database queue and the live engine queue always apply the *same* shuffle, so they never drift out of step; a stale reorder is ignored rather than scrambling anything.
+
+## v0.1.23
+
+Repeat comes to the player (Phase 17a, the first of the Phase 17 "player table-stakes" set).
+
+- **A repeat button on the Now-bar, and `Ctrl+R`,** cycling off → all → one. Repeat-all wraps the queue back to the top instead of stopping; repeat-one loops the current item. The button dims when repeat is off and shows a distinct glyph for repeat-one, so the mode reads at a glance.
+- **The mode is remembered across restarts,** stored on the same DB-backed audio settings row as ReplayGain and gapless.
+- **It plays nicely with the stop-at-a-boundary features.** Stop-after-current and an end-of-item sleep timer still pause exactly where they should, even under repeat; an end-of-queue sleep timer still ends the queue rather than looping it forever. Repeat-one never prefetches the next track (there is nothing to hand off to when the current track is about to replay).
+- Groundwork for shuffle (Phase 17b) rides along: the settings row gained a shuffle flag, unused until shuffle lands next.
+
 ## v0.1.22
 
 Gapless playback is now actually gapless.

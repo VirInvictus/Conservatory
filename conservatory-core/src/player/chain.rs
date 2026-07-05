@@ -110,6 +110,8 @@ mod tests {
         MusicProfile {
             gapless: true,
             replaygain_db,
+            rg_album: replaygain_db,
+            rg_track: replaygain_db,
             speed: 1.0,
             pitch_correction: false,
             smart_speed: false,

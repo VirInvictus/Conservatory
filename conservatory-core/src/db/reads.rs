@@ -1635,6 +1635,8 @@ pub fn get_audio_state(conn: &Connection) -> Result<AudioState> {
                 // Degrade an unrecognized stored value to the default.
                 resampler: resampler_raw.parse().unwrap_or(ResamplerQuality::Default),
                 smart_speed_level: row.get("smart_speed_level")?,
+                repeat: row.get("repeat")?,
+                shuffle: row.get("shuffle")?,
             })
         })
         .optional()?;

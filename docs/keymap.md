@@ -40,9 +40,13 @@
 | `Ctrl+0` | Mute / unmute |
 | `Ctrl+M` | Stop after current: finish the current item, then pause at the boundary (v0.0.76; also the header menu) |
 | `Ctrl+J` | Jump to the playing track: select and scroll to it in the browse list (v0.0.76; also the header menu) |
+| `Ctrl+R` | Repeat mode: cycle off → all → one (v0.1.23; also the Now-bar repeat button) |
+| `Ctrl+K` | Shuffle: toggle on / off, reordering the upcoming queue in place (v0.1.24; also the Now-bar shuffle button) |
 | Media keys | Play/pause/next/previous via MPRIS2 (spec §6.5) |
 
 ## Queue
+
+> **Queue vs. playlists (17d).** The **queue** is the transient now-and-next list the player is working through; "Play", "Play Next", and "Add to Queue" all act on it, and it is what the queue drawer shows. A **playlist** is a saved, named collection; "Add to Playlist" writes into one and it persists in the sidebar's Playlists section. The track context menu keeps them in separate sections (a "Play queue" group and a "Playlists" group) so the two never read as synonyms.
 
 | Key | Action |
 |---|---|

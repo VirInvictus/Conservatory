@@ -25,8 +25,10 @@ pub mod engine;
 pub mod handle;
 pub mod host;
 pub mod item;
+pub mod mode;
 pub mod profile;
 pub mod session;
+pub mod shuffle;
 pub mod sleep;
 pub mod spectrum;
 pub mod spoken;
@@ -40,11 +42,13 @@ pub use engine::{spawn, spawn_null, spawn_with};
 pub use handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 pub use host::{AudioDevice, HostEvent, MpvHost};
 pub use item::PlayableItem;
+pub use mode::Repeat;
 pub use profile::{
     MusicProfile, PlaybackConfig, ReplayGain, quick_seek_target, resolve_book_profile,
     resolve_episode_profile, resolve_music_profile, resolve_skip_amounts,
 };
 pub use session::{SessionAccumulator, SessionOwner};
+pub use shuffle::{apply_permutation, shuffle_order};
 pub use sleep::{SleepClock, SleepMode, SleepStatus};
 pub use spoken::{SmartSpeedLevel, smart_speed_stage, voice_boost_stages};
 pub use state::{EndReason, INSURANCE_INTERVAL_MS, StateDebounce, StateEvent};

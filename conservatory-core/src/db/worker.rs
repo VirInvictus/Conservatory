@@ -418,6 +418,13 @@ impl WorkerHandle {
             .await
     }
 
+    /// Reorder the whole queue by a permutation (`perm[new] = old`), the shuffle
+    /// path (Phase 17b); applied in lock-step with the engine's `ReorderQueue`.
+    pub async fn reorder_queue_by_positions(&self, perm: Vec<usize>) -> Result<()> {
+        self.dispatch(|reply| Command::ReorderQueueByPositions { perm, reply })
+            .await
+    }
+
     /// Empty the queue.
     pub async fn clear_queue(&self) -> Result<()> {
         self.dispatch(|reply| Command::ClearQueue { reply }).await
@@ -1155,6 +1162,9 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::ReorderQueue { from, to, reply } => {
             let _ = reply.send(writes::reorder_queue(conn, from, to));
+        }
+        Command::ReorderQueueByPositions { perm, reply } => {
+            let _ = reply.send(writes::reorder_queue_by_positions(conn, &perm));
         }
         Command::ClearQueue { reply } => {
             let _ = reply.send(writes::clear_queue(conn));

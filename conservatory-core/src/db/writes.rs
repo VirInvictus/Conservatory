@@ -359,7 +359,8 @@ pub(crate) fn set_audio_state(conn: &Connection, state: &AudioState) -> Result<(
             comp_attack_ms = ?8, comp_release_ms = ?9,
             limiter_enabled = ?10, limiter_ceiling_db = ?11,
             leveler_enabled = ?12, leveler_target_peak = ?13, leveler_gausssize = ?14,
-            output_backend = ?15, resampler_quality = ?16, smart_speed_level = ?17
+            output_backend = ?15, resampler_quality = ?16, smart_speed_level = ?17,
+            repeat = ?18, shuffle = ?19
          WHERE id = 0",
         params![
             state.replaygain_mode,
@@ -379,6 +380,8 @@ pub(crate) fn set_audio_state(conn: &Connection, state: &AudioState) -> Result<(
             state.output_backend,
             state.resampler.as_str(),
             state.smart_speed_level,
+            state.repeat,
+            state.shuffle,
         ],
     )?;
     Ok(())
@@ -695,6 +698,35 @@ pub(crate) fn reorder_queue(conn: &mut Connection, from: i64, to: i64) -> Result
 /// Empty the queue.
 pub(crate) fn clear_queue(conn: &Connection) -> Result<()> {
     conn.execute("DELETE FROM queue", [])?;
+    Ok(())
+}
+
+/// Reorder the whole queue by a permutation (Phase 17b, shuffle): `perm` maps a
+/// new position to the old position (`perm[new] = old`), the same permutation the
+/// engine applies to its in-memory queue, so the DB queue and the live engine
+/// queue stay lock-step. Reads the current ids in position order and rewrites each
+/// row's `position` to its new index. A `perm` whose length does not match the
+/// queue (a stale snapshot) is ignored rather than corrupting positions — the
+/// engine guards identically, so both no-op together. `queue.position` carries no
+/// UNIQUE constraint, so the transient duplicate positions mid-rewrite are fine.
+pub(crate) fn reorder_queue_by_positions(conn: &mut Connection, perm: &[usize]) -> Result<()> {
+    let tx = conn.transaction()?;
+    let old_ids: Vec<i64> = {
+        let mut stmt = tx.prepare("SELECT id FROM queue ORDER BY position")?;
+        stmt.query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<i64>>>()?
+    };
+    if perm.len() == old_ids.len() {
+        for (new_index, &old_index) in perm.iter().enumerate() {
+            if let Some(&id) = old_ids.get(old_index) {
+                tx.execute(
+                    "UPDATE queue SET position = ?1 WHERE id = ?2",
+                    params![new_index as i64, id],
+                )?;
+            }
+        }
+    }
+    tx.commit()?;
     Ok(())
 }
 

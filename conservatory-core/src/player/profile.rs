@@ -109,8 +109,17 @@ pub struct MusicProfile {
     pub gapless: bool,
     /// The ReplayGain head-stage gain in dB to apply (preamp-adjusted, clamped),
     /// or `None` for no normalization (Phase 5.5a). Rendered as a `volume` filter
-    /// at the head of the `af` chain, recomputed per track (the #8267 fix).
+    /// at the head of the `af` chain, recomputed per track (the #8267 fix). This is
+    /// the *effective* gain the chain reads; [`MusicProfile::contextual`] swaps it
+    /// between the album- and track-context gains below (Phase 17c).
     pub replaygain_db: Option<f64>,
+    /// The album-context and track-context ReplayGain gains (dB, preamp-adjusted +
+    /// clamped), carried so the engine can pick per playback context (Phase 17c):
+    /// album gain played in order, track gain when shuffling. In Album mode both
+    /// are filled; Track mode carries only `rg_track` (so context never lifts it to
+    /// album gain); Off and spoken word carry neither.
+    pub rg_album: Option<f64>,
+    pub rg_track: Option<f64>,
     /// Playback rate (1.0 = native). Episodes resolve it from the show's
     /// `playback_speed`; music plays at 1.0.
     pub speed: f64,
@@ -128,40 +137,72 @@ pub struct MusicProfile {
     pub voice_boost: bool,
 }
 
-/// Resolve which stored gain (dB) ReplayGain should apply for `track` under the
-/// mode, downgrading to what the track actually carries: an album-mode request on
-/// a track with only track gain falls back to track gain, and a track with no RG
-/// tags resolves to `None` (no normalization against absent data). The read-only
-/// stance (spec §16.7): we consult the tags import / the rsgain scan stored,
-/// never invent a value.
-fn resolve_replaygain_raw(track: &Track, mode: ReplayGain) -> Option<f64> {
-    match mode {
-        ReplayGain::Off => None,
-        ReplayGain::Album => track.replaygain_album.or(track.replaygain_track),
-        ReplayGain::Track => track.replaygain_track.or(track.replaygain_album),
-    }
-}
-
-/// Resolve the music profile for `track` under `cfg`. The ReplayGain gain is the
+/// Resolve the music profile for `track` under `cfg`. Each context gain is the
 /// stored value plus the preamp, then clamped to ≤ 0 dB when `replaygain_clip`
-/// (the no-peak-data clip guard, Phase 5.5a).
+/// (the no-peak-data clip guard, Phase 5.5a). Both the album- and track-context
+/// gains are computed (Phase 17c) so the engine can pick per playback context;
+/// each falls back to the other tag the track actually carries (an album-mode
+/// track with only track gain uses track gain, and a track with no RG tags
+/// resolves to `None`, never inventing a value, the read-only stance spec §16.7).
+/// `replaygain_db` starts at the linear (album / in-order) default; the engine
+/// calls [`MusicProfile::contextual`] to swap it to track gain when shuffling.
 pub fn resolve_music_profile(track: &Track, cfg: &PlaybackConfig) -> MusicProfile {
-    let replaygain_db = resolve_replaygain_raw(track, cfg.replaygain).map(|raw| {
-        let net = raw + cfg.replaygain_preamp;
-        if cfg.replaygain_clip {
-            net.min(0.0)
-        } else {
-            net
-        }
-    });
+    let adjust = |raw: Option<f64>| -> Option<f64> {
+        raw.map(|raw| {
+            let net = raw + cfg.replaygain_preamp;
+            if cfg.replaygain_clip {
+                net.min(0.0)
+            } else {
+                net
+            }
+        })
+    };
+    let (rg_album, rg_track) = match cfg.replaygain {
+        ReplayGain::Off => (None, None),
+        // Track mode: only the track-context slot, so context can never lift it to
+        // album gain (contextual falls back to it either way).
+        ReplayGain::Track => (
+            None,
+            adjust(track.replaygain_track.or(track.replaygain_album)),
+        ),
+        // Album mode: both, so shuffle can flip album ↔ track.
+        ReplayGain::Album => (
+            adjust(track.replaygain_album.or(track.replaygain_track)),
+            adjust(track.replaygain_track.or(track.replaygain_album)),
+        ),
+    };
+    let replaygain_db = rg_album.or(rg_track);
 
     MusicProfile {
         gapless: cfg.gapless,
         replaygain_db,
+        rg_album,
+        rg_track,
         speed: 1.0,
         pitch_correction: false,
         smart_speed: false,
         voice_boost: false,
+    }
+}
+
+impl MusicProfile {
+    /// A copy whose effective `replaygain_db` follows the playback context (Phase
+    /// 17c): **track** gain when shuffling (each track judged on its own, since
+    /// shuffle breaks the album's intra-loudness relationships), **album** gain in
+    /// order. Each falls back to the other so a track with only one gain still
+    /// normalizes; a profile carrying neither (Off, spoken word) stays `None`, so
+    /// this is a no-op there. Pure; the engine applies it at load and re-applies
+    /// live when shuffle toggles.
+    pub fn contextual(&self, shuffle: bool) -> MusicProfile {
+        let replaygain_db = if shuffle {
+            self.rg_track.or(self.rg_album)
+        } else {
+            self.rg_album.or(self.rg_track)
+        };
+        MusicProfile {
+            replaygain_db,
+            ..*self
+        }
     }
 }
 
@@ -185,6 +226,8 @@ pub fn resolve_episode_profile(settings: Option<&ShowSettings>) -> MusicProfile 
     MusicProfile {
         gapless: false,
         replaygain_db: None,
+        rg_album: None,
+        rg_track: None,
         speed,
         pitch_correction: true,
         smart_speed: settings.is_some_and(|s| s.smart_speed),
@@ -228,6 +271,8 @@ pub fn resolve_book_profile(playback: Option<&BookPlayback>) -> MusicProfile {
     MusicProfile {
         gapless: false,
         replaygain_db: None,
+        rg_album: None,
+        rg_track: None,
         speed,
         pitch_correction: true,
         smart_speed: playback.and_then(|p| p.smart_speed).unwrap_or(false),
@@ -311,6 +356,68 @@ mod tests {
             ..PlaybackConfig::default()
         };
         assert_eq!(resolve_music_profile(&t, &cfg).replaygain_db, Some(-7.0));
+    }
+
+    #[test]
+    fn contextual_swaps_album_and_track_gain_in_album_mode() {
+        // Phase 17c: album gain played in order, track gain when shuffling.
+        let mut t = track();
+        t.replaygain_album = Some(-7.0);
+        t.replaygain_track = Some(-5.0);
+        let p = resolve_music_profile(&t, &PlaybackConfig::default()); // album mode
+        assert_eq!(
+            p.replaygain_db,
+            Some(-7.0),
+            "the linear default is album gain"
+        );
+        assert_eq!(p.contextual(false).replaygain_db, Some(-7.0));
+        assert_eq!(
+            p.contextual(true).replaygain_db,
+            Some(-5.0),
+            "shuffle → track gain"
+        );
+    }
+
+    #[test]
+    fn contextual_is_a_noop_in_track_and_off_modes() {
+        let mut t = track();
+        t.replaygain_album = Some(-7.0);
+        t.replaygain_track = Some(-5.0);
+        // Track mode: track gain regardless of playback context.
+        let cfg = PlaybackConfig {
+            replaygain: ReplayGain::Track,
+            ..PlaybackConfig::default()
+        };
+        let p = resolve_music_profile(&t, &cfg);
+        assert_eq!(p.contextual(false).replaygain_db, Some(-5.0));
+        assert_eq!(p.contextual(true).replaygain_db, Some(-5.0));
+        // Off: no gain either way.
+        let cfg = PlaybackConfig {
+            replaygain: ReplayGain::Off,
+            ..PlaybackConfig::default()
+        };
+        let p = resolve_music_profile(&t, &cfg);
+        assert_eq!(p.contextual(false).replaygain_db, None);
+        assert_eq!(p.contextual(true).replaygain_db, None);
+    }
+
+    #[test]
+    fn contextual_falls_back_when_only_one_gain_present() {
+        // Album mode, only track gain present: both contexts use track gain, so
+        // context can never drop normalization to `None`.
+        let mut t = track();
+        t.replaygain_track = Some(-4.0);
+        let p = resolve_music_profile(&t, &PlaybackConfig::default());
+        assert_eq!(p.contextual(false).replaygain_db, Some(-4.0));
+        assert_eq!(p.contextual(true).replaygain_db, Some(-4.0));
+    }
+
+    #[test]
+    fn spoken_word_carries_no_context_gains() {
+        let ep = resolve_episode_profile(None);
+        assert_eq!(ep.rg_album, None);
+        assert_eq!(ep.rg_track, None);
+        assert_eq!(ep.contextual(true).replaygain_db, None);
     }
 
     #[test]

@@ -539,6 +539,8 @@ mod tests {
         let profile = MusicProfile {
             gapless: true,
             replaygain_db: None,
+            rg_album: None,
+            rg_track: None,
             speed: 1.0,
             pitch_correction: false,
             smart_speed: false,

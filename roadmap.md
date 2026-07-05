@@ -1010,8 +1010,38 @@ Deferred out of this phase, recorded here so they are not lost: a book list-view
 
 **Phase 16.5 complete.** All nine sub-phases shipped, v0.1.9 through v0.1.17: zero migrations, zero new dependencies, roughly 45 audit findings closed or explicitly deferred (the deferred list is at the top of this phase).
 
-## Phases 17–19 — planned (from the UI/UX deep-dive)
+## Phase 17 — Player table-stakes
 
-- **Phase 17 — Player table-stakes:** shuffle and repeat modes (absent from the engine and UI today), context-aware ReplayGain (album gain for whole-album listening, track gain when shuffling), and the queue-vs-playlist verb clarity the research calls out.
+From the v0.1.2 UI/UX deep-dive: the three things a serious music player has that Conservatory did not. Shuffle and repeat (absent from the engine and the UI), context-aware ReplayGain (album gain played straight through, track gain when shuffling), and the queue-vs-playlist verb clarity the research called out. Four independently shippable sub-phases, the Phase 16 / 16.5 shape; zero new dependencies. Decisions (with Brandon): shuffle is **in-place** (enabling it physically reorders the upcoming queue tail, so the queue view stays the play order, spec §6.1), and both modes **persist** across restarts on the DB-canonical `audio_state` singleton.
+
+### Phase 17a — Repeat modes ✅ (v0.1.23)
+
+Repeat is a pure engine-advance concern, so it ships first (no reorder).
+
+- [x] Migration 0018 adds `repeat` (TEXT `off`/`all`/`one`) and `shuffle` (bool) to `audio_state`, both added up front so 17b needs no second migration; `AudioState` + `get_audio_state` + `set_audio_state` carry them. A new `player::mode::Repeat` enum (`as_str` / `from_stored` / `next`, the `ReplayGain` idiom) is the one place the string becomes an enum.
+- [x] The engine gains `repeat` and `PlayerCommand::SetRepeat`: `One` reloads the current item at EOF instead of advancing (a one-shot stop, stop-after-current or the end-of-item sleep, still wins); `All` wraps to the top via `wrap_to_top` instead of ending (an end-of-queue sleep timer still wins); `One` is a prefetch stop-boundary (no gapless hand-off to a track we are about to replay). `PlayerSnapshot` carries the mode.
+- [x] Now-bar repeat button (icon + dimmed-when-off opacity + tooltip, the distinct song-repeat glyph for `One`), cycled by the button and `Ctrl+R`, applied to the engine and persisted to `audio_state`; restored into the engine at launch (`apply_persisted_audio`). The shortcuts reference + `docs/keymap.md` gain the binding.
+- [x] Tests: `Repeat` round-trips its TEXT; `audio_state` persists the modes; two engine integration tests through the null host — `One` replays the current item (play_count climbs, the queue never ends) and `All` wraps back to index 0 without ever ending.
+
+### Phase 17b — Shuffle ✅ (v0.1.24)
+
+In-place reorder; the DB queue and engine queue stay lock-step by applying the **same permutation** (the position-keyed invariant).
+
+- [x] Pure `player::shuffle::shuffle_order(len, keep_prefix, seed)` (a hand-rolled SplitMix64, no new dep) leaving the played + current prefix in place and Fisher-Yates-shuffling the future, plus `apply_permutation`; `PlayerCommand::SetShuffle` / `ReorderQueue(perm)` (both length-guarded so a stale perm is ignored, not corrupting); the repeat-all wrap reshuffles when shuffle is on (`wrap_to_top`, persisting the same perm); a `reorder_queue_by_positions` worker op both the GUI toggle and the engine wrap use. `PlayerSnapshot` carries `shuffle`.
+- [x] Now-bar shuffle button (left end of the transport, dimmed when off) + `Ctrl+K` (Ctrl+U is the queue); toggle-on computes one permutation and applies it to both the DB (`reorder_queue_by_positions`) and the engine (`reorder_queue`); the replace-queue Play paths (double-click / facet Play via `play_leaf_from`, and `play_playlist`) shuffle the built queue (activated item first, `playqueue::shuffle_play_order`) before writing it; the flag persists to `audio_state` and restores at launch (without reshuffling the resumed queue).
+- [x] Tests: `shuffle_order` (permutation / prefix / determinism) + `apply_permutation` unit tests; `shuffle_play_order` puts the activated item first; a worker test that `reorder_queue_by_positions` applies a perm and keeps positions dense (and ignores a stale one); an engine integration test that `ReorderQueue` tracks the current index (and no-ops a stale perm).
+
+### Phase 17c — Context-aware ReplayGain ✅ (v0.1.25)
+
+- [x] `MusicProfile` carries both resolved gains (`rg_album` / `rg_track`, each preamp-adjusted + clamped, falling back to the other so one-gain tracks still normalize) and a pure `contextual(shuffle)` picks album-when-linear / track-when-shuffle; `replaygain_db` stays the effective field the `@rg` chain renders (so `chain.rs` is untouched), defaulting to the album/in-order gain. Track and Off modes are context-invariant; spoken word carries neither gain. The engine applies `profile.contextual(self.shuffle)` at `load_current` and `advance_into_prefetched`, and re-applies live to the current track on `SetShuffle` (the gap-free `apply_profile` path, the set_eq idiom). Unit-tested (album↔track swap, Track/Off no-op, single-gain fallback, spoken word `None`); the existing `resolve_music_profile` tests hold unchanged.
+
+### Phase 17d — Queue-vs-playlist verb clarity ✅ (v0.1.26)
+
+- [x] Audited the five context menus: the verbs were already consistent (Play / Play Next / Add to Queue / Remove from Queue / Clear Queue), and only the track menu carried the queue-vs-playlist ambiguity (it lumped "Add to Playlist" in with Edit / Rating). Fixed by grouping the track menu into a labeled **"Play queue"** section (Play / Play Next / Add to Queue) and a separate labeled **"Playlists"** section (Add to Playlist), so the transient queue and the saved list never read as synonyms. `docs/keymap.md` gains a "Queue vs. playlists" explainer. No engine work.
+
+**Phase 17 complete.** All four sub-phases shipped, v0.1.23 through v0.1.26: shuffle and repeat (in-place, persisted), context-aware ReplayGain, and the queue/playlist clarity pass. Migration 0018 (two additive `audio_state` columns); zero new dependencies. The music half now has the player table-stakes it was missing.
+
+## Phases 18–19 — planned (from the UI/UX deep-dive)
+
 - **Phase 18 — Grammar and column power:** Quod-Libet-grade grammar extensions (accent-folding, saved-query-by-name reuse), and customizable plus computed columns (the deadbeef Title-Formatting / MusicBee Virtual Tags idea).
 - **Phase 19 — Immersive polish:** a waveform seek bar (the seek bar as the loudness envelope, reusing the PipeWire tap), full-screen Now Playing, drag-drop file import, and richer navigable-credits metadata from local sources.

@@ -60,9 +60,10 @@ pub use path_template::{
 };
 pub use player::{
     AudioDevice, ChapterMark, EndReason, HostEvent, MpvHost, MusicProfile, PlayableItem,
-    PlaybackConfig, PlayerCommand, PlayerHandle, PlayerSnapshot, ReplayGain, SleepMode,
+    PlaybackConfig, PlayerCommand, PlayerHandle, PlayerSnapshot, Repeat, ReplayGain, SleepMode,
     SleepStatus, StateDebounce, StateEvent, build_af_chain, eq_stage, quick_seek_target,
     resolve_book_profile, resolve_episode_profile, resolve_music_profile, resolve_skip_amounts,
+    shuffle_order,
 };
 pub use playlist::{M3uTrack, build_m3u, parse_m3u};
 pub use replaygain::{

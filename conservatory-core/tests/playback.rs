@@ -143,6 +143,8 @@ fn host_plays_fixture_to_eof() {
     let profile = MusicProfile {
         gapless: true,
         replaygain_db: Some(-6.0),
+        rg_album: Some(-6.0),
+        rg_track: Some(-6.0),
         speed: 1.0,
         pitch_correction: false,
         smart_speed: true,
@@ -202,6 +204,8 @@ fn host_load_applies_profile_speed() {
     let profile = MusicProfile {
         gapless: false,
         replaygain_db: None,
+        rg_album: None,
+        rg_track: None,
         speed: 1.5,
         pitch_correction: true,
         smart_speed: false,

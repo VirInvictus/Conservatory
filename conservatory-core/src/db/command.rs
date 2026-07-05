@@ -292,6 +292,12 @@ pub(crate) enum Command {
         to: i64,
         reply: oneshot::Sender<Result<()>>,
     },
+    /// Reorder the whole queue by a permutation (`perm[new] = old`), the shuffle
+    /// path (Phase 17b). Applied in lock-step with the engine's `ReorderQueue`.
+    ReorderQueueByPositions {
+        perm: Vec<usize>,
+        reply: oneshot::Sender<Result<()>>,
+    },
 
     /// Empty the queue.
     ClearQueue { reply: oneshot::Sender<Result<()>> },
@@ -630,6 +636,7 @@ impl Command {
             Self::ReplaceQueueWithBooks { .. } => "replace_queue_with_books",
             Self::RemoveQueueItem { .. } => "remove_queue_item",
             Self::ReorderQueue { .. } => "reorder_queue",
+            Self::ReorderQueueByPositions { .. } => "reorder_queue_by_positions",
             Self::ClearQueue { .. } => "clear_queue",
             Self::CreatePlaylist { .. } => "create_playlist",
             Self::DeletePlaylist { .. } => "delete_playlist",

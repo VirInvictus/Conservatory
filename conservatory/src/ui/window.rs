@@ -35,12 +35,14 @@ use conservatory_core::db::{
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
-    Assignment, Config, ImportMode, PlaybackConfig, PlayerHandle, TagWrite, any_path_affecting,
-    build_album_edit, build_track_edit, common_value, genres_assignment, parse_assignment,
-    write_track_tags,
+    Assignment, Config, ImportMode, PlaybackConfig, PlayerHandle, Repeat, TagWrite,
+    any_path_affecting, build_album_edit, build_track_edit, common_value, genres_assignment,
+    parse_assignment, shuffle_order, write_track_tags,
 };
 
-use crate::playqueue::{MixedQueueRow, build_mixed_queue, build_play_queue, fmt_position};
+use crate::playqueue::{
+    MixedQueueRow, build_mixed_queue, build_play_queue, fmt_position, shuffle_play_order,
+};
 use crate::query::{materialize_smart, query_leaf};
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
@@ -210,6 +212,16 @@ const FILTER_GRAMMAR_TIP: &str = "Search grammar: field:value with AND / OR / NO
 
 /// One sidebar row: a left-aligned, ellipsized name label. The tooltip carries
 /// the full name, since the narrow sidebar ellipsizes long ones (16.5b).
+/// A wall-clock-derived seed for the shuffle permutation (Phase 17b), mixing
+/// seconds and nanoseconds so successive toggles differ. The same permutation is
+/// sent to the engine and the DB, so the seed only lives here.
+fn seed_now() -> u64 {
+    let d = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    (d.as_secs() << 20) ^ u64::from(d.subsec_nanos())
+}
+
 fn perspective_row(name: &str) -> gtk::ListBoxRow {
     let label = gtk::Label::builder()
         .label(name)
@@ -629,6 +641,24 @@ impl ConservatoryWindow {
             }
         });
 
+        // Repeat toggle (Phase 17a): cycle Off → All → One, apply to the engine,
+        // and persist to `audio_state`; also bound to Ctrl+R.
+        let weak = self.downgrade();
+        now_bar.repeat_btn.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.cycle_repeat();
+            }
+        });
+
+        // Shuffle toggle (Phase 17b): reorder the upcoming queue in place, apply to
+        // the engine, and persist to `audio_state`; also bound to Ctrl+K.
+        let weak = self.downgrade();
+        now_bar.shuffle_btn.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.toggle_shuffle();
+            }
+        });
+
         // The plugin pages (lazily built) plus the shared multi-view chrome
         // (switcher in the header, the adaptive bottom switcher bar, the
         // breakpoint), which exists only when a second view is compiled in. A
@@ -910,6 +940,105 @@ impl ConservatoryWindow {
             ));
             player.set_output_backend(state.output_backend);
             player.set_resampler_quality(state.resampler);
+            // Restore the transport modes into the engine (Phase 17): the Now-bar
+            // button follows via the refresh poll. Shuffle is a queue-order mode
+            // wired at Phase 17b; the flag is restored here so a later Play honours
+            // it (the resumed queue itself is left in its saved order, not
+            // reshuffled).
+            let repeat = Repeat::from_stored(&state.repeat);
+            player.set_repeat(repeat);
+            player.set_shuffle(state.shuffle);
+            if let Some(now) = imp.now_bar.get() {
+                now.set_repeat(repeat);
+                now.set_shuffle(state.shuffle);
+            }
+        }
+    }
+
+    /// Toggle shuffle (Phase 17b, the Now-bar button / Ctrl+K). Turning it **on**
+    /// reorders the upcoming queue tail in place: it computes one permutation and
+    /// applies it to *both* the DB queue (`reorder_queue_by_positions`) and the live
+    /// engine queue (`reorder_queue`), so the two stay lock-step and the queue view
+    /// keeps showing the true play order (spec §6.1). The played + currently-playing
+    /// prefix stays put. Turning it **off** leaves the order as-is (non-destructive);
+    /// it just stops governing future plays. Either way the flag is applied to the
+    /// engine, reflected on the button, and persisted to `audio_state`.
+    fn toggle_shuffle(&self) {
+        let imp = self.imp();
+        let Some(player) = imp.player.get() else {
+            return;
+        };
+        let snap = player.snapshot();
+        let on = !snap.shuffle;
+        if on {
+            // Shuffle the tail after the currently-playing item; if nothing is
+            // playing, the whole queue is fair game.
+            let keep_prefix = snap.current_index.map_or(0, |c| c + 1);
+            let len = snap.queue_len;
+            if len > keep_prefix + 1 {
+                let perm = shuffle_order(len, keep_prefix, seed_now());
+                if let (Some(worker), Some(rt)) = (imp.worker.get(), imp.runtime.get()) {
+                    let _ = rt.block_on(worker.reorder_queue_by_positions(perm.clone()));
+                }
+                player.reorder_queue(perm);
+            }
+        }
+        player.set_shuffle(on);
+        if let Some(now) = imp.now_bar.get() {
+            now.set_shuffle(on);
+        }
+        self.persist_shuffle(on);
+    }
+
+    /// Write the shuffle flag into the `audio_state` singleton (Phase 17b), reading
+    /// the row first so the other audio fields are preserved. Best-effort, the
+    /// `persist_repeat` idiom.
+    fn persist_shuffle(&self, on: bool) {
+        let imp = self.imp();
+        let (Some(pool), Some(worker), Some(rt)) =
+            (imp.pool.get(), imp.worker.get(), imp.runtime.get())
+        else {
+            return;
+        };
+        if let Ok(conn) = pool.open()
+            && let Ok(mut state) = get_audio_state(&conn)
+        {
+            state.shuffle = on;
+            let _ = rt.block_on(worker.set_audio_state(state));
+        }
+    }
+
+    /// Cycle the repeat mode Off → All → One (Phase 17a, the Now-bar button /
+    /// Ctrl+R): apply it to the engine, reflect it on the button, and persist the
+    /// new mode to the `audio_state` singleton so it survives a restart.
+    fn cycle_repeat(&self) {
+        let imp = self.imp();
+        let Some(player) = imp.player.get() else {
+            return;
+        };
+        let next = player.snapshot().repeat.next();
+        player.set_repeat(next);
+        if let Some(now) = imp.now_bar.get() {
+            now.set_repeat(next);
+        }
+        self.persist_repeat(next);
+    }
+
+    /// Write the repeat mode into the `audio_state` singleton (Phase 17a), reading
+    /// the row first so the other audio fields are preserved. Best-effort: a failed
+    /// read/write leaves the engine's live mode in force for the session.
+    fn persist_repeat(&self, mode: Repeat) {
+        let imp = self.imp();
+        let (Some(pool), Some(worker), Some(rt)) =
+            (imp.pool.get(), imp.worker.get(), imp.runtime.get())
+        else {
+            return;
+        };
+        if let Ok(conn) = pool.open()
+            && let Ok(mut state) = get_audio_state(&conn)
+        {
+            state.repeat = mode.as_str().to_string();
+            let _ = rt.block_on(worker.set_audio_state(state));
         }
     }
 
@@ -2014,7 +2143,7 @@ impl ConservatoryWindow {
         let tracks = get_tracks(&conn, &ordered_ids).unwrap_or_default();
         drop(conn);
 
-        let (items, start) = build_play_queue(
+        let (mut items, mut start) = build_play_queue(
             &ordered_ids,
             pos as usize,
             &tracks,
@@ -2023,6 +2152,14 @@ impl ConservatoryWindow {
         );
         if items.is_empty() {
             return;
+        }
+        // Shuffle-on (Phase 17b): reorder the built queue so the activated item
+        // leads and the rest are shuffled. The DB queue written below mirrors it by
+        // construction (same order), so the engine and the DB stay lock-step.
+        if player.snapshot().shuffle && items.len() > 1 {
+            let perm = shuffle_play_order(items.len(), start, seed_now());
+            items = perm.iter().map(|&o| items[o].clone()).collect();
+            start = 0;
         }
 
         // Write the DB queue through so it mirrors what the engine plays (the
@@ -2430,13 +2567,17 @@ impl ConservatoryWindow {
         });
         self.add_action(&add_to_playlist);
 
-        // The model: Play / Add to Queue · Edit + Rating + Add to Playlist · Reveal.
+        // The model, grouped so the transient queue reads distinctly from saved
+        // playlists (17d): a "Play queue" section (Play / Play Next / Add to Queue,
+        // all act on the now-playing queue), then metadata (Edit / Rating), then a
+        // labeled "Playlists" section (Add to Playlist, a saved named list), then
+        // Reveal, then the destructive verb.
         let menu = gio::Menu::new();
         let top = gio::Menu::new();
         top.append(Some("Play"), Some("win.track-play"));
         top.append(Some("Play Next"), Some("win.track-play-next"));
         top.append(Some("Add to Queue"), Some("win.track-queue"));
-        menu.append_section(None, &top);
+        menu.append_section(Some("Play queue"), &top);
 
         let mid = gio::Menu::new();
         mid.append(Some("Edit\u{2026}"), Some("win.track-edit"));
@@ -2452,12 +2593,17 @@ impl ConservatoryWindow {
             ratings.append_item(&item);
         }
         mid.append_submenu(Some("Rating"), &ratings);
-        // The Add-to-Playlist submenu is repopulated by `refresh_playlists`; stash
-        // the gio::Menu so it can be rebuilt as playlists come and go.
-        let add_menu = gio::Menu::new();
-        mid.append_submenu(Some("Add to Playlist"), &add_menu);
-        let _ = imp.add_to_playlist_menu.set(add_menu);
         menu.append_section(None, &mid);
+
+        // Playlists: a saved, named collection, kept in its own labeled section so
+        // "Add to Playlist" does not read as a synonym of the transient "Add to
+        // Queue" above (17d). The submenu is repopulated by `refresh_playlists`;
+        // stash the gio::Menu so it can be rebuilt as playlists come and go.
+        let playlists = gio::Menu::new();
+        let add_menu = gio::Menu::new();
+        playlists.append_submenu(Some("Add to Playlist"), &add_menu);
+        let _ = imp.add_to_playlist_menu.set(add_menu);
+        menu.append_section(Some("Playlists"), &playlists);
 
         let bottom = gio::Menu::new();
         bottom.append(Some("Reveal in Files"), Some("win.track-reveal"));
@@ -3414,6 +3560,28 @@ impl ConservatoryWindow {
                 glib::Propagation::Stop
             })),
         ));
+        // Ctrl+R cycles the repeat mode Off → All → One (Phase 17a).
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>r"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade() {
+                    win.cycle_repeat();
+                }
+                glib::Propagation::Stop
+            })),
+        ));
+        // Ctrl+K toggles shuffle (Phase 17b).
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("<Control>k"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                if let Some(win) = weak.upgrade() {
+                    win.toggle_shuffle();
+                }
+                glib::Propagation::Stop
+            })),
+        ));
         // Ctrl+Shift+→/← skip to the next / previous chapter of the current item
         // (Phase 6c-iii-b); a no-op when it has no chapters.
         for (trigger, dir) in [
@@ -4059,6 +4227,8 @@ impl ConservatoryWindow {
                     ("Ctrl+0", "Mute / unmute"),
                     ("Ctrl+M", "Stop after the current track"),
                     ("Ctrl+J", "Jump to the playing track"),
+                    ("Ctrl+R", "Repeat: off / all / one"),
+                    ("Ctrl+K", "Shuffle: on / off"),
                     ("Ctrl+Shift+Right / Left", "Next / previous chapter"),
                     ("S", "Sleep timer"),
                 ],
@@ -4989,9 +5159,17 @@ impl ConservatoryWindow {
         };
         let tracks = get_tracks(&conn, &ids).unwrap_or_default();
         drop(conn);
-        let (items, start) = build_play_queue(&ids, 0, &tracks, root, &self.playback_config());
+        let (mut items, mut start) =
+            build_play_queue(&ids, 0, &tracks, root, &self.playback_config());
         if items.is_empty() {
             return;
+        }
+        // Shuffle-on (Phase 17b): the playlist plays shuffled (its first entry
+        // leads, the rest shuffled), the DB queue mirroring it by construction.
+        if player.snapshot().shuffle && items.len() > 1 {
+            let perm = shuffle_play_order(items.len(), start, seed_now());
+            items = perm.iter().map(|&o| items[o].clone()).collect();
+            start = 0;
         }
         let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
         if let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) {

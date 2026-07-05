@@ -728,6 +728,12 @@ pub struct AudioState {
     /// / `aggressive`) so this struct stays db-owned; the player layer converts it
     /// to `player::spoken::SmartSpeedLevel` (the `replaygain_mode` idiom).
     pub smart_speed_level: String,
+    /// The repeat mode, stored as TEXT (`off` / `all` / `one`) the `replaygain_mode`
+    /// idiom; the player layer converts it to `player::mode::Repeat` (Phase 17a).
+    pub repeat: String,
+    /// Shuffle mode: whether new play orders (a Play, a repeat-all lap) are
+    /// shuffled in place (Phase 17b). Persisted so it survives a restart.
+    pub shuffle: bool,
 }
 
 impl Default for AudioState {
@@ -743,6 +749,8 @@ impl Default for AudioState {
             output_backend: "auto".to_string(),
             resampler: ResamplerQuality::Default,
             smart_speed_level: "gentle".to_string(),
+            repeat: "off".to_string(),
+            shuffle: false,
         }
     }
 }

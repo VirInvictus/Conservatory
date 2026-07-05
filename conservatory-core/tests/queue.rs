@@ -14,7 +14,7 @@ use conservatory_core::db::{
 use conservatory_core::player;
 use conservatory_core::{
     ChapterMark, ImportOptions, MoveMode, PlayableItem, PlaybackConfig, PlayerHandle,
-    PlayerSnapshot, import_folder, resolve_music_profile,
+    PlayerSnapshot, Repeat, import_folder, resolve_music_profile,
 };
 use tempfile::tempdir;
 
@@ -1225,6 +1225,251 @@ fn engine_play_next_inserts_after_the_current_item() {
     // A general insert before the current item shifts its index up by the block.
     player.insert_items(0, vec![item(4)]);
     wait(&player, |s| s.current_index == Some(1) && s.queue_len == 4);
+
+    player.shutdown();
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
+// --- Phase 17a: repeat modes drive the engine's end-of-item advance.
+
+/// Repeat::One replays the current item instead of advancing: a real imported
+/// track set to loop bumps its `play_count` past 1, and turning repeat off lets
+/// the (single-item) queue finally end.
+#[test]
+fn engine_repeat_one_replays_the_current_item() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let libdir = tempdir().unwrap();
+    let srcdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let root = libdir.path().to_path_buf();
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    std::fs::copy(
+        fixtures_dir.join("sample.mp3"),
+        srcdir.path().join("sample.mp3"),
+    )
+    .unwrap();
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+    let pool = ReadPool::new(db.clone(), 3).unwrap();
+    runtime.block_on(async {
+        let opts = ImportOptions {
+            library_root: root.clone(),
+            mode: MoveMode::Copy,
+        };
+        import_folder(&worker, &pool, srcdir.path(), &opts)
+            .await
+            .unwrap();
+    });
+    let (track_id, item) = {
+        let conn = pool.open().unwrap();
+        let track = get_track(&conn, search_rows(&conn).unwrap()[0].track_id)
+            .unwrap()
+            .unwrap();
+        let item = PlayableItem {
+            track_id: track.id,
+            source: root.join(&track.file_path),
+            profile: resolve_music_profile(&track, &PlaybackConfig::default()),
+            album_id: track.album_id,
+            kind: MediaKind::Track,
+            streaming: false,
+            chapters: [].into(),
+            segments: [].into(),
+        };
+        (track.id, item)
+    };
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.set_repeat(Repeat::One);
+    player.play_queue(vec![item], 0);
+
+    // The single item loops, so its play_count climbs past one (each full replay
+    // bumps it). The queue never ends while One is armed.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let count = {
+            let conn = pool.open().unwrap();
+            get_track(&conn, track_id).unwrap().unwrap().play_count
+        };
+        if count >= 2 {
+            break;
+        }
+        assert!(
+            !player.snapshot().ended,
+            "the queue must not end while Repeat::One is armed"
+        );
+        assert!(Instant::now() < deadline, "the item never looped");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // Turning repeat off lets the current loop finish and the queue end.
+    player.set_repeat(Repeat::Off);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if player.snapshot().ended {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the queue never ended after repeat was turned off"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    player.shutdown();
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
+/// Repeat::All wraps the queue back to the top instead of stopping: a two-item
+/// queue is observed to return to index 0 after reaching the last item, without
+/// ever reporting `ended`.
+#[test]
+fn engine_repeat_all_wraps_to_the_top() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+
+    // Synthetic Track items over a real fixture (the ids need not exist: the
+    // play-count bump is a silent no-op for a missing row, and the wrap is what we
+    // observe, not persistence).
+    let item = |id: i64| PlayableItem {
+        track_id: id,
+        source: fixtures_dir.join("sample.mp3"),
+        profile: conservatory_core::resolve_episode_profile(None),
+        album_id: None,
+        kind: MediaKind::Track,
+        streaming: false,
+        chapters: [].into(),
+        segments: [].into(),
+    };
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.set_repeat(Repeat::All);
+    player.play_queue(vec![item(1), item(2)], 0);
+
+    // Watch the index reach the last item, then wrap back to 0 (the lap). The
+    // engine must never report `ended` with Repeat::All armed.
+    let mut reached_last = false;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let snap = player.snapshot();
+        assert!(
+            !snap.ended,
+            "Repeat::All must never end the queue while armed"
+        );
+        match snap.current_index {
+            Some(1) => reached_last = true,
+            Some(0) if reached_last => break, // wrapped back to the top
+            _ => {}
+        }
+        assert!(Instant::now() < deadline, "the queue never wrapped");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    player.set_repeat(Repeat::Off);
+    player.shutdown();
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
+// --- Phase 17b: shuffle reorders the queue in place (DB + engine, lock-step).
+
+/// `reorder_queue_by_positions` rewrites the whole queue by a permutation
+/// (`perm[new] = old`), keeping the positions a dense 0..n range, and ignores a
+/// stale (wrong-length) permutation rather than corrupting the queue.
+#[tokio::test]
+async fn reorder_queue_by_positions_applies_a_permutation() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("t.db");
+    let worker = spawn_worker(path.clone()).unwrap();
+    fixtures::generate(&worker, FixtureScale::Small)
+        .await
+        .unwrap();
+    let pool = ReadPool::new(path, 3).unwrap();
+
+    worker.enqueue_tracks(vec![1, 2, 3, 4]).await.unwrap();
+    // perm[new] = old: new order pulls old index 3 to slot 1, etc.
+    worker
+        .reorder_queue_by_positions(vec![0, 3, 1, 2])
+        .await
+        .unwrap();
+    assert_eq!(queue_track_ids(&pool), vec![1, 4, 2, 3]);
+    assert_positions_contiguous(&pool);
+
+    // A stale permutation (wrong length) is a no-op, not a corruption.
+    worker.reorder_queue_by_positions(vec![0, 1]).await.unwrap();
+    assert_eq!(queue_track_ids(&pool), vec![1, 4, 2, 3]);
+    assert_positions_contiguous(&pool);
+}
+
+/// The engine's `ReorderQueue` keeps the playing item playing and moves its index
+/// to wherever the permutation lands it (the lock-step counterpart of the worker
+/// op above). Paused so the 0.3 s fixtures can't advance under the assertions.
+#[test]
+fn engine_reorder_queue_tracks_the_current_index() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+    let item = |id: i64| PlayableItem {
+        track_id: id,
+        source: fixtures_dir.join("sample.mp3"),
+        profile: conservatory_core::resolve_episode_profile(None),
+        album_id: None,
+        kind: MediaKind::Track,
+        streaming: false,
+        chapters: [].into(),
+        segments: [].into(),
+    };
+    let wait = |player: &PlayerHandle, pred: fn(&PlayerSnapshot) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if pred(&player.snapshot()) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "snapshot condition not met in time"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.play_queue(vec![item(1), item(2), item(3), item(4)], 1);
+    player.pause();
+    wait(&player, |s| {
+        s.current_index == Some(1) && s.paused && s.queue_len == 4
+    });
+
+    // perm[new] = old: [2, 0, 1, 3] moves old index 1 (the playing item) to new
+    // slot 2. The item keeps playing; current follows it.
+    player.reorder_queue(vec![2, 0, 1, 3]);
+    wait(&player, |s| s.current_index == Some(2) && s.queue_len == 4);
+
+    // A stale (wrong-length) permutation is ignored: nothing moves.
+    player.reorder_queue(vec![0, 1]);
+    wait(&player, |s| s.current_index == Some(2) && s.queue_len == 4);
 
     player.shutdown();
     runtime.block_on(worker.shutdown_ack()).ok();

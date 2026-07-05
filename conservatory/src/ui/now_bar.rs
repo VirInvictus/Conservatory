@@ -17,7 +17,7 @@ use gtk4 as gtk;
 
 use conservatory_core::db::MediaKind;
 use conservatory_core::player::SleepMode;
-use conservatory_core::{PlayerHandle, SleepStatus, quick_seek_target};
+use conservatory_core::{PlayerHandle, Repeat, SleepStatus, quick_seek_target};
 
 use crate::ui::accent::AccentProvider;
 
@@ -44,6 +44,14 @@ pub struct NowBar {
     /// has chapters (`chapter_count > 0`), flanking the item prev/next.
     pub prev_chapter_btn: gtk::Button,
     pub next_chapter_btn: gtk::Button,
+    /// Shuffle toggle (Phase 17b): at the left end of the transport. Toggles the
+    /// shuffle mode on click (the window wires it so it can reorder the queue and
+    /// persist); its opacity / tooltip reflect the state via [`NowBar::set_shuffle`].
+    pub shuffle_btn: gtk::Button,
+    /// Repeat mode toggle (Phase 17a): cycles Off → All → One on click (the
+    /// window wires the cycle so it can persist). Its icon / opacity / tooltip
+    /// reflect the mode via [`NowBar::set_repeat`]; always visible.
+    pub repeat_btn: gtk::Button,
     /// Spoken-word quick-seek (16.5f): skip-back/forward label buttons flanking
     /// play/pause, shown only for episodes and audiobooks; the amounts follow
     /// the show's overrides via [`NowBar::set_quick_seek`].
@@ -87,6 +95,11 @@ pub fn fmt_sleep_remaining(secs: f64) -> String {
 
 /// The placeholder shown when the album has no cover on disk.
 const COVER_PLACEHOLDER: &str = "audio-x-generic-symbolic";
+
+/// A transport-mode button's dimmed opacity when the mode is Off (an active mode
+/// is full opacity), so shuffle / repeat read their state at a glance without new
+/// CSS. Shared by the shuffle and repeat buttons.
+const MODE_OFF_OPACITY: f64 = 0.45;
 
 /// The Now-bar's secondary line (Phase 12c): `artist · album` when the album adds
 /// information, else just the artist. Folding the duplicate keeps a podcast
@@ -170,6 +183,14 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     let next_chapter_btn = transport_button("media-seek-forward-symbolic", "Next chapter");
     prev_chapter_btn.set_visible(false);
     next_chapter_btn.set_visible(false);
+    // Shuffle toggle (Phase 17b): starts Off (dimmed); the window's toggle updates
+    // its look and reorders the queue. The click is wired in the window.
+    let shuffle_btn = transport_button("media-playlist-shuffle-symbolic", "Shuffle: off");
+    shuffle_btn.set_opacity(MODE_OFF_OPACITY);
+    // Repeat toggle (Phase 17a): starts Off (dimmed); the window's cycle updates
+    // its look. The click is wired in the window so it can persist to audio_state.
+    let repeat_btn = transport_button("media-playlist-repeat-symbolic", "Repeat: off");
+    repeat_btn.set_opacity(MODE_OFF_OPACITY);
     // Per-show podcast playback affordance, by the transport; hidden for music /
     // books (the window toggles it for episodes and wires the dialog).
     let podcast_btn = transport_button(
@@ -188,6 +209,7 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     let skip_amounts: Rc<Cell<(f64, f64)>> = Rc::new(Cell::new((15.0, 30.0)));
     let transport = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     transport.set_valign(gtk::Align::Center);
+    transport.append(&shuffle_btn);
     transport.append(&prev_chapter_btn);
     transport.append(&prev_btn);
     transport.append(&seek_back_btn);
@@ -195,6 +217,7 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     transport.append(&seek_fwd_btn);
     transport.append(&next_btn);
     transport.append(&next_chapter_btn);
+    transport.append(&repeat_btn);
     transport.append(&podcast_btn);
     root.set_center_widget(Some(&transport));
 
@@ -283,6 +306,8 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         play_btn,
         prev_chapter_btn,
         next_chapter_btn,
+        shuffle_btn,
+        repeat_btn,
         seek_back_btn,
         seek_fwd_btn,
         skip_amounts,
@@ -397,6 +422,30 @@ impl NowBar {
         self.set_quick_seek(false, 15.0, 30.0);
         self.sleep_btn.set_visible(false);
         self.set_sleep(None);
+    }
+
+    /// Reflect shuffle on the button (Phase 17b): full opacity + "on" tooltip when
+    /// active, dimmed + "off" when not. Idempotent, so the poll can call it freely.
+    pub fn set_shuffle(&self, on: bool) {
+        self.shuffle_btn
+            .set_tooltip_text(Some(if on { "Shuffle: on" } else { "Shuffle: off" }));
+        self.shuffle_btn
+            .set_opacity(if on { 1.0 } else { MODE_OFF_OPACITY });
+    }
+
+    /// Reflect the repeat mode on the button (Phase 17a): the "one" mode gets the
+    /// distinct song-repeat glyph, an active mode is full opacity, Off is dimmed;
+    /// the tooltip names the mode. Idempotent, so the poll can call it freely.
+    pub fn set_repeat(&self, mode: Repeat) {
+        let (icon, tip, active) = match mode {
+            Repeat::Off => ("media-playlist-repeat-symbolic", "Repeat: off", false),
+            Repeat::All => ("media-playlist-repeat-symbolic", "Repeat: all", true),
+            Repeat::One => ("media-playlist-repeat-song-symbolic", "Repeat: one", true),
+        };
+        self.repeat_btn.set_icon_name(icon);
+        self.repeat_btn.set_tooltip_text(Some(tip));
+        self.repeat_btn
+            .set_opacity(if active { 1.0 } else { MODE_OFF_OPACITY });
     }
 
     /// Show/hide the spoken-word quick-seek pair and set its amounts (16.5f);

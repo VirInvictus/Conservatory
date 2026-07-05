@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use conservatory_core::db::{MediaKind, ShowSettings, Track};
-use conservatory_core::{PlayableItem, PlaybackConfig, resolve_music_profile};
+use conservatory_core::{PlayableItem, PlaybackConfig, resolve_music_profile, shuffle_order};
 
 /// Build the play queue and start index from the visible list.
 ///
@@ -50,6 +50,28 @@ pub fn build_play_queue(
         .unwrap_or(0);
 
     (items, start)
+}
+
+/// A play-order permutation for shuffle-on playback (Phase 17b): the activated
+/// item (`start`) comes first, the rest follow in shuffled order. Returns
+/// `perm[new] = old` over a queue of `len` items, so applying it to the built
+/// `PlayableItem`s (and, identically, to the DB queue) makes both agree by
+/// construction — the double-click Play with shuffle on. Pure (seeded).
+pub fn shuffle_play_order(len: usize, start: usize, seed: u64) -> Vec<usize> {
+    if len == 0 {
+        return Vec::new();
+    }
+    let start = start.min(len - 1);
+    // The activated item first, then every other index in natural order.
+    let mut order: Vec<usize> = Vec::with_capacity(len);
+    order.push(start);
+    order.extend((0..len).filter(|&i| i != start));
+    // Shuffle everything after the activated head, then read `order` back through
+    // that permutation (so index 0 stays `start`).
+    shuffle_order(len, 1, seed)
+        .into_iter()
+        .map(|p| order[p])
+        .collect()
 }
 
 /// A queued episode's playable source (Phase 6b-ii-c). Either a downloaded file
@@ -492,6 +514,25 @@ mod tests {
     fn drop_position_clamps_at_the_end() {
         // Below the last row never exceeds the final index.
         assert_eq!(drop_target_position(0, 4, DropBias::Below, 5), 4);
+    }
+
+    #[test]
+    fn shuffle_play_order_puts_activated_first() {
+        use std::collections::HashSet;
+        let perm = shuffle_play_order(6, 3, 4242);
+        assert_eq!(perm[0], 3, "the activated item leads the shuffled queue");
+        assert_eq!(perm.len(), 6);
+        assert_eq!(
+            perm.iter().copied().collect::<HashSet<_>>().len(),
+            6,
+            "the result is a permutation"
+        );
+        // Deterministic per seed; an out-of-range start clamps to the last item.
+        assert_eq!(shuffle_play_order(6, 3, 4242), perm);
+        assert_eq!(shuffle_play_order(4, 99, 1)[0], 3);
+        // A single item (or none) is trivially itself.
+        assert_eq!(shuffle_play_order(1, 0, 7), vec![0]);
+        assert!(shuffle_play_order(0, 0, 7).is_empty());
     }
 
     #[test]

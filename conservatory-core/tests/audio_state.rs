@@ -30,6 +30,9 @@ async fn audio_state_defaults_then_round_trips() {
         assert!(s.dsp.is_off());
         assert_eq!(s.output_backend, "auto");
         assert_eq!(s.resampler, ResamplerQuality::Default);
+        // Phase 17: the transport modes seed off.
+        assert_eq!(s.repeat, "off");
+        assert!(!s.shuffle);
     }
 
     // Enable + tune every module, change output, and persist.
@@ -46,6 +49,8 @@ async fn audio_state_defaults_then_round_trips() {
     s.gapless = false;
     s.output_backend = "pipewire".to_string();
     s.resampler = ResamplerQuality::High;
+    s.repeat = "all".to_string();
+    s.shuffle = true;
     worker.set_audio_state(s.clone()).await.unwrap();
 
     let back = get_audio_state(&pool.open().unwrap()).unwrap();

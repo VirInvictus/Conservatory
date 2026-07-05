@@ -26,7 +26,9 @@ use crate::player::chapters::{current_chapter_at, neighbour_chapter};
 use crate::player::handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 use crate::player::host::{HostEvent, MpvHost};
 use crate::player::item::PlayableItem;
+use crate::player::mode::Repeat;
 use crate::player::session::{SessionAccumulator, SessionOwner};
+use crate::player::shuffle::{apply_permutation, shuffle_order};
 use crate::player::sleep::{SleepClock, SleepMode};
 use crate::player::state::{EndReason, StateDebounce, StateEvent};
 
@@ -130,6 +132,14 @@ struct Engine {
     /// boundary with gapless profiles and no stop-at-boundary armed
     /// ([`should_prefetch`]); every queue mutation resyncs it.
     prefetched: bool,
+    /// The active repeat mode (Phase 17a): consulted at the EOF boundary. `One`
+    /// replays the current item; `All` wraps the queue at its end; `Off` stops.
+    repeat: Repeat,
+    /// Shuffle is on (Phase 17b): a repeat-all lap reshuffles the queue in place,
+    /// and the flag is the ReplayGain context (Phase 17c). The one-shot shuffle of
+    /// the live queue is driven by the GUI (a `ReorderQueue` command), so the DB
+    /// queue is persisted in the same step.
+    shuffle: bool,
 }
 
 impl Engine {
@@ -163,6 +173,8 @@ impl Engine {
             book_segment: 0,
             stop_after_current: false,
             prefetched: false,
+            repeat: Repeat::Off,
+            shuffle: false,
         }
     }
 
@@ -468,6 +480,31 @@ impl Engine {
                 // Same boundary rule as the EndOfItem sleep mode above.
                 self.resync_prefetch();
             }
+            PlayerCommand::SetRepeat(mode) => {
+                self.repeat = mode;
+                // `One` replays the current item, so the coming boundary must not
+                // hand off gaplessly to the next track; re-derive the prefetch
+                // (also re-arms it when leaving `One`). The wrap boundary of `All`
+                // is handled at end-of-queue, not here.
+                self.resync_prefetch();
+            }
+            PlayerCommand::SetShuffle(on) => {
+                self.shuffle = on;
+                // Re-apply context-aware ReplayGain to the current track live
+                // (Phase 17c): album gain ↔ track gain follows the shuffle state, a
+                // gap-free chain rebuild (the set_eq path). Spoken word carries no
+                // RG so this is a no-op there. Extract the profile before touching
+                // the host to release the queue borrow. No reorder here: the GUI
+                // drives that via `ReorderQueue` so the DB persists the same perm.
+                let live = self
+                    .current_item()
+                    .filter(|i| i.kind == MediaKind::Track)
+                    .map(|i| i.profile.contextual(on));
+                if let Some(profile) = live {
+                    let _ = self.host.apply_profile(&profile);
+                }
+            }
+            PlayerCommand::ReorderQueue(perm) => self.reorder_queue(perm),
             PlayerCommand::Stop => {
                 self.set_paused(true);
                 self.flush(StateEvent::Quit, true);
@@ -518,21 +555,33 @@ impl Engine {
                 // (Arming either clears the prefetch, so the branches below
                 // never race a hand-off that has already started sounding.)
                 let stop_after_current = self.stop_after_current;
-                if self.prefetched {
-                    // mpv already crossed into the appended next track
-                    // gaplessly; sync bookkeeping instead of reloading.
-                    self.advance_into_prefetched();
+                // Repeat::One replays the current item (Phase 17a): reload it from
+                // the head instead of advancing. A one-shot stop (stop-after-current
+                // or the end-of-item sleep) is an explicit override that wins, so it
+                // still pauses at the boundary; those fall through to the advance
+                // path below. `One` never prefetches (`should_prefetch`), so there
+                // is no gapless hand-off to reconcile here.
+                if self.repeat == Repeat::One && !stop_after_item && !stop_after_current {
+                    self.ended = false;
+                    self.load_current();
+                    self.flush(StateEvent::Seek, false);
                 } else {
-                    self.advance_after_end();
-                }
-                if stop_after_item || stop_after_current {
-                    if stop_after_item {
-                        self.sleep = None;
+                    if self.prefetched {
+                        // mpv already crossed into the appended next track
+                        // gaplessly; sync bookkeeping instead of reloading.
+                        self.advance_into_prefetched();
+                    } else {
+                        self.advance_after_end();
                     }
-                    self.stop_after_current = false;
-                    if !self.ended {
-                        self.set_paused(true);
-                        self.flush(StateEvent::Pause, true);
+                    if stop_after_item || stop_after_current {
+                        if stop_after_item {
+                            self.sleep = None;
+                        }
+                        self.stop_after_current = false;
+                        if !self.ended {
+                            self.set_paused(true);
+                            self.flush(StateEvent::Pause, true);
+                        }
                     }
                 }
             }
@@ -562,6 +611,7 @@ impl Engine {
             return;
         }
         let stop_boundary = self.stop_after_current
+            || self.repeat == Repeat::One
             || matches!(
                 self.sleep.as_ref().map(|c| c.mode()),
                 Some(SleepMode::EndOfItem)
@@ -617,7 +667,10 @@ impl Engine {
         self.current = Some(next);
         self.ended = false;
         self.book_segment = 0;
-        if let Some(profile) = self.queue.get(next).map(|i| i.profile)
+        if let Some(profile) = self
+            .queue
+            .get(next)
+            .map(|i| i.profile.contextual(self.shuffle))
             && let Err(e) = self.host.apply_profile(&profile)
         {
             tracing::warn!(error = %e, "player: profile hand-off failed at gapless boundary");
@@ -641,13 +694,22 @@ impl Engine {
             self.load_current();
             self.flush(StateEvent::Seek, false);
         } else {
+            // Repeat::All wraps back to the top instead of stopping (Phase 17a). A
+            // sleep timer set to "end of queue" is an explicit stop that wins, so
+            // the wrap is suppressed when it is armed (the timer then fires below).
+            // With shuffle on the lap is reshuffled first (Phase 17b, wired here).
+            let sleep_end_of_queue = matches!(
+                self.sleep.as_ref().map(|c| c.mode()),
+                Some(SleepMode::EndOfQueue)
+            );
+            if self.repeat == Repeat::All && !self.queue.is_empty() && !sleep_end_of_queue {
+                self.wrap_to_top();
+                return;
+            }
             self.ended = true;
             // A sleep timer set to "end of queue" is satisfied here (Phase
             // 6c-iii-d); disarm it.
-            if matches!(
-                self.sleep.as_ref().map(|c| c.mode()),
-                Some(SleepMode::EndOfQueue)
-            ) {
+            if sleep_end_of_queue {
                 self.sleep = None;
             }
             // Persist the finished item at offset 0 as the resume cursor. Per
@@ -660,6 +722,43 @@ impl Engine {
                 self.save_cursor(kind, id, 0.0, true);
             }
         }
+    }
+
+    /// Wrap the queue back to the top for a Repeat::All lap (Phase 17a). Loads the
+    /// first item and keeps playing. With shuffle on (Phase 17b) each lap is a
+    /// fresh order: the queue is reshuffled in place and the *same* permutation is
+    /// persisted to the DB queue, so the engine and the DB stay lock-step.
+    fn wrap_to_top(&mut self) {
+        if self.shuffle && self.queue.len() > 1 {
+            let perm = shuffle_order(self.queue.len(), 0, seed_now());
+            self.queue = apply_permutation(&self.queue, &perm);
+            let worker = self.worker.clone();
+            self.rt.block_on(async move {
+                let _ = worker.reorder_queue_by_positions(perm).await;
+            });
+        }
+        self.current = Some(0);
+        self.ended = false;
+        self.load_current();
+        self.flush(StateEvent::Seek, false);
+    }
+
+    /// Apply a queue permutation (`perm[new] = old`), Phase 17b: rebuild the queue
+    /// in the new order and move `current` to wherever the playing item landed. A
+    /// perm whose length does not match the queue (a stale GUI snapshot) is ignored
+    /// so the engine and the DB — which guards identically — stay lock-step. The
+    /// playing item keeps playing; only its index changes.
+    fn reorder_queue(&mut self, perm: Vec<usize>) {
+        if perm.len() != self.queue.len() {
+            return;
+        }
+        self.queue = apply_permutation(&self.queue, &perm);
+        if let Some(c) = self.current {
+            self.current = perm.iter().position(|&old| old == c);
+        }
+        // A reorder can change which item follows the playing one.
+        self.resync_prefetch();
+        self.flush(StateEvent::Seek, false);
     }
 
     /// Manual skip forward: load the next item (the abandoned one emits an
@@ -738,7 +837,9 @@ impl Engine {
             return;
         };
         let path = item.source.to_string_lossy().into_owned();
-        let profile = item.profile;
+        // Context-aware ReplayGain (Phase 17c): album gain in order, track gain
+        // when shuffling. A no-op for spoken word (no RG carried).
+        let profile = item.profile.contextual(self.shuffle);
         let kind = item.kind;
         // `track_id` carries the episode id for an episode item (the queue's
         // per-kind id field, 6b-ii-c).
@@ -1082,6 +1183,8 @@ impl Engine {
             audio_device: self.audio_device.clone(),
             sleep: self.sleep.as_ref().map(|c| c.status()),
             stop_after_current: self.stop_after_current,
+            repeat: self.repeat,
+            shuffle: self.shuffle,
         };
         if let Ok(mut guard) = self.snapshot.lock() {
             *guard = snap;
@@ -1094,6 +1197,16 @@ fn now_secs() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// A wall-clock-derived seed for the shuffle reshuffle (Phase 17b). Mixes the
+/// seconds and nanoseconds so two reshuffles in the same second differ. Not
+/// cryptographic; a play-queue shuffle needs only unpredictability, not security.
+fn seed_now() -> u64 {
+    let d = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    (d.as_secs() << 20) ^ u64::from(d.subsec_nanos())
 }
 
 /// Where `current` lands after the item at `from` moves to `to` (the same
@@ -1287,6 +1400,8 @@ mod tests {
             profile: MusicProfile {
                 gapless,
                 replaygain_db: None,
+                rg_album: None,
+                rg_track: None,
                 speed: 1.0,
                 pitch_correction: false,
                 smart_speed: false,

@@ -15,6 +15,7 @@ use crate::db::models::ResamplerQuality;
 use crate::db::{DspState, EqState, MediaKind};
 use crate::player::host::AudioDevice;
 use crate::player::item::PlayableItem;
+use crate::player::mode::Repeat;
 use crate::player::sleep::{SleepMode, SleepStatus};
 use crate::player::spoken::SmartSpeedLevel;
 
@@ -104,6 +105,18 @@ pub enum PlayerCommand {
     /// `toggle_stop_after_current`): when armed, the engine pauses at the end of
     /// the current item instead of playing on, then disarms.
     SetStopAfterCurrent(bool),
+    /// Set the repeat mode (Phase 17a): Off plays to the end and stops, All wraps
+    /// the queue, One replays the current item. Applied live to the advance logic.
+    SetRepeat(Repeat),
+    /// Set shuffle on/off (Phase 17b). The engine stores the flag (a repeat-all
+    /// lap reshuffles when it is on) and re-applies context-aware ReplayGain to the
+    /// current track (Phase 17c); the *reorder* of the live queue is a separate
+    /// `ReorderQueue`, so the GUI can persist the same permutation to the DB queue.
+    SetShuffle(bool),
+    /// Reorder the whole queue by a permutation (`perm[new] = old`), the shuffle
+    /// path (Phase 17b). The playing item keeps playing; its index follows. Applied
+    /// in lock-step with `worker.reorder_queue_by_positions` (the same permutation).
+    ReorderQueue(Vec<usize>),
     /// Halt playback and persist, but keep the engine thread alive.
     Stop,
     /// Stop and exit the engine thread (joined by [`PlayerHandle::shutdown`]).
@@ -162,6 +175,12 @@ pub struct PlayerSnapshot {
     /// of the current item. Drives the menu toggle's checked state, which the
     /// engine clears once the boundary fires.
     pub stop_after_current: bool,
+    /// The active repeat mode (Phase 17a): drives the Now-bar repeat button's
+    /// icon / active state.
+    pub repeat: Repeat,
+    /// Shuffle is on (Phase 17b): drives the Now-bar shuffle button's active state
+    /// and is the context that flips ReplayGain to track gain (Phase 17c).
+    pub shuffle: bool,
 }
 
 impl Default for PlayerSnapshot {
@@ -187,6 +206,8 @@ impl Default for PlayerSnapshot {
             audio_device: None,
             sleep: None,
             stop_after_current: false,
+            repeat: Repeat::Off,
+            shuffle: false,
         }
     }
 }
@@ -354,6 +375,23 @@ impl PlayerHandle {
     /// Arm / disarm stop-after-current (Phase 11d).
     pub fn set_stop_after_current(&self, on: bool) {
         let _ = self.tx.send(PlayerCommand::SetStopAfterCurrent(on));
+    }
+
+    /// Set the repeat mode (Phase 17a).
+    pub fn set_repeat(&self, repeat: Repeat) {
+        let _ = self.tx.send(PlayerCommand::SetRepeat(repeat));
+    }
+
+    /// Set shuffle on/off (Phase 17b). Pair with [`Self::reorder_queue`] +
+    /// `worker.reorder_queue_by_positions` (the same permutation) to shuffle the
+    /// live queue in place.
+    pub fn set_shuffle(&self, on: bool) {
+        let _ = self.tx.send(PlayerCommand::SetShuffle(on));
+    }
+
+    /// Reorder the live queue by a permutation (`perm[new] = old`), Phase 17b.
+    pub fn reorder_queue(&self, perm: Vec<usize>) {
+        let _ = self.tx.send(PlayerCommand::ReorderQueue(perm));
     }
 
     pub fn stop(&self) {

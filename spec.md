@@ -721,8 +721,21 @@ The phases below are the contract-level shape. `roadmap.md` breaks each into ind
 - **Phase 12.** Visual identity: the Kanagawa Dragon theme, album art across the browse, an enriched now-bar, and the spectrum visualizer. **Done (v0.0.77–v0.0.80).**
 - **Phase 13.** Sleekness: a layout fix, empty states and toasts, an internal tidy, bundled typography (Inter / Fraunces / IBM Plex Mono via fontconfig), and deadbeef-cui browser parity (activate-to-play, keyboard shortcuts, the shortcuts reference). **Done (v0.0.82–v0.0.88).**
 - **Phase 14.** Debug + observability: a `--debug` mode on both binaries emitting SQL (with timings), filesystem IO, network requests, and memory (RSS) to stderr on four filterable channels (`conservatory::{sql,io,net,mem}`); documented in `docs/debugging.md`. **Done (v0.0.89–v0.0.90).**
+- **Phase 15.** The `0.1.0` readiness gate: move-safety proven, the §13 memory budget measured, release scaffolding sane. No new features. **Done; `0.1.0` tagged.**
+- **Phases 16 / 16.5.** Power-user interaction (context menus, click-to-rate, mixed-values bulk edit, smart + static playlists) and a per-tab UX-completeness pass. **Done (v0.1.3–v0.1.17).**
+- **Phase 17.** Player table-stakes: shuffle, repeat, context-aware ReplayGain, queue/playlist verb clarity. **Done (v0.1.23–v0.1.26).**
 
-The manager half (Phases 1–3) must be usable before the player half is finished, and the player must be usable before podcasts arrive. Audiobooks (Phase 7) complete the three media types; the maintenance, configuration, and polish phases (8, 10–14) build on that base, and Phase 9 (scrobbling) remains the one pre-1.0 feature outstanding. Each is a hard phase that leaves a usable artifact. No phase leaves the app non-functional.
+**Version milestones.** A `0.x.0` / `x.0.0` marks a capability tier (a cluster of phases delivering a nameable new thing); patch releases are the sub-phases within it. `1.0.0` is this spec's intended scope, verified on a real library and installable via Flatpak; per semver that is "the major features intended, reliable enough for general release," not "every idea." The `1.x` / `2.0` phases pick up the §16 doors deliberately left open plus the researched gaps against MusicBee / Calibre; `roadmap.md` carries the milestone table and the per-phase detail. The §14 "out of scope, forever" lines are unchanged by any of this.
+
+- **Phase 18 (`0.2.0`).** Grammar + column power: accent-folding and saved-query-by-name in the search grammar, and computed / customizable browse columns (the columns-only browse stays).
+- **Phase 19 + Phase 9 (`0.3.0`).** Immersive polish (a waveform seek bar, full-screen Now Playing, drag-drop import, richer local credits) shipping with the optional, off-by-default ListenBrainz / Last.fm scrobble (§14 carve-out), the last pre-1.0 feature.
+- **Phase 20 (`1.0.0`).** The endgame, no new features: the 50k real-library memory gate (§13), the full-library move-safety pass (§5.4), the library-root decision (§16.14), Flatpak + AppStream / GNOME Circle packaging (§12), and the final icon (§15). The gate that earns the tag.
+- **Phase 21 (`1.1.0`).** Metadata intelligence: online metadata + cover-art fetching that consumes a canonical source (MusicBrainz + Cover Art Archive for music, Audnexus / Google Books for audiobooks), review-then-apply through the existing write-back pipeline, never a silent auto-tag. Resolves §16.5, §16.10; does not out-Picard Picard (§14).
+- **Phase 22 (`1.2.0`).** Curation depth: the genre-tree rollup escape hatch (§16.3), audiobook chapterize by silence detection (§16.11), audiobook bookmarks + a Continue-Listening row.
+- **Phase 23 (`1.3.0`).** Library operations: format conversion / transcoding on export, device / DAP sync (send-to-device), and multiple libraries (per-folder databases). All local-first.
+- **Phase 24 (`2.0.0`).** Long-form + background: transcripts (§14: "2.x maybe at most") and portal-mediated background feed refresh (§12).
+
+The manager half (Phases 1–3) must be usable before the player half is finished, and the player must be usable before podcasts arrive. Audiobooks (Phase 7) complete the three media types; the maintenance, configuration, and polish phases (8, 10–17) build on that base. Phases 1–17 are done; Phases 18–20 are the runway to `1.0.0`, and Phases 21–24 are the committed post-1.0 tiers. Each is a hard phase that leaves a usable artifact. No phase leaves the app non-functional.
 
 ---
 

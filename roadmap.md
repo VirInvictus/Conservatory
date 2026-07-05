@@ -4,6 +4,24 @@ Phasing is deliberate and hard (spec §17): each stage must be usable on its own
 
 Each top-level phase is split into independently shippable sub-phases (the way the Atrium and Viaduct roadmaps actually grew). A sub-phase carries its own checklist, a `Tests:` line, and a *usable artifact* exit condition: the thing that must work before the sub-phase is called done. Provenance (what each piece is ported or modeled from) is noted inline rather than in a separate section.
 
+## Version milestones
+
+A `0.x.0` / `x.0.0` is a **capability milestone**: a cluster of phases delivering a nameable new tier. Patch releases are the sub-phases within it (the reason the version stayed `0.1.x` through Phases 16, 16.5, and 17: those were all the first-release capability tier maturing). `1.0.0` is the intended scope of `spec.md`, verified on a real library and installable via Flatpak; per semver it means "the major features intended, reliable enough for general release," not "every idea." The post-1.0 tiers pick up the doors the spec deliberately left open (§16.3 genre-tree, §16.5 MusicBrainz tagging, §16.10 audiobook metadata, §16.11 chapterize) plus the researched gaps against MusicBee / Calibre (online metadata fetching, format conversion, multiple libraries).
+
+| Version | Milestone | Phase(s) | Status |
+|---|---|---|---|
+| `0.1.0` | First release: manager + player + podcasts + audiobooks + maintenance | 1–15 | ✅ tagged |
+| `0.1.x` | Power-user interaction, UX completeness, player table-stakes | 16, 16.5, 17 | ✅ (through v0.1.26) |
+| **`0.2.0`** | **Grammar & columns** | 18 | planned |
+| **`0.3.0`** | **Immersive & history** | 19 + 9 | planned |
+| **`1.0.0`** | **Verified & packaged** (the endgame) | 20 | planned |
+| `1.1.0` | Metadata intelligence | 21 | committed, beyond 1.0 |
+| `1.2.0` | Curation depth | 22 | committed, beyond 1.0 |
+| `1.3.0` | Library operations | 23 | committed, beyond 1.0 |
+| `2.0.0` | Long-form & background | 24 | committed, beyond 1.0 |
+
+The detail for each lands in its phase section below; `1.0.0` is the honest release target, and the `1.x` / `2.0` tiers are what make it category-leading afterward. Nothing here changes the spec's §14 "out of scope, forever" lines (recommendations, social, DRM, video, Windows/macOS, out-Picard-ing Picard).
+
 ## Continuous (every phase)
 
 These run alongside every phase rather than belonging to one; called out here so they are not forgotten.
@@ -1041,7 +1059,74 @@ In-place reorder; the DB queue and engine queue stay lock-step by applying the *
 
 **Phase 17 complete.** All four sub-phases shipped, v0.1.23 through v0.1.26: shuffle and repeat (in-place, persisted), context-aware ReplayGain, and the queue/playlist clarity pass. Migration 0018 (two additive `audio_state` columns); zero new dependencies. The music half now has the player table-stakes it was missing.
 
-## Phases 18–19 — planned (from the UI/UX deep-dive)
+## Milestone 0.2.0 — Grammar & columns
 
-- **Phase 18 — Grammar and column power:** Quod-Libet-grade grammar extensions (accent-folding, saved-query-by-name reuse), and customizable plus computed columns (the deadbeef Title-Formatting / MusicBee Virtual Tags idea).
-- **Phase 19 — Immersive polish:** a waveform seek bar (the seek bar as the loudness envelope, reusing the PipeWire tap), full-screen Now Playing, drag-drop file import, and richer navigable-credits metadata from local sources.
+### Phase 18 — Grammar and column power
+
+The power-user *data* tier (from the v0.1.2 UI/UX deep-dive). Deepens the two surfaces that separate a manager from a player: the search grammar and the browse columns.
+
+- [ ] Quod-Libet-grade grammar extensions in `conservatory-search`: accent-folding (a search for `bjork` matches `Björk`), and saved-query-by-name reuse (reference a Perspective's query by name inside another query). Ports the shape from `atrium-search`; the semantics stay CalibreQuarry-faithful (docs/search-grammar.md is the cross-project contract).
+- [ ] Customizable + computed columns in the leaf list (the deadbeef Title-Formatting / MusicBee Virtual Tags idea): user-defined columns from a small formatting vocabulary over the track fields, added/removed/reordered from a column editor. Keeps the columns-only browse (no album grid, the standing decision).
+- Tests: grammar parity cases for accent-folding + named-query resolution; the column formatter as a pure, unit-tested evaluator.
+- *Usable artifact:* accent-insensitive search and at least one computed column configurable from the UI. **Tags `0.2.0`.**
+
+## Milestone 0.3.0 — Immersive & history
+
+### Phase 19 — Immersive polish
+
+The experience tier: the seek bar and Now Playing become immersive, and import gains a pointer path.
+
+- [ ] A waveform seek bar (the seek bar as the track's loudness envelope), reusing the Phase 12d PipeWire tap / the offline decode; the accent-tinted scrubber precedent.
+- [ ] Full-screen Now Playing (the Hermitage Codex moment at full bleed), drag-drop file import (drop audio onto the window to import through the existing pipeline), and richer navigable-credits metadata from local sources.
+- *Usable artifact:* a waveform scrubber and drag-drop import. Ships alongside Phase 9 under `0.3.0`.
+
+### Phase 9 — Listening history sync (scrobbling)
+
+Already specified above (see "Phase 9 — Listening history sync"); it is the one remaining pre-1.0 *feature*, optional and off by default (ListenBrainz + optional Last.fm, a one-way local-first outbox). **Slotted into `0.3.0`** so the immersive tier and the optional history sync ship together. **Tags `0.3.0`.**
+
+## Milestone 1.0.0 — Verified & packaged
+
+### Phase 20 — The 1.0 endgame (quality + packaging, mirrors Atrium's Phase 20)
+
+No new features: the readiness gate that earns the `1.0.0` tag, gathering the tracked pre-1.0 items (see "Tracked pre-1.0 items" under Phase 15) and the packaging the 0.1.0 gate deferred.
+
+- [ ] **50k real-library memory gate:** confirm the spec §13 idle target (< 200 MB) on a working copy of Brandon's real ~50k-track library (the synthetic fixture tops out at 12k, extrapolating to ~215–230 MB); optimize if over before the tag.
+- [ ] **Full-library move-safety pass:** run the Phase 15a move / undo / crash checks against a working copy of the real library (the 0.1.0 gate was synthetic-only).
+- [ ] **Library-root decision (§16.14):** settle the `~/Music/Conservatory/Music/` stutter (accept it / `~/Conservatory` / drop the music-tree prefix) and make it the config default.
+- [ ] **Flatpak + AppStream:** the `org.gnome.Conservatory` (or `io.github.virinvictus.Conservatory`) manifest, a validating `metainfo.xml` (releases tag, 16:9 screenshots, SPDX license, `appstreamcli validate` clean), the Meson packaging wrapper wired end-to-end, and GNOME Circle readiness (§12). The final icon pass (a conservatory silhouette, §15).
+- *Usable artifact:* a `v1.0.0` tag the move logic, the memory budget, and a real installable Flatpak build have all earned, numbers recorded. **Tags `1.0.0`.**
+
+## Beyond 1.0 (committed tiers)
+
+The doors the spec left open (§16) plus the researched gaps against MusicBee / Calibre, committed as real phases rather than "considered." Each is a capability milestone; ordering is a lean, not a promise.
+
+### Phase 21 — Metadata intelligence (`1.1.0`)
+
+The biggest competitive gap and the most "Calibre for audio" of the lot. Online metadata + cover-art fetching that **consumes a canonical source** and does not try to out-Picard Picard on match quality (§14, §16.5).
+
+- [ ] Music: MusicBrainz lookup (by AcoustID / existing tags) + Cover Art Archive fetch, presented as a review-then-apply step through the existing bulk-edit + write-back pipeline (never a silent auto-tag; the move-safety discipline). Resolves §16.5.
+- [ ] Audiobooks: an online provider (Audnexus / Google Books, the Audiobookshelf model) behind the same review-then-apply flow. Resolves §16.10.
+- [ ] A new optional dependency + network surface behind config (off by default); credentials (if any) in libsecret via the existing `oo7`.
+
+### Phase 22 — Curation depth (`1.2.0`)
+
+Deepening each media type's curation, mostly cashing in escape hatches the schema already anticipates.
+
+- [ ] Genre-tree rollup: leaf tags (Synthwave) collapse to a coarse shelving parent (Electronic), the §5/§16.3 v2 escape hatch for when flat shelving churns. Re-shelving stays cheap (the `shelf_genre` + template design already supports it without a migration).
+- [ ] Audiobook chapterize by silence detection on import (the m4b-tool technique) for single-file books with no markers (§16.11), opt-in.
+- [ ] Audiobook bookmarks + a Continue-Listening row + a book list-view alternative to the shelf grid (the 16.5 deferrals).
+
+### Phase 23 — Library operations (`1.3.0`)
+
+The heaviest new-subsystem tier: moving audio in and out, and holding more than one library. All local-first.
+
+- [ ] Format conversion / transcoding on export (shell out to `ffmpeg`, the Lattice idiom): a transcoded copy for a phone / DAP, originals never touched.
+- [ ] Device / DAP sync (Calibre's send-to-device): a one-way export to a mounted device with a chosen profile.
+- [ ] Multiple libraries (MusicBee's per-folder databases): switch between distinct library roots, each its own DB. Inverts the current single-root assumption, so it is deliberately late.
+
+### Phase 24 — Long-form & background (`2.0.0`)
+
+The far horizon; the spec caps some of these at 2.x explicitly.
+
+- [ ] Podcast / audiobook transcripts (§14: "2.x maybe at most"): fetch/display where a feed offers them, or a local speech-to-text step.
+- [ ] Portal-mediated background feed refresh (§12): periodic refresh without the app foregrounded, via the background portal (Flatpak-friendly).

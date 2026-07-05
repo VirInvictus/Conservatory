@@ -183,3 +183,11 @@ When something misbehaves, run either binary with `--debug` for a verbose diagno
 ## License
 
 GPL-3.0-or-later. The license is forced by the GPL libraries the player links, not by a call Conservatory makes: libmpv links a GPL ffmpeg build (the filters the audio chain rides), and librubberband (GPL-2-or-later) where the build carries it. See [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md) for the full chain.
+
+## Support
+
+If Conservatory's useful to you and you'd like to chip in:
+
+```
+bc1qkge6zr45tzqfwfmvma2ylumt6mg7wlwmhr05yv
+```

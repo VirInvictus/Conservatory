@@ -74,6 +74,7 @@ One grammar, all three surfaces (music, podcasts, audiobooks). The filter bar ab
 ### Modifiers and operators
 
 - **Match modifiers:** substring (default), `"quoted substring"`, `=exact`, `~regex`, `?fuzzy` (Damerau-Levenshtein), and `true`/`false` existence on optional fields.
+- **Accent-folding (Phase 18a):** substring, quoted, and fuzzy matches are **diacritic-insensitive** (the Quod Libet default), so `bjork` matches `Björk`. `=exact` and `~regex` stay literal. Folding only broadens matches, never narrows, so it can never turn a query into an error (§3.4). On the SQL fast path, bare text folds via the FTS `unicode61 remove_diacritics 2` tokenizer (migration 0019), mirroring the eval-side `fold`. **Fast-path limitation:** accented *field-text* (`artist:bjork`) matches via `LIKE`, which does not fold, so it folds only when the query lands on the eval path; bare text (the common case) folds on both paths. Folded shadow columns for field-text are a possible follow-on.
 - **Boolean:** `AND` / `OR` / `NOT` (case-insensitive), implicit `AND` between bare tokens, `!` prefix as `NOT`. Precedence `NOT > AND > OR`; parentheses group.
 - **Comparison / range:** `=` `!=` `>` `<` `>=` `<=` on numeric and date fields; `lo..hi` inclusive ranges.
 - **Date keywords:** `today`, `yesterday`, `thisweek`, `thismonth`, `thisyear`, `Ndaysago`, plus `YYYY`, `YYYY-MM`, `YYYY-MM-DD` with field-count precision.
@@ -81,7 +82,7 @@ One grammar, all three surfaces (music, podcasts, audiobooks). The filter bar ab
 
 ### Perspectives
 
-Named saved expressions (Calibre saved searches; Atrium's term). Stored as **text** and re-parsed on load so they inherit later grammar additions. A Perspective can target tracks, albums, episodes, or books, can be referenced from another expression like a Calibre virtual library (with cycle detection), and can act as a queue source (spec §6.1).
+Named saved expressions (Calibre saved searches; Atrium's term). Stored as **text** and re-parsed on load so they inherit later grammar additions. A Perspective can target tracks, albums, episodes, or books, can be referenced from another expression like a Calibre virtual library (with cycle detection), and can act as a queue source (spec §6.1). The `vl:NAME` reference **is** the saved-query-by-name reuse (expanded at parse time by the `PerspectiveResolver` with a cycle guard, §"As-built"): `vl:fav AND rating:>=4` composes a saved search into a new one.
 
 ## Architecture the crate implements
 

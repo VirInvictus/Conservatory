@@ -27,6 +27,28 @@ pub type RowContextFn = Rc<dyn Fn(u32, f64, f64, gtk::Widget)>;
 /// Click-to-rate callback (Phase 16b): `(row position, new rating 0..=5)`.
 pub type RowRateFn = Rc<dyn Fn(u32, u8)>;
 
+/// The full leaf-column catalog as `(id, display title)` in canonical order
+/// (Phase 18b), for the Preferences editor. Each `id` is the `[browse].columns`
+/// config token `build_column` maps to a column; the default visible set is
+/// `conservatory_core::config::default_columns`.
+pub const COLUMN_CATALOG: &[(&str, &str)] = &[
+    ("cover", "Cover art"),
+    ("glyph", "Playing glyph"),
+    ("artist", "Artist"),
+    ("album", "Album"),
+    ("genre", "Genre"),
+    ("title", "Title"),
+    ("trackno", "Track number"),
+    ("year", "Year"),
+    ("duration", "Duration"),
+    ("bitrate", "Bitrate"),
+    ("format", "Format"),
+    ("playcount", "Play count"),
+    ("added", "Date added"),
+    ("lastplayed", "Last played"),
+    ("rating", "Rating"),
+];
+
 const MAX_STARS: i32 = 5;
 /// The browse cover thumbnail edge, in px. A 40px cover gives album-art-per-row
 /// (the deadbeef look) while keeping the table reasonably dense.
@@ -69,6 +91,7 @@ fn text_column(
     key: TrackSort,
     field: fn(&TrackRow) -> String,
     on_context: RowContextFn,
+    tech: bool,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(move |_, item| {
@@ -81,6 +104,10 @@ fn text_column(
             .vexpand(true)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
+        // Technical / numeric columns render in the bundled monospace (Phase 13d).
+        if tech {
+            label.add_css_class("tech");
+        }
         item.set_child(Some(&label));
 
         // Secondary-click opens the row context menu (Phase 16a). `item.position()`
@@ -294,7 +321,172 @@ fn rating_column(on_rate: RowRateFn) -> gtk::ColumnViewColumn {
     col
 }
 
-pub fn build_leaf(root: Option<PathBuf>, on_context: RowContextFn, on_rate: RowRateFn) -> Leaf {
+/// A fixed-width column (the numeric / date columns don't expand).
+fn fixed(col: gtk::ColumnViewColumn, width: i32) -> gtk::ColumnViewColumn {
+    col.set_fixed_width(width);
+    col
+}
+
+/// Build the leaf column for a catalog `id` (Phase 18b), or `None` for an unknown
+/// id (skipped, the forgiving config idiom). The `text_column` / `cover_column` /
+/// `glyph_column` / `rating_column` builders are reused; the numeric / date
+/// columns are fixed-width and monospace (`tech`). `id` is the stable config
+/// token that `[browse].columns` and the Preferences editor share.
+fn build_column(
+    id: &str,
+    root: &Option<PathBuf>,
+    cache: &CoverCache,
+    on_context: &RowContextFn,
+    on_rate: &RowRateFn,
+) -> Option<gtk::ColumnViewColumn> {
+    let ctx = on_context.clone();
+    let col = match id {
+        "cover" => cover_column(root.clone(), cache.clone()),
+        "glyph" => glyph_column(),
+        "artist" => text_column(
+            "Artist",
+            true,
+            0.0,
+            TrackSort::Artist,
+            TrackRow::artist,
+            ctx,
+            false,
+        ),
+        "album" => text_column(
+            "Album",
+            true,
+            0.0,
+            TrackSort::Album,
+            TrackRow::album,
+            ctx,
+            false,
+        ),
+        "genre" => text_column(
+            "Genre",
+            true,
+            0.0,
+            TrackSort::Genre,
+            TrackRow::genres,
+            ctx,
+            false,
+        ),
+        "title" => text_column(
+            "Title",
+            true,
+            0.0,
+            TrackSort::Title,
+            TrackRow::title,
+            ctx,
+            false,
+        ),
+        "duration" => fixed(
+            text_column(
+                "Duration",
+                false,
+                1.0,
+                TrackSort::Duration,
+                TrackRow::duration_text,
+                ctx,
+                true,
+            ),
+            80,
+        ),
+        "year" => fixed(
+            text_column(
+                "Year",
+                false,
+                1.0,
+                TrackSort::Year,
+                TrackRow::year_text,
+                ctx,
+                true,
+            ),
+            64,
+        ),
+        "trackno" => fixed(
+            text_column(
+                "#",
+                false,
+                1.0,
+                TrackSort::TrackNo,
+                TrackRow::track_no_text,
+                ctx,
+                true,
+            ),
+            48,
+        ),
+        "format" => fixed(
+            text_column(
+                "Format",
+                false,
+                0.0,
+                TrackSort::Format,
+                TrackRow::format_text,
+                ctx,
+                true,
+            ),
+            72,
+        ),
+        "bitrate" => fixed(
+            text_column(
+                "Bitrate",
+                false,
+                1.0,
+                TrackSort::Bitrate,
+                TrackRow::bitrate_text,
+                ctx,
+                true,
+            ),
+            72,
+        ),
+        "playcount" => fixed(
+            text_column(
+                "Plays",
+                false,
+                1.0,
+                TrackSort::PlayCount,
+                TrackRow::play_count_text,
+                ctx,
+                true,
+            ),
+            64,
+        ),
+        "added" => fixed(
+            text_column(
+                "Added",
+                false,
+                0.0,
+                TrackSort::Added,
+                TrackRow::added_text,
+                ctx,
+                true,
+            ),
+            108,
+        ),
+        "lastplayed" => fixed(
+            text_column(
+                "Last Played",
+                false,
+                0.0,
+                TrackSort::LastPlayed,
+                TrackRow::last_played_text,
+                ctx,
+                true,
+            ),
+            108,
+        ),
+        "rating" => rating_column(on_rate.clone()),
+        _ => return None,
+    };
+    Some(col)
+}
+
+pub fn build_leaf(
+    root: Option<PathBuf>,
+    columns: &[String],
+    on_context: RowContextFn,
+    on_rate: RowRateFn,
+) -> Leaf {
     let store = gio::ListStore::new::<TrackRow>();
     let cover_cache = CoverCache::new();
 
@@ -308,51 +500,27 @@ pub fn build_leaf(root: Option<PathBuf>, on_context: RowContextFn, on_rate: RowR
     view.set_show_column_separators(true);
     view.add_css_class("data-table");
 
-    view.append_column(&cover_column(root, cover_cache));
-    view.append_column(&glyph_column());
-    view.append_column(&text_column(
-        "Artist",
-        true,
-        0.0,
-        TrackSort::Artist,
-        TrackRow::artist,
-        on_context.clone(),
-    ));
-    view.append_column(&text_column(
-        "Album",
-        true,
-        0.0,
-        TrackSort::Album,
-        TrackRow::album,
-        on_context.clone(),
-    ));
-    view.append_column(&text_column(
-        "Genre",
-        true,
-        0.0,
-        TrackSort::Genre,
-        TrackRow::genres,
-        on_context.clone(),
-    ));
-    view.append_column(&text_column(
-        "Title",
-        true,
-        0.0,
-        TrackSort::Title,
-        TrackRow::title,
-        on_context.clone(),
-    ));
-    let duration = text_column(
-        "Duration",
-        false,
-        1.0,
-        TrackSort::Duration,
-        TrackRow::duration_text,
-        on_context.clone(),
-    );
-    duration.set_fixed_width(80);
-    view.append_column(&duration);
-    view.append_column(&rating_column(on_rate));
+    // Build the configured columns in order (Phase 18b); unknown / duplicate ids
+    // are skipped. Fall back to the default set if the config resolves to nothing,
+    // so the header is never empty.
+    let mut seen = std::collections::HashSet::new();
+    let mut added = 0;
+    for id in columns {
+        if !seen.insert(id.as_str()) {
+            continue;
+        }
+        if let Some(col) = build_column(id, &root, &cover_cache, &on_context, &on_rate) {
+            view.append_column(&col);
+            added += 1;
+        }
+    }
+    if added == 0 {
+        for id in conservatory_core::config::default_columns() {
+            if let Some(col) = build_column(&id, &root, &cover_cache, &on_context, &on_rate) {
+                view.append_column(&col);
+            }
+        }
+    }
 
     sort_model.set_sorter(view.sorter().as_ref());
 
@@ -418,7 +586,25 @@ impl Leaf {
 
 #[cfg(test)]
 mod tests {
-    use super::rating_from_click;
+    use super::{COLUMN_CATALOG, rating_from_click};
+
+    #[test]
+    fn catalog_has_unique_ids_and_covers_the_defaults() {
+        use std::collections::HashSet;
+        let ids: HashSet<&str> = COLUMN_CATALOG.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            ids.len(),
+            COLUMN_CATALOG.len(),
+            "catalog ids must be unique"
+        );
+        // Every default column must resolve in the catalog (and thus in build_column).
+        for id in conservatory_core::config::default_columns() {
+            assert!(
+                ids.contains(id.as_str()),
+                "default column {id:?} is missing from the catalog"
+            );
+        }
+    }
 
     // A 100 px stars row: 20 px per star, so [0,20)=1 … [80,100)=5.
     #[test]

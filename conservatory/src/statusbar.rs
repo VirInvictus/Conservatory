@@ -174,6 +174,13 @@ mod tests {
             rating: 0,
             cover_path: None,
             accent_rgb: None,
+            year: None,
+            track_no: None,
+            format: None,
+            bitrate: None,
+            play_count: 0,
+            last_played: None,
+            added_at: None,
         }
     }
 

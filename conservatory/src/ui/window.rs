@@ -362,6 +362,7 @@ impl ConservatoryWindow {
         let ctx_weak = weak.clone();
         let leaf = build_leaf(
             imp.library_root.get().cloned(),
+            &config.browse.columns,
             Rc::new(move |pos, x, y, cell| {
                 if let Some(win) = ctx_weak.upgrade() {
                     win.show_track_context_menu(pos, x, y, cell);
@@ -1523,6 +1524,42 @@ impl ConservatoryWindow {
             });
         }
         page.add(&browse_group);
+
+        // Browse columns (Phase 18b): a switch per catalog column; the enabled
+        // ones, in catalog order, become `[browse].columns`. Reordering is a
+        // follow-on (the config accepts any order; this editor toggles visibility).
+        let columns_group = adw::PreferencesGroup::new();
+        columns_group.set_title("Browse columns");
+        columns_group.set_description(Some(
+            "Choose which columns the track list shows. Takes effect on the next launch.",
+        ));
+        let enabled: std::collections::HashSet<String> =
+            config.borrow().browse.columns.iter().cloned().collect();
+        let switches: Vec<(&'static str, adw::SwitchRow)> = crate::ui::track_list::COLUMN_CATALOG
+            .iter()
+            .map(|(id, title)| {
+                let row = adw::SwitchRow::new();
+                row.set_title(title);
+                row.set_active(enabled.contains(*id));
+                columns_group.add(&row);
+                (*id, row)
+            })
+            .collect();
+        let switches = Rc::new(switches);
+        for (_, row) in switches.iter() {
+            let config = config.clone();
+            let switches = switches.clone();
+            row.connect_active_notify(move |_| {
+                // Rebuild in catalog order from the active switches.
+                let cols: Vec<String> = switches
+                    .iter()
+                    .filter(|(_, r)| r.is_active())
+                    .map(|(id, _)| id.to_string())
+                    .collect();
+                config.borrow_mut().browse.columns = cols;
+            });
+        }
+        page.add(&columns_group);
 
         let pod_group = adw::PreferencesGroup::new();
         pod_group.set_title("Podcasts");

@@ -106,3 +106,85 @@ async fn regex_does_not_translate_so_eval_runs() {
     assert!(try_translate(&parse("title:~^track").expr, today).is_none());
     assert!(try_translate(&parse("artist:?artst").expr, today).is_none());
 }
+
+/// Phase 18a: bare-text search folds accents on the SQL fast path. A track whose
+/// artist / album / title carry diacritics is found by the plain ASCII query
+/// through the `remove_diacritics` FTS tokenizer (migration 0019), matching the
+/// eval-side `fold`.
+#[tokio::test]
+async fn bare_text_folds_accents_through_fts() {
+    use conservatory_core::db::{Album, Artist, Track};
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("library.db");
+    let worker = spawn_worker(path.clone()).unwrap();
+
+    let artist = worker
+        .insert_artist(Artist {
+            id: 0,
+            name: "Björk".into(),
+            sort_name: "Björk".into(),
+            musicbrainz_id: None,
+        })
+        .await
+        .unwrap();
+    let album = worker
+        .insert_album(Album {
+            id: 0,
+            title: "Homogénic".into(),
+            album_artist_id: Some(artist),
+            shelf_genre: None,
+            year: Some(1997),
+            release_date: None,
+            musicbrainz_release_id: None,
+            cover_path: None,
+            accent_rgb: None,
+            folder_path: "x".into(),
+            added_at: None,
+        })
+        .await
+        .unwrap();
+    let track = worker
+        .insert_track(Track {
+            id: 0,
+            album_id: Some(album),
+            artist_id: Some(artist),
+            title: "Jóga".into(),
+            track_no: Some(1),
+            disc_no: Some(1),
+            duration: None,
+            file_path: "x/1.flac".into(),
+            format: Some("flac".into()),
+            bitrate: None,
+            sample_rate: None,
+            replaygain_track: None,
+            replaygain_album: None,
+            rating: 0,
+            play_count: 0,
+            last_played: None,
+            starred: false,
+            musicbrainz_recording_id: None,
+            added_at: None,
+        })
+        .await
+        .unwrap();
+
+    let pool = ReadPool::new(path, 3).unwrap();
+    let conn = pool.open().unwrap();
+    let today = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
+
+    // Bare ASCII text finds the accented artist / album / title through FTS.
+    for q in ["bjork", "homogenic", "joga"] {
+        let parsed = parse(q);
+        let clause = try_translate(&parsed.expr, today)
+            .unwrap_or_else(|| panic!("{q:?} should translate to an FTS clause"));
+        let params: Vec<SqlParam> = clause.params.iter().map(to_param).collect();
+        let ids = search_track_ids(&conn, &clause.sql, &params).unwrap();
+        assert!(
+            ids.contains(&track),
+            "bare {q:?} should match the accented row via the folded FTS"
+        );
+    }
+
+    worker.shutdown_ack().await.unwrap();
+}

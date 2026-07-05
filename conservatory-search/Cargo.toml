@@ -13,3 +13,4 @@ authors.workspace = true
 [dependencies]
 regex = { workspace = true }
 chrono = { workspace = true }
+unicode-normalization = { workspace = true }

@@ -12,7 +12,7 @@ A `0.x.0` / `x.0.0` is a **capability milestone**: a cluster of phases deliverin
 |---|---|---|---|
 | `0.1.0` | First release: manager + player + podcasts + audiobooks + maintenance | 1–15 | ✅ tagged |
 | `0.1.x` | Power-user interaction, UX completeness, player table-stakes | 16, 16.5, 17 | ✅ (through v0.1.26) |
-| **`0.2.0`** | **Grammar & columns** | 18 | planned |
+| **`0.2.0`** | **Grammar & columns** | 18 | ✅ tagged |
 | **`0.3.0`** | **Immersive & history** | 19 + 9 | planned |
 | **`1.0.0`** | **Verified & packaged** (the endgame) | 20 | planned |
 | `1.1.0` | Metadata intelligence | 21 | committed, beyond 1.0 |
@@ -1063,12 +1063,20 @@ In-place reorder; the DB queue and engine queue stay lock-step by applying the *
 
 ### Phase 18 — Grammar and column power
 
-The power-user *data* tier (from the v0.1.2 UI/UX deep-dive). Deepens the two surfaces that separate a manager from a player: the search grammar and the browse columns.
+The power-user *data* tier (from the v0.1.2 UI/UX deep-dive). Deepens the two surfaces that separate a manager from a player: the search grammar and the browse columns. Two hard-phased sub-phases; `0.2.0` tags when 18b lands.
 
-- [ ] Quod-Libet-grade grammar extensions in `conservatory-search`: accent-folding (a search for `bjork` matches `Björk`), and saved-query-by-name reuse (reference a Perspective's query by name inside another query). Ports the shape from `atrium-search`; the semantics stay CalibreQuarry-faithful (docs/search-grammar.md is the cross-project contract).
-- [ ] Customizable + computed columns in the leaf list (the deadbeef Title-Formatting / MusicBee Virtual Tags idea): user-defined columns from a small formatting vocabulary over the track fields, added/removed/reordered from a column editor. Keeps the columns-only browse (no album grid, the standing decision).
-- Tests: grammar parity cases for accent-folding + named-query resolution; the column formatter as a pure, unit-tested evaluator.
-- *Usable artifact:* accent-insensitive search and at least one computed column configurable from the UI. **Tags `0.2.0`.**
+### Phase 18a — Accent-folding ✅ (v0.1.27)
+
+- [x] Accent-folding, always-on for substring / quoted / fuzzy matches (`=exact` and `~regex` stay literal), so `bjork` matches `Björk`. Eval path: a pure `conservatory-search::fold` (NFD, drop combining marks, lowercase; reuses the workspace `unicode-normalization`) applied in the bare-text / substring / fuzzy matchers. SQL fast path: migration 0019 rebuilds every FTS table with the `unicode61 remove_diacritics 2` tokenizer, so bare text folds through `MATCH`, mirroring `fold` (the dual path stays consistent). Field-text on the fast path (`artist:bjork`) folds only on eval, documented. Unit + eval + FTS integration tests.
+- [x] Saved-query-by-name reuse was **already** implemented as `vl:NAME` (parse-time expansion with a cycle guard); recorded in the grammar doc, no code needed.
+
+### Phase 18b — Configurable built-in columns ✅ (v0.2.0)
+
+- [x] A column catalog (`track_list::COLUMN_CATALOG` + `build_column`, id → column) + `[browse].columns` config (default = the pre-18b fixed set, so an unconfigured launch is unchanged; unknown / duplicate ids skipped, forgiving) + a Preferences "Browse columns" editor (a switch per catalog column, the Phase 10c idiom). Beyond today's set the catalog exposes year / track# / format / bitrate / play count / date added / last played; the numeric/date columns are fixed-width and monospace (Phase 13d `.tech`). `TrackBrief` + `facet_tracks` widen for the new fields (curated, the 50k §13 budget); `TrackSort` + `cmp_tracks` gain the seven sort keys (unit-tested). Applies next launch (the config idiom). A title-formatting mini-language stays deferred; **reorder is a follow-on** (the editor toggles visibility, the config accepts any order).
+- Tests: `cmp_tracks` for the new keys; a catalog-vs-defaults consistency test; GUI smoke-launch with a 12-column custom config (every new id builds without panic).
+- *Usable artifact:* add a Year / Play Count / Format column from Preferences, persisted across launch.
+
+**Phase 18 complete → `0.2.0` tagged.** Accent-insensitive search (18a) and configurable browse columns (18b); one migration (0019, FTS re-tokenize); no new external dependency. The first capability milestone on the runway to 1.0. Next: `0.3.0` (Phase 19 immersive + Phase 9 scrobble).
 
 ## Milestone 0.3.0 — Immersive & history
 

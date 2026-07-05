@@ -10,6 +10,7 @@ use regex::Regex;
 
 use crate::ast::{Comparator, Expr, Field, MatchKind, State, Value};
 use crate::dates;
+use crate::fold::fold;
 
 /// The searchable projection of a library item (a track or, on the audiobook
 /// shelf, a book). The consumer fills this from a DB read; the crate owns it so
@@ -64,14 +65,16 @@ fn eval(expr: &Expr, item: &SearchItem, today: NaiveDate) -> bool {
 /// Authors are included so typing a name on the audiobook shelf finds the book
 /// (empty for tracks, so music is unaffected).
 fn text_any(item: &SearchItem, needle: &str) -> bool {
-    let n = needle.to_lowercase();
+    // Accent-fold both sides (Phase 18a): `bjork` matches `Björk`. This mirrors the
+    // FTS `remove_diacritics` tokenizer the SQL path uses, so the dual path agrees.
+    let n = fold(needle);
     let cols = [
         Some(item.title.as_str()),
         item.artist.as_deref(),
         item.album.as_deref(),
     ];
-    cols.iter().flatten().any(|c| c.to_lowercase().contains(&n))
-        || item.authors.iter().any(|a| a.to_lowercase().contains(&n))
+    cols.iter().flatten().any(|c| fold(c).contains(&n))
+        || item.authors.iter().any(|a| fold(a).contains(&n))
 }
 
 /// The text candidates a field exposes (multi-valued for genre).
@@ -108,10 +111,9 @@ fn field_match(item: &SearchItem, field: Field, kind: &MatchKind) -> bool {
         MatchKind::HasAny => present(item, field),
         MatchKind::HasNone => !present(item, field),
         MatchKind::Substring(v) => {
-            let v = v.to_lowercase();
-            candidates(item, field)
-                .iter()
-                .any(|c| c.to_lowercase().contains(&v))
+            // Accent-fold both sides (Phase 18a); `artist:bjork` matches `Björk`.
+            let v = fold(v);
+            candidates(item, field).iter().any(|c| fold(c).contains(&v))
         }
         MatchKind::Exact(v) => candidates(item, field)
             .iter()
@@ -237,8 +239,9 @@ fn fuzzy_threshold(needle: &str) -> usize {
 /// A fuzzy hit if the needle is within `threshold` edits of the whole candidate
 /// or any of its whitespace-separated words.
 fn fuzzy_hit(candidate: &str, needle: &str, threshold: usize) -> bool {
-    let cand = candidate.to_lowercase();
-    let need = needle.to_lowercase();
+    // Accent-fold both sides (Phase 18a) so `?bjork` fuzzy-matches `Björk`.
+    let cand = fold(candidate);
+    let need = fold(needle);
     if damerau_levenshtein(&cand, &need) <= threshold {
         return true;
     }
@@ -328,6 +331,28 @@ mod tests {
 
     fn run_book(expr: &str) -> bool {
         evaluate(&crate::parse::parse(expr).expr, &book(), today())
+    }
+
+    #[test]
+    fn accent_folding_matches_diacritics() {
+        let mut it = item();
+        it.artist = Some("Björk".into());
+        it.album = Some("Homogénic".into());
+        it.title = "Jóga".into();
+        let ev = |q: &str| evaluate(&crate::parse::parse(q).expr, &it, today());
+        // Bare text folds (text_any), both ASCII needle → accented value and back.
+        assert!(ev("bjork"));
+        assert!(ev("joga"));
+        assert!(ev("björk"));
+        // Field substring folds.
+        assert!(ev("artist:bjork"));
+        assert!(ev("album:homogenic"));
+        // Fuzzy folds (one transposition off the folded form).
+        assert!(ev("artist:?bjrok"));
+        // Exact stays accent-sensitive: the ASCII form must NOT match the accented
+        // value, but the exact accented form does.
+        assert!(!ev("artist:=bjork"));
+        assert!(ev("artist:=Björk"));
     }
 
     #[test]

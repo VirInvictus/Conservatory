@@ -178,6 +178,47 @@ impl TrackRow {
         let total = secs.round() as i64;
         format!("{}:{:02}", total / 60, total % 60)
     }
+
+    // --- The configurable extra columns (Phase 18b). Each is empty when unknown. ---
+
+    pub fn year_text(&self) -> String {
+        self.with(|b| b.year.map(|y| y.to_string()).unwrap_or_default())
+    }
+
+    pub fn track_no_text(&self) -> String {
+        self.with(|b| b.track_no.map(|n| n.to_string()).unwrap_or_default())
+    }
+
+    pub fn format_text(&self) -> String {
+        self.with(|b| b.format.clone().unwrap_or_default().to_uppercase())
+    }
+
+    pub fn bitrate_text(&self) -> String {
+        self.with(|b| b.bitrate.map(|k| k.to_string()).unwrap_or_default())
+    }
+
+    pub fn play_count_text(&self) -> String {
+        self.with(|b| b.play_count.to_string())
+    }
+
+    pub fn added_text(&self) -> String {
+        self.with(|b| fmt_date(b.added_at))
+    }
+
+    pub fn last_played_text(&self) -> String {
+        self.with(|b| fmt_date(b.last_played))
+    }
+}
+
+/// A unix-seconds timestamp as `YYYY-MM-DD` (local), empty when unset (Phase 18b).
+fn fmt_date(ts: Option<i64>) -> String {
+    ts.and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d")
+                .to_string()
+        })
+        .unwrap_or_default()
 }
 
 // --- Queue row (queue drawer entry, Phase 4b-ii-b) ---

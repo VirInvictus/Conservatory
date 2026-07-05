@@ -114,6 +114,22 @@ pub struct AudiobooksConfig {
 #[serde(default)]
 pub struct BrowseConfig {
     pub panes: Vec<String>,
+    /// The leaf columns, left-to-right, by catalog id (Phase 18b). Default is the
+    /// pre-18b fixed set, so an unconfigured launch is visually unchanged. Unknown
+    /// / duplicate ids are skipped when the leaf is built (the forgiving idiom).
+    pub columns: Vec<String>,
+}
+
+/// The pre-18b fixed leaf column order (the [`BrowseConfig::columns`] default and
+/// the catalog's canonical order). Shared so the config default and the GUI editor
+/// agree on the baseline.
+pub fn default_columns() -> Vec<String> {
+    [
+        "cover", "glyph", "artist", "album", "genre", "title", "duration", "rating",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 /// Import disposition, the serde-facing `"copy"` / `"move"`.
@@ -184,6 +200,7 @@ impl Default for BrowseConfig {
                 "albumartist".to_string(),
                 "album".to_string(),
             ],
+            columns: default_columns(),
         }
     }
 }

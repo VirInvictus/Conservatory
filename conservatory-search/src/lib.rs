@@ -13,6 +13,7 @@
 pub mod ast;
 pub mod dates;
 pub mod eval;
+pub mod fold;
 pub mod lex;
 pub mod parse;
 pub mod rank;
@@ -20,6 +21,7 @@ pub mod sql_translate;
 
 pub use ast::{Comparator, DateSpec, Expr, Field, MatchKind, SortKey, SortSpec, State, Value};
 pub use eval::{SearchItem, evaluate};
+pub use fold::fold;
 pub use parse::{ParseResult, PerspectiveResolver, parse, parse_with_resolver};
 pub use rank::{blend_relevance, collect_text_terms};
 pub use sql_translate::{SqlClause, SqlValue, try_translate};

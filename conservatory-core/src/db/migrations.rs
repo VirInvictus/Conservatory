@@ -96,10 +96,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 18,
         sql: include_str!("migrations/0018_shuffle_repeat.sql"),
     },
+    Migration {
+        version: 19,
+        sql: include_str!("migrations/0019_fts_fold.sql"),
+    },
 ];
 
 /// The `user_version` a fully-migrated database reaches.
-pub const CURRENT_VERSION: i32 = 18;
+pub const CURRENT_VERSION: i32 = 19;
 
 /// Apply any unapplied migrations. Idempotent: running this on a
 /// fully-migrated database is a no-op.

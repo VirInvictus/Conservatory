@@ -1,5 +1,23 @@
 # Patch Notes
 
+## v0.2.0
+
+The first milestone on the road to 1.0: **Phase 18, "grammar and columns."** Accent-insensitive search shipped in v0.1.27; this release adds configurable browse columns and tags 0.2.0.
+
+- **Choose your browse columns.** The track list is no longer a fixed set. A new "Browse columns" section in Preferences lets you show or hide Year, Track number, Bitrate, Format, Play count, Date added, and Last played alongside the usual Artist / Album / Genre / Title / Duration / Rating, each sortable by its header. An unconfigured library looks exactly as before; changes take effect on the next launch.
+- The numeric and date columns render in the app's monospace face, so they line up cleanly.
+- Under the hood this is deliberately a curated, built-in set rather than a free-form formatting language: every extra column is memory on every row of a large library, so the set stays practical. Reordering columns from the editor is a planned follow-on (the config file already accepts any order).
+
+Milestone note: 0.2.0 is the "grammar and columns" capability tier complete. Next up on the runway to 1.0 is 0.3.0 (immersive polish plus optional scrobbling).
+
+## v0.1.27
+
+Accent-insensitive search (Phase 18a, the first step toward the 0.2.0 "grammar and columns" milestone).
+
+- **Searching `bjork` now finds `Björk`.** Substring, quoted, and fuzzy matches ignore diacritics, so you no longer have to type the accents (or know how to). `Sigur Rós`, `Motörhead`, `Beyoncé`, `Antonín Dvořák` all come up from their plain-ASCII spelling. Exact (`=`) and regex (`~`) matches stay literal, and folding only ever finds *more*, so it can never turn a search into an error.
+- It works the same whether the query runs on the fast database path or the in-memory path (bare-text search folds via the search index; the one place it does not yet fold is an accented value behind a specific field like `artist:bjork` on the fast path, noted in the grammar doc).
+- Housekeeping: `vl:NAME` was already the "reference a saved search by name" feature the roadmap called for, so that part of the grammar work was already done; this release is the accent-folding half.
+
 ## v0.1.26
 
 Queue-vs-playlist clarity (Phase 17d, closing the Phase 17 set).

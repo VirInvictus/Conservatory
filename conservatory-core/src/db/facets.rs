@@ -149,6 +149,17 @@ pub struct TrackBrief {
     pub cover_path: Option<String>,
     /// The album's extracted accent (packed `0x00RRGGBB`), for tinting.
     pub accent_rgb: Option<u32>,
+    /// Extra fields carried for the configurable browse columns (Phase 18b). Kept
+    /// curated: every field here is per-row memory across a 50k leaf (spec §13).
+    /// `year` is the album's; the rest are the track's. Timestamps are raw unix
+    /// seconds (formatted for display in the GUI layer).
+    pub year: Option<i32>,
+    pub track_no: Option<i32>,
+    pub format: Option<String>,
+    pub bitrate: Option<i32>,
+    pub play_count: i32,
+    pub last_played: Option<i64>,
+    pub added_at: Option<i64>,
 }
 
 /// A sortable leaf column (Phase 3c). The GTK `ColumnView` header drives this;
@@ -161,6 +172,14 @@ pub enum TrackSort {
     Title,
     Duration,
     Rating,
+    // Phase 18b: the configurable-column sort keys.
+    Year,
+    TrackNo,
+    Format,
+    Bitrate,
+    PlayCount,
+    LastPlayed,
+    Added,
 }
 
 fn nocase(s: &Option<String>) -> String {
@@ -188,6 +207,15 @@ pub fn cmp_tracks(
             .partial_cmp(&b.duration.unwrap_or(0.0))
             .unwrap_or(Equal),
         TrackSort::Rating => a.rating.cmp(&b.rating),
+        // Phase 18b sort keys. `Option` orders `None` first, which is the sensible
+        // "unknown sorts to the top" for these; `descending` flips it.
+        TrackSort::Year => a.year.cmp(&b.year),
+        TrackSort::TrackNo => a.track_no.cmp(&b.track_no),
+        TrackSort::Format => nocase(&a.format).cmp(&nocase(&b.format)),
+        TrackSort::Bitrate => a.bitrate.cmp(&b.bitrate),
+        TrackSort::PlayCount => a.play_count.cmp(&b.play_count),
+        TrackSort::LastPlayed => a.last_played.cmp(&b.last_played),
+        TrackSort::Added => a.added_at.cmp(&b.added_at),
     };
     if descending { ord.reverse() } else { ord }
 }
@@ -312,6 +340,9 @@ pub fn facet_tracks(conn: &Connection, filters: &[FacetFilter]) -> Result<Vec<Tr
     let sql = format!(
         "SELECT t.id, t.title, t.duration, t.rating, ta.name AS artist, al.title AS album,
                 al.cover_path AS cover_path, al.accent_rgb AS accent_rgb,
+                al.year AS year, t.track_no AS track_no, t.format AS format,
+                t.bitrate AS bitrate, t.play_count AS play_count,
+                t.last_played AS last_played, t.added_at AS added_at,
                 (SELECT group_concat(name, ', ') FROM (
                     SELECT g.name FROM track_genres tg JOIN genres g ON g.id = tg.genre_id
                     WHERE tg.track_id = t.id ORDER BY g.name COLLATE NOCASE
@@ -336,6 +367,13 @@ pub fn facet_tracks(conn: &Connection, filters: &[FacetFilter]) -> Result<Vec<Tr
             rating: r.get::<_, i64>("rating")?.clamp(0, 5) as u8,
             cover_path: r.get("cover_path")?,
             accent_rgb: accent.map(|v| v as u32),
+            year: r.get::<_, Option<i64>>("year")?.map(|v| v as i32),
+            track_no: r.get::<_, Option<i64>>("track_no")?.map(|v| v as i32),
+            format: r.get("format")?,
+            bitrate: r.get::<_, Option<i64>>("bitrate")?.map(|v| v as i32),
+            play_count: r.get::<_, i64>("play_count")? as i32,
+            last_played: r.get("last_played")?,
+            added_at: r.get("added_at")?,
         })
     })?;
     rows.map(|r| r.map_err(Into::into)).collect()
@@ -363,6 +401,13 @@ mod tests {
             rating,
             cover_path: None,
             accent_rgb: None,
+            year: Some(2000 + id as i32),
+            track_no: Some(id as i32),
+            format: Some("flac".into()),
+            bitrate: Some(1000 - id as i32),
+            play_count: id as i32,
+            last_played: Some(id),
+            added_at: Some(id),
         }
     }
 
@@ -396,6 +441,33 @@ mod tests {
         assert_eq!(ids(&tracks), vec![10, 11, 12]);
         sort_tracks(&mut tracks, TrackSort::Artist, true);
         assert_eq!(ids(&tracks), vec![10, 11, 12], "reverse must not flip ties");
+    }
+
+    #[test]
+    fn phase_18b_sort_keys_order_by_value() {
+        // `brief(id)` sets year=2000+id, track_no=id, bitrate=1000-id,
+        // play_count=id, added=last_played=id, format="flac" (all equal).
+        let mk = || {
+            vec![
+                brief(1, "", "", "", "", 0),
+                brief(2, "", "", "", "", 0),
+                brief(3, "", "", "", "", 0),
+            ]
+        };
+        let sorted = |key, desc| {
+            let mut t = mk();
+            sort_tracks(&mut t, key, desc);
+            ids(&t)
+        };
+        assert_eq!(sorted(TrackSort::Year, false), vec![1, 2, 3]);
+        assert_eq!(sorted(TrackSort::TrackNo, false), vec![1, 2, 3]);
+        assert_eq!(sorted(TrackSort::PlayCount, true), vec![3, 2, 1]);
+        // bitrate = 1000 - id, so ascending bitrate reverses the id order.
+        assert_eq!(sorted(TrackSort::Bitrate, false), vec![3, 2, 1]);
+        assert_eq!(sorted(TrackSort::Added, false), vec![1, 2, 3]);
+        assert_eq!(sorted(TrackSort::LastPlayed, false), vec![1, 2, 3]);
+        // format is identical → ties preserve the incoming browse order.
+        assert_eq!(sorted(TrackSort::Format, false), vec![1, 2, 3]);
     }
 
     #[test]

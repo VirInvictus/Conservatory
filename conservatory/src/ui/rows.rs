@@ -48,3 +48,84 @@ pub fn row(title: &str, subtitle: Option<&str>, suffix: Option<&gtk::Widget>) ->
         .child(&content)
         .build()
 }
+
+/// An adw::SwitchRow successor: the returned `gtk::Switch` keeps the exact
+/// `set_active` / `is_active` / `connect_active_notify` surface call sites
+/// already wire against.
+pub fn switch_row(title: &str, subtitle: Option<&str>) -> (gtk::ListBoxRow, gtk::Switch) {
+    let switch = gtk::Switch::new();
+    let row = row(title, subtitle, Some(switch.upcast_ref()));
+    (row, switch)
+}
+
+/// An adw::SpinRow successor; the returned `gtk::SpinButton` carries the
+/// `set_digits` / `set_value` / `value` / `adjustment` surface.
+pub fn spin_row(
+    title: &str,
+    subtitle: Option<&str>,
+    min: f64,
+    max: f64,
+    step: f64,
+) -> (gtk::ListBoxRow, gtk::SpinButton) {
+    let spin = gtk::SpinButton::with_range(min, max, step);
+    let row = row(title, subtitle, Some(spin.upcast_ref()));
+    (row, spin)
+}
+
+/// An adw::PreferencesGroup successor: an optional heading and dim description
+/// over a `.boxed-list` of rows.
+pub struct Group {
+    root: gtk::Box,
+    list: gtk::ListBox,
+}
+
+pub fn group(title: Option<&str>, description: Option<&str>) -> Group {
+    let root = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(6)
+        .build();
+    if let Some(title) = title.filter(|t| !t.is_empty()) {
+        let label = gtk::Label::builder()
+            .label(title)
+            .xalign(0.0)
+            .css_classes(["heading"])
+            .build();
+        root.append(&label);
+    }
+    if let Some(description) = description.filter(|d| !d.is_empty()) {
+        let label = gtk::Label::builder()
+            .label(description)
+            .xalign(0.0)
+            .wrap(true)
+            .css_classes(["caption", "dim-label"])
+            .build();
+        root.append(&label);
+    }
+    let list = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .css_classes(["boxed-list"])
+        .build();
+    root.append(&list);
+    Group { root, list }
+}
+
+impl Group {
+    /// The widget to place (a dialog extra child, a preferences page section).
+    pub fn widget(&self) -> &gtk::Widget {
+        self.root.upcast_ref()
+    }
+
+    /// Append a row; any non-row widget is wrapped in a non-activatable row,
+    /// the way adw::PreferencesGroup::add did.
+    pub fn add(&self, child: &impl IsA<gtk::Widget>) {
+        if let Some(row) = child.as_ref().downcast_ref::<gtk::ListBoxRow>() {
+            self.list.append(row);
+        } else {
+            let wrapper = gtk::ListBoxRow::builder()
+                .activatable(false)
+                .child(child)
+                .build();
+            self.list.append(&wrapper);
+        }
+    }
+}

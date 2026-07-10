@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.2.5
+
+De-adwaita sub-phase 26f: the shared rows module grows switch and spin rows plus a preferences-group successor (heading + dim description over a boxed list). First consumers: the two Now-bar playing-settings dialogs (per-show and per-book speed / Smart Speed / Voice Boost, quick-seek overrides) now run entirely on owned widgets, including their alert shell from 26e. Live-apply on the playing item is unchanged.
+
 ## v0.2.4
 
 De-adwaita sub-phase 26e: an owned modal alert dialog (`ui/dialogs.rs`) replaces `adw::AlertDialog` across thirteen window.rs prompts (EQ preset save, remove-from-library, bulk edit and its error loop, move-files confirm, embed-tags pair, the error dialog, Perspective save/delete, playlist create both flavours, playlist delete). Named responses, suggested/destructive button styling, Escape and window-close answering with the close response, and Enter confirming the default all behave as before. The two per-show/per-book playing-settings dialogs follow in 26f with the row rebuild they depend on.

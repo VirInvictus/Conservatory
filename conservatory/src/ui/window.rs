@@ -53,6 +53,7 @@ use crate::ui::now_bar::{NowBar, build_now_bar};
 use crate::ui::now_playing_panel::{NowPlayingPanel, build_now_playing_panel};
 use crate::ui::objects::TrackRow;
 use crate::ui::queue_panel::{QueuePanel, build_queue_panel};
+use crate::ui::rows;
 use crate::ui::sound;
 use crate::ui::track_list::{Leaf, build_leaf};
 
@@ -4450,47 +4451,54 @@ impl ConservatoryWindow {
             .unwrap_or_else(|| default_settings(show_id));
         drop(conn);
 
-        let group = adw::PreferencesGroup::new();
-        group.set_description(Some(
-            "Smart Speed trims dead air; Voice Boost lifts quiet, uneven speech. \
-             They apply to this show's episodes when you play them.",
-        ));
-        let speed = adw::SpinRow::with_range(MIN_SPEED, MAX_SPEED, 0.05);
-        speed.set_title("Playback speed");
+        let group = rows::group(
+            None,
+            Some(
+                "Smart Speed trims dead air; Voice Boost lifts quiet, uneven speech. \
+                 They apply to this show's episodes when you play them.",
+            ),
+        );
+        let (speed_row, speed) = rows::spin_row("Playback speed", None, MIN_SPEED, MAX_SPEED, 0.05);
         speed.set_digits(2);
         speed.set_value(cur.playback_speed);
-        let smart = adw::SwitchRow::new();
-        smart.set_title("Smart Speed");
+        let (smart_row, smart) = rows::switch_row("Smart Speed", None);
         smart.set_active(cur.smart_speed);
-        let voice = adw::SwitchRow::new();
-        voice.set_title("Voice Boost");
+        let (voice_row, voice) = rows::switch_row("Voice Boost", None);
         voice.set_active(cur.voice_boost);
         // The Now-bar quick-seek amounts (16.5f), editable right where the
         // buttons live; 0 inherits the defaults (15 back / 30 forward).
-        let back = adw::SpinRow::with_range(0.0, 300.0, 5.0);
-        back.set_title("Skip back (seconds)");
-        back.set_subtitle("0 uses the default (15)");
+        let (back_row, back) = rows::spin_row(
+            "Skip back (seconds)",
+            Some("0 uses the default (15)"),
+            0.0,
+            300.0,
+            5.0,
+        );
         back.set_value(cur.skip_back.unwrap_or(0) as f64);
-        let fwd = adw::SpinRow::with_range(0.0, 300.0, 5.0);
-        fwd.set_title("Skip forward (seconds)");
-        fwd.set_subtitle("0 uses the default (30)");
+        let (fwd_row, fwd) = rows::spin_row(
+            "Skip forward (seconds)",
+            Some("0 uses the default (30)"),
+            0.0,
+            300.0,
+            5.0,
+        );
         fwd.set_value(cur.skip_forward.unwrap_or(0) as f64);
-        group.add(&speed);
-        group.add(&smart);
-        group.add(&voice);
-        group.add(&back);
-        group.add(&fwd);
+        group.add(&speed_row);
+        group.add(&smart_row);
+        group.add(&voice_row);
+        group.add(&back_row);
+        group.add(&fwd_row);
 
-        let dialog = adw::AlertDialog::new(Some(&show_title), None);
-        dialog.set_extra_child(Some(&group));
+        let dialog = Alert::new(Some(&show_title), None);
+        dialog.set_extra_child(Some(group.widget()));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("save", "Save");
-        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("save", Appearance::Suggested);
         dialog.set_default_response(Some("save"));
         dialog.set_close_response("cancel");
 
         let weak = self.downgrade();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "save" {
                 return;
             }
@@ -4588,35 +4596,34 @@ impl ConservatoryWindow {
         let cur = get_book_playback(&conn, book_id).ok().flatten();
         drop(conn);
 
-        let group = adw::PreferencesGroup::new();
-        group.set_description(Some(
-            "Smart Speed trims dead air; Voice Boost lifts quiet, uneven narration. \
-             These apply to this book when you play it.",
-        ));
-        let speed = adw::SpinRow::with_range(MIN_SPEED, MAX_SPEED, 0.05);
-        speed.set_title("Playback speed");
+        let group = rows::group(
+            None,
+            Some(
+                "Smart Speed trims dead air; Voice Boost lifts quiet, uneven narration. \
+                 These apply to this book when you play it.",
+            ),
+        );
+        let (speed_row, speed) = rows::spin_row("Playback speed", None, MIN_SPEED, MAX_SPEED, 0.05);
         speed.set_digits(2);
         speed.set_value(cur.as_ref().and_then(|p| p.speed).unwrap_or(1.0));
-        let smart = adw::SwitchRow::new();
-        smart.set_title("Smart Speed");
+        let (smart_row, smart) = rows::switch_row("Smart Speed", None);
         smart.set_active(cur.as_ref().and_then(|p| p.smart_speed).unwrap_or(false));
-        let voice = adw::SwitchRow::new();
-        voice.set_title("Voice Boost");
+        let (voice_row, voice) = rows::switch_row("Voice Boost", None);
         voice.set_active(cur.as_ref().and_then(|p| p.voice_boost).unwrap_or(false));
-        group.add(&speed);
-        group.add(&smart);
-        group.add(&voice);
+        group.add(&speed_row);
+        group.add(&smart_row);
+        group.add(&voice_row);
 
-        let dialog = adw::AlertDialog::new(Some(&title), None);
-        dialog.set_extra_child(Some(&group));
+        let dialog = Alert::new(Some(&title), None);
+        dialog.set_extra_child(Some(group.widget()));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("save", "Save");
-        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("save", Appearance::Suggested);
         dialog.set_default_response(Some("save"));
         dialog.set_close_response("cancel");
 
         let weak = self.downgrade();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "save" {
                 return;
             }

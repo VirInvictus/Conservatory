@@ -4247,75 +4247,10 @@ impl ConservatoryWindow {
         }
     }
 
-    /// The keyboard-shortcuts reference (Phase 13e-iii, `F1`). Built as an
-    /// `adw::PreferencesDialog` of grouped rows rather than a `gtk::ShortcutsWindow`
-    /// (deprecated in recent GTK; `AdwShortcutsDialog` postdates our libadwaita), so
-    /// it stays current and inherits the app's typography. The list is curated to
-    /// match what is actually wired (no aspirational keys).
+    /// The keyboard-shortcuts reference (Phase 13e-iii, `F1`; hand-rolled plain
+    /// GTK since Phase 26). The curated table lives in `ui/shortcuts.rs`.
     fn show_shortcuts_window(&self) {
-        let groups: [(&str, &[(&str, &str)]); 3] = [
-            (
-                "Playback",
-                &[
-                    ("Space", "Play / pause"),
-                    ("Ctrl+Right", "Next track"),
-                    ("Ctrl+Left", "Previous track"),
-                    ("Ctrl+Up / Ctrl+Down", "Volume up / down"),
-                    ("Ctrl+0", "Mute / unmute"),
-                    ("Ctrl+M", "Stop after the current track"),
-                    ("Ctrl+J", "Jump to the playing track"),
-                    ("Ctrl+R", "Repeat: off / all / one"),
-                    ("Ctrl+K", "Shuffle: on / off"),
-                    ("Ctrl+Shift+Right / Left", "Next / previous chapter"),
-                    ("S", "Sleep timer"),
-                ],
-            ),
-            (
-                "Browse & Queue",
-                &[
-                    ("Double-click / Enter", "Play the track or facet"),
-                    ("Ctrl+Enter", "Add the selection to the queue"),
-                    ("Ctrl+E", "Edit the selected tracks"),
-                    ("Ctrl+F", "Focus the filter"),
-                    ("Ctrl+L", "Clear the filter"),
-                    ("Alt+Up / Alt+Down", "Move the queued item"),
-                    ("Delete", "Remove from the queue"),
-                    ("Ctrl+Shift+C", "Clear the queue"),
-                ],
-            ),
-            (
-                "Panels & View",
-                &[
-                    ("Ctrl+U", "Queue"),
-                    ("Ctrl+P", "Track properties"),
-                    ("Ctrl+I", "Now Playing"),
-                    ("Alt+1 / Alt+2 / Alt+3", "Music / Podcasts / Audiobooks"),
-                    ("Ctrl+comma", "Preferences"),
-                    ("F1", "This shortcuts window"),
-                    ("Ctrl+Q", "Quit"),
-                ],
-            ),
-        ];
-
-        let page = adw::PreferencesPage::new();
-        for (title, rows) in groups {
-            let group = adw::PreferencesGroup::builder().title(title).build();
-            for (accel, desc) in rows {
-                let row = adw::ActionRow::builder().title(*desc).build();
-                let keys = gtk::Label::builder()
-                    .label(*accel)
-                    .css_classes(["dim-label", "numeric"])
-                    .build();
-                row.add_suffix(&keys);
-                group.add(&row);
-            }
-            page.add(&group);
-        }
-
-        let dialog = adw::PreferencesDialog::new();
-        dialog.set_title("Keyboard Shortcuts");
-        dialog.add(&page);
-        dialog.present(Some(self));
+        crate::ui::shortcuts::present(self);
     }
 
     /// The header primary menu (Phase 11d): the transport conveniences that are
@@ -4377,22 +4312,24 @@ impl ConservatoryWindow {
             .build()
     }
 
-    /// The About dialog (16.5b): version from the crate, GPL-3.0-or-later (the
-    /// librubberband chain, spec §11), repo link.
+    /// The About dialog (16.5b; plain GTK since Phase 26): version from the
+    /// crate, GPL-3.0-or-later (the librubberband chain, spec §11), repo link.
     fn show_about_dialog(&self) {
-        let about = adw::AboutDialog::builder()
-            .application_name("Conservatory")
-            .application_icon("audio-x-generic")
+        let about = gtk::AboutDialog::builder()
+            .program_name("Conservatory")
+            .logo_icon_name("audio-x-generic")
             .version(env!("CARGO_PKG_VERSION"))
-            .developer_name("Brandon LaRocque")
+            .authors(vec!["Brandon LaRocque"])
             .license_type(gtk::License::Gpl30)
             .website("https://github.com/VirInvictus/Conservatory")
             .comments(
                 "Calibre for audio: a library manager and player for music, \
                  podcasts, and audiobooks that owns its files.",
             )
+            .modal(true)
             .build();
-        about.present(Some(self));
+        about.set_transient_for(Some(self));
+        about.present();
     }
 
     /// Toggle stop-after-current (Phase 11d, `Ctrl+M`): the engine finishes the

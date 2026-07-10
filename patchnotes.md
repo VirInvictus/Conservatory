@@ -1,5 +1,12 @@
 # Patch Notes
 
+## v0.2.1
+
+The first step of Phase 26 (de-adwaita, the 0.3.0 milestone; sub-phase 26b). Conservatory is migrating from libadwaita to plain GTK4 with its own flat, tiling-first stylesheet; this release lays the plain-GTK foundations. Nothing changes visually yet: the adwaita stylesheet still themes everything until the owned sheet lands late in the phase.
+
+- The keyboard-shortcuts reference (`F1`) is now a hand-rolled plain-GTK window (`ui/shortcuts.rs`) over shared owned list rows (`ui/rows.rs`), with the same curated key table. Escape closes it via a new shared helper.
+- The About dialog is now `gtk::AboutDialog` (a plain toplevel) instead of adwaita's in-window sheet. Same contents.
+
 ## v0.2.0
 
 The first milestone on the road to 1.0: **Phase 18, "grammar and columns."** Accent-insensitive search shipped in v0.1.27; this release adds configurable browse columns and tags 0.2.0.

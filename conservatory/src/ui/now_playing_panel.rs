@@ -17,7 +17,6 @@ use std::rc::Rc;
 
 use gtk::prelude::*;
 use gtk4 as gtk;
-use libadwaita as adw;
 
 use std::path::Path;
 
@@ -179,18 +178,18 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
     column.append(&overlay);
     column.append(&chapters_box);
 
-    // The idle state (Phase 13b): a centered StatusPage shown in place of the
-    // populated column when nothing is playing. `clear()` swaps to it; any
-    // populate call swaps back. (While it shows, the spectrum's `area` is
-    // unmapped, so the capture is idle too.)
-    let idle_page = adw::StatusPage::builder()
-        .icon_name("audio-x-generic-symbolic")
-        .title("Nothing playing")
-        .description("Play something to see it here.")
-        .build();
+    // The idle state (Phase 13b; owned composite since Phase 26): a centered
+    // status page shown in place of the populated column when nothing is
+    // playing. `clear()` swaps to it; any populate call swaps back. (While it
+    // shows, the spectrum's `area` is unmapped, so the capture is idle too.)
+    let idle_page = crate::ui::status_page::status_page(
+        Some("audio-x-generic-symbolic"),
+        "Nothing playing",
+        Some("Play something to see it here."),
+    );
     let stack = gtk::Stack::new();
     stack.add_named(&column, Some("content"));
-    stack.add_named(&idle_page, Some("empty"));
+    stack.add_named(idle_page.widget(), Some("empty"));
     stack.set_visible_child_name("empty");
 
     let revealer = gtk::Revealer::builder()

@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.2.2
+
+De-adwaita sub-phase 26c: every empty state now renders through an owned composite (`ui/status_page.rs`) instead of `adw::StatusPage`. Same seven surfaces (empty track list, filtered no-matches, the podcast tab call-to-action, empty episode list, empty audiobook shelf, idle Now Playing drawer), same copy, same runtime title/description swaps.
+
 ## v0.2.1
 
 The first step of Phase 26 (de-adwaita, the 0.3.0 milestone; sub-phase 26b). Conservatory is migrating from libadwaita to plain GTK4 with its own flat, tiling-first stylesheet; this release lays the plain-GTK foundations. Nothing changes visually yet: the adwaita stylesheet still themes everything until the owned sheet lands late in the phase.

@@ -103,11 +103,11 @@ struct Inner {
     sources: RefCell<Vec<Option<Source>>>,
     /// The selected show's `last_fetched`, for the detail header (P18).
     show_last_fetched: RefCell<Option<DateTime<Utc>>>,
-    /// Swaps the whole tab for a no-subscriptions StatusPage (P6).
+    /// Swaps the whole tab for a no-subscriptions status page (P6).
     view_stack: gtk::Stack,
     /// Swaps the episode list for a per-source empty page (P6).
     list_stack: gtk::Stack,
-    list_empty: adw::StatusPage,
+    list_empty: crate::ui::status_page::StatusPage,
     /// The sidebar-footer refresh button; insensitive while a batch runs.
     refresh_btn: gtk::Button,
     refresh_busy: Cell<bool>,
@@ -1370,13 +1370,11 @@ pub fn build_podcasts_view(
     detail.append(&notes_scroll);
 
     // The episode list's per-source empty page (16.5c), swapped in by `load`.
-    let list_empty = adw::StatusPage::builder()
-        .icon_name("microphone-symbolic")
-        .title("No episodes")
-        .build();
+    let list_empty =
+        crate::ui::status_page::status_page(Some("microphone-symbolic"), "No episodes", None);
     let list_stack = gtk::Stack::new();
     list_stack.add_named(&list_scroll, Some("list"));
-    list_stack.add_named(&list_empty, Some("empty"));
+    list_stack.add_named(list_empty.widget(), Some("empty"));
 
     // The sidebar list is populated by `rebuild_sidebar` (16.5c), so subscribe
     // and unsubscribe can rebuild it in place.
@@ -1661,7 +1659,7 @@ pub fn build_podcasts_view(
     root.set_position(200);
 
     // The no-subscriptions call-to-action (16.5c): the whole tab swaps for a
-    // StatusPage until a first feed exists.
+    // status page until a first feed exists.
     let cta_subscribe = gtk::Button::with_label("Subscribe\u{2026}");
     cta_subscribe.add_css_class("suggested-action");
     cta_subscribe.add_css_class("pill");
@@ -1679,15 +1677,15 @@ pub fn build_podcasts_view(
     cta_box.set_halign(gtk::Align::Center);
     cta_box.append(&cta_subscribe);
     cta_box.append(&cta_import);
-    let empty_view = adw::StatusPage::builder()
-        .icon_name("microphone-symbolic")
-        .title("No podcast subscriptions")
-        .description("Subscribe to a feed to start your podcast library.")
-        .child(&cta_box)
-        .build();
+    let empty_view = crate::ui::status_page::status_page(
+        Some("microphone-symbolic"),
+        "No podcast subscriptions",
+        Some("Subscribe to a feed to start your podcast library."),
+    );
+    empty_view.set_child(&cta_box);
 
     view_stack.add_named(&root, Some("content"));
-    view_stack.add_named(&empty_view, Some("empty"));
+    view_stack.add_named(empty_view.widget(), Some("empty"));
 
     // First population: fills the sidebar, selects the Inbox (which loads the
     // episode list), and picks the content-vs-empty page.

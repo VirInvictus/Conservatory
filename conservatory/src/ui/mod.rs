@@ -19,6 +19,7 @@ pub mod rows;
 pub mod shortcuts;
 pub mod sound;
 pub mod spectrum;
+pub mod status_page;
 pub mod track_list;
 pub mod window;
 

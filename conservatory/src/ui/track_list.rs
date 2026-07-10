@@ -11,12 +11,12 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
-use libadwaita as adw;
 
 use conservatory_core::db::{TrackBrief, TrackSort, cmp_tracks};
 
 use crate::ui::covers::CoverCache;
 use crate::ui::objects::TrackRow;
+use crate::ui::status_page::{StatusPage, status_page};
 
 /// Right-click callback for a leaf row (Phase 16a): `(row position, pointer x,
 /// pointer y, the clicked cell widget)`. The window uses it to pop the shared
@@ -65,7 +65,7 @@ pub struct Leaf {
     pub column_view: gtk::ColumnView,
     pub view: gtk::ScrolledWindow,
     pub stack: gtk::Stack,
-    empty_page: adw::StatusPage,
+    empty_page: StatusPage,
 }
 
 fn track(obj: &glib::Object) -> TrackRow {
@@ -530,16 +530,13 @@ pub fn build_leaf(
         .child(&view)
         .build();
 
-    // The empty state (Phase 13b): a centered StatusPage shown in place of the
-    // table when the leaf is empty. Its title / description are set per refresh
-    // (no library vs no filter matches).
-    let empty_page = adw::StatusPage::builder()
-        .icon_name(COVER_PLACEHOLDER)
-        .title("No tracks")
-        .build();
+    // The empty state (Phase 13b; owned composite since Phase 26): a centered
+    // status page shown in place of the table when the leaf is empty. Its
+    // title / description are set per refresh (no library vs no filter matches).
+    let empty_page = status_page(Some(COVER_PLACEHOLDER), "No tracks", None);
     let stack = gtk::Stack::new();
     stack.add_named(&scroller, Some("list"));
-    stack.add_named(&empty_page, Some("empty"));
+    stack.add_named(empty_page.widget(), Some("empty"));
 
     Leaf {
         store,

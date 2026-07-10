@@ -67,10 +67,11 @@ pub fn build_audiobooks_view(
 
     // The empty-shelf state (16.5g): a call-to-action for a fresh library, or
     // a "no matches" page while the filter narrows to nothing.
-    let shelf_empty = adw::StatusPage::builder()
-        .icon_name("audio-x-generic-symbolic")
-        .title("No audiobooks yet")
-        .build();
+    let shelf_empty = crate::ui::status_page::status_page(
+        Some("audio-x-generic-symbolic"),
+        "No audiobooks yet",
+        None,
+    );
     let shelf_stack = gtk::Stack::new();
 
     let detail = Detail::new();
@@ -251,7 +252,7 @@ pub fn build_audiobooks_view(
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
     shelf_stack.add_named(&shelf_scroll, Some("grid"));
-    shelf_stack.add_named(&shelf_empty, Some("empty"));
+    shelf_stack.add_named(shelf_empty.widget(), Some("empty"));
 
     // The filter bar sits above the shelf, in a toolbar strip (the Music-page
     // layout); a sort picker (16.5g) and a pencil button (bulk edit, also
@@ -371,10 +372,10 @@ struct Inner {
     /// starts the queue from that book).
     menu: OnceCell<gtk::PopoverMenu>,
     context_pos: Cell<Option<usize>>,
-    /// Swaps the grid for the empty-shelf StatusPage (16.5g), with per-cause
+    /// Swaps the grid for the empty-shelf status page (16.5g), with per-cause
     /// copy (fresh library vs no filter matches).
     shelf_stack: gtk::Stack,
-    shelf_empty: adw::StatusPage,
+    shelf_empty: crate::ui::status_page::StatusPage,
     /// The active shelf ordering (16.5g); the DropDown drives it.
     sort: Cell<ShelfSort>,
 }

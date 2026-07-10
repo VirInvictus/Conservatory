@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.2.4
+
+De-adwaita sub-phase 26e: an owned modal alert dialog (`ui/dialogs.rs`) replaces `adw::AlertDialog` across thirteen window.rs prompts (EQ preset save, remove-from-library, bulk edit and its error loop, move-files confirm, embed-tags pair, the error dialog, Perspective save/delete, playlist create both flavours, playlist delete). Named responses, suggested/destructive button styling, Escape and window-close answering with the close response, and Enter confirming the default all behave as before. The two per-show/per-book playing-settings dialogs follow in 26f with the row rebuild they depend on.
+
 ## v0.2.3
 
 De-adwaita sub-phase 26d: toasts are now an owned overlay (a crossfading auto-hide revealer over the content area) instead of `adw::ToastOverlay`. Same four-second, newest-wins behaviour: a burst of confirmations keeps the latest one up for its full window. Styled as a pill to match the adwaita look until the owned stylesheet lands.

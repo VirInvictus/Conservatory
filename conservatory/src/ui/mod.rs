@@ -6,6 +6,7 @@ pub mod accent;
 pub mod audiobooks;
 pub mod coalescing;
 pub mod covers;
+pub mod dialogs;
 pub mod facet_pane;
 pub mod fields;
 pub mod inspector;

@@ -45,6 +45,7 @@ use crate::playqueue::{
 };
 use crate::query::{materialize_smart, query_leaf};
 use crate::ui::coalescing::CoalescingQueue;
+use crate::ui::dialogs::{Alert, Appearance};
 use crate::ui::facet_pane::{FacetPane, build_pane};
 use crate::ui::fields::{collect_assignments, inspector_fields};
 use crate::ui::inspector::{Inspector, build_inspector};
@@ -2087,14 +2088,15 @@ impl ConservatoryWindow {
         let entry = gtk::Entry::builder()
             .placeholder_text("Preset name")
             .build();
-        let dialog = adw::AlertDialog::new(Some("Save EQ preset"), None);
+        entry.set_activates_default(true);
+        let dialog = Alert::new(Some("Save EQ preset"), None);
         dialog.set_extra_child(Some(&entry));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("save", "Save");
-        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("save", Appearance::Suggested);
         dialog.set_default_response(Some("save"));
         let weak = self.downgrade();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "save" {
                 return;
             }
@@ -2890,14 +2892,14 @@ impl ConservatoryWindow {
             "Remove {} track(s) from the library? The files stay on disk, so you can re-import them.",
             ids.len()
         );
-        let dialog = adw::AlertDialog::new(Some("Remove from library?"), Some(&body));
+        let dialog = Alert::new(Some("Remove from library?"), Some(&body));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("remove", "Remove");
-        dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
+        dialog.set_response_appearance("remove", Appearance::Destructive);
         dialog.set_default_response(Some("cancel"));
         dialog.set_close_response("cancel");
         let weak = self.downgrade();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp == "remove"
                 && let Some(win) = weak.upgrade()
             {
@@ -3098,7 +3100,7 @@ impl ConservatoryWindow {
             entries.push(((*key).to_string(), check, entry));
         }
 
-        let dialog = adw::AlertDialog::new(
+        let dialog = Alert::new(
             Some("Edit metadata"),
             Some(&format!(
                 "Apply to {} selected track(s). Tick a field to write it; shared values are \
@@ -3109,12 +3111,12 @@ impl ConservatoryWindow {
         dialog.set_extra_child(Some(&grid));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("apply", "Apply");
-        dialog.set_response_appearance("apply", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("apply", Appearance::Suggested);
         dialog.set_default_response(Some("apply"));
         dialog.set_close_response("cancel");
 
         let weak = self.downgrade();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "apply" {
                 return;
             }
@@ -3142,12 +3144,12 @@ impl ConservatoryWindow {
     /// List the parse failures that rejected a bulk edit, then reopen the edit
     /// dialog pre-filled with the attempt so the fix loses nothing (16.5a).
     fn present_bulk_edit_errors(&self, errors: Vec<String>, entered: Vec<(String, bool, String)>) {
-        let dialog = adw::AlertDialog::new(Some("Edit not applied"), Some(&errors.join("\n")));
+        let dialog = Alert::new(Some("Edit not applied"), Some(&errors.join("\n")));
         dialog.add_response("ok", "Fix Values");
         dialog.set_default_response(Some("ok"));
         dialog.set_close_response("ok");
         let weak = self.downgrade();
-        dialog.connect_response(None, move |_, _| {
+        dialog.connect_response(move |_| {
             if let Some(win) = weak.upgrade() {
                 win.prompt_bulk_edit_prefilled(Some(entered.clone()));
             }
@@ -3253,16 +3255,16 @@ impl ConservatoryWindow {
                 preview.conflicts.len()
             )
         };
-        let dialog = adw::AlertDialog::new(Some("Move files?"), Some(&body));
+        let dialog = Alert::new(Some("Move files?"), Some(&body));
         dialog.add_response("cancel", "Keep in place");
         dialog.add_response("move", "Move");
-        dialog.set_response_appearance("move", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("move", Appearance::Suggested);
         dialog.set_default_response(Some("move"));
         dialog.set_close_response("cancel");
 
         let weak = self.downgrade();
         let albums = albums.to_vec();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             let Some(win) = weak.upgrade() else { return };
             if resp == "move" {
                 win.run_scoped_move(&albums, &root);
@@ -3317,7 +3319,7 @@ impl ConservatoryWindow {
 
     /// Present a simple error dialog (used for the file-move failure path).
     fn error_dialog(&self, title: &str, body: &str) {
-        let dialog = adw::AlertDialog::new(Some(title), Some(body));
+        let dialog = Alert::new(Some(title), Some(body));
         dialog.add_response("ok", "OK");
         dialog.present(Some(self));
     }
@@ -3330,7 +3332,7 @@ impl ConservatoryWindow {
             return;
         }
         if self.imp().library_root.get().is_none() {
-            let dialog = adw::AlertDialog::new(
+            let dialog = Alert::new(
                 Some("No library root"),
                 Some("Launch as `conservatory <db> <root>` to write tags into the files."),
             );
@@ -3338,7 +3340,7 @@ impl ConservatoryWindow {
             dialog.present(Some(self));
             return;
         }
-        let dialog = adw::AlertDialog::new(
+        let dialog = Alert::new(
             Some("Embed metadata into files?"),
             Some(&format!(
                 "Write the database metadata into {} file(s) on disk. The files become \
@@ -3348,12 +3350,12 @@ impl ConservatoryWindow {
         );
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("write", "Write");
-        dialog.set_response_appearance("write", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("write", Appearance::Suggested);
         dialog.set_default_response(Some("write"));
         dialog.set_close_response("cancel");
 
         let weak = self.downgrade();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "write" {
                 return;
             }
@@ -4982,20 +4984,20 @@ impl ConservatoryWindow {
             .placeholder_text("Perspective name")
             .activates_default(true)
             .build();
-        let dialog = adw::AlertDialog::new(
+        let dialog = Alert::new(
             Some("Save Perspective"),
             Some("Save the current filter as a named, reloadable search."),
         );
         dialog.set_extra_child(Some(&name_entry));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("save", "Save");
-        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("save", Appearance::Suggested);
         dialog.set_default_response(Some("save"));
         dialog.set_close_response("cancel");
 
         let weak = self.downgrade();
         let entry_weak = name_entry.downgrade();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "save" {
                 return;
             }
@@ -5048,14 +5050,14 @@ impl ConservatoryWindow {
             return;
         };
         let body = format!("Delete the Perspective \u{201c}{name}\u{201d}? This cannot be undone.");
-        let dialog = adw::AlertDialog::new(Some("Delete Perspective?"), Some(&body));
+        let dialog = Alert::new(Some("Delete Perspective?"), Some(&body));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("delete", "Delete");
-        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_response_appearance("delete", Appearance::Destructive);
         dialog.set_default_response(Some("cancel"));
         dialog.set_close_response("cancel");
         let weak = self.downgrade();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp == "delete"
                 && let Some(win) = weak.upgrade()
             {
@@ -5224,7 +5226,7 @@ impl ConservatoryWindow {
             .placeholder_text("Playlist name")
             .activates_default(true)
             .build();
-        let dialog = adw::AlertDialog::new(
+        let dialog = Alert::new(
             Some("New Static Playlist"),
             Some(
                 "A frozen, hand-ordered list. Add tracks with the right-click \u{201c}Add to \
@@ -5234,12 +5236,12 @@ impl ConservatoryWindow {
         dialog.set_extra_child(Some(&name_entry));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("create", "Create");
-        dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("create", Appearance::Suggested);
         dialog.set_default_response(Some("create"));
         dialog.set_close_response("cancel");
         let weak = self.downgrade();
         let entry_weak = name_entry.downgrade();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "create" {
                 return;
             }
@@ -5304,7 +5306,7 @@ impl ConservatoryWindow {
             grid.attach(&widget, 1, r as i32, 1, 1);
         }
 
-        let dialog = adw::AlertDialog::new(
+        let dialog = Alert::new(
             Some("New Smart Playlist"),
             Some(
                 "A live rule: a search that resolves fresh each time, with an optional limit and order.",
@@ -5313,11 +5315,11 @@ impl ConservatoryWindow {
         dialog.set_extra_child(Some(&grid));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("create", "Create");
-        dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("create", Appearance::Suggested);
         dialog.set_default_response(Some("create"));
         dialog.set_close_response("cancel");
         let weak = self.downgrade();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "create" {
                 return;
             }
@@ -5370,14 +5372,14 @@ impl ConservatoryWindow {
             return;
         };
         let body = format!("Delete the playlist \u{201c}{name}\u{201d}? This cannot be undone.");
-        let dialog = adw::AlertDialog::new(Some("Delete Playlist?"), Some(&body));
+        let dialog = Alert::new(Some("Delete Playlist?"), Some(&body));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("delete", "Delete");
-        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_response_appearance("delete", Appearance::Destructive);
         dialog.set_default_response(Some("cancel"));
         dialog.set_close_response("cancel");
         let weak = self.downgrade();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp == "delete"
                 && let Some(win) = weak.upgrade()
             {

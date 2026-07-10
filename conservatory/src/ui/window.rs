@@ -149,9 +149,14 @@ mod imp {
         // feature-gated Podcasts/Audiobooks plugin pages. `Alt+1/2/3` switch
         // its visible child by name.
         pub view_stack: OnceCell<adw::ViewStack>,
-        // The toast host (Phase 13b): brief, non-modal confirmations for actions
-        // that would otherwise complete silently or behind a modal "Done" dialog.
-        pub toast_overlay: OnceCell<adw::ToastOverlay>,
+        // The toast host (Phase 13b; owned since Phase 26): brief, non-modal
+        // confirmations for actions that would otherwise complete silently or
+        // behind a modal "Done" dialog. An auto-hiding revealer over the content;
+        // the pending hide is cancelled on re-show so a burst keeps the newest
+        // message visible for its full window.
+        pub toast_revealer: OnceCell<gtk::Revealer>,
+        pub toast_label: OnceCell<gtk::Label>,
+        pub toast_timeout: RefCell<Option<glib::SourceId>>,
         // The leaf right-click context menu (Phase 16a): a shared PopoverMenu
         // parented to the leaf ColumnView, and the row position last right-clicked
         // (so the "Play" verb starts from that row, not the selection anchor).
@@ -606,8 +611,21 @@ impl ConservatoryWindow {
 
         // The toast host (Phase 13b) wraps the main content area, so confirmations
         // float at the bottom of the browse, above the status / Now-bar chrome.
-        let toast_overlay = adw::ToastOverlay::new();
+        let toast_label = gtk::Label::builder()
+            .css_classes(["toast"])
+            .wrap(true)
+            .build();
+        let toast_revealer = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::Crossfade)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::End)
+            .margin_bottom(12)
+            .can_target(false)
+            .child(&toast_label)
+            .build();
+        let toast_overlay = gtk::Overlay::new();
         toast_overlay.set_child(Some(&content_box));
+        toast_overlay.add_overlay(&toast_revealer);
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
@@ -682,7 +700,8 @@ impl ConservatoryWindow {
 
         self.set_content(Some(&toolbar));
         let _ = imp.view_stack.set(stack);
-        let _ = imp.toast_overlay.set(toast_overlay);
+        let _ = imp.toast_revealer.set(toast_revealer);
+        let _ = imp.toast_label.set(toast_label);
 
         // Music-only header controls follow the active tab (Phase 16f): only
         // compiled when a second tab exists (a music-only build never switches).
@@ -3375,12 +3394,31 @@ impl ConservatoryWindow {
         self.toast(&body);
     }
 
-    /// Show a brief, non-modal confirmation (Phase 13b). A no-op before the
-    /// overlay is built (it is set at the end of `build_contents`).
+    /// Show a brief, non-modal confirmation (Phase 13b; owned revealer since
+    /// Phase 26). A no-op before the overlay is built (it is set at the end of
+    /// `build_contents`). Newest wins: the pending hide is cancelled so a burst
+    /// of toasts keeps the last message up for its full four seconds.
     fn toast(&self, message: &str) {
-        if let Some(overlay) = self.imp().toast_overlay.get() {
-            overlay.add_toast(adw::Toast::new(message));
+        let imp = self.imp();
+        let (Some(revealer), Some(label)) = (imp.toast_revealer.get(), imp.toast_label.get())
+        else {
+            return;
+        };
+        label.set_label(message);
+        revealer.set_reveal_child(true);
+        if let Some(id) = imp.toast_timeout.take() {
+            id.remove();
         }
+        let weak = self.downgrade();
+        let id = glib::timeout_add_local_once(Duration::from_secs(4), move || {
+            if let Some(win) = weak.upgrade() {
+                win.imp().toast_timeout.replace(None);
+                if let Some(revealer) = win.imp().toast_revealer.get() {
+                    revealer.set_reveal_child(false);
+                }
+            }
+        });
+        imp.toast_timeout.replace(Some(id));
     }
 
     /// Keep the drawer's playing-row highlight in step with the engine: when the

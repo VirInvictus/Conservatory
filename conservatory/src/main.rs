@@ -89,6 +89,9 @@ scrollbar slider { min-width: 8px; min-height: 8px; border-radius: 8px; }
    title / artist legible against the bars behind it. */
 .now-playing-info { background-color: alpha(@window_bg_color, 0.72); border-radius: 10px; padding: 8px 14px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
 .spectrum { background: alpha(currentColor, 0.03); }
+/* The owned toast label (Phase 26d; adw::Toast styled its own node). Pill-shaped
+   to match the adwaita look until the owned sheet squares it at 26l. */
+.toast { background-color: @popover_bg_color; color: @popover_fg_color; border: 1px solid alpha(currentColor, 0.12); border-radius: 999px; padding: 8px 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
 ";
 
 fn load_css() {

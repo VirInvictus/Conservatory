@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.2.3
+
+De-adwaita sub-phase 26d: toasts are now an owned overlay (a crossfading auto-hide revealer over the content area) instead of `adw::ToastOverlay`. Same four-second, newest-wins behaviour: a burst of confirmations keeps the latest one up for its full window. Styled as a pill to match the adwaita look until the owned stylesheet lands.
+
 ## v0.2.2
 
 De-adwaita sub-phase 26c: every empty state now renders through an owned composite (`ui/status_page.rs`) instead of `adw::StatusPage`. Same seven surfaces (empty track list, filtered no-matches, the podcast tab call-to-action, empty episode list, empty audiobook shelf, idle Now Playing drawer), same copy, same runtime title/description swaps.

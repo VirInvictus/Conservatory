@@ -72,7 +72,7 @@ Conservatory runs from source. There is no packaged release yet.
 System build dependencies (Fedora 44):
 
 ```bash
-sudo dnf install gtk4-devel libadwaita-devel mpv-libs-devel sqlite-devel pipewire-devel
+sudo dnf install gtk4-devel mpv-libs-devel sqlite-devel pipewire-devel
 # The audio chain rides the full (GPL) ffmpeg build: RPM Fusion's ffmpeg-libs, not ffmpeg-free-libs
 sudo dnf install --setopt=install_weak_deps=False ffmpeg-libs
 ```
@@ -140,9 +140,9 @@ Six crates, on the discipline that every non-GUI surface stays CLI-testable. Mus
 - `conservatory-podcasts`: the absorbed Belfry podcast subsystem.
 - `conservatory-audiobooks`: the audiobook subsystem.
 - `conservatory-cli`: the headless binary.
-- `conservatory`: the GTK4 / libadwaita binary.
+- `conservatory`: the GTK4 binary (plain GTK4, no libadwaita; spec §2.4).
 
-**Stack:** Rust 2024, GTK 4.16+ / libadwaita 1.7+, SQLite via `rusqlite` (bundled, FTS5, single-writer worker + read pool + WAL), `tokio`. libmpv via `libmpv2`, with the audio chain riding ffmpeg's `volume` / `equalizer` / `acompressor` / `alimiter` / `dynaudnorm` / `silenceremove` filters and `scaletempo2` for variable speed. `lofty` for tag read and write, `image` for cover decode and accent extraction, `reqwest` + `feed-rs` + `quick-xml` + `ammonia` for podcasts, `oo7` for libsecret credentials, `zbus` for MPRIS2. The spectrum visualizer taps Conservatory's own output node through `pipewire` (not the whole device, so other apps do not move the bars) and runs its own FFT with `realfft`. Meson wraps Cargo for Flatpak packaging. Memory budget: under 200 MB idle, under 300 MB active on a 50k-track library (spec §13).
+**Stack:** Rust 2024, GTK 4.14+ (plain GTK4, libadwaita retired at Phase 26), SQLite via `rusqlite` (bundled, FTS5, single-writer worker + read pool + WAL), `tokio`. libmpv via `libmpv2`, with the audio chain riding ffmpeg's `volume` / `equalizer` / `acompressor` / `alimiter` / `dynaudnorm` / `silenceremove` filters and `scaletempo2` for variable speed. `lofty` for tag read and write, `image` for cover decode and accent extraction, `reqwest` + `feed-rs` + `quick-xml` + `ammonia` for podcasts, `oo7` for libsecret credentials, `zbus` for MPRIS2. The spectrum visualizer taps Conservatory's own output node through `pipewire` (not the whole device, so other apps do not move the bars) and runs its own FFT with `realfft`. Meson wraps Cargo for Flatpak packaging. Memory budget: under 200 MB idle, under 300 MB active on a 50k-track library (spec §13).
 
 ## Project status
 

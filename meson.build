@@ -12,8 +12,8 @@ project(
 # install targets ship with the GTK phases (Phase 3+, see roadmap.md);
 # this scaffold establishes the directory layout and dependency checks.
 
-dependency('gtk4', version: '>= 4.16')
-dependency('libadwaita-1', version: '>= 1.7')
+# Plain GTK4 only since Phase 26 (spec §2.4); 4.14 matches the Cargo v4_14 pin.
+dependency('gtk4', version: '>= 4.14')
 dependency('mpv', version: '>= 0.36')
 dependency('sqlite3', version: '>= 3.38')
 

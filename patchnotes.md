@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.2.12
+
+De-adwaita sub-phase 26m, the toolkit cut: **libadwaita is gone.** The dependency leaves the workspace and binary manifests, `adw::Application` becomes `gtk::Application`, and `ForceDark` retires (the owned sheet plus `gtk-application-prefer-dark-theme` carry dark-only now). meson and CI drop the libadwaita dev packages; meson's GTK floor aligns to the real 4.14 pin. Spec, keymap, and README sweep to the plain-GTK posture. `cargo tree` shows zero libadwaita under both feature sets. Same features, same look as v0.2.11.
+
 ## v0.2.11
 
 De-adwaita sub-phase 26l, the visual flip: Conservatory now paints itself with its own generated stylesheet (`theme.rs`), Kanagawa Dragon baked in, installed above USER priority so neither the still-linked adwaita sheet nor a themed `~/.config/gtk-4.0/gtk.css` can override it. The look is the spec §2.4 language: flat, square, 1px hairlines, denser spacing; buttons, switches, sliders, spin buttons, dropdowns, popovers, tooltips, scrollbars, selections, and the toast are all squared and Dragon-coloured. The lifted cover cards deliberately keep their radius and shadow (chrome is flat; content imagery stays lifted, and the accent ring layers onto that shadow). `docs/theme.md` rewritten to the owned posture.

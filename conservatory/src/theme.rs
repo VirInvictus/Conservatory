@@ -217,8 +217,7 @@ pub fn sheet() -> String {
 /// Install the sheet display-wide, one step above USER priority: a themed
 /// `~/.config/gtk-4.0/gtk.css` loads at USER (800) and outranks APPLICATION
 /// (600), silently half-overriding an in-app theme (the Colophon discovery);
-/// USER + 1 keeps the owned sheet authoritative over both it and the adwaita
-/// sheet while libadwaita is still linked.
+/// USER + 1 keeps the owned sheet authoritative over it.
 pub fn install() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(&sheet());

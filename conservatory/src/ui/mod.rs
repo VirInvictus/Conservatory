@@ -1,4 +1,5 @@
-//! The GTK4/libadwaita browse UI (Phase 3b). Programmatic widgets (no `.ui`
+//! The GTK4 browse UI (Phase 3b; plain GTK4 since Phase 26). Programmatic
+//! widgets (no `.ui`
 //! templates); all data logic lives in `conservatory-core`.
 
 pub mod accent;

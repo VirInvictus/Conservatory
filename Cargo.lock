@@ -592,7 +592,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "chrono",
  "conservatory-audiobooks",
@@ -600,7 +600,6 @@ dependencies = [
  "conservatory-podcasts",
  "conservatory-search",
  "gtk4",
- "libadwaita",
  "pipewire",
  "tempfile",
  "tokio",
@@ -610,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-audiobooks"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "chrono",
  "conservatory-core",
@@ -626,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-cli"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "anyhow",
  "chrono",
@@ -642,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-core"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "chrono",
  "conservatory-search",
@@ -665,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-podcasts"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "ammonia",
  "chrono",
@@ -685,7 +684,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-search"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "chrono",
  "regex",
@@ -1836,37 +1835,6 @@ name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
-
-[[package]]
-name = "libadwaita"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "500135d29c16aabf67baafd3e7741d48e8b8978ca98bac39e589165c8dc78191"
-dependencies = [
- "gdk4",
- "gio",
- "glib",
- "gtk4",
- "libadwaita-sys",
- "libc",
- "pango",
-]
-
-[[package]]
-name = "libadwaita-sys"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6680988058c2558baf3f548a370e4e78da3bf7f08469daa822ac414842c912db"
-dependencies = [
- "gdk4-sys",
- "gio-sys",
- "glib-sys",
- "gobject-sys",
- "gtk4-sys",
- "libc",
- "pango-sys",
- "system-deps",
-]
 
 [[package]]
 name = "libc"

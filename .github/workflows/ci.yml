@@ -20,10 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The GUI binary (Phase 3b) needs GTK4 + libadwaita; the core playback
-      # host (Phase 4a) links the system libmpv; rusqlite stays `bundled`.
+      # The GUI binary (Phase 3b) needs GTK4 (plain GTK4 only since Phase 26);
+      # the core playback host (Phase 4a) links the system libmpv; rusqlite
+      # stays `bundled`.
       - name: Install system libraries
-        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libmpv-dev
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libmpv-dev
       # rsgain (Phase 5c) is best-effort: the ReplayGain scan test skips when it
       # is absent, so a missing package never fails CI.
       - name: Install rsgain (best-effort)
@@ -64,7 +65,7 @@ jobs:
       # core (and thus the music-only binaries) links the system libmpv at
       # Phase 4a, so this job needs it too.
       - name: Install system libraries
-        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libmpv-dev
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libmpv-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

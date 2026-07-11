@@ -1,6 +1,6 @@
 # Keymap
 
-> **Status: substantially wired.** The in-window playback and navigation keys are live as of Phase 13e (v0.0.86 to v0.0.88): **`Space`** plays / pauses (everywhere except while typing in the filter, the foobar2000 rule), **`Ctrl+→/←`** skip next / previous, **`Ctrl+↑/↓`** change volume, **`Ctrl+0`** mutes, **`Ctrl+L`** clears the filter, **`Ctrl+Q`** quits, and **`F1`** opens the shortcuts reference (also in the header menu). **Double-click / Enter** now plays a track *or* a facet value (Phase 13e-i). Earlier-wired: `Ctrl+F` (filter), `Ctrl+Enter` (append), `Ctrl+U/I/P` (panels), `Ctrl+,` (preferences), `Ctrl+E` (edit), `Ctrl+M` (stop-after), `Ctrl+J` (jump), `Ctrl+Shift+→/←` (chapters), `S` (sleep), `Alt+1/2/3` (views), the queue keys (`Alt+↑/↓`, `Delete`, `Ctrl+Shift+C`), and media keys via MPRIS2. **Deliberately deferred** (marked below): bare `→/←` and `Shift+→/←` seek (the arrows navigate the browse columns, so they are intentionally unbound, as in deadbeef-cui), the `Ctrl+S` and `Delete` *bindings* (their actions exist elsewhere: the sidebar save button saves a Perspective, and the right-click menu removes from library behind a confirm since 16a), and `Ctrl+Shift+J` (a jobs surface that does not exist yet). The keymap encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** GNOME/libadwaita conventions are followed where one exists.
+> **Status: substantially wired.** The in-window playback and navigation keys are live as of Phase 13e (v0.0.86 to v0.0.88): **`Space`** plays / pauses (everywhere except while typing in the filter, the foobar2000 rule), **`Ctrl+→/←`** skip next / previous, **`Ctrl+↑/↓`** change volume, **`Ctrl+0`** mutes, **`Ctrl+L`** clears the filter, **`Ctrl+Q`** quits, and **`F1`** opens the shortcuts reference (also in the header menu). **Double-click / Enter** now plays a track *or* a facet value (Phase 13e-i). Earlier-wired: `Ctrl+F` (filter), `Ctrl+Enter` (append), `Ctrl+U/I/P` (panels), `Ctrl+,` (preferences), `Ctrl+E` (edit), `Ctrl+M` (stop-after), `Ctrl+J` (jump), `Ctrl+Shift+→/←` (chapters), `S` (sleep), `Alt+1/2/3` (views), the queue keys (`Alt+↑/↓`, `Delete`, `Ctrl+Shift+C`), and media keys via MPRIS2. **Deliberately deferred** (marked below): bare `→/←` and `Shift+→/←` seek (the arrows navigate the browse columns, so they are intentionally unbound, as in deadbeef-cui), the `Ctrl+S` and `Delete` *bindings* (their actions exist elsewhere: the sidebar save button saves a Perspective, and the right-click menu removes from library behind a confirm since 16a), and `Ctrl+Shift+J` (a jobs surface that does not exist yet). The keymap encodes spec §3.1's principle: **every action is keyboard-accessible, no hidden gestures, every swipe has a menu equivalent.** Desktop conventions are followed where one exists (the bindings predate the Phase 26 de-adwaita move and survived it unchanged).
 
 ## Global
 
@@ -8,10 +8,10 @@
 |---|---|
 | `Ctrl+F` | Focus the filter bar (the full search grammar; no separate search mode, spec §3.4) |
 | `Ctrl+L` | Clear the filter bar |
-| `Ctrl+,` | Preferences (`AdwPreferencesDialog`) |
+| `Ctrl+,` | Preferences (a plain modal window since Phase 26i) |
 | `Ctrl+Q` | Quit |
 | `F1` | Keyboard shortcuts window |
-| `Alt+1` / `Alt+2` / `Alt+3` | Switch top-level view: Music / Podcasts / Audiobooks (the `AdwTabView` `Alt+N` convention; a global shortcut switching the `AdwViewStack`, Phase 6b-i. `Alt+3` is inert until the Audiobooks tab, 7b) |
+| `Alt+1` / `Alt+2` / `Alt+3` | Switch top-level view: Music / Podcasts / Audiobooks (the tab-view `Alt+N` convention; a global shortcut switching the view stack, Phase 6b-i) |
 | `Ctrl+Shift+J` | Open the jobs / activity surface (imports, moves, fetches) (proposed; `Ctrl+J` now jumps to the playing track, Phase 11d) |
 
 ## Browse (Music)
@@ -76,4 +76,4 @@
 | `Esc` | Collapse Now Playing back to the Now-bar |
 | `S` | Sleep timer menu (any playing item; the "end of item" row reads "End of track" / "End of episode" / "End of book" by kind) |
 
-The earlier `Ctrl+1`/`Ctrl+2` top-level-switch overlap with the podcast triage lists is resolved: top-level view switching moved to `Alt+1/2/3` (the `AdwTabView` convention), leaving `Ctrl+1/2/3` to the triage lists within the Podcasts view.
+The earlier `Ctrl+1`/`Ctrl+2` top-level-switch overlap with the podcast triage lists is resolved: top-level view switching moved to `Alt+1/2/3` (the tab-view convention), leaving `Ctrl+1/2/3` to the triage lists within the Podcasts view.

@@ -3992,7 +3992,7 @@ impl ConservatoryWindow {
         bar.set_visible(narrow);
     }
 
-    /// `Alt+1/2/3` switch the top-level view (spec §2.3; the AdwTabView `Alt+N`
+    /// `Alt+1/2/3` switch the top-level view (spec §2.3; the tab-view `Alt+N`
     /// convention, leaving `Ctrl+N` free for the 6b-ii triage lists).
     fn install_view_keys(&self) {
         let controller = gtk::ShortcutController::new();

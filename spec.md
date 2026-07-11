@@ -1,7 +1,7 @@
 # Conservatory — Application Specification
 
 **Version:** 0.0.90 (Phases 0–8 and 10–14 shipped; Phase 9, scrobbling, is the remaining pre-1.0 feature. See §17 and roadmap.md.)
-**Target:** GNOME 50+, GTK4 ≥ 4.16, libadwaita ≥ 1.7
+**Target:** Wayland-native Linux desktops (Hyprland and GNOME both first-class), GTK4 ≥ 4.14, no libadwaita (§2.4, Phase 26)
 **Language:** Rust (2024 Edition)
 **Build System:** Cargo workspace (`conservatory-core` + `conservatory-search` + `conservatory-podcasts` + `conservatory-audiobooks` + `conservatory-cli` + `conservatory`) / Meson wrapper for Flatpak packaging
 **License:** GNU GPL v3.0 or later (forced by the GPL libraries libmpv links, the same license chain as Belfry; see §15)
@@ -151,7 +151,7 @@ Phase 26 drops libadwaita and keeps GTK4: the GNOME identity layer (adwaita styl
 
 ### 3.1 Design Principles
 
-- **Whitespace and colour with discipline.** libadwaita's restrained accent system; per-album accent extracted from cover art (the Hermitage median-cut pattern) used as an accent, not a brand colour. Desktop reading distances; AdwClamp-bounded list widths on ultrawide displays.
+- **Whitespace and colour with discipline.** One restrained accent (the §2.4 owned sheet); per-album accent extracted from cover art (the Hermitage median-cut pattern) used as an accent, not a brand colour. Desktop reading distances.
 - **Every list is a queryable database.** The Calibre gift: filter bar with the full grammar (§3.4), sortable columns, multi-select bulk actions, saved Perspectives, on both the music and podcast surfaces.
 - **Metadata-first browse for large collections.** The Columns UI facets (§3.3) are the primary music navigation, tuned for 50k-plus-track libraries the way deadbeef-cui is.
 - **Every action visible and keyboard-accessible.** Framework's discipline: no hidden gestures; every swipe has a menu equivalent; keyboard-first works.
@@ -637,7 +637,7 @@ voice_boost = false
 
 Backend (Rust): `tokio`, `rusqlite` (bundled, FTS5), `libmpv2`, `lofty` (and/or `symphonia`), `reqwest` (conditional GET, Basic auth), `oo7` (libsecret), `feed-rs` + `quick-xml` (podcasts), `ammonia` (show-note sanitize), `id3` (chapter fallback), `image` (cover decode/accent), `serde`/`serde_json`/`toml`, `regex`, `unicode-normalization` (Phase 8b dedup NFKC key folding), `tracing`, `zbus` (MPRIS + inhibitor). A MusicBrainz client crate only if §7.3 is taken on.
 
-Frontend: `gtk4` (≥ 4.16), `libadwaita` (≥ 1.7), system `libmpv` (0.36+) with the ffmpeg filter library (`silenceremove`, `rubberband`, `acompressor`, `equalizer`, `loudnorm`), `libsecret` (via `oo7`).
+Frontend: `gtk4` (≥ 4.14; plain GTK4, no libadwaita since Phase 26, §2.4), system `libmpv` (0.36+) with the ffmpeg filter library (`silenceremove`, `rubberband`, `acompressor`, `equalizer`, `loudnorm`), `libsecret` (via `oo7`).
 
 External tools (shelled out, not linked, ATTRIBUTIONS.md): `rsgain` (ReplayGain scan, §16.7), `ffprobe` (embedded-M4B chapters, §3.8), and `flac` + `ffmpeg` (the Phase 8a integrity audit: `flac -t` test-decodes / MD5-verifies FLAC, `ffmpeg` strict-decodes the rest to a null sink; §8). A missing tool degrades gracefully or fails with a helpful message; none is required for normal playback.
 
@@ -661,7 +661,7 @@ Conservatory carries no WebKit. It must stay responsive on large libraries (the 
 - **Facet selection-change to track-list repaint (50k tracks):** < 100 ms (the debounce plus memoized counts make this feasible; deadbeef-cui hits it in C).
 - **Position-write latency (pause → committed):** < 50 ms.
 
-GTK4 + libadwaita pull a ~150 MB C-side floor (measured in Viaduct); the targets account for it. Each phase ends with a `heaptrack` / `massif` note; features that miss budget get gated.
+GTK4 pulls a C-side floor of roughly 150 MB (measured with libadwaita in Viaduct; dropping libadwaita at Phase 26 can only lower it, confirmed by the 26n memory pass); the targets account for it. Each phase ends with a `heaptrack` / `massif` note; features that miss budget get gated.
 
 ---
 
@@ -681,7 +681,7 @@ GTK4 + libadwaita pull a ~150 MB C-side floor (measured in Viaduct); the targets
 
 ## 15. Naming, Branding, License
 
-**Conservatory.** A building where a collection is kept and cultivated, and a school of music; it fits the architectural-structure naming line (Atrium, Belfry, Hermitage, Framework, Lattice, Viaduct) while reading as music-coded. The icon should evoke architecture (a glasshouse or hall), not audio clichés: no waveforms, headphones, or play triangles. A conservatory silhouette in libadwaita accent does the work (the Belfry branding discipline).
+**Conservatory.** A building where a collection is kept and cultivated, and a school of music; it fits the architectural-structure naming line (Atrium, Belfry, Hermitage, Framework, Lattice, Viaduct) while reading as music-coded. The icon should evoke architecture (a glasshouse or hall), not audio clichés: no waveforms, headphones, or play triangles. A conservatory silhouette in the Dragon accent does the work (the Belfry branding discipline).
 
 App ID: `org.gnome.Conservatory` (GNOME Circle) or `io.github.virinvictus.Conservatory`.
 

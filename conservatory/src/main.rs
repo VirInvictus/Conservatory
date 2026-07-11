@@ -1,14 +1,14 @@
-//! Conservatory GTK4/libadwaita binary. Phase 3b launches the faceted browse
+//! Conservatory GTK4 binary (plain GTK4 since Phase 26, spec §2.4). Phase 3b
+//! launched the faceted browse
 //! window (spec §3.3); the player, podcasts, and audiobooks tabs follow in later
 //! phases. All data logic lives in `conservatory-core`; this binary renders.
 
 use std::path::PathBuf;
 
 use gtk4 as gtk;
-use libadwaita as adw;
 
-use adw::prelude::*;
 use gtk::glib;
+use gtk::prelude::*;
 
 #[cfg(feature = "audiobooks")]
 mod book_query;
@@ -110,14 +110,12 @@ fn main() -> glib::ExitCode {
     register_bundled_fonts();
     conservatory_core::debug::log_memory("startup");
 
-    let app = adw::Application::builder().application_id(APP_ID).build();
+    let app = gtk::Application::builder().application_id(APP_ID).build();
 
     app.connect_startup(|_| {
         // Kanagawa Dragon is dark-only (Phase 12a). The owned sheet (26l) paints
         // everything it names; prefer-dark makes the widget internals it doesn't
-        // reach follow dark polarity too. ForceDark keeps the still-linked
-        // adwaita sheet dark underneath until the toolkit cut removes it (26m).
-        adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
+        // reach follow dark polarity too.
         if let Some(settings) = gtk::Settings::default() {
             settings.set_gtk_application_prefer_dark_theme(true);
         }
@@ -141,8 +139,7 @@ fn main() -> glib::ExitCode {
             conservatory_core::Config::default()
         });
         let root = resolve_root(positionals.get(1).cloned(), &config);
-        // adw::Application IS-A gtk::Application; main.rs converts fully at 26m.
-        let window = ui::window::ConservatoryWindow::new(app.upcast_ref(), db, root);
+        let window = ui::window::ConservatoryWindow::new(app, db, root);
         window.present();
     });
 

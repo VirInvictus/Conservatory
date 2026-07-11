@@ -147,10 +147,21 @@ mod imp {
         // selection change can show the selection total without re-summing the
         // whole view.
         pub view_total: Cell<(usize, f64)>,
-        // The top-level view stack (Phase 6b-i): Music first, plus the
-        // feature-gated Podcasts/Audiobooks plugin pages. `Alt+1/2/3` switch
-        // its visible child by name.
-        pub view_stack: OnceCell<adw::ViewStack>,
+        // The top-level view stack (Phase 6b-i; plain gtk::Stack since 26k1):
+        // Music first, plus the feature-gated Podcasts/Audiobooks plugin pages.
+        // `Alt+1/2/3` switch its visible child by name.
+        pub view_stack: OnceCell<gtk::Stack>,
+        // The narrow-width chrome (26k1, replacing the AdwBreakpoint): the
+        // header and the bottom switcher bar the size_allocate watcher toggles
+        // at the 550px threshold, plus the cached side of the crossing so the
+        // toggle fires only when the boundary is actually crossed. Gated like
+        // the chrome itself: a music-only build has one tab and no switcher.
+        #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
+        pub chrome_header: OnceCell<gtk::Widget>,
+        #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
+        pub switcher_bar: OnceCell<gtk::Box>,
+        #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
+        pub narrow: Cell<bool>,
         // The toast host (Phase 13b; owned since Phase 26): brief, non-modal
         // confirmations for actions that would otherwise complete silently or
         // behind a modal "Done" dialog. An auto-hiding revealer over the content;
@@ -194,7 +205,15 @@ mod imp {
     }
 
     impl ObjectImpl for ConservatoryWindow {}
-    impl WidgetImpl for ConservatoryWindow {}
+    impl WidgetImpl for ConservatoryWindow {
+        // The AdwBreakpoint successor (26k1): watch the allocated width and
+        // swap the header switcher for the bottom bar across the threshold.
+        fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
+            self.parent_size_allocate(width, height, baseline);
+            #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
+            self.obj().update_narrow_chrome(width);
+        }
+    }
     impl WindowImpl for ConservatoryWindow {}
     impl ApplicationWindowImpl for ConservatoryWindow {}
     impl AdwApplicationWindowImpl for ConservatoryWindow {}
@@ -472,12 +491,12 @@ impl ConservatoryWindow {
         music_page.append(&filter_bar);
         music_page.append(&content);
 
-        // The top-level view stack (spec §2.2, §2.3): Music first; the Podcasts
-        // (and later Audiobooks) plugin pages are added, feature-gated, below.
-        // AdwViewStack does not propagate its page's expand flags, so it is set to
-        // fill explicitly; otherwise the page parks at its natural size and the
-        // browse cannot grow into freed revealer space.
-        let stack = adw::ViewStack::new();
+        // The top-level view stack (spec §2.2, §2.3; plain gtk::Stack since
+        // 26k1, tabs are text-only per §2.4): Music first; the Podcasts (and
+        // later Audiobooks) plugin pages are added, feature-gated, below. Set
+        // to fill explicitly so the page never parks at its natural size and
+        // the browse can grow into freed revealer space.
+        let stack = gtk::Stack::new();
         stack.set_hexpand(true);
         stack.set_vexpand(true);
         // Which sections this launch shows (Phase 16e): a runtime toggle over what
@@ -487,12 +506,7 @@ impl ConservatoryWindow {
         let audiobooks_on = cfg!(feature = "audiobooks") && config.sections.audiobooks;
         let show_music = config.sections.music || (!podcasts_on && !audiobooks_on);
         if show_music {
-            stack.add_titled_with_icon(
-                &music_page,
-                Some("music"),
-                "Music",
-                "folder-music-symbolic",
-            );
+            stack.add_titled(&music_page, Some("music"), "Music");
         }
 
         // The bottom Now Playing drawer (v0.0.38): built here so the toolbar
@@ -3852,15 +3866,16 @@ impl ConservatoryWindow {
     /// by [`install_view_chrome`], so this only owns the page. Compiled only with
     /// the `podcasts` feature.
     #[cfg(feature = "podcasts")]
-    fn attach_podcasts_view(&self, stack: &adw::ViewStack) {
+    fn attach_podcasts_view(&self, stack: &gtk::Stack) {
         // Lazy construction (spec §2.3): the page's child is built on its first
         // `::map`, not eagerly at startup, so switching to it is what pays for
         // it. Reads go through the pool; triage actions write through the worker
-        // (dispatched on the runtime, the GUI write idiom).
-        let podcasts_bin = adw::Bin::new();
+        // (dispatched on the runtime, the GUI write idiom). The host is a plain
+        // box (the adw::Bin successor, 26k1); the view is appended exactly once.
+        let podcasts_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let built = Cell::new(false);
         let weak = self.downgrade();
-        podcasts_bin.connect_map(move |bin| {
+        podcasts_host.connect_map(move |host| {
             if built.replace(true) {
                 return;
             }
@@ -3869,22 +3884,20 @@ impl ConservatoryWindow {
                 if let (Some(pool), Some(worker), Some(rt)) =
                     (imp.pool.get().cloned(), imp.worker.get(), imp.runtime.get())
                 {
-                    bin.set_child(Some(&crate::ui::podcasts::build_podcasts_view(
+                    let view = crate::ui::podcasts::build_podcasts_view(
                         pool,
                         worker.clone(),
                         rt.handle().clone(),
                         imp.player.get().cloned(),
                         imp.library_root.get().cloned(),
-                    )));
+                    );
+                    view.set_hexpand(true);
+                    view.set_vexpand(true);
+                    host.append(&view);
                 }
             }
         });
-        stack.add_titled_with_icon(
-            &podcasts_bin,
-            Some("podcasts"),
-            "Podcasts",
-            "microphone-symbolic",
-        );
+        stack.add_titled(&podcasts_host, Some("podcasts"), "Podcasts");
     }
 
     /// Add the lazily-built Audiobooks page to the view stack (Phase 7b-i), the
@@ -3892,11 +3905,11 @@ impl ConservatoryWindow {
     /// first `::map`; the shared chrome is [`install_view_chrome`]'s job. Compiled
     /// only with the `audiobooks` feature.
     #[cfg(feature = "audiobooks")]
-    fn attach_audiobooks_view(&self, stack: &adw::ViewStack) {
-        let books_bin = adw::Bin::new();
+    fn attach_audiobooks_view(&self, stack: &gtk::Stack) {
+        let books_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let built = Cell::new(false);
         let weak = self.downgrade();
-        books_bin.connect_map(move |bin| {
+        books_host.connect_map(move |host| {
             if built.replace(true) {
                 return;
             }
@@ -3905,22 +3918,20 @@ impl ConservatoryWindow {
                 if let (Some(pool), Some(worker), Some(rt)) =
                     (imp.pool.get().cloned(), imp.worker.get(), imp.runtime.get())
                 {
-                    bin.set_child(Some(&crate::ui::audiobooks::build_audiobooks_view(
+                    let view = crate::ui::audiobooks::build_audiobooks_view(
                         pool,
                         worker.clone(),
                         rt.handle().clone(),
                         imp.player.get().cloned(),
                         imp.library_root.get().cloned(),
-                    )));
+                    );
+                    view.set_hexpand(true);
+                    view.set_vexpand(true);
+                    host.append(&view);
                 }
             }
         });
-        stack.add_titled_with_icon(
-            &books_bin,
-            Some("audiobooks"),
-            "Audiobooks",
-            "library-symbolic",
-        );
+        stack.add_titled(&books_host, Some("audiobooks"), "Audiobooks");
     }
 
     /// Build the shared multi-view chrome (Phase 6b-i): the header view switcher,
@@ -3930,31 +3941,55 @@ impl ConservatoryWindow {
     #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
     fn install_view_chrome(
         &self,
-        stack: &adw::ViewStack,
+        stack: &gtk::Stack,
         header: &adw::HeaderBar,
         toolbar: &adw::ToolbarView,
     ) {
-        // The header switcher (libadwaita 1.4+ idiom; AdwViewSwitcherTitle is
-        // deprecated and not used). `Wide` keeps the labels until the breakpoint.
-        let switcher = adw::ViewSwitcher::builder()
-            .stack(stack)
-            .policy(adw::ViewSwitcherPolicy::Wide)
-            .build();
+        // The header switcher (a text-only gtk::StackSwitcher since 26k1, the
+        // spec §2.4 posture).
+        let switcher = gtk::StackSwitcher::builder().stack(stack).build();
         header.set_title_widget(Some(&switcher));
 
-        // The adaptive bottom bar: hidden when wide, revealed beneath the Now-bar
-        // at the narrow breakpoint (the spec §2.3 stacking call).
-        let switcher_bar = adw::ViewSwitcherBar::builder().stack(stack).build();
+        // The adaptive bottom bar: hidden when wide, shown beneath the Now-bar
+        // when narrow (the spec §2.3 stacking call). A second switcher on the
+        // same stack, centered in its own bar.
+        let bar_switcher = gtk::StackSwitcher::builder()
+            .stack(stack)
+            .halign(gtk::Align::Center)
+            .build();
+        let switcher_bar = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .halign(gtk::Align::Center)
+            .margin_top(4)
+            .margin_bottom(4)
+            .visible(false)
+            .build();
+        switcher_bar.append(&bar_switcher);
         toolbar.add_bottom_bar(&switcher_bar);
 
-        let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
-            adw::BreakpointConditionLengthType::MaxWidth,
-            550.0,
-            adw::LengthUnit::Sp,
-        ));
-        breakpoint.add_setter(header, "visible", Some(&false.to_value()));
-        breakpoint.add_setter(&switcher_bar, "reveal", Some(&true.to_value()));
-        self.add_breakpoint(breakpoint);
+        // The width watcher (the AdwBreakpoint successor): size_allocate feeds
+        // update_narrow_chrome, which swaps header for bar across 550px.
+        let imp = self.imp();
+        let _ = imp.chrome_header.set(header.clone().upcast());
+        let _ = imp.switcher_bar.set(switcher_bar);
+    }
+
+    /// Swap the header (and its switcher) for the bottom switcher bar when the
+    /// window is narrower than the threshold, and back (26k1; the exact
+    /// behavior of the AdwBreakpoint it replaces). Only touches visibility on
+    /// a boundary crossing, so steady-state allocations cost two loads.
+    #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
+    fn update_narrow_chrome(&self, width: i32) {
+        let imp = self.imp();
+        let (Some(header), Some(bar)) = (imp.chrome_header.get(), imp.switcher_bar.get()) else {
+            return;
+        };
+        let narrow = is_narrow(width);
+        if imp.narrow.replace(narrow) == narrow {
+            return;
+        }
+        header.set_visible(!narrow);
+        bar.set_visible(narrow);
     }
 
     /// `Alt+1/2/3` switch the top-level view (spec §2.3; the AdwTabView `Alt+N`
@@ -5567,6 +5602,18 @@ fn fmt_centre(centre: u32) -> String {
     }
 }
 
+/// The width below which the header switcher yields to the bottom switcher
+/// bar (26k1; the same 550 threshold the AdwBreakpoint used, in logical px).
+/// Gated like its watcher: a music-only build has one tab and no switcher.
+#[cfg(any(feature = "podcasts", feature = "audiobooks", test))]
+const NARROW_WIDTH: i32 = 550;
+
+/// Pure crossing test for the narrow-chrome watcher.
+#[cfg(any(feature = "podcasts", feature = "audiobooks", test))]
+fn is_narrow(width: i32) -> bool {
+    width <= NARROW_WIDTH
+}
+
 /// One Preferences page (Phase 26i): a scrolling column of `rows::Group`s.
 /// The scroller goes into the page stack; groups append to the returned box.
 fn pref_page() -> (gtk::ScrolledWindow, gtk::Box) {
@@ -5613,7 +5660,15 @@ fn import_mode_from_index(index: u32) -> ImportMode {
 
 #[cfg(test)]
 mod tests {
-    use super::{ImportMode, import_mode_from_index, import_mode_index, view_page_name};
+    use super::{ImportMode, import_mode_from_index, import_mode_index, is_narrow, view_page_name};
+
+    #[test]
+    fn narrow_crossing_matches_the_old_breakpoint() {
+        assert!(is_narrow(320));
+        assert!(is_narrow(550)); // MaxWidth 550 was inclusive
+        assert!(!is_narrow(551));
+        assert!(!is_narrow(1100));
+    }
 
     #[test]
     fn view_keys_map_to_page_names() {

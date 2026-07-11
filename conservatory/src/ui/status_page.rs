@@ -62,7 +62,9 @@ impl StatusPage {
         self.root.upcast_ref()
     }
 
-    /// A call-to-action row below the description (the podcast subscribe CTA).
+    /// A call-to-action row below the description (the podcast subscribe CTA,
+    /// its only consumer; gated so the music-only build carries no dead code).
+    #[cfg(feature = "podcasts")]
     pub fn set_child(&self, child: &impl IsA<gtk::Widget>) {
         self.root.append(child);
     }

@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.2.9
+
+De-adwaita sub-phase 26k1: the three-tab machinery goes plain GTK. The view stack is a `gtk::Stack`, the header switcher a text-only `gtk::StackSwitcher` (Music | Podcasts | Audiobooks; the tab icons retire, per the spec §2.4 posture), the adaptive bottom switcher bar a second switcher in its own bar, and the narrow-width collapse a hand-rolled width watcher at the same 550px threshold the `AdwBreakpoint` used. The lazily-built plugin tab hosts become plain boxes. Also fixes the music-only CI lane, red since v0.2.2 on a dead-code lint in the status-page composite.
+
 ## v0.2.8
 
 De-adwaita sub-phase 26i, the riskiest step: the Preferences window is rebuilt as a plain modal window with a text page switcher (General | Library | Sound) over owned groups and rows, replacing `adw::PreferencesDialog` and the whole preference-row family. The DSP compressor / limiter / leveler become owned expanders whose enable switch reveals their settings. Every handler body is unchanged (containers only): live per-band EQ, the DSP rebuild path, backend/device/resampler live-apply, config save-on-close, and audio-state persist-on-close all wire exactly as before. The audible A/B acceptance pass is grouped into the phase's hands-on matrix.

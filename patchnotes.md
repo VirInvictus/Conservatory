@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.2.8
+
+De-adwaita sub-phase 26i, the riskiest step: the Preferences window is rebuilt as a plain modal window with a text page switcher (General | Library | Sound) over owned groups and rows, replacing `adw::PreferencesDialog` and the whole preference-row family. The DSP compressor / limiter / leveler become owned expanders whose enable switch reveals their settings. Every handler body is unchanged (containers only): live per-band EQ, the DSP rebuild path, backend/device/resampler live-apply, config save-on-close, and audio-state persist-on-close all wire exactly as before. The audible A/B acceptance pass is grouped into the phase's hands-on matrix.
+
 ## v0.2.7
 
 De-adwaita sub-phase 26h: the Audiobooks tab is now adwaita-free. Remove-from-library, per-book playback settings, the bulk edit grid with its error-and-retry loop, and the re-shelve move confirm all run on the owned alert and rows. Only window.rs (shell + Preferences), sound.rs, and main.rs still name adw types.

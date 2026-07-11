@@ -464,8 +464,11 @@ impl Inner {
         );
         fwd.set_value(cur.skip_forward.unwrap_or(0) as f64);
 
-        let (policy_row, policy) =
-            rows::combo_row("New episodes", &["Add to Inbox", "Add to Queue", "Archive"]);
+        let (policy_row, policy) = rows::combo_row(
+            "New episodes",
+            None,
+            &["Add to Inbox", "Add to Queue", "Archive"],
+        );
         policy.set_selected(inbox_policy_index(cur.inbox_policy));
 
         for row in [

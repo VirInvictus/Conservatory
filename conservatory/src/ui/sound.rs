@@ -1,9 +1,9 @@
-//! The "Sound" preferences surface (Phase 5.5b-ii): the app's first
-//! `adw::PreferencesDialog`. Hosts the 10-band graphic equalizer — a row of
-//! vertical sliders + a preset picker — that drives the player live (gap-free
-//! `af-command` per band) and persists through the single-writer worker. The
-//! dialog is built in `window.rs` (so its handlers capture the window); this
-//! module carries the reusable widget builder and the pure preset-match logic.
+//! The "Sound" preferences surface (Phase 5.5b-ii; plain GTK since Phase 26i).
+//! Hosts the 10-band graphic equalizer — a row of vertical sliders + a preset
+//! picker — that drives the player live (gap-free `af-command` per band) and
+//! persists through the single-writer worker. The page is built in `window.rs`
+//! (so its handlers capture the window); this module carries the reusable
+//! widget builder and the pure preset-match logic.
 
 use gtk::prelude::*;
 use gtk4 as gtk;

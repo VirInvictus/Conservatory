@@ -1122,11 +1122,10 @@ impl ConservatoryWindow {
         }
         let sliders = Rc::new(sliders);
 
-        let eq_group = adw::PreferencesGroup::new();
-        eq_group.set_title("Equalizer");
-        eq_group.set_description(Some(
-            "Drag a band to hear it change live (dB). Applies to everything you play.",
-        ));
+        let eq_group = rows::group(
+            Some("Equalizer"),
+            Some("Drag a band to hear it change live (dB). Applies to everything you play."),
+        );
         eq_group.add(&slider_box);
 
         // Preset picker: the named presets plus a trailing "Custom" marker.
@@ -1134,10 +1133,7 @@ impl ConservatoryWindow {
         let custom_index = preset_names.len() as u32;
         let mut items: Vec<&str> = preset_names.iter().map(String::as_str).collect();
         items.push(sound::CUSTOM_LABEL);
-        let model = gtk::StringList::new(&items);
-        let preset_row = adw::ComboRow::new();
-        preset_row.set_title("Preset");
-        preset_row.set_model(Some(&model));
+        let (preset_row_w, preset_row) = rows::combo_row("Preset", None, &items);
         let initial = match sound::match_preset(&state.bands, &presets) {
             Some(name) => preset_names
                 .iter()
@@ -1154,41 +1150,64 @@ impl ConservatoryWindow {
         btns.append(&save_btn);
         btns.append(&delete_btn);
         btns.append(&reset_btn);
-        let presets_group = adw::PreferencesGroup::new();
-        presets_group.set_title("Presets");
-        presets_group.set_header_suffix(Some(&btns));
-        presets_group.add(&preset_row);
+        let presets_group = rows::group(Some("Presets"), None);
+        presets_group.set_header_suffix(&btns);
+        presets_group.add(&preset_row_w);
 
-        let page = adw::PreferencesPage::new();
-        page.set_title("Sound");
-        page.set_icon_name(Some("audio-card-symbolic"));
-        page.add(&eq_group);
-        page.add(&presets_group);
+        let (sound_page, sound_box) = pref_page();
+        sound_box.append(eq_group.widget());
+        sound_box.append(presets_group.widget());
 
-        let dialog = adw::PreferencesDialog::new();
-        dialog.set_title("Preferences");
-
-        // The config-backed pages (Phase 10b) come first, so Ctrl+, opens on
-        // General; the Sound page (DB-backed audio) follows. The config is loaded
-        // once into a shared cell the row handlers mutate, then saved on close.
+        // The Preferences window (an adw::PreferencesDialog until Phase 26i): a
+        // plain modal window over a text StackSwitcher of three pages. The
+        // config-backed pages (Phase 10b) come first, so Ctrl+, opens on General;
+        // the Sound page (DB-backed audio) follows. The config is loaded once
+        // into a shared cell the row handlers mutate, then saved on close.
+        let stack = gtk::Stack::new();
         let config = Rc::new(RefCell::new(
             conservatory_core::config::load_default().unwrap_or_default(),
         ));
-        dialog.add(&self.build_general_page(&config));
-        dialog.add(&self.build_library_page(&config));
-        dialog.add(&page);
+        stack.add_titled(
+            &self.build_general_page(&config),
+            Some("general"),
+            "General",
+        );
+        stack.add_titled(
+            &self.build_library_page(&config),
+            Some("library"),
+            "Library",
+        );
+        stack.add_titled(&sound_page, Some("sound"), "Sound");
+        let switcher = gtk::StackSwitcher::builder()
+            .stack(&stack)
+            .halign(gtk::Align::Center)
+            .margin_top(10)
+            .build();
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        column.append(&switcher);
+        column.append(&stack);
+        let dialog = gtk::Window::builder()
+            .title("Preferences")
+            .transient_for(self)
+            .modal(true)
+            .default_width(640)
+            .default_height(560)
+            .child(&column)
+            .build();
+        crate::ui::close_on_escape(&dialog);
         {
             let config = config.clone();
-            dialog.connect_closed(move |_| {
+            dialog.connect_close_request(move |_| {
                 if let Err(e) = conservatory_core::config::save_default(&config.borrow()) {
                     tracing::warn!("saving config failed: {e}");
                 }
+                glib::Propagation::Proceed
             });
         }
 
         // The ReplayGain / DSP / Output groups (Phase 5.5c-ii), backed by the
         // singleton `audio_state` (separate from the EQ's own table above).
-        self.add_audio_groups(&page, &dialog);
+        self.add_audio_groups(&sound_box, &dialog);
 
         // Slider drag → live band change + mark the EQ "Custom".
         for (i, slider) in sliders.iter().enumerate() {
@@ -1272,16 +1291,17 @@ impl ConservatoryWindow {
         {
             let weak = self.downgrade();
             let sliders = sliders.clone();
-            dialog.connect_closed(move |_| {
+            dialog.connect_close_request(move |_| {
                 if let Some(win) = weak.upgrade() {
                     let bands = read_slider_bands(&sliders);
                     let preset = sound::match_preset(&bands, &presets);
                     win.persist_eq(bands, preset);
                 }
+                glib::Propagation::Proceed
             });
         }
 
-        dialog.present(Some(self));
+        dialog.present();
     }
 
     /// Toggle the track properties inspector (Phase 11a) and refresh it on open.
@@ -1350,66 +1370,65 @@ impl ConservatoryWindow {
     /// sections of `config.toml`. Each row mutates the shared `config`; the
     /// dialog saves it on close. The library root applies on the next launch
     /// (the running session holds the root it started with).
-    fn build_general_page(&self, config: &Rc<RefCell<Config>>) -> adw::PreferencesPage {
-        let page = adw::PreferencesPage::new();
-        page.set_title("General");
-        page.set_icon_name(Some("preferences-system-symbolic"));
+    fn build_general_page(&self, config: &Rc<RefCell<Config>>) -> gtk::ScrolledWindow {
+        let (page, content) = pref_page();
 
-        let lib_group = adw::PreferencesGroup::new();
-        lib_group.set_title("Library");
         // The dialog edits config.toml on disk; the running app keeps its
         // startup snapshot, so every config-backed setting is next-launch.
-        lib_group.set_description(Some("These settings take effect on the next launch."));
-
-        let root_row = adw::ActionRow::new();
-        root_row.set_title("Library root");
-        let current = config.borrow().library.root.clone();
-        root_row.set_subtitle(
-            &current
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "(none)".to_string()),
+        let lib_group = rows::group(
+            Some("Library"),
+            Some("These settings take effect on the next launch."),
         );
+
+        let current = config.borrow().library.root.clone();
         let choose = gtk::Button::with_label("Choose…");
-        choose.set_valign(gtk::Align::Center);
+        let (root_row, root_sub) = rows::action_row(
+            "Library root",
+            Some(
+                &current
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(none)".to_string()),
+            ),
+            Some(choose.upcast_ref()),
+        );
         {
             let config = config.clone();
-            let root_row = root_row.clone();
             let weak = self.downgrade();
             choose.connect_clicked(move |_| {
                 let Some(win) = weak.upgrade() else { return };
                 let chooser = gtk::FileDialog::new();
                 chooser.set_title("Choose library root");
                 let config = config.clone();
-                let root_row = root_row.clone();
+                let root_sub = root_sub.clone();
                 chooser.select_folder(Some(&win), gtk::gio::Cancellable::NONE, move |res| {
                     if let Ok(file) = res
                         && let Some(path) = file.path()
                     {
-                        root_row.set_subtitle(&path.display().to_string());
+                        root_sub.set_label(&path.display().to_string());
                         config.borrow_mut().library.root = Some(path);
                     }
                 });
             });
         }
-        root_row.add_suffix(&choose);
         lib_group.add(&root_row);
 
-        let tmpl = adw::EntryRow::new();
-        tmpl.set_title("Music path template");
-        tmpl.set_text(&config.borrow().library.path_template);
+        let (tmpl_row, tmpl) = rows::entry_row(
+            "Music path template",
+            &config.borrow().library.path_template,
+        );
         {
             let config = config.clone();
             tmpl.connect_changed(move |e| {
                 config.borrow_mut().library.path_template = e.text().to_string();
             });
         }
-        lib_group.add(&tmpl);
+        lib_group.add(&tmpl_row);
 
-        let modes = gtk::StringList::new(&["Copy", "Move"]);
-        let import = adw::ComboRow::new();
-        import.set_title("Import mode");
-        import.set_subtitle("Copy leaves originals; Move consumes them");
-        import.set_model(Some(&modes));
+        let (import_row, import) = rows::combo_row(
+            "Import mode",
+            Some("Copy leaves originals; Move consumes them"),
+            &["Copy", "Move"],
+        );
         import.set_selected(import_mode_index(config.borrow().library.import_mode));
         {
             let config = config.clone();
@@ -1417,11 +1436,12 @@ impl ConservatoryWindow {
                 config.borrow_mut().library.import_mode = import_mode_from_index(r.selected());
             });
         }
-        lib_group.add(&import);
+        lib_group.add(&import_row);
 
-        let embed = adw::SwitchRow::new();
-        embed.set_title("Embed tags on edit");
-        embed.set_subtitle("Write curated metadata back into files");
+        let (embed_row, embed) = rows::switch_row(
+            "Embed tags on edit",
+            Some("Write curated metadata back into files"),
+        );
         embed.set_active(config.borrow().library.embed_tags_on_edit);
         {
             let config = config.clone();
@@ -1429,35 +1449,32 @@ impl ConservatoryWindow {
                 config.borrow_mut().library.embed_tags_on_edit = s.is_active();
             });
         }
-        lib_group.add(&embed);
-        page.add(&lib_group);
+        lib_group.add(&embed_row);
+        content.append(lib_group.widget());
 
-        let genre_group = adw::PreferencesGroup::new();
-        genre_group.set_title("Genre");
-        genre_group.set_description(Some("Takes effect on the next launch."));
-        let unknown = adw::EntryRow::new();
-        unknown.set_title("Default unknown genre");
-        unknown.set_text(&config.borrow().genre.default_unknown);
+        let genre_group = rows::group(Some("Genre"), Some("Takes effect on the next launch."));
+        let (unknown_row, unknown) = rows::entry_row(
+            "Default unknown genre",
+            &config.borrow().genre.default_unknown,
+        );
         {
             let config = config.clone();
             unknown.connect_changed(move |e| {
                 config.borrow_mut().genre.default_unknown = e.text().to_string();
             });
         }
-        genre_group.add(&unknown);
-        page.add(&genre_group);
+        genre_group.add(&unknown_row);
+        content.append(genre_group.widget());
 
         // Sections (Phase 16e): which media tabs to show. Disabling one skips
         // building its tab and starting its subsystem at the next launch. The
         // Podcasts / Audiobooks toggles appear only when those plugins are compiled
         // in (a music-only build shows just Music).
-        let sections_group = adw::PreferencesGroup::new();
-        sections_group.set_title("Sections");
-        sections_group.set_description(Some(
-            "Which media tabs to show. Takes effect on the next launch.",
-        ));
-        let music_sw = adw::SwitchRow::new();
-        music_sw.set_title("Music");
+        let sections_group = rows::group(
+            Some("Sections"),
+            Some("Which media tabs to show. Takes effect on the next launch."),
+        );
+        let (music_row, music_sw) = rows::switch_row("Music", None);
         music_sw.set_active(config.borrow().sections.music);
         {
             let config = config.clone();
@@ -1465,30 +1482,28 @@ impl ConservatoryWindow {
                 config.borrow_mut().sections.music = s.is_active();
             });
         }
-        sections_group.add(&music_sw);
+        sections_group.add(&music_row);
         #[cfg(feature = "podcasts")]
         {
-            let podcasts_sw = adw::SwitchRow::new();
-            podcasts_sw.set_title("Podcasts");
+            let (podcasts_row, podcasts_sw) = rows::switch_row("Podcasts", None);
             podcasts_sw.set_active(config.borrow().sections.podcasts);
             let config = config.clone();
             podcasts_sw.connect_active_notify(move |s| {
                 config.borrow_mut().sections.podcasts = s.is_active();
             });
-            sections_group.add(&podcasts_sw);
+            sections_group.add(&podcasts_row);
         }
         #[cfg(feature = "audiobooks")]
         {
-            let audiobooks_sw = adw::SwitchRow::new();
-            audiobooks_sw.set_title("Audiobooks");
+            let (audiobooks_row, audiobooks_sw) = rows::switch_row("Audiobooks", None);
             audiobooks_sw.set_active(config.borrow().sections.audiobooks);
             let config = config.clone();
             audiobooks_sw.connect_active_notify(move |s| {
                 config.borrow_mut().sections.audiobooks = s.is_active();
             });
-            sections_group.add(&audiobooks_sw);
+            sections_group.add(&audiobooks_row);
         }
-        page.add(&sections_group);
+        content.append(sections_group.widget());
 
         page
     }
@@ -1497,35 +1512,31 @@ impl ConservatoryWindow {
     /// `[audiobooks]` sections of `config.toml`. The facet-pane configuration
     /// (spec §3.2) joins this page in Phase 10c. Kept `#[cfg]`-free: these are
     /// plain config rows, present in the music-only build too.
-    fn build_library_page(&self, config: &Rc<RefCell<Config>>) -> adw::PreferencesPage {
-        let page = adw::PreferencesPage::new();
-        page.set_title("Library");
-        page.set_icon_name(Some("folder-music-symbolic"));
+    fn build_library_page(&self, config: &Rc<RefCell<Config>>) -> gtk::ScrolledWindow {
+        let (page, content) = pref_page();
 
         // Browse panes (Phase 10c): five ordered slots, each a facet field or
         // "(none)". The non-empty slots, top to bottom, become `[browse].panes`.
-        let browse_group = adw::PreferencesGroup::new();
-        browse_group.set_title("Browse panes");
-        browse_group.set_description(Some(
-            "Choose up to five browse columns, top to bottom. Takes effect on the next launch.",
-        ));
+        let browse_group = rows::group(
+            Some("Browse panes"),
+            Some(
+                "Choose up to five browse columns, top to bottom. Takes effect on the next launch.",
+            ),
+        );
         let mut items: Vec<&str> = vec!["(none)"];
         items.extend(FacetField::ALL.iter().map(|f| f.title()));
         let current = FacetField::panes_from_config(&config.borrow().browse.panes);
         let mut combo_rows = Vec::with_capacity(5);
         for slot in 0..5 {
-            let model = gtk::StringList::new(&items);
-            let row = adw::ComboRow::new();
-            row.set_title(&format!("Pane {}", slot + 1));
-            row.set_model(Some(&model));
+            let (row, dropdown) = rows::combo_row(&format!("Pane {}", slot + 1), None, &items);
             let selected = current
                 .get(slot)
                 .and_then(|f| FacetField::ALL.iter().position(|x| x == f))
                 .map(|i| i as u32 + 1)
                 .unwrap_or(0);
-            row.set_selected(selected);
+            dropdown.set_selected(selected);
             browse_group.add(&row);
-            combo_rows.push(row);
+            combo_rows.push(dropdown);
         }
         let combo_rows = Rc::new(combo_rows);
         for row in combo_rows.iter() {
@@ -1544,26 +1555,24 @@ impl ConservatoryWindow {
                 config.borrow_mut().browse.panes = panes;
             });
         }
-        page.add(&browse_group);
+        content.append(browse_group.widget());
 
         // Browse columns (Phase 18b): a switch per catalog column; the enabled
         // ones, in catalog order, become `[browse].columns`. Reordering is a
         // follow-on (the config accepts any order; this editor toggles visibility).
-        let columns_group = adw::PreferencesGroup::new();
-        columns_group.set_title("Browse columns");
-        columns_group.set_description(Some(
-            "Choose which columns the track list shows. Takes effect on the next launch.",
-        ));
+        let columns_group = rows::group(
+            Some("Browse columns"),
+            Some("Choose which columns the track list shows. Takes effect on the next launch."),
+        );
         let enabled: std::collections::HashSet<String> =
             config.borrow().browse.columns.iter().cloned().collect();
-        let switches: Vec<(&'static str, adw::SwitchRow)> = crate::ui::track_list::COLUMN_CATALOG
+        let switches: Vec<(&'static str, gtk::Switch)> = crate::ui::track_list::COLUMN_CATALOG
             .iter()
             .map(|(id, title)| {
-                let row = adw::SwitchRow::new();
-                row.set_title(title);
-                row.set_active(enabled.contains(*id));
+                let (row, switch) = rows::switch_row(title, None);
+                switch.set_active(enabled.contains(*id));
                 columns_group.add(&row);
-                (*id, row)
+                (*id, switch)
             })
             .collect();
         let switches = Rc::new(switches);
@@ -1580,25 +1589,24 @@ impl ConservatoryWindow {
                 config.borrow_mut().browse.columns = cols;
             });
         }
-        page.add(&columns_group);
+        content.append(columns_group.widget());
 
-        let pod_group = adw::PreferencesGroup::new();
-        pod_group.set_title("Podcasts");
-        pod_group.set_description(Some("Takes effect on the next launch."));
+        let pod_group = rows::group(Some("Podcasts"), Some("Takes effect on the next launch."));
 
-        let pod_subdir = adw::EntryRow::new();
-        pod_subdir.set_title("Library subfolder");
-        pod_subdir.set_text(&config.borrow().podcasts.library_subdir);
+        let (pod_subdir_row, pod_subdir) = rows::entry_row(
+            "Library subfolder",
+            &config.borrow().podcasts.library_subdir,
+        );
         {
             let config = config.clone();
             pod_subdir.connect_changed(move |e| {
                 config.borrow_mut().podcasts.library_subdir = e.text().to_string();
             });
         }
-        pod_group.add(&pod_subdir);
+        pod_group.add(&pod_subdir_row);
 
-        let pod_max = adw::SpinRow::with_range(1.0, 16.0, 1.0);
-        pod_max.set_title("Max concurrent downloads");
+        let (pod_max_row, pod_max) =
+            rows::spin_row("Max concurrent downloads", None, 1.0, 16.0, 1.0);
         pod_max.set_value(config.borrow().podcasts.max_concurrent_downloads as f64);
         {
             let config = config.clone();
@@ -1606,37 +1614,34 @@ impl ConservatoryWindow {
                 config.borrow_mut().podcasts.max_concurrent_downloads = r.value() as u32;
             });
         }
-        pod_group.add(&pod_max);
-        page.add(&pod_group);
+        pod_group.add(&pod_max_row);
+        content.append(pod_group.widget());
 
-        let book_group = adw::PreferencesGroup::new();
-        book_group.set_title("Audiobooks");
-        book_group.set_description(Some("Takes effect on the next launch."));
+        let book_group = rows::group(Some("Audiobooks"), Some("Takes effect on the next launch."));
 
-        let book_subdir = adw::EntryRow::new();
-        book_subdir.set_title("Library subfolder");
-        book_subdir.set_text(&config.borrow().audiobooks.library_subdir);
+        let (book_subdir_row, book_subdir) = rows::entry_row(
+            "Library subfolder",
+            &config.borrow().audiobooks.library_subdir,
+        );
         {
             let config = config.clone();
             book_subdir.connect_changed(move |e| {
                 config.borrow_mut().audiobooks.library_subdir = e.text().to_string();
             });
         }
-        book_group.add(&book_subdir);
+        book_group.add(&book_subdir_row);
 
-        let book_tmpl = adw::EntryRow::new();
-        book_tmpl.set_title("Path template");
-        book_tmpl.set_text(&config.borrow().audiobooks.path_template);
+        let (book_tmpl_row, book_tmpl) =
+            rows::entry_row("Path template", &config.borrow().audiobooks.path_template);
         {
             let config = config.clone();
             book_tmpl.connect_changed(move |e| {
                 config.borrow_mut().audiobooks.path_template = e.text().to_string();
             });
         }
-        book_group.add(&book_tmpl);
+        book_group.add(&book_tmpl_row);
 
-        let book_speed = adw::SpinRow::with_range(0.5, 3.0, 0.05);
-        book_speed.set_title("Default speed");
+        let (book_speed_row, book_speed) = rows::spin_row("Default speed", None, 0.5, 3.0, 0.05);
         book_speed.set_digits(2);
         book_speed.set_value(config.borrow().audiobooks.default_speed);
         {
@@ -1645,10 +1650,9 @@ impl ConservatoryWindow {
                 config.borrow_mut().audiobooks.default_speed = r.value();
             });
         }
-        book_group.add(&book_speed);
+        book_group.add(&book_speed_row);
 
-        let book_ss = adw::SwitchRow::new();
-        book_ss.set_title("Smart Speed");
+        let (book_ss_row, book_ss) = rows::switch_row("Smart Speed", None);
         book_ss.set_active(config.borrow().audiobooks.smart_speed);
         {
             let config = config.clone();
@@ -1656,10 +1660,9 @@ impl ConservatoryWindow {
                 config.borrow_mut().audiobooks.smart_speed = s.is_active();
             });
         }
-        book_group.add(&book_ss);
+        book_group.add(&book_ss_row);
 
-        let book_vb = adw::SwitchRow::new();
-        book_vb.set_title("Voice Boost");
+        let (book_vb_row, book_vb) = rows::switch_row("Voice Boost", None);
         book_vb.set_active(config.borrow().audiobooks.voice_boost);
         {
             let config = config.clone();
@@ -1667,8 +1670,8 @@ impl ConservatoryWindow {
                 config.borrow_mut().audiobooks.voice_boost = s.is_active();
             });
         }
-        book_group.add(&book_vb);
-        page.add(&book_group);
+        book_group.add(&book_vb_row);
+        content.append(book_group.widget());
 
         page
     }
@@ -1678,7 +1681,7 @@ impl ConservatoryWindow {
     /// EQ's own table). DSP + output changes apply to the engine live; ReplayGain
     /// / gapless changes are resolved per-queue (so they take effect on the next
     /// built queue, not retroactively). The whole state persists on dialog close.
-    fn add_audio_groups(&self, page: &adw::PreferencesPage, dialog: &adw::PreferencesDialog) {
+    fn add_audio_groups(&self, page: &gtk::Box, dialog: &gtk::Window) {
         let Some(pool) = self.imp().pool.get() else {
             return;
         };
@@ -1703,18 +1706,16 @@ impl ConservatoryWindow {
         };
 
         // --- ReplayGain ---
-        let rg_group = adw::PreferencesGroup::new();
-        rg_group.set_title("ReplayGain");
-        rg_group.set_description(Some(
-            "Volume normalization for music (podcasts and audiobooks carry no ReplayGain); \
-             applies to the next queue.",
-        ));
+        let rg_group = rows::group(
+            Some("ReplayGain"),
+            Some(
+                "Volume normalization for music (podcasts and audiobooks carry no ReplayGain); \
+                 applies to the next queue.",
+            ),
+        );
 
-        let rg_mode = adw::ComboRow::new();
-        rg_mode.set_title("Mode");
-        rg_mode.set_model(Some(&gtk::StringList::new(&sound::option_labels(
-            &sound::RG_MODES,
-        ))));
+        let (rg_mode_row, rg_mode) =
+            rows::combo_row("Mode", None, &sound::option_labels(&sound::RG_MODES));
         rg_mode.set_selected(sound::option_index(
             &sound::RG_MODES,
             &state.borrow().replaygain_mode,
@@ -1727,8 +1728,7 @@ impl ConservatoryWindow {
             });
         }
 
-        let rg_preamp = adw::SpinRow::with_range(-15.0, 15.0, 0.5);
-        rg_preamp.set_title("Preamp (dB)");
+        let (rg_preamp_row, rg_preamp) = rows::spin_row("Preamp (dB)", None, -15.0, 15.0, 0.5);
         rg_preamp.set_digits(1);
         rg_preamp.set_value(state.borrow().replaygain_preamp);
         {
@@ -1738,9 +1738,10 @@ impl ConservatoryWindow {
             });
         }
 
-        let rg_clip = adw::SwitchRow::new();
-        rg_clip.set_title("Prevent clipping");
-        rg_clip.set_subtitle("Cap the gain at 0 dB (no peak data)");
+        let (rg_clip_row, rg_clip) = rows::switch_row(
+            "Prevent clipping",
+            Some("Cap the gain at 0 dB (no peak data)"),
+        );
         rg_clip.set_active(state.borrow().replaygain_clip);
         {
             let state = state.clone();
@@ -1749,49 +1750,42 @@ impl ConservatoryWindow {
             });
         }
 
-        for row in [
-            rg_mode.upcast_ref::<gtk::Widget>(),
-            rg_preamp.upcast_ref(),
-            rg_clip.upcast_ref(),
-        ] {
+        for row in [&rg_mode_row, &rg_preamp_row, &rg_clip_row] {
             rg_group.add(row);
         }
 
         // --- Dynamics (DSP modules) ---
-        let dsp_group = adw::PreferencesGroup::new();
-        dsp_group.set_title("Dynamics");
-        dsp_group.set_description(Some(
-            "Compressor, brick-wall limiter, and volume leveler. Applies to everything you \
-             play; Smart Speed and Voice Boost live in each show's and book's settings.",
-        ));
+        let dsp_group = rows::group(
+            Some("Dynamics"),
+            Some(
+                "Compressor, brick-wall limiter, and volume leveler. Applies to everything you \
+                 play; Smart Speed and Voice Boost live in each show's and book's settings.",
+            ),
+        );
 
         // Compressor.
-        let comp = adw::ExpanderRow::new();
-        comp.set_title("Compressor");
-        comp.set_show_enable_switch(true);
-        comp.set_enable_expansion(state.borrow().dsp.comp.enabled);
-        let comp_threshold = adw::SpinRow::with_range(-60.0, 0.0, 1.0);
-        comp_threshold.set_title("Threshold (dB)");
+        let comp = rows::expander("Compressor", None);
+        let (comp_threshold_row, comp_threshold) =
+            rows::spin_row("Threshold (dB)", None, -60.0, 0.0, 1.0);
         comp_threshold.set_value(state.borrow().dsp.comp.settings.threshold_db);
-        let comp_ratio = adw::SpinRow::with_range(1.0, 20.0, 0.5);
-        comp_ratio.set_title("Ratio (N:1)");
+        let (comp_ratio_row, comp_ratio) = rows::spin_row("Ratio (N:1)", None, 1.0, 20.0, 0.5);
         comp_ratio.set_digits(1);
         comp_ratio.set_value(state.borrow().dsp.comp.settings.ratio);
-        let comp_attack = adw::SpinRow::with_range(1.0, 200.0, 1.0);
-        comp_attack.set_title("Attack (ms)");
+        let (comp_attack_row, comp_attack) = rows::spin_row("Attack (ms)", None, 1.0, 200.0, 1.0);
         comp_attack.set_value(state.borrow().dsp.comp.settings.attack_ms);
-        let comp_release = adw::SpinRow::with_range(10.0, 2000.0, 10.0);
-        comp_release.set_title("Release (ms)");
+        let (comp_release_row, comp_release) =
+            rows::spin_row("Release (ms)", None, 10.0, 2000.0, 10.0);
         comp_release.set_value(state.borrow().dsp.comp.settings.release_ms);
-        comp.add_row(&comp_threshold);
-        comp.add_row(&comp_ratio);
-        comp.add_row(&comp_attack);
-        comp.add_row(&comp_release);
+        comp.add_row(&comp_threshold_row);
+        comp.add_row(&comp_ratio_row);
+        comp.add_row(&comp_attack_row);
+        comp.add_row(&comp_release_row);
+        comp.switch.set_active(state.borrow().dsp.comp.enabled);
         {
             let state = state.clone();
             let apply = apply_dsp.clone();
-            comp.connect_enable_expansion_notify(move |e| {
-                state.borrow_mut().dsp.comp.enabled = e.enables_expansion();
+            comp.switch.connect_active_notify(move |s| {
+                state.borrow_mut().dsp.comp.enabled = s.is_active();
                 apply();
             });
         }
@@ -1829,21 +1823,23 @@ impl ConservatoryWindow {
         }
 
         // Limiter.
-        let limiter = adw::ExpanderRow::new();
-        limiter.set_title("Limiter");
-        limiter.set_subtitle("A transparent peak catcher / ReplayGain clip net");
-        limiter.set_show_enable_switch(true);
-        limiter.set_enable_expansion(state.borrow().dsp.limiter.enabled);
-        let limiter_ceiling = adw::SpinRow::with_range(-30.0, 0.0, 0.5);
-        limiter_ceiling.set_title("Ceiling (dB)");
+        let limiter = rows::expander(
+            "Limiter",
+            Some("A transparent peak catcher / ReplayGain clip net"),
+        );
+        let (limiter_ceiling_row, limiter_ceiling) =
+            rows::spin_row("Ceiling (dB)", None, -30.0, 0.0, 0.5);
         limiter_ceiling.set_digits(1);
         limiter_ceiling.set_value(state.borrow().dsp.limiter.settings.ceiling_db);
-        limiter.add_row(&limiter_ceiling);
+        limiter.add_row(&limiter_ceiling_row);
+        limiter
+            .switch
+            .set_active(state.borrow().dsp.limiter.enabled);
         {
             let state = state.clone();
             let apply = apply_dsp.clone();
-            limiter.connect_enable_expansion_notify(move |e| {
-                state.borrow_mut().dsp.limiter.enabled = e.enables_expansion();
+            limiter.switch.connect_active_notify(move |s| {
+                state.borrow_mut().dsp.limiter.enabled = s.is_active();
                 apply();
             });
         }
@@ -1859,24 +1855,24 @@ impl ConservatoryWindow {
         }
 
         // Leveler.
-        let leveler = adw::ExpanderRow::new();
-        leveler.set_title("Leveler");
-        leveler.set_show_enable_switch(true);
-        leveler.set_enable_expansion(state.borrow().dsp.leveler.enabled);
-        let leveler_target = adw::SpinRow::with_range(0.0, 1.0, 0.05);
-        leveler_target.set_title("Target peak");
+        let leveler = rows::expander("Leveler", None);
+        let (leveler_target_row, leveler_target) =
+            rows::spin_row("Target peak", None, 0.0, 1.0, 0.05);
         leveler_target.set_digits(2);
         leveler_target.set_value(state.borrow().dsp.leveler.settings.target_peak);
-        let leveler_gauss = adw::SpinRow::with_range(3.0, 301.0, 2.0);
-        leveler_gauss.set_title("Window size");
+        let (leveler_gauss_row, leveler_gauss) =
+            rows::spin_row("Window size", None, 3.0, 301.0, 2.0);
         leveler_gauss.set_value(state.borrow().dsp.leveler.settings.gausssize as f64);
-        leveler.add_row(&leveler_target);
-        leveler.add_row(&leveler_gauss);
+        leveler.add_row(&leveler_target_row);
+        leveler.add_row(&leveler_gauss_row);
+        leveler
+            .switch
+            .set_active(state.borrow().dsp.leveler.enabled);
         {
             let state = state.clone();
             let apply = apply_dsp.clone();
-            leveler.connect_enable_expansion_notify(move |e| {
-                state.borrow_mut().dsp.leveler.enabled = e.enables_expansion();
+            leveler.switch.connect_active_notify(move |s| {
+                state.borrow_mut().dsp.leveler.enabled = s.is_active();
                 apply();
             });
         }
@@ -1897,19 +1893,15 @@ impl ConservatoryWindow {
             });
         }
 
-        dsp_group.add(&comp);
-        dsp_group.add(&limiter);
-        dsp_group.add(&leveler);
+        dsp_group.add(&comp.row);
+        dsp_group.add(&limiter.row);
+        dsp_group.add(&leveler.row);
 
         // --- Output ---
-        let out_group = adw::PreferencesGroup::new();
-        out_group.set_title("Output");
+        let out_group = rows::group(Some("Output"), None);
 
-        let backend = adw::ComboRow::new();
-        backend.set_title("Backend");
-        backend.set_model(Some(&gtk::StringList::new(&sound::option_labels(
-            &sound::BACKENDS,
-        ))));
+        let (backend_row, backend) =
+            rows::combo_row("Backend", None, &sound::option_labels(&sound::BACKENDS));
         backend.set_selected(sound::option_index(
             &sound::BACKENDS,
             &state.borrow().output_backend,
@@ -1927,7 +1919,7 @@ impl ConservatoryWindow {
                 }
             });
         }
-        out_group.add(&backend);
+        out_group.add(&backend_row);
 
         // Device: a second, write-through surface for the header picker (Phase
         // 4c-ii). Listed from the engine's queried device list; skipped if the
@@ -1954,9 +1946,7 @@ impl ConservatoryWindow {
                     .as_deref()
                     .and_then(|c| names.iter().position(|n| n == c))
                     .unwrap_or(0) as u32;
-                let device = adw::ComboRow::new();
-                device.set_title("Device");
-                device.set_model(Some(&gtk::StringList::new(&label_refs)));
+                let (device_row, device) = rows::combo_row("Device", None, &label_refs);
                 device.set_selected(selected);
                 let weak = self.downgrade();
                 device.connect_selected_notify(move |row| {
@@ -1967,15 +1957,12 @@ impl ConservatoryWindow {
                         player.set_audio_device(name.clone());
                     }
                 });
-                out_group.add(&device);
+                out_group.add(&device_row);
             }
         }
 
-        let resampler = adw::ComboRow::new();
-        resampler.set_title("Resampler");
-        resampler.set_model(Some(&gtk::StringList::new(&sound::option_labels(
-            &sound::RESAMPLERS,
-        ))));
+        let (resampler_row, resampler) =
+            rows::combo_row("Resampler", None, &sound::option_labels(&sound::RESAMPLERS));
         resampler.set_selected(sound::option_index(
             &sound::RESAMPLERS,
             state.borrow().resampler.as_str(),
@@ -1995,10 +1982,9 @@ impl ConservatoryWindow {
                 }
             });
         }
-        out_group.add(&resampler);
+        out_group.add(&resampler_row);
 
-        let gapless = adw::SwitchRow::new();
-        gapless.set_title("Gapless playback");
+        let (gapless_row, gapless) = rows::switch_row("Gapless playback", None);
         gapless.set_active(state.borrow().gapless);
         {
             let state = state.clone();
@@ -2006,20 +1992,21 @@ impl ConservatoryWindow {
                 state.borrow_mut().gapless = row.is_active();
             });
         }
-        out_group.add(&gapless);
+        out_group.add(&gapless_row);
 
         // --- Spoken word (Smart Speed level) ---
-        let ss_group = adw::PreferencesGroup::new();
-        ss_group.set_title("Spoken word");
-        ss_group.set_description(Some(
-            "How aggressively Smart Speed trims dead air. Turn Smart Speed on per \
-             show or per book; this sets how hard it cuts (applies live).",
-        ));
-        let ss_level = adw::ComboRow::new();
-        ss_level.set_title("Smart Speed level");
-        ss_level.set_model(Some(&gtk::StringList::new(&sound::option_labels(
-            &sound::SMART_SPEED_LEVELS,
-        ))));
+        let ss_group = rows::group(
+            Some("Spoken word"),
+            Some(
+                "How aggressively Smart Speed trims dead air. Turn Smart Speed on per \
+                 show or per book; this sets how hard it cuts (applies live).",
+            ),
+        );
+        let (ss_level_row, ss_level) = rows::combo_row(
+            "Smart Speed level",
+            None,
+            &sound::option_labels(&sound::SMART_SPEED_LEVELS),
+        );
         ss_level.set_selected(sound::option_index(
             &sound::SMART_SPEED_LEVELS,
             &state.borrow().smart_speed_level,
@@ -2040,25 +2027,26 @@ impl ConservatoryWindow {
                 }
             });
         }
-        ss_group.add(&ss_level);
+        ss_group.add(&ss_level_row);
 
-        page.add(&rg_group);
-        page.add(&dsp_group);
-        page.add(&ss_group);
-        page.add(&out_group);
+        page.append(rg_group.widget());
+        page.append(dsp_group.widget());
+        page.append(ss_group.widget());
+        page.append(out_group.widget());
 
         // Persist the whole audio config on close (live changes applied above are
         // saved here, the EQ slider precedent).
         {
             let weak = self.downgrade();
             let state = state.clone();
-            dialog.connect_closed(move |_| {
+            dialog.connect_close_request(move |_| {
                 if let Some(win) = weak.upgrade()
                     && let (Some(worker), Some(rt)) =
                         (win.imp().worker.get(), win.imp().runtime.get())
                 {
                     let _ = rt.block_on(worker.set_audio_state(state.borrow().clone()));
                 }
+                glib::Propagation::Proceed
             });
         }
     }
@@ -5577,6 +5565,25 @@ fn fmt_centre(centre: u32) -> String {
     } else {
         centre.to_string()
     }
+}
+
+/// One Preferences page (Phase 26i): a scrolling column of `rows::Group`s.
+/// The scroller goes into the page stack; groups append to the returned box.
+fn pref_page() -> (gtk::ScrolledWindow, gtk::Box) {
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(18)
+        .margin_top(18)
+        .margin_bottom(18)
+        .margin_start(18)
+        .margin_end(18)
+        .build();
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .child(&content)
+        .build();
+    (scroller, content)
 }
 
 /// Read the current band gains off the EQ sliders into the fixed band array.

@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.2.10
+
+De-adwaita sub-phase 26k2, the shell cut: the window is now a plain `gtk::ApplicationWindow`. The header becomes a real titlebar (`gtk::HeaderBar`) with **no window buttons** (the spec §2.4 tiling posture; Ctrl+Q and your compositor's binds close the window), and the `AdwToolbarView` becomes a plain vertical box (content, status bar, Now-bar, narrow switcher bar, preserving the §2.3 stacking rule). Zero adw widgets are constructed anywhere in the app now; only main.rs's application object and the stylesheet remain for the final cut.
+
 ## v0.2.9
 
 De-adwaita sub-phase 26k1: the three-tab machinery goes plain GTK. The view stack is a `gtk::Stack`, the header switcher a text-only `gtk::StackSwitcher` (Music | Podcasts | Audiobooks; the tab icons retire, per the spec §2.4 posture), the adaptive bottom switcher bar a second switcher in its own bar, and the narrow-width collapse a hand-rolled width watcher at the same 550px threshold the `AdwBreakpoint` used. The lazily-built plugin tab hosts become plain boxes. Also fixes the music-only CI lane, red since v0.2.2 on a dead-code lint in the status-page composite.

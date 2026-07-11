@@ -1,17 +1,18 @@
-//! The faceted browse window (Phase 3b/3c). An `adw::ApplicationWindow` subclass
-//! (programmatic children, no `.ui`) holding the read pool, the single-writer
-//! worker, the facet panes, the filter bar, the Perspectives sidebar, and the
-//! leaf list. Phase 3c adds the always-on filter bar (spec §3.4: the panes
-//! filter, the grammar searches, they intersect on the leaf) and Perspectives:
-//! named saved searches in the sidebar, saved through the worker and reloaded by
-//! re-parsing their text.
+//! The faceted browse window (Phase 3b/3c). A `gtk::ApplicationWindow` subclass
+//! (programmatic children, no `.ui`; plain GTK4 since Phase 26) holding the
+//! read pool, the single-writer worker, the facet panes, the filter bar, the
+//! Perspectives sidebar, and the leaf list. Phase 3c adds the always-on filter
+//! bar (spec §3.4: the panes filter, the grammar searches, they intersect on
+//! the leaf) and Perspectives: named saved searches in the sidebar, saved
+//! through the worker and reloaded by re-parsing their text.
 //!
-//! Phase 6b-i turns the single-view window into the multi-view shell of spec
-//! §2.3: the music browse is one page of an `AdwViewStack`, with a header
-//! `AdwViewSwitcher` and a Podcasts plugin page (feature-gated, lazy on `::map`,
-//! empty until 6b-ii). An `AdwBreakpoint` collapses the switcher to a bottom
-//! `AdwViewSwitcherBar` beneath the persistent Now-bar on narrow widths. A
-//! music-only build keeps a single-page stack with no switcher chrome.
+//! Phase 6b-i turned the single-view window into the multi-view shell of spec
+//! §2.3: the music browse is one page of a `gtk::Stack`, with a text
+//! `gtk::StackSwitcher` in the flat no-buttons titlebar and Podcasts /
+//! Audiobooks plugin pages (feature-gated, lazy on `::map`). A width watcher
+//! collapses the switcher to a bottom bar beneath the persistent Now-bar on
+//! narrow widths. A music-only build keeps a single-page stack with no
+//! switcher chrome.
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -19,12 +20,11 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gtk4 as gtk;
-use libadwaita as adw;
 
-use adw::prelude::*;
-use adw::subclass::prelude::*;
 use gtk::gio;
 use gtk::glib;
+use gtk::prelude::*;
+use gtk::subclass::prelude::*;
 
 use conservatory_core::db::{
     EQ_CENTRES, EqState, FacetField, FacetFilter, MediaKind, Perspective, Playlist, PlaylistKind,
@@ -201,7 +201,7 @@ mod imp {
     impl ObjectSubclass for ConservatoryWindow {
         const NAME: &'static str = "ConservatoryWindow";
         type Type = super::ConservatoryWindow;
-        type ParentType = adw::ApplicationWindow;
+        type ParentType = gtk::ApplicationWindow;
     }
 
     impl ObjectImpl for ConservatoryWindow {}
@@ -216,12 +216,11 @@ mod imp {
     }
     impl WindowImpl for ConservatoryWindow {}
     impl ApplicationWindowImpl for ConservatoryWindow {}
-    impl AdwApplicationWindowImpl for ConservatoryWindow {}
 }
 
 glib::wrapper! {
     pub struct ConservatoryWindow(ObjectSubclass<imp::ConservatoryWindow>)
-        @extends adw::ApplicationWindow, gtk::ApplicationWindow, gtk::Window, gtk::Widget,
+        @extends gtk::ApplicationWindow, gtk::Window, gtk::Widget,
         @implements gtk::gio::ActionGroup, gtk::gio::ActionMap, gtk::Accessible,
                     gtk::Buildable, gtk::ConstraintTarget, gtk::Native, gtk::Root,
                     gtk::ShortcutManager;
@@ -294,7 +293,7 @@ fn playlist_row(name: &str, is_smart: bool) -> gtk::ListBoxRow {
 
 impl ConservatoryWindow {
     pub fn new(
-        app: &adw::Application,
+        app: &gtk::Application,
         db_path: Option<PathBuf>,
         library_root: Option<PathBuf>,
     ) -> Self {
@@ -433,7 +432,7 @@ impl ConservatoryWindow {
         // The browse body is the expand-sink: when a right-docked revealer (queue /
         // inspector) or the bottom Now Playing drawer collapses, its freed space
         // must flow back here, not sit empty. The whole container chain up to the
-        // AdwViewStack page must carry both expand flags or the browse parks at its
+        // stack page must carry both expand flags or the browse parks at its
         // natural size in the top-left and the freed space reads as a dead gap.
         body.set_hexpand(true);
         body.set_vexpand(true);
@@ -513,7 +512,10 @@ impl ConservatoryWindow {
         // content can stack it above the Now-bar (it slides up from the bottom).
         let now_playing = build_now_playing_panel();
 
-        let header = adw::HeaderBar::new();
+        // The slim flat headerbar (26k2, spec §2.4): a real titlebar with no
+        // window buttons; closing is Ctrl+Q plus the compositor's own binds.
+        let header = gtk::HeaderBar::new();
+        header.set_show_title_buttons(false);
 
         // The header buttons grouped into clusters (Phase 13b) for visual
         // hierarchy: the panel-toggle trio (queue / props / info) reads as one
@@ -643,14 +645,17 @@ impl ConservatoryWindow {
         toast_overlay.set_child(Some(&content_box));
         toast_overlay.add_overlay(&toast_revealer);
 
-        let toolbar = adw::ToolbarView::new();
-        toolbar.add_top_bar(&header);
-        toolbar.set_content(Some(&toast_overlay));
-        // The status bar sits above the Now-bar, which is the stable innermost
-        // bottom bar (spec §2.3); the adaptive view-switcher bar reveals *beneath*
-        // the Now-bar at the narrow breakpoint (added in `attach_podcasts_view`).
-        toolbar.add_bottom_bar(&status_bar);
-        toolbar.add_bottom_bar(&now_bar.root);
+        // The window body (a plain vertical box since 26k2, replacing
+        // AdwToolbarView; the header is a real titlebar): content, then the
+        // status bar above the Now-bar, which is the stable innermost bottom
+        // bar (spec §2.3); the adaptive view-switcher bar sits *beneath* the
+        // Now-bar (appended in `install_view_chrome`).
+        self.set_titlebar(Some(&header));
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        toast_overlay.set_vexpand(true);
+        body.append(&toast_overlay);
+        body.append(&status_bar);
+        body.append(&now_bar.root);
 
         // The Now-bar cover/title cluster toggles the drawer (the click handle).
         let click = gtk::GestureClick::new();
@@ -711,10 +716,10 @@ impl ConservatoryWindow {
         // more than one tab is actually showing this launch.
         #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
         if podcasts_on || audiobooks_on {
-            self.install_view_chrome(&stack, &header, &toolbar);
+            self.install_view_chrome(&stack, &header, &body);
         }
 
-        self.set_content(Some(&toolbar));
+        self.set_child(Some(&body));
         let _ = imp.view_stack.set(stack);
         let _ = imp.toast_revealer.set(toast_revealer);
         let _ = imp.toast_label.set(toast_label);
@@ -1096,8 +1101,8 @@ impl ConservatoryWindow {
         }
     }
 
-    /// Open the "Sound" preferences dialog (Phase 5.5b-ii): the app's first
-    /// The `adw::PreferencesDialog` (Phase 10b). The General + Library pages edit
+    /// Open the Preferences window (Phase 5.5b-ii / 10b; a plain modal window
+    /// over owned pages since 26i). The General + Library pages edit
     /// `config.toml` (the 10a loader); the Sound page hosts the 10-band graphic
     /// equalizer plus the ReplayGain / DSP / output groups, which persist to the
     /// DB singletons. Built fresh each open from the stored state.
@@ -3939,12 +3944,7 @@ impl ConservatoryWindow {
     /// when *any* second view (podcasts or audiobooks) is compiled in; a music-only
     /// build (`--no-default-features`) keeps a single-page stack with no switcher.
     #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
-    fn install_view_chrome(
-        &self,
-        stack: &gtk::Stack,
-        header: &adw::HeaderBar,
-        toolbar: &adw::ToolbarView,
-    ) {
+    fn install_view_chrome(&self, stack: &gtk::Stack, header: &gtk::HeaderBar, body: &gtk::Box) {
         // The header switcher (a text-only gtk::StackSwitcher since 26k1, the
         // spec §2.4 posture).
         let switcher = gtk::StackSwitcher::builder().stack(stack).build();
@@ -3965,7 +3965,7 @@ impl ConservatoryWindow {
             .visible(false)
             .build();
         switcher_bar.append(&bar_switcher);
-        toolbar.add_bottom_bar(&switcher_bar);
+        body.append(&switcher_bar);
 
         // The width watcher (the AdwBreakpoint successor): size_allocate feeds
         // update_narrow_chrome, which swaps header for bar across 550px.

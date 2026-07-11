@@ -108,33 +108,32 @@ Six crates. **Music is the native program; podcasts and audiobooks are compile-t
 
 ### 2.3 Widget Tree
 
-A top-level view switcher selects between **Music**, **Podcasts**, and **Audiobooks**, with a persistent Now-bar across all three.
+A top-level view switcher selects between **Music**, **Podcasts**, and **Audiobooks**, with a persistent Now-bar across all three. Plain GTK4 throughout (§2.4; libadwaita retired at Phase 26).
 
 ```text
-AdwApplicationWindow
-├── AdwBreakpoint (narrow → split views collapse)
-└── AdwToastOverlay
-    └── AdwToolbarView
-        ├── AdwHeaderBar (AdwViewSwitcher: Music | Podcasts | Audiobooks; search; jobs; menu)
-        └── AdwViewStack
-            ├── "Music"
-            │   └── faceted Columns UI panes (1–5, §3.3) over a track list
-            ├── "Podcasts"
-            │   └── AdwNavigationSplitView (sidebar triage + episode list + detail)
-            └── "Audiobooks"
-                └── AdwNavigationSplitView (shelf grid + book detail + chapter list, §3.8)
-        └── AdwBin (now_bar — persistent transport, the unified queue's head)
+GtkApplicationWindow
+├── titlebar: GtkHeaderBar (flat, no window buttons;
+│             GtkStackSwitcher: Music | Podcasts | Audiobooks; search; jobs; menu)
+└── GtkBox (vertical)
+    ├── GtkOverlay (content + the toast revealer)
+    │   └── GtkStack
+    │       ├── "Music"      → faceted Columns UI panes (1–5, §3.3) over a track list
+    │       ├── "Podcasts"   → nested GtkPaned (sidebar triage | episode list | detail)
+    │       └── "Audiobooks" → nested GtkPaned (shelf grid | book detail + chapters, §3.8)
+    ├── status bar
+    ├── now_bar (persistent transport, the unified queue's head)
+    └── narrow switcher bar (a second GtkStackSwitcher, shown ≤ 550px)
 ```
 
 The Music view is the deadbeef-cui layout as a first-class window: N configurable hierarchical filter panes (default Genre → Album Artist → Album) feeding a sortable track list. The Podcasts view is Belfry's three-pane triage layout. The Audiobooks view is Cozy's shelf layout: a cover-grid library, a book detail pane with the chapter list and per-book speed / sleep controls, and the same filter bar as the other surfaces.
 
 The Podcasts and Audiobooks tabs are plugin surfaces (§2.2): the view switcher offers only the tabs whose features are compiled in, and a music-only build opens straight into the Music view with no switcher.
 
-The switcher follows current libadwaita idiom (1.4+): an `AdwViewSwitcher` (`policy = wide`) lives in the header bar's title-widget, and an `AdwBreakpoint` hides it and reveals a bottom `AdwViewSwitcherBar` once the window is too narrow for the header switcher (HIG: the switcher migrates to the bottom edge). `AdwViewSwitcherTitle` is deprecated and not used. Three settled details:
+The switcher is a text-only `GtkStackSwitcher` in the titlebar (§2.4); a hand-rolled width watcher (the `AdwBreakpoint` successor) hides the header and shows the bottom switcher bar once the window is narrower than 550px (the switcher migrates to the bottom edge). Three settled details:
 
-- **Bottom-bar stacking (an opinionated call, no GNOME precedent).** No shipping GNOME app pairs a persistent bottom transport bar with an adaptive bottom view switcher. The rule here: the Now-bar is the stable innermost bottom bar (always visible, closest to content); the `AdwViewSwitcherBar` reveals *beneath* it only at the narrow breakpoint. Locked by visual prototype when the shell is built (Phase 6b-i).
-- **State retention.** `AdwViewStack` keeps each page's widget tree alive, so scroll position and selection survive switching away and back. Heavy pages (Podcasts, Audiobooks) are built lazily on their child's `::map` signal rather than eagerly at startup.
-- **Keyboard.** `Alt+1` / `Alt+2` / `Alt+3` switch top-level views via a `win.view` action, mirroring `AdwTabView`'s `Alt+N` convention (GNOME has no standard for numeric view jumps; `Ctrl+N` is a browser-tab habit and is left free for the podcast triage lists, §3.7). See `docs/keymap.md`.
+- **Bottom-bar stacking (an opinionated call).** The Now-bar is the stable innermost bottom bar (always visible, closest to content); the narrow switcher bar shows *beneath* it only below the threshold. Locked by visual prototype when the shell was built (Phase 6b-i).
+- **State retention.** `GtkStack` keeps each page's widget tree alive, so scroll position and selection survive switching away and back. Heavy pages (Podcasts, Audiobooks) are built lazily on their child's `::map` signal rather than eagerly at startup.
+- **Keyboard.** `Alt+1` / `Alt+2` / `Alt+3` switch top-level views via a `win.view` action (GNOME has no standard for numeric view jumps; `Ctrl+N` is a browser-tab habit and is left free for the podcast triage lists, §3.7). See `docs/keymap.md`.
 
 ### 2.4 Design language (Hyprland-native, de-adwaita; decisions locked 2026-07-10)
 

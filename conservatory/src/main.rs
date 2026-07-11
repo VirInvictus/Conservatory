@@ -221,7 +221,8 @@ fn main() -> glib::ExitCode {
             conservatory_core::Config::default()
         });
         let root = resolve_root(positionals.get(1).cloned(), &config);
-        let window = ui::window::ConservatoryWindow::new(app, db, root);
+        // adw::Application IS-A gtk::Application; main.rs converts fully at 26m.
+        let window = ui::window::ConservatoryWindow::new(app.upcast_ref(), db, root);
         window.present();
     });
 

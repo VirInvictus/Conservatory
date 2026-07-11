@@ -14,7 +14,7 @@ A `0.x.0` / `x.0.0` is a **capability milestone**: a cluster of phases deliverin
 | `0.1.x` | Power-user interaction, UX completeness, player table-stakes | 16, 16.5, 17 | ✅ (through v0.1.26) |
 | **`0.2.0`** | **Grammar & columns** | 18 | ✅ tagged |
 | **`0.3.0`** | **Hyprland-native design (de-adwaita)** | 26 (+ the Phase 25 audits as its verification tail) | ✅ tagged |
-| `0.4.0` | Immersive & history | 19 + 9 | planned |
+| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (9a shipped v0.3.1) |
 | **`1.0.0`** | **Verified & packaged** (the endgame) | 20 | planned |
 | `1.1.0` | Metadata intelligence | 21 | committed, beyond 1.0 |
 | `1.2.0` | Curation depth | 22 | committed, beyond 1.0 |
@@ -677,13 +677,32 @@ Modeled on Lattice's `--playlist` (rule-based smart `.m3u`), bridged to Conserva
 
 A peripheral "feel good" addition for the music-and-podcast lifer: scrobble completed plays to an external listening-history service. **Optional and off by default**, it sits late and self-contained so it never blocks the engine work, and it is the deliberate, scoped reversal of the spec §14 no-social/no-cloud stance (recorded there). Local-first is preserved: with sync off the app is unchanged, and **ListenBrainz leads** (open, self-hostable, fits the offline-first rule) with Last.fm as a secondary optional target. Reuses `reqwest` (already in the workspace via `conservatory-podcasts`); no new Rust dependency. Hooks the existing play-completion path (spec §6.4) that already updates play counts.
 
-- [ ] A `scrobble` module (in core, behind config): on track/episode completion, queue a "listen" submission; a small on-disk outbox survives offline and retries (local-first: a play is recorded locally first, synced when the network returns, never lost if the service is down).
-- [ ] ListenBrainz client (user token in libsecret via the existing `oo7`); "now playing" update on start + "listen" submission on completion. Last.fm client as an optional second target (session auth).
-- [ ] Config `[scrobble]`: `enabled = false`, `service = "listenbrainz"`, plus the token reference; a Preferences "Sync" group to enable it and paste a token.
-- [ ] Honours scope: music tracks and podcast episodes only by default; audiobooks excluded unless explicitly opted in (a 14-hour book is not a "listen").
-- [ ] Tests: outbox persists and retries across a simulated offline window; completion hook enqueues exactly once; disabled is a true no-op; credential store round-trip (in-memory backend).
+Split headless-first (the CLI-testable rule): **9a** lands the outbox, the ListenBrainz client, the config, and the CLI (all headless); **9b** wires the engine's play-completion hook and the GUI (the "Sync" prefs + the spawned submitter); **9c** adds Last.fm as the optional second target.
 
-*Usable artifact:* completed plays scrobble to ListenBrainz (or Last.fm), surviving offline, with the feature entirely inert when disabled.
+### Phase 9a — Outbox + ListenBrainz client + config (headless, CLI) ✅ (v0.3.1)
+
+- [x] The app-wide secret store moved to core: `CredentialStore` (libsecret via `oo7`) promoted from `conservatory-podcasts` to `conservatory-core::secret`, so the scrobble token and the podcast Basic-auth credentials share one store (the podcast crate re-exports it, public API unchanged). `reqwest` + `oo7` now build into core (scrobbling covers music, the native program).
+- [x] The `scrobble_outbox` table (migration 0020): a completed play is snapshotted here first (local-first), so a rename cannot corrupt history and submission needs no join. Worker commands `enqueue_scrobble` / `delete_scrobble` / `bump_scrobble_attempt`; pool reads `pending_scrobbles` / `count_pending_scrobbles`.
+- [x] The core `scrobble` module: a service-neutral `Listen`, the pure ListenBrainz `submit-listens` payload builder (unit-tested), the `ListenSubmitter` trait (so the drain loop is tested with a fake), and `ListenBrainzClient` (reqwest, base-URL overridable for self-hosting / wiremock) with token validation. The drain loop (`drain_ready` + `run`) deletes on success, reschedules with exponential backoff (capped hourly) on a transient failure, and parks a permanent one; nothing is lost.
+- [x] Config `[scrobble]`: `enabled = false`, `service = "listenbrainz"` (the token stays in libsecret, never the file).
+- [x] CLI `scrobble` verb (the headless surface): `status`, `token set/clear`, `flush`, `test`.
+- [x] Tests: outbox persists + retries across a simulated offline window then submits; permanent failure parks; a different service's listens are left alone and an empty pass is a no-op; the ListenBrainz client speaks the wire protocol against a wiremock server; the ListenBrainz payload JSON shape; credential-store round-trip (in-memory backend). Config round-trip. (Core 385, podcasts 59 green.)
+
+*Usable artifact:* the `scrobble` CLI enqueues, inspects, and drains listens to ListenBrainz (or a mock), surviving offline, with the subsystem inert when unused.
+
+### Phase 9b — Engine hook + GUI (planned)
+
+- [ ] The engine's `EndReason::Eof` completion path enqueues a listen for a natural track / episode completion (guarded by a `scrobble_enabled` flag set from config); the metadata is resolved once through a read then snapshotted into the outbox. Honours scope: music tracks and podcast episodes only; audiobooks excluded (a 14-hour book is not a "listen"). A "now playing" update on load (ephemeral, not queued).
+- [ ] The GUI spawns `scrobble::run` on its runtime (the `mpris::run` precedent); a Preferences "Sync" group enables it, picks the service, and pastes/validates a token.
+- [ ] Tests: the completion hook enqueues exactly once on a qualifying EOF, audiobook excluded, disabled is a true no-op (null-host engine integration).
+
+*Usable artifact:* real completed plays scrobble to ListenBrainz from the running app, off by default.
+
+### Phase 9c — Last.fm (planned)
+
+- [ ] Last.fm as the optional second target: session auth + `api_sig` signing, behind the same config / prefs / outbox (the `service` column already routes per-listen).
+
+*Usable artifact:* Last.fm works as an alternative to ListenBrainz. **Tags `0.4.0`** once Phase 19 also lands.
 
 ---
 
@@ -1127,7 +1146,7 @@ The experience tier: the seek bar and Now Playing become immersive, and import g
 
 ### Phase 9 — Listening history sync (scrobbling)
 
-Already specified above (see "Phase 9 — Listening history sync"); it is the one remaining pre-1.0 *feature*, optional and off by default (ListenBrainz + optional Last.fm, a one-way local-first outbox). **Slotted into `0.4.0`** so the immersive tier and the optional history sync ship together. **Tags `0.4.0`.**
+Already specified above (see "Phase 9 — Listening history sync"), now sub-phased 9a/9b/9c; it is the one remaining pre-1.0 *feature*, optional and off by default (ListenBrainz + optional Last.fm, a one-way local-first outbox). **9a shipped v0.3.1** (the outbox, the ListenBrainz client, the config, the CLI, all headless); 9b (engine hook + GUI) and 9c (Last.fm) remain. **Slotted into `0.4.0`** so the immersive tier and the optional history sync ship together. **Tags `0.4.0`.**
 
 ## Milestone 1.0.0 — Verified & packaged
 

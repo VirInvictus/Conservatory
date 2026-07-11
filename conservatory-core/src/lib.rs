@@ -28,6 +28,8 @@ pub mod path_template;
 pub mod player;
 pub mod playlist;
 pub mod replaygain;
+pub mod scrobble;
+pub mod secret;
 pub mod shelf_genre;
 pub mod stats;
 pub mod tags;
@@ -42,7 +44,7 @@ pub use audit::{
     ArtDeficiency, ArtResDeficiency, AuditOptions, AuditReport, BitrateDeficiency, RgBucket,
     RgCoverage, TagDeficiency, TagFlags, run_audit,
 };
-pub use config::{Config, ImportMode, config_path, load_default, save_default};
+pub use config::{Config, ImportMode, ScrobbleConfig, config_path, load_default, save_default};
 pub use covers::{resync_album_covers, sync_album_cover, write_cover};
 pub use dedup::{
     DedupOptions, DuplicateReport, ExactAlbumDupe, MultiformatDupe, SimilarAlbums, TrackDupe,
@@ -69,6 +71,11 @@ pub use playlist::{M3uTrack, build_m3u, parse_m3u};
 pub use replaygain::{
     DEFAULT_TARGET_LUFS, replaygain_from_file, rsgain_available, scan_album_files,
 };
+pub use scrobble::{
+    DrainReport, Listen, ListenBrainzClient, ListenSubmitter, ScrobbleService, SubmitError,
+    backoff_secs, drain_ready,
+};
+pub use secret::{BasicAuth, CredentialStore};
 pub use shelf_genre::{AlbumGenreInput, GenreVocab, normalize, resolve_album, resolve_shelf_genre};
 pub use stats::{
     ArtistStat, BitrateStat, FormatStat, GenreStat, LibraryStats, RatingTally, compute_stats,

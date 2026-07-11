@@ -35,6 +35,7 @@ pub struct Config {
     pub audiobooks: AudiobooksConfig,
     pub browse: BrowseConfig,
     pub sections: SectionsConfig,
+    pub scrobble: ScrobbleConfig,
 }
 
 /// `[sections]`: which media tabs are enabled (Phase 16e). Disabling a section
@@ -130,6 +131,29 @@ pub fn default_columns() -> Vec<String> {
     .iter()
     .map(|s| s.to_string())
     .collect()
+}
+
+/// `[scrobble]`: optional, off-by-default listening-history sync (spec §14
+/// carve-out, Phase 9). The user token is **not** stored here; it lives in
+/// libsecret, keyed per service (`ScrobbleService::token_ref`). With `enabled =
+/// false` (the default) the whole subsystem is inert.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScrobbleConfig {
+    pub enabled: bool,
+    /// `"listenbrainz"` (default) | `"lastfm"`. Parsed forgivingly by
+    /// `ScrobbleService::parse`; an unknown value degrades to ListenBrainz.
+    pub service: String,
+}
+
+impl Default for ScrobbleConfig {
+    fn default() -> Self {
+        // Spec §10 [scrobble] defaults: off, ListenBrainz.
+        Self {
+            enabled: false,
+            service: "listenbrainz".to_string(),
+        }
+    }
 }
 
 /// Import disposition, the serde-facing `"copy"` / `"move"`.
@@ -282,6 +306,24 @@ mod tests {
         assert_eq!(config.genre.default_unknown, "Unknown");
         assert_eq!(config.podcasts.max_concurrent_downloads, 3);
         assert_eq!(config.browse.panes, Config::default().browse.panes);
+        // The scrobble section defaults to off / ListenBrainz.
+        assert!(!config.scrobble.enabled);
+        assert_eq!(config.scrobble.service, "listenbrainz");
+    }
+
+    #[test]
+    fn scrobble_section_round_trips() {
+        let text = r#"
+            [scrobble]
+            enabled = true
+            service = "lastfm"
+        "#;
+        let config: Config = toml::from_str(text).unwrap();
+        assert!(config.scrobble.enabled);
+        assert_eq!(config.scrobble.service, "lastfm");
+        // And a full round-trip is lossless.
+        let back: Config = toml::from_str(&to_toml_string(&config).unwrap()).unwrap();
+        assert_eq!(config, back);
     }
 
     #[test]

@@ -24,7 +24,6 @@
 //! Triage browse / actions are 6b.
 
 pub mod chapters;
-pub mod credentials;
 pub mod download;
 pub mod error;
 pub mod fetcher;
@@ -38,7 +37,9 @@ pub mod retention;
 pub mod slug;
 
 pub use chapters::{fetch_chapters, parse_chapters_json};
-pub use credentials::{BasicAuth, CredentialStore};
+// Promoted to conservatory-core at Phase 9 (shared with the scrobble token);
+// re-exported here so `conservatory_podcasts::CredentialStore` stays valid.
+pub use conservatory_core::secret::{BasicAuth, CredentialStore};
 pub use download::{
     ProgressFn, download_episode, download_episode_with_progress, download_fraction,
 };

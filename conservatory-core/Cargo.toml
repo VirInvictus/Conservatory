@@ -36,10 +36,24 @@ zbus = { workspace = true }
 libc = { workspace = true }
 # Phase 8b: NFKC folding for the duplicate-detection normalization keys.
 unicode-normalization = { workspace = true }
+# Phase 9: the app-wide secret store (scrobble token + the podcast Basic-auth
+# credentials moved here from conservatory-podcasts). libsecret via oo7; the
+# in-memory backend covers headless tests.
+oo7 = { workspace = true }
+# Phase 9: the scrobble submitter (spec §14 carve-out). reqwest is already a
+# workspace dep (pulled by conservatory-podcasts); it lands in core too because
+# scrobbling covers music, the native program, not just the podcast plugin.
+# serde_json builds the ListenBrainz submit-listens payload; the reqwest `json`
+# feature (added on top of the workspace set) sends it and reads the reply.
+reqwest = { workspace = true, features = ["json"] }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 serde_json = { workspace = true }
+# Phase 9a: exercise the real ListenBrainz reqwest + JSON path against a mock
+# server (the podcast fetcher's wiremock precedent).
+wiremock = { workspace = true }
 # Test-only: the Phase 3a SQL-vs-eval parity test exercises both search paths
 # against a fixture DB. Core does not depend on the search crate at runtime.
 conservatory-search = { path = "../conservatory-search" }

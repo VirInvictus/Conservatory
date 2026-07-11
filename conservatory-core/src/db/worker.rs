@@ -19,8 +19,8 @@ use tokio::sync::{mpsc, oneshot};
 use crate::db::command::Command;
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState, PlaylistKind,
-    PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
+    EQ_BAND_COUNT, Episode, EqState, NewScrobble, Playback, PlaybackCursor, PlayedState,
+    PlaylistKind, PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::db::{connection, migrations, probe, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
@@ -627,6 +627,33 @@ impl WorkerHandle {
             real_seconds,
             audio_seconds,
             smart_speed_saved,
+            reply,
+        })
+        .await
+    }
+
+    /// Enqueue one listen into `scrobble_outbox` (Phase 9a).
+    pub async fn enqueue_scrobble(&self, scrobble: NewScrobble, created_at: i64) -> Result<()> {
+        self.dispatch(|reply| Command::EnqueueScrobble {
+            scrobble,
+            created_at,
+            reply,
+        })
+        .await
+    }
+
+    /// Delete an outbox row after a successful submission (Phase 9a).
+    pub async fn delete_scrobble(&self, id: i64) -> Result<()> {
+        self.dispatch(|reply| Command::DeleteScrobble { id, reply })
+            .await
+    }
+
+    /// Record a failed submission attempt (Phase 9a): bump `attempts`, push
+    /// `next_attempt_at` to the backoff point.
+    pub async fn bump_scrobble_attempt(&self, id: i64, next_attempt_at: i64) -> Result<()> {
+        self.dispatch(|reply| Command::BumpScrobbleAttempt {
+            id,
+            next_attempt_at,
             reply,
         })
         .await
@@ -1301,6 +1328,23 @@ fn handle(conn: &mut Connection, command: Command) {
                 audio_seconds,
                 smart_speed_saved,
             ));
+        }
+        Command::EnqueueScrobble {
+            scrobble,
+            created_at,
+            reply,
+        } => {
+            let _ = reply.send(writes::enqueue_scrobble(conn, &scrobble, created_at));
+        }
+        Command::DeleteScrobble { id, reply } => {
+            let _ = reply.send(writes::delete_scrobble(conn, id));
+        }
+        Command::BumpScrobbleAttempt {
+            id,
+            next_attempt_at,
+            reply,
+        } => {
+            let _ = reply.send(writes::bump_scrobble_attempt(conn, id, next_attempt_at));
         }
         Command::UpsertVerifyResults { rows, reply } => {
             let _ = reply.send(writes::upsert_verify_results(conn, &rows));

@@ -12,9 +12,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPerson, BookPlayback, Chapter,
     CompSettings, DspState, EQ_BAND_COUNT, Episode, EqPreset, EqState, InboxPolicy,
-    LevelerSettings, LimiterSettings, MediaKind, ModuleState, Perspective, Playback, PlayedState,
-    Playlist, PlaylistKind, PlaylistOrder, QueueItem, ResamplerQuality, Series, Show, ShowSettings,
-    Tag, Track, VerifyResultRow,
+    LevelerSettings, LimiterSettings, MediaKind, ModuleState, PendingScrobble, Perspective,
+    Playback, PlayedState, Playlist, PlaylistKind, PlaylistOrder, QueueItem, ResamplerQuality,
+    Series, Show, ShowSettings, Tag, Track, VerifyResultRow,
 };
 use crate::errors::Result;
 use crate::verify::VerifyVerdict;
@@ -1294,6 +1294,41 @@ pub fn list_chapters(conn: &Connection, episode_id: i64) -> Result<Vec<Chapter>>
         conn.prepare("SELECT * FROM chapters WHERE episode_id = ?1 ORDER BY start_time")?;
     let rows = stmt.query_map(params![episode_id], row_to_chapter)?;
     rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// Outbox rows ready to submit (Phase 9a): `next_attempt_at <= now`, oldest
+/// first, capped at `limit`. The drain loop submits these and then deletes (on
+/// success) or bumps the attempt (on failure) through the writer.
+pub fn pending_scrobbles(conn: &Connection, now: i64, limit: i64) -> Result<Vec<PendingScrobble>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, service, kind, listened_at, artist, track, album, track_number,
+                duration_secs, recording_mbid, attempts
+         FROM scrobble_outbox
+         WHERE next_attempt_at <= ?1
+         ORDER BY id
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![now, limit], |r| {
+        Ok(PendingScrobble {
+            id: r.get("id")?,
+            service: r.get("service")?,
+            kind: r.get("kind")?,
+            listened_at: r.get("listened_at")?,
+            artist: r.get("artist")?,
+            track: r.get("track")?,
+            album: r.get("album")?,
+            track_number: r.get("track_number")?,
+            duration_secs: r.get("duration_secs")?,
+            recording_mbid: r.get("recording_mbid")?,
+            attempts: r.get("attempts")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// Total queued listens (Phase 9a), for the `scrobble status` CLI verb.
+pub fn count_pending_scrobbles(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row("SELECT COUNT(*) FROM scrobble_outbox", [], |r| r.get(0))?)
 }
 
 /// A show's tags, ordered by name (Phase 6a-i).

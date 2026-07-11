@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.3.1
+
+**Phase 9a: the scrobble outbox and the ListenBrainz client (headless).** The first sub-phase of the 0.4.0 "Immersive & history" milestone lands the local-first spine of listening-history sync (spec §14 carve-out), off by default and fully inert until enabled.
+
+- A completed play is queued into a new `scrobble_outbox` table (migration 0020) that snapshots the listen metadata, so a rename can never corrupt history and submission needs no join. A background submitter drains the outbox and deletes on success, reschedules with exponential backoff on a transient failure (429 / 5xx / offline), and parks a permanent failure (a bad token) rather than losing the listen. Nothing is ever dropped.
+- ListenBrainz leads (open, self-hostable): a client builds the `submit-listens` payload and validates a token, pointed at the public instance or a self-hosted one.
+- A `[scrobble]` config section (`enabled = false`, `service = "listenbrainz"`); the user token lives in libsecret, never the config file.
+- A `scrobble` CLI verb is the headless surface: `status`, `token set/clear`, `flush` (force a drain), and `test` (validate the token).
+- Groundwork move: the `CredentialStore` (libsecret via `oo7`) is promoted from `conservatory-podcasts` to `conservatory-core` as the app-wide secret store, shared by the podcast Basic-auth credentials and the scrobble token. The podcast crate re-exports it, so its public API is unchanged. `reqwest` and `oo7` now build into core (scrobbling covers music, the native program, not just the podcast plugin).
+- Not yet wired: the engine's play-completion hook that enqueues real plays, the Preferences "Sync" group, and Last.fm as the optional second target. Those are Phases 9b and 9c.
+
 ## v0.3.0
 
 **The Hyprland-native milestone: Phase 26, de-adwaita, complete.** Conservatory now runs the same feature set on plain GTK4 with zero libadwaita symbols in the workspace, wearing its own flat, tiling-first Kanagawa Dragon stylesheet on all three tabs.

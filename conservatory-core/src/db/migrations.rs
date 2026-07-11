@@ -100,10 +100,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 19,
         sql: include_str!("migrations/0019_fts_fold.sql"),
     },
+    Migration {
+        version: 20,
+        sql: include_str!("migrations/0020_scrobble_outbox.sql"),
+    },
 ];
 
 /// The `user_version` a fully-migrated database reaches.
-pub const CURRENT_VERSION: i32 = 19;
+pub const CURRENT_VERSION: i32 = 20;
 
 /// Apply any unapplied migrations. Idempotent: running this on a
 /// fully-migrated database is a no-op.
@@ -253,6 +257,7 @@ mod tests {
             "eq_presets",
             "eq_state",
             "audio_state",
+            "scrobble_outbox",
         ] {
             assert!(table_exists(&conn, t), "missing table: {t}");
         }

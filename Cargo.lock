@@ -592,7 +592,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "conservatory-audiobooks",
@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-audiobooks"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "conservatory-core",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "conservatory-search",
@@ -649,7 +649,9 @@ dependencies = [
  "libc",
  "libmpv2",
  "lofty",
+ "oo7",
  "realfft",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
@@ -659,12 +661,13 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "unicode-normalization",
+ "wiremock",
  "zbus 5.13.2",
 ]
 
 [[package]]
 name = "conservatory-podcasts"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ammonia",
  "chrono",
@@ -684,7 +687,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-search"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "regex",

@@ -14,8 +14,8 @@ use conservatory_core::db::{Episode, WorkerHandle};
 use reqwest::Client;
 use tokio::io::AsyncWriteExt;
 
-use crate::credentials::BasicAuth;
 use crate::error::{FetchError, Result};
+use conservatory_core::secret::BasicAuth;
 
 /// A progress observer for a running download (16.5e): called per chunk with
 /// `(bytes written so far, expected total)`. The total comes from the response

@@ -18,9 +18,9 @@ use chrono::{DateTime, Duration, Utc};
 use reqwest::{Client, StatusCode, header};
 use tokio::sync::Mutex;
 
-use crate::credentials::BasicAuth;
 use crate::error::{FetchError, Result};
 use crate::http;
+use conservatory_core::secret::BasicAuth;
 
 /// Backoff applied to a host that answers 429 without a numeric `Retry-After`
 /// (a missing header or the HTTP-date form). Five minutes is conservative; a

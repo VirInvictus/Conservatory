@@ -363,6 +363,13 @@ enum Command {
         action: ConfigAction,
     },
 
+    /// Listening-history scrobbling (Phase 9, off by default). Manage the
+    /// service token, inspect the outbox, and drain queued listens.
+    Scrobble {
+        #[command(subcommand)]
+        action: ScrobbleAction,
+    },
+
     /// Set an album's cover image: write it into the album folder as cover.jpg
     /// and record `cover_path` + a refreshed accent (Phase 5d).
     SetCover {
@@ -1106,6 +1113,45 @@ enum ConfigAction {
 }
 
 #[derive(Subcommand)]
+enum ScrobbleAction {
+    /// Show the scrobble config (enabled + service) and the queued-listen count.
+    Status {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
+    /// Manage the service token in libsecret (never stored in the config file).
+    Token {
+        #[command(subcommand)]
+        action: ScrobbleTokenAction,
+    },
+    /// Force one drain pass now: submit ready queued listens to the service.
+    Flush {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
+    /// Validate the stored token against the service.
+    Test,
+}
+
+#[derive(Subcommand)]
+enum ScrobbleTokenAction {
+    /// Store (or replace) the service token.
+    Set {
+        /// The user token (ListenBrainz) to store.
+        token: String,
+        /// Which service the token is for; defaults to the configured service.
+        #[arg(long)]
+        service: Option<String>,
+    },
+    /// Remove the stored token for a service.
+    Clear {
+        /// Which service to clear; defaults to the configured service.
+        #[arg(long)]
+        service: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum QueueAction {
     /// Append tracks to the queue tail.
     Add {
@@ -1191,6 +1237,7 @@ fn main() -> Result<()> {
         Some(Command::Queue { action }) => queue(action),
         Some(Command::Playlist { action }) => playlist(action),
         Some(Command::Config { action }) => config_cmd(action),
+        Some(Command::Scrobble { action }) => block_on(run_scrobble(action)),
         Some(Command::Tag { action }) => tag(action),
         Some(Command::EmbedTags {
             db,
@@ -4854,6 +4901,111 @@ fn config_cmd(action: ConfigAction) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The `scrobble` verb (Phase 9a): the headless surface for the outbox +
+/// ListenBrainz client. Token storage is libsecret (async), so the whole verb
+/// runs on the async runtime.
+async fn run_scrobble(action: ScrobbleAction) -> Result<()> {
+    use conservatory_core::scrobble::{ListenBrainzClient, ScrobbleService, drain_ready};
+
+    // The configured service, resolved forgivingly (unknown -> ListenBrainz).
+    let config = conservatory_core::config::load_default().context("loading config")?;
+    let configured = ScrobbleService::parse(&config.scrobble.service);
+
+    // Resolve a service string override into a ScrobbleService, else the config's.
+    let resolve_service =
+        |override_str: &Option<String>| override_str.as_deref().map(ScrobbleService::parse);
+
+    match action {
+        ScrobbleAction::Status { db } => {
+            let pool = ReadPool::new(db, 3).context("opening read pool")?;
+            let pending = {
+                let conn = pool.open().context("opening pool connection")?;
+                conservatory_core::db::count_pending_scrobbles(&conn).context("counting outbox")?
+            };
+            println!("enabled\t{}", config.scrobble.enabled);
+            println!("service\t{}", configured.as_str());
+            println!("pending\t{pending}");
+        }
+        ScrobbleAction::Token { action } => {
+            let store = conservatory_core::CredentialStore::secret_service()
+                .await
+                .context("connecting to the secret service")?;
+            match action {
+                ScrobbleTokenAction::Set { token, service } => {
+                    let svc = resolve_service(&service).unwrap_or(configured);
+                    store
+                        .set(svc.token_ref(), &token)
+                        .await
+                        .context("storing token")?;
+                    println!("stored {} token", svc.as_str());
+                }
+                ScrobbleTokenAction::Clear { service } => {
+                    let svc = resolve_service(&service).unwrap_or(configured);
+                    store
+                        .delete(svc.token_ref())
+                        .await
+                        .context("clearing token")?;
+                    println!("cleared {} token", svc.as_str());
+                }
+            }
+        }
+        ScrobbleAction::Flush { db } => {
+            if configured != ScrobbleService::ListenBrainz {
+                anyhow::bail!(
+                    "{} scrobbling arrives at Phase 9c; only ListenBrainz is wired",
+                    configured.as_str()
+                );
+            }
+            let token = scrobble_token(configured).await?;
+            let client = ListenBrainzClient::new(token);
+            let worker = spawn_worker(db.clone()).context("spawning worker")?;
+            let pool = ReadPool::new(db, 3).context("opening read pool")?;
+            let now = chrono::Utc::now().timestamp();
+            let report = drain_ready(&worker, &pool, configured, &client, now, 50)
+                .await
+                .context("draining outbox")?;
+            worker.shutdown_ack().await.context("shutdown ack")?;
+            println!(
+                "submitted\t{}\nretried\t{}\nparked\t{}",
+                report.submitted, report.retried, report.parked
+            );
+        }
+        ScrobbleAction::Test => {
+            if configured != ScrobbleService::ListenBrainz {
+                anyhow::bail!(
+                    "{} scrobbling arrives at Phase 9c; only ListenBrainz is wired",
+                    configured.as_str()
+                );
+            }
+            let token = scrobble_token(configured).await?;
+            let client = ListenBrainzClient::new(token);
+            match client.validate_token().await {
+                Ok(Some(user)) => println!("valid\t{user}"),
+                Ok(None) => println!("invalid"),
+                Err(e) => anyhow::bail!("validation request failed: {e}"),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fetch the stored token for `service`, erroring with a helpful hint if absent.
+async fn scrobble_token(service: conservatory_core::ScrobbleService) -> Result<String> {
+    let store = conservatory_core::CredentialStore::secret_service()
+        .await
+        .context("connecting to the secret service")?;
+    store
+        .get(service.token_ref())
+        .await
+        .context("reading token")?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no {} token stored; run `scrobble token set <token>`",
+                service.as_str()
+            )
+        })
 }
 
 fn queue_list(db: PathBuf) -> Result<()> {

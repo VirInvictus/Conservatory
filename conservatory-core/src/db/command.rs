@@ -12,8 +12,8 @@ use tokio::sync::oneshot;
 
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState, PlaylistKind,
-    PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
+    EQ_BAND_COUNT, Episode, EqState, NewScrobble, Playback, PlaybackCursor, PlayedState,
+    PlaylistKind, PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -434,6 +434,28 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Enqueue one listen into `scrobble_outbox` (Phase 9a). Snapshots the
+    /// metadata at completion time; the background submitter drains it.
+    EnqueueScrobble {
+        scrobble: NewScrobble,
+        created_at: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Delete an outbox row after a successful submission (Phase 9a).
+    DeleteScrobble {
+        id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Record a failed submission attempt (Phase 9a): bump `attempts`, push
+    /// `next_attempt_at` to the backoff point.
+    BumpScrobbleAttempt {
+        id: i64,
+        next_attempt_at: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Upsert a batch of integrity-verification results (Phase 8a), one tx.
     UpsertVerifyResults {
         rows: Vec<VerifyResultRow>,
@@ -656,6 +678,9 @@ impl Command {
             Self::SetEpisodePosition { .. } => "set_episode_position",
             Self::CompleteEpisode { .. } => "complete_episode",
             Self::InsertListeningSession { .. } => "insert_listening_session",
+            Self::EnqueueScrobble { .. } => "enqueue_scrobble",
+            Self::DeleteScrobble { .. } => "delete_scrobble",
+            Self::BumpScrobbleAttempt { .. } => "bump_scrobble_attempt",
             Self::UpsertVerifyResults { .. } => "upsert_verify_results",
             Self::UpsertShowSettings { .. } => "upsert_show_settings",
             Self::ReplaceChapters { .. } => "replace_chapters",

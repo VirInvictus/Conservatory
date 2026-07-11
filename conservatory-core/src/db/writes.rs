@@ -8,8 +8,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, Playback, PlaybackCursor, PlayedState, PlaylistKind,
-    PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
+    EQ_BAND_COUNT, Episode, EqState, NewScrobble, Playback, PlaybackCursor, PlayedState,
+    PlaylistKind, PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -1191,6 +1191,55 @@ pub(crate) fn insert_listening_session(
             audio_seconds,
             smart_speed_saved
         ],
+    )?;
+    Ok(())
+}
+
+/// Enqueue one listen into `scrobble_outbox` (Phase 9a). The metadata is
+/// snapshotted at completion time; `attempts` starts at 0 and `next_attempt_at`
+/// at 0 so the row is immediately eligible for the next drain pass.
+pub(crate) fn enqueue_scrobble(conn: &Connection, s: &NewScrobble, created_at: i64) -> Result<()> {
+    conn.execute(
+        "INSERT INTO scrobble_outbox
+            (service, kind, listened_at, artist, track, album, track_number,
+             duration_secs, recording_mbid, attempts, next_attempt_at, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 0, ?10)",
+        params![
+            s.service,
+            s.kind,
+            s.listened_at,
+            s.artist,
+            s.track,
+            s.album,
+            s.track_number,
+            s.duration_secs,
+            s.recording_mbid,
+            created_at,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Delete a submitted (or discarded) outbox row by id (Phase 9a). Used after a
+/// successful submission.
+pub(crate) fn delete_scrobble(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM scrobble_outbox WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+/// Record a failed submission attempt (Phase 9a): bump `attempts` and push
+/// `next_attempt_at` to the caller-computed backoff point, so the drain loop
+/// skips the row until then.
+pub(crate) fn bump_scrobble_attempt(
+    conn: &Connection,
+    id: i64,
+    next_attempt_at: i64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE scrobble_outbox
+            SET attempts = attempts + 1, next_attempt_at = ?2
+         WHERE id = ?1",
+        params![id, next_attempt_at],
     )?;
     Ok(())
 }

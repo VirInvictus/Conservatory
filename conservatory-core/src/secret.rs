@@ -1,10 +1,17 @@
-//! HTTP Basic auth credentials for private feeds (Phase 6a-iii-b).
+//! The app-wide secret store (libsecret / freedesktop secret service, via `oo7`).
 //!
-//! Real-world feeds (Substack-style token URLs, Patreon tiers) gate access
-//! behind HTTP Basic auth. The password lives in the secret service
-//! (libsecret, via `oo7`); the database stores only a username
-//! (`shows.auth_user`) and an opaque lookup key (`shows.auth_pass_ref`), never
-//! the password inline (spec §8).
+//! Two kinds of secret pass through here:
+//!
+//! - **HTTP Basic auth for private podcast feeds** (Phase 6a-iii-b): Substack-
+//!   style token URLs and Patreon tiers gate access behind Basic auth. The
+//!   database stores only a username (`shows.auth_user`) and an opaque lookup
+//!   key (`shows.auth_pass_ref`); the password lives here, never inline (spec §8).
+//! - **The scrobble service token** (Phase 9): the ListenBrainz / Last.fm user
+//!   token, keyed by a fixed reference so the config file never holds it.
+//!
+//! Originally in `conservatory-podcasts`; promoted to core at Phase 9 so the
+//! scrobble module (in core, so it covers music) can share one secret store
+//! rather than duplicating it (the podcast crate re-exports these types).
 //!
 //! [`CredentialStore`] is an enum rather than a `dyn` trait so its async
 //! methods stay object-safe-free: the `Secret` variant wraps the libsecret
@@ -16,7 +23,7 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use crate::error::{FetchError, Result};
+use crate::errors::{Error, Result};
 
 /// The `app` attribute every Conservatory keyring item carries, so a search is
 /// scoped to this application's credentials.
@@ -29,9 +36,10 @@ pub struct BasicAuth {
     pub password: String,
 }
 
-/// A store of feed passwords keyed by an opaque `auth_pass_ref` (the value
-/// `shows.auth_pass_ref` holds). Cheap to clone (both variants are `Arc`-backed),
-/// so it can be threaded into a concurrent refresh.
+/// A store of secrets keyed by an opaque reference string (for a feed, the value
+/// `shows.auth_pass_ref` holds; for scrobbling, a fixed per-service key). Cheap
+/// to clone (both variants are `Arc`-backed), so it can be threaded into a
+/// concurrent refresh or a background scrobble submitter.
 #[derive(Clone)]
 pub enum CredentialStore {
     /// The freedesktop secret service / libsecret (oo7).
@@ -51,7 +59,7 @@ impl CredentialStore {
     pub async fn secret_service() -> Result<Self> {
         let keyring = oo7::Keyring::new()
             .await
-            .map_err(|e| FetchError::Credentials(e.to_string()))?;
+            .map_err(|e| Error::Credentials(e.to_string()))?;
         Ok(CredentialStore::Secret(Arc::new(keyring)))
     }
 
@@ -69,11 +77,11 @@ impl CredentialStore {
                 Ok(())
             }
             CredentialStore::Secret(keyring) => {
-                let label = format!("Conservatory feed credential ({key})");
+                let label = format!("Conservatory secret ({key})");
                 keyring
                     .create_item(&label, &Self::attrs(key), password.as_bytes(), true)
                     .await
-                    .map_err(|e| FetchError::Credentials(e.to_string()))
+                    .map_err(|e| Error::Credentials(e.to_string()))
             }
         }
     }
@@ -86,13 +94,13 @@ impl CredentialStore {
                 let items = keyring
                     .search_items(&Self::attrs(key))
                     .await
-                    .map_err(|e| FetchError::Credentials(e.to_string()))?;
+                    .map_err(|e| Error::Credentials(e.to_string()))?;
                 match items.first() {
                     Some(item) => {
                         let secret = item
                             .secret()
                             .await
-                            .map_err(|e| FetchError::Credentials(e.to_string()))?;
+                            .map_err(|e| Error::Credentials(e.to_string()))?;
                         Ok(Some(String::from_utf8_lossy(&secret).into_owned()))
                     }
                     None => Ok(None),
@@ -111,7 +119,7 @@ impl CredentialStore {
             CredentialStore::Secret(keyring) => keyring
                 .delete(&Self::attrs(key))
                 .await
-                .map_err(|e| FetchError::Credentials(e.to_string())),
+                .map_err(|e| Error::Credentials(e.to_string())),
         }
     }
 

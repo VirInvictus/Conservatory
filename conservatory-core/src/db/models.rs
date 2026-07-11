@@ -400,6 +400,41 @@ pub struct VerifyResultRow {
     pub checked_at: i64,
 }
 
+/// One queued "listen" awaiting submission (Phase 9a, `scrobble_outbox`). The
+/// metadata is snapshotted at play-completion time so a later rename cannot
+/// corrupt history and the submitter needs no join. [`NewScrobble`] is the
+/// enqueue payload; [`PendingScrobble`] is the read-back the drain loop submits,
+/// carrying the row id and retry bookkeeping.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewScrobble {
+    pub service: String,
+    /// 'track' | 'episode' (scope + accounting; the services don't distinguish).
+    pub kind: String,
+    pub listened_at: i64,
+    pub artist: String,
+    pub track: String,
+    pub album: Option<String>,
+    pub track_number: Option<i64>,
+    pub duration_secs: Option<i64>,
+    pub recording_mbid: Option<String>,
+}
+
+/// A `scrobble_outbox` row read back for submission (Phase 9a).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingScrobble {
+    pub id: i64,
+    pub service: String,
+    pub kind: String,
+    pub listened_at: i64,
+    pub artist: String,
+    pub track: String,
+    pub album: Option<String>,
+    pub track_number: Option<i64>,
+    pub duration_secs: Option<i64>,
+    pub recording_mbid: Option<String>,
+    pub attempts: i64,
+}
+
 /// The undo record for one `apestrip` (Phase 8c-iii): the excised APEv2 tag
 /// bytes and where they were removed, plus the pre-strip size/mtime so undo can
 /// refuse a file that changed after the strip. Path-keyed (library-relative).

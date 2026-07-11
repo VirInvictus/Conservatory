@@ -49,6 +49,9 @@ pub enum Error {
 
     #[error("config: {0}")]
     Config(String),
+
+    #[error("credential store error: {0}")]
+    Credentials(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

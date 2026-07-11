@@ -31,11 +31,11 @@ use conservatory_core::db::{
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-use crate::credentials::CredentialStore;
 use crate::error::{FetchError, Result};
 use crate::fetcher::Fetcher;
 use crate::parse::{ParsedEpisode, ParsedFeed, parse_feed};
 use crate::slug;
+use conservatory_core::secret::CredentialStore;
 
 /// How many feeds to poll at once in [`refresh_all`]. Bounded so a large
 /// subscription list does not open a connection per feed at once; the

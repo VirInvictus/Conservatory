@@ -15,96 +15,11 @@ mod book_query;
 mod playqueue;
 mod query;
 mod statusbar;
+mod theme;
 mod ui;
 mod viz;
 
 const APP_ID: &str = "org.virinvictus.Conservatory";
-
-/// The app's visual identity (Phase 12a): the Kanagawa Dragon palette mapped onto
-/// libadwaita's named colours (the source-of-truth mapping is `docs/theme.md`),
-/// plus the structural Columns UI compaction and the lifted album-cover cards.
-/// The dense `.data-table` padding is deliberate (the deadbeef model); the covers
-/// get an Amberol-style drop shadow, and the per-album accent ring is layered on
-/// at runtime via `ui/accent.rs` (`.cover-acc-RRGGBB`).
-const CSS: &str = "\
-@define-color window_bg_color #181616;
-@define-color window_fg_color #c5c9c5;
-@define-color view_bg_color #12120f;
-@define-color view_fg_color #c5c9c5;
-@define-color headerbar_bg_color #1d1c19;
-@define-color headerbar_fg_color #c5c9c5;
-@define-color sidebar_bg_color #12120f;
-@define-color sidebar_fg_color #c5c9c5;
-@define-color secondary_sidebar_bg_color #181616;
-@define-color card_bg_color #1d1c19;
-@define-color card_fg_color #c5c9c5;
-@define-color popover_bg_color #1d1c19;
-@define-color popover_fg_color #c5c9c5;
-@define-color dialog_bg_color #1d1c19;
-@define-color accent_color #c4746e;
-@define-color accent_bg_color #c4746e;
-@define-color accent_fg_color #12120f;
-@define-color warning_color #c4b28a;
-@define-color error_color #c4746e;
-@define-color success_color #87a987;
-
-/* Typography (Phase 13d): bundled OFL fonts registered via fontconfig at startup
-   so nothing is assumed installed. Inter body, Fraunces headers, IBM Plex Mono
-   technical fields; each rule keeps a generic-family fallback so a missing font
-   degrades to a sane default rather than breaking text. */
-window, popover, dropdown, tooltip { font-family: \"Inter\", \"Adwaita Sans\", sans-serif; }
-.title-1, .title-2, .title-3, .title-4, .large-title, .heading { font-family: \"Fraunces\", serif; }
-.tech { font-family: \"IBM Plex Mono\", monospace; }
-
-columnview.data-table > listview > row > cell { padding-top: 1px; padding-bottom: 1px; }
-columnview.data-table > listview > row { transition: background-color 150ms ease; }
-columnview.data-table > listview > row:hover { background: alpha(currentColor, 0.04); }
-columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height: 0; transition: background-color 150ms ease; }
-columnview > header > button:hover { background: alpha(currentColor, 0.08); }
-.numeric { font-feature-settings: \"tnum\"; }
-.rating-stars { color: @accent_color; }
-.filter-warn text { background-color: alpha(@warning_color, 0.20); }
-selection { background-color: alpha(@accent_color, 0.35); color: @window_fg_color; }
-*:focus-visible { outline-color: @accent_color; outline-width: 2px; outline-offset: 1px; }
-scrollbar slider { min-width: 8px; min-height: 8px; border-radius: 8px; }
-.now-bar { padding: 6px 12px; border-top: 1px solid alpha(currentColor, 0.10); }
-.now-bar-cover { border-radius: 6px; box-shadow: 0 1px 5px rgba(0,0,0,0.40); background: alpha(currentColor, 0.06); }
-.queue-row { padding: 4px 8px; }
-.queue-row.playing { background: alpha(@accent_color, 0.16); }
-.queue-list { border-left: 1px solid alpha(currentColor, 0.12); }
-.chapter-row { padding: 3px 6px; border-radius: 5px; transition: background-color 150ms ease; }
-.chapter-row:hover { background: alpha(currentColor, 0.06); }
-.chapter-row.current-chapter { background: alpha(@accent_color, 0.16); font-weight: bold; }
-.sleep-menu-row { transition: background-color 150ms ease; }
-.sleep-menu-row:hover { background: alpha(currentColor, 0.08); }
-.book-tile { padding: 8px; border-radius: 10px; }
-.book-tile:selected { background: alpha(@accent_color, 0.18); }
-.cover-art { border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 4px 14px rgba(0,0,0,0.28); background: alpha(currentColor, 0.05); }
-.cover-thumb { border-radius: 4px; background: alpha(currentColor, 0.06); }
-.book-cover { border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 4px 12px rgba(0,0,0,0.26); background: alpha(currentColor, 0.06); }
-.inspector-cover { border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 6px 18px rgba(0,0,0,0.30); background: alpha(currentColor, 0.06); }
-.now-playing-cover { border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 6px 18px rgba(0,0,0,0.30); background: alpha(currentColor, 0.06); }
-.now-playing-drawer { border-top: 1px solid alpha(currentColor, 0.10); }
-/* The chip floating over the full-bleed spectrum: a translucent scrim keeps the
-   title / artist legible against the bars behind it. */
-.now-playing-info { background-color: alpha(@window_bg_color, 0.72); border-radius: 10px; padding: 8px 14px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
-.spectrum { background: alpha(currentColor, 0.03); }
-/* The owned toast label (Phase 26d; adw::Toast styled its own node). Pill-shaped
-   to match the adwaita look until the owned sheet squares it at 26l. */
-.toast { background-color: @popover_bg_color; color: @popover_fg_color; border: 1px solid alpha(currentColor, 0.12); border-radius: 999px; padding: 8px 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
-";
-
-fn load_css() {
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(CSS);
-    if let Some(display) = gtk::gdk::Display::default() {
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
-}
 
 /// Register the bundled fonts (Phase 13d) so the typography (Inter body, Fraunces
 /// headers, IBM Plex Mono technical fields) renders without assuming any font is
@@ -198,10 +113,15 @@ fn main() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).build();
 
     app.connect_startup(|_| {
-        // Kanagawa Dragon is a dark palette (Phase 12a); force the dark scheme so
-        // the `@define-color` overrides land on the dark variant, not the light.
+        // Kanagawa Dragon is dark-only (Phase 12a). The owned sheet (26l) paints
+        // everything it names; prefer-dark makes the widget internals it doesn't
+        // reach follow dark polarity too. ForceDark keeps the still-linked
+        // adwaita sheet dark underneath until the toolkit cut removes it (26m).
         adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
-        load_css();
+        if let Some(settings) = gtk::Settings::default() {
+            settings.set_gtk_application_prefer_dark_theme(true);
+        }
+        theme::install();
     });
 
     app.connect_activate(|app| {

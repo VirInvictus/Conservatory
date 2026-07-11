@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.2.11
+
+De-adwaita sub-phase 26l, the visual flip: Conservatory now paints itself with its own generated stylesheet (`theme.rs`), Kanagawa Dragon baked in, installed above USER priority so neither the still-linked adwaita sheet nor a themed `~/.config/gtk-4.0/gtk.css` can override it. The look is the spec §2.4 language: flat, square, 1px hairlines, denser spacing; buttons, switches, sliders, spin buttons, dropdowns, popovers, tooltips, scrollbars, selections, and the toast are all squared and Dragon-coloured. The lifted cover cards deliberately keep their radius and shadow (chrome is flat; content imagery stays lifted, and the accent ring layers onto that shadow). `docs/theme.md` rewritten to the owned posture.
+
 ## v0.2.10
 
 De-adwaita sub-phase 26k2, the shell cut: the window is now a plain `gtk::ApplicationWindow`. The header becomes a real titlebar (`gtk::HeaderBar`) with **no window buttons** (the spec §2.4 tiling posture; Ctrl+Q and your compositor's binds close the window), and the `AdwToolbarView` becomes a plain vertical box (content, status bar, Now-bar, narrow switcher bar, preserving the §2.3 stacking rule). Zero adw widgets are constructed anywhere in the app now; only main.rs's application object and the stylesheet remain for the final cut.

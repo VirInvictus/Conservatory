@@ -1,15 +1,23 @@
 # Visual theme (Kanagawa Dragon)
 
-Reference for Conservatory's fixed visual identity, landed at Phase 12a. The app
-ships the **Kanagawa Dragon** palette (Brandon's house dark theme) mapped onto
-libadwaita's named colours, and forces the dark colour scheme. The per-album
-accent (extracted per `docs/accent.md`) tints highlights only; it does not
-recolour the window chrome (the Amberol "chameleon" model was considered and
-declined, to keep one consistent identity across every screen).
+Reference for Conservatory's fixed visual identity, landed at Phase 12a and
+made fully self-owned at Phase 26 (de-adwaita). The app ships the **Kanagawa
+Dragon** palette (Brandon's house dark theme) baked into its own generated
+stylesheet; there is no adwaita sheet underneath. The look is the spec §2.4
+design language: flat, square, hard 1px borders, denser spacing than the GNOME
+HIG, a slim titlebar with no window buttons. The per-album accent (extracted
+per `docs/accent.md`) tints highlights only; it does not recolour the window
+chrome (the Amberol "chameleon" model was considered and declined, to keep one
+consistent identity across every screen).
 
-The CSS lives in `conservatory/src/main.rs` (the `CSS` const, injected at
-`startup` by `load_css`); the runtime per-album accent ring lives in
-`conservatory/src/ui/accent.rs`.
+The sheet lives in `conservatory/src/theme.rs`: palette consts spliced into a
+structural template by `sheet()`, installed display-wide by `install()` at
+`STYLE_PROVIDER_PRIORITY_USER + 1`. That priority is load-bearing (the
+Colophon discovery): a themed `~/.config/gtk-4.0/gtk.css` loads at USER (800)
+and outranks APPLICATION (600), so an app sheet below USER gets silently
+half-overridden on themed systems. The runtime per-album accent ring lives in
+`conservatory/src/ui/accent.rs` and registers at USER + 2, so it keeps
+outranking the base sheet.
 
 ## Palette (Dragon variant)
 
@@ -30,36 +38,39 @@ also `calibre-web-kanagawa/theme/kanagawa-dragon.css`):
 | dragonGreen | `#87a987` | success |
 | dragonBlue2 | `#8ba4b0` | secondary (info) |
 
-## libadwaita named-colour mapping
+## Owned palette roles
 
-`@define-color` overrides in `main.rs` (must stay in step with this table):
+The `theme.rs` consts (must stay in step with this table; each is baked into
+the generated sheet by token replacement):
 
-| libadwaita name | Hex | Dragon token |
-|---|---|---|
-| `window_bg_color` | `#181616` | dragonBlack3 |
-| `window_fg_color` | `#c5c9c5` | dragonWhite |
-| `view_bg_color` | `#12120f` | dragonBlack1 |
-| `view_fg_color` | `#c5c9c5` | dragonWhite |
-| `headerbar_bg_color` | `#1d1c19` | dragonBlack2 |
-| `headerbar_fg_color` | `#c5c9c5` | dragonWhite |
-| `sidebar_bg_color` | `#12120f` | dragonBlack1 |
-| `sidebar_fg_color` | `#c5c9c5` | dragonWhite |
-| `secondary_sidebar_bg_color` | `#181616` | dragonBlack3 |
-| `card_bg_color` | `#1d1c19` | dragonBlack2 |
-| `card_fg_color` | `#c5c9c5` | dragonWhite |
-| `popover_bg_color` | `#1d1c19` | dragonBlack2 |
-| `popover_fg_color` | `#c5c9c5` | dragonWhite |
-| `dialog_bg_color` | `#1d1c19` | dragonBlack2 |
-| `accent_color` | `#c4746e` | dragonRed |
-| `accent_bg_color` | `#c4746e` | dragonRed |
-| `accent_fg_color` | `#12120f` | dragonBlack1 (dark text on the red fill) |
-| `warning_color` | `#c4b28a` | dragonYellow |
-| `error_color` | `#c4746e` | dragonRed |
-| `success_color` | `#87a987` | dragonGreen |
+| Const | Hex | Dragon token | Role |
+|---|---|---|---|
+| `BG_WINDOW` | `#181616` | dragonBlack3 | window ground |
+| `BG_VIEW` | `#12120f` | dragonBlack1 | lists / sidebar / entries ground |
+| `BG_HEADER` | `#1d1c19` | dragonBlack2 | titlebar, tooltips |
+| `BG_CARD` | `#1d1c19` | dragonBlack2 | cards, popovers, buttons, toasts |
+| `FG` | `#c5c9c5` | dragonWhite | primary foreground |
+| `FG_DIM` | `#a6a69c` | dragonGray | `.dim-label`, subtitles |
+| `GRID` | `#393836` | dragonBlack5 | hairlines, 1px borders |
+| `ACCENT` | `#c4746e` | dragonRed | accent, selection, `.suggested-action` |
+| `ON_ACCENT` | `#12120f` | dragonBlack1 | dark text on the red fill |
+| `WARN` | `#c4b28a` | dragonYellow | warnings (`.filter-warn`) |
+| `ERR` | `#c4746e` | dragonRed | `.destructive-action` |
+| `OK` | `#87a987` | dragonGreen | `.success` |
 
-Forcing the dark scheme (`adw::ColorScheme::ForceDark`) is required: Dragon is a
-dark palette, and without forcing it the overrides would land on whichever
-variant the system prefers. A light (Lotus) variant is out of scope.
+Dark polarity is forced with `gtk-application-prefer-dark-theme` at startup so
+the stock-widget internals the sheet does not name follow dark too. Dragon is
+dark-only; a light (Lotus) variant is out of scope. Custom properties
+(`--c-*`, the Colophon mechanism) are deliberately not used: one fixed palette
+gains nothing from them, and skipping them keeps the gtk4 crate on `v4_14`.
+
+## What stays deliberately un-flat
+
+The lifted cover cards keep their radius and Amberol-style drop shadow (below):
+chrome is flat, content imagery stays lifted (the Hermitage
+cover-as-visual-unit pattern), and the runtime accent ring layers onto that
+same shadow. Everything else squared off at Phase 26: selection rectangles,
+tiles, the toast, popovers, buttons, switches, sliders.
 
 ## Cover cards and the accent ring
 
@@ -79,13 +90,14 @@ declaration.
 
 ## Typography (Phase 13d)
 
-Three bundled OFL fonts, one per role, applied through `font-family` rules in the
-`CSS` const (`conservatory/src/main.rs`). Every rule carries a generic fallback so
-a missing font degrades to a sane default rather than breaking text.
+Three bundled OFL fonts, one per role, applied through exactly three
+`font-family` rules in the generated sheet (`conservatory/src/theme.rs`,
+test-enforced). Every rule carries a generic fallback so a missing font
+degrades to a sane default rather than breaking text.
 
 | Role | Font | CSS selector | Fallback |
 |---|---|---|---|
-| Base UI (chrome, menus, track list, facet panes, property values) | Inter | `window, popover, dropdown, tooltip` | `"Adwaita Sans", sans-serif` |
+| Base UI (chrome, menus, track list, facet panes, property values) | Inter | `window, popover, dropdown, tooltip` | `sans-serif` |
 | Headers and titles | Fraunces | `.title-1`..`.title-4`, `.large-title`, `.heading` | `serif` |
 | Technical text (paths, the status-bar tech line, MusicBrainz ids) | IBM Plex Mono | `.tech` | `monospace` |
 

@@ -72,6 +72,14 @@ pub fn spin_row(
     (row, spin)
 }
 
+/// An adw::ComboRow successor; the returned `gtk::DropDown` carries the
+/// `set_selected` / `selected` / `connect_selected_notify` surface.
+pub fn combo_row(title: &str, items: &[&str]) -> (gtk::ListBoxRow, gtk::DropDown) {
+    let dropdown = gtk::DropDown::from_strings(items);
+    let row = row(title, None, Some(dropdown.upcast_ref()));
+    (row, dropdown)
+}
+
 /// An adw::PreferencesGroup successor: an optional heading and dim description
 /// over a `.boxed-list` of rows.
 pub struct Group {

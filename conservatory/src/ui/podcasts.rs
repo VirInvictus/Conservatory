@@ -31,12 +31,11 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use gtk4 as gtk;
-use libadwaita as adw;
 
-use adw::prelude::*;
 use chrono::{DateTime, Utc};
 use gtk::gio;
 use gtk::glib;
+use gtk::prelude::*;
 
 use conservatory_core::PlayerHandle;
 use conservatory_core::db::{
@@ -47,7 +46,9 @@ use conservatory_core::db::{
 use conservatory_podcasts::{Fetcher, RefreshOutcome, RefreshStatus};
 
 use crate::playqueue::{EpisodeSource, attach_episode_chapters, build_episode_queue};
+use crate::ui::dialogs::{Alert, Appearance};
 use crate::ui::objects::EpisodeRow;
+use crate::ui::rows;
 
 /// A context-menu verb: a method on `Inner` taking `&self` (Phase 16a).
 type EpisodeVerb = fn(&Inner);
@@ -406,9 +407,9 @@ impl Inner {
 
     /// Open the per-show settings dialog for `show_id` (Phase 6b-ii-c-3-c;
     /// since 16.5d also reachable from the episode context menu, so the id is
-    /// a parameter rather than the sidebar selection): an
-    /// `adw::PreferencesGroup` pre-populated from the stored overrides (or the
-    /// schema defaults), saved through `upsert_show_settings`.
+    /// a parameter rather than the sidebar selection): an owned settings group
+    /// pre-populated from the stored overrides (or the schema defaults), saved
+    /// through `upsert_show_settings`.
     fn open_settings_for(self: &Rc<Self>, show_id: i64) {
         let cur = self
             .pool
@@ -417,83 +418,83 @@ impl Inner {
             .and_then(|conn| get_show_settings(&conn, show_id).ok().flatten())
             .unwrap_or_else(|| default_settings(show_id));
 
-        let group = adw::PreferencesGroup::new();
-        group.set_description(Some(
-            "Smart Speed trims dead air; Voice Boost lifts quiet, uneven speech. \
-             Both apply to this show's episodes when you play them.",
-        ));
+        let group = rows::group(
+            None,
+            Some(
+                "Smart Speed trims dead air; Voice Boost lifts quiet, uneven speech. \
+                 Both apply to this show's episodes when you play them.",
+            ),
+        );
 
         // Speed bounds mirror player::profile's MIN/MAX_SPEED (the real clamp
         // stays at resolve_episode_profile, so the UI cap is only a guard rail).
-        let speed = adw::SpinRow::with_range(MIN_SPEED, MAX_SPEED, 0.05);
-        speed.set_title("Playback speed");
+        let (speed_row, speed) = rows::spin_row("Playback speed", None, MIN_SPEED, MAX_SPEED, 0.05);
         speed.set_digits(2);
         speed.set_value(cur.playback_speed);
 
-        let smart = adw::SwitchRow::new();
-        smart.set_title("Smart Speed");
+        let (smart_row, smart) = rows::switch_row("Smart Speed", None);
         smart.set_active(cur.smart_speed);
 
-        let voice = adw::SwitchRow::new();
-        voice.set_title("Voice Boost");
+        let (voice_row, voice) = rows::switch_row("Voice Boost", None);
         voice.set_active(cur.voice_boost);
 
-        let intro = adw::SpinRow::with_range(0.0, 600.0, 1.0);
-        intro.set_title("Skip intro (seconds)");
+        let (intro_row, intro) = rows::spin_row("Skip intro (seconds)", None, 0.0, 600.0, 1.0);
         intro.set_value(cur.skip_intro as f64);
 
-        let outro = adw::SpinRow::with_range(0.0, 600.0, 1.0);
-        outro.set_title("Skip outro (seconds)");
+        let (outro_row, outro) = rows::spin_row("Skip outro (seconds)", None, 0.0, 600.0, 1.0);
         outro.set_value(cur.skip_outro as f64);
 
         // The quick-seek amounts (16.5f): the schema fields existed since
         // Phase 6, the dialog finally exposes them. 0 inherits the defaults.
-        let back = adw::SpinRow::with_range(0.0, 300.0, 5.0);
-        back.set_title("Skip back (seconds)");
-        back.set_subtitle("0 uses the default (15)");
+        let (back_row, back) = rows::spin_row(
+            "Skip back (seconds)",
+            Some("0 uses the default (15)"),
+            0.0,
+            300.0,
+            5.0,
+        );
         back.set_value(cur.skip_back.unwrap_or(0) as f64);
 
-        let fwd = adw::SpinRow::with_range(0.0, 300.0, 5.0);
-        fwd.set_title("Skip forward (seconds)");
-        fwd.set_subtitle("0 uses the default (30)");
+        let (fwd_row, fwd) = rows::spin_row(
+            "Skip forward (seconds)",
+            Some("0 uses the default (30)"),
+            0.0,
+            300.0,
+            5.0,
+        );
         fwd.set_value(cur.skip_forward.unwrap_or(0) as f64);
 
-        let policy = adw::ComboRow::new();
-        policy.set_title("New episodes");
-        policy.set_model(Some(&gtk::StringList::new(&[
-            "Add to Inbox",
-            "Add to Queue",
-            "Archive",
-        ])));
+        let (policy_row, policy) =
+            rows::combo_row("New episodes", &["Add to Inbox", "Add to Queue", "Archive"]);
         policy.set_selected(inbox_policy_index(cur.inbox_policy));
 
         for row in [
-            speed.upcast_ref::<gtk::Widget>(),
-            smart.upcast_ref(),
-            voice.upcast_ref(),
-            intro.upcast_ref(),
-            outro.upcast_ref(),
-            back.upcast_ref(),
-            fwd.upcast_ref(),
-            policy.upcast_ref(),
+            &speed_row,
+            &smart_row,
+            &voice_row,
+            &intro_row,
+            &outro_row,
+            &back_row,
+            &fwd_row,
+            &policy_row,
         ] {
             group.add(row);
         }
 
-        let dialog = adw::AlertDialog::new(Some("Show settings"), None);
-        dialog.set_extra_child(Some(&group));
+        let dialog = Alert::new(Some("Show settings"), None);
+        dialog.set_extra_child(Some(group.widget()));
         dialog.add_response("cancel", "Cancel");
         // Unsubscribe lives with the rest of the show's management (16.5c);
         // it hands off to its own destructive confirm.
         dialog.add_response("unsubscribe", "Unsubscribe\u{2026}");
-        dialog.set_response_appearance("unsubscribe", adw::ResponseAppearance::Destructive);
+        dialog.set_response_appearance("unsubscribe", Appearance::Destructive);
         dialog.add_response("save", "Save");
-        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("save", Appearance::Suggested);
         dialog.set_default_response(Some("save"));
         dialog.set_close_response("cancel");
 
         let inner = self.clone();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp == "unsubscribe" {
                 inner.confirm_unsubscribe(show_id);
                 return;
@@ -642,15 +643,15 @@ impl Inner {
             Some(e) => format!("The feed could not be added: {e}"),
             None => "Paste the podcast's feed URL.".to_string(),
         };
-        let dialog = adw::AlertDialog::new(Some("Subscribe to a podcast"), Some(&body));
+        let dialog = Alert::new(Some("Subscribe to a podcast"), Some(&body));
         dialog.set_extra_child(Some(&entry));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("subscribe", "Subscribe");
-        dialog.set_response_appearance("subscribe", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("subscribe", Appearance::Suggested);
         dialog.set_default_response(Some("subscribe"));
         dialog.set_close_response("cancel");
         let inner = self.clone();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "subscribe" {
                 return;
             }
@@ -709,14 +710,14 @@ impl Inner {
             "Unsubscribe from \u{201c}{name}\u{201d}? Its episodes leave the library and the \
              queue; downloaded files stay on disk. This cannot be undone."
         );
-        let dialog = adw::AlertDialog::new(Some("Unsubscribe?"), Some(&body));
+        let dialog = Alert::new(Some("Unsubscribe?"), Some(&body));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("unsubscribe", "Unsubscribe");
-        dialog.set_response_appearance("unsubscribe", adw::ResponseAppearance::Destructive);
+        dialog.set_response_appearance("unsubscribe", Appearance::Destructive);
         dialog.set_default_response(Some("cancel"));
         dialog.set_close_response("cancel");
         let inner = self.clone();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "unsubscribe" {
                 return;
             }
@@ -1000,14 +1001,14 @@ impl Inner {
             "Delete {} downloaded file(s)? The episodes stay in the library and can still stream.",
             prunes.len()
         );
-        let dialog = adw::AlertDialog::new(Some("Delete downloads?"), Some(&body));
+        let dialog = Alert::new(Some("Delete downloads?"), Some(&body));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("delete", "Delete");
-        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_response_appearance("delete", Appearance::Destructive);
         dialog.set_default_response(Some("cancel"));
         dialog.set_close_response("cancel");
         let inner = self.clone();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "delete" {
                 return;
             }
@@ -1642,8 +1643,7 @@ pub fn build_podcasts_view(
     sidebar_box.append(&footer);
 
     // Layout: sidebar | (episode list | detail). Nested `gtk::Paned`, matching
-    // the music browse body; an adaptive AdwNavigationSplitView is a later
-    // refinement.
+    // the music browse body (and the spec §2.4 plain-GTK posture).
     let content = gtk::Paned::new(gtk::Orientation::Horizontal);
     content.set_start_child(Some(&list_stack));
     content.set_end_child(Some(&detail));

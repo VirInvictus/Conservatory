@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.2.6
+
+De-adwaita sub-phase 26g: the Podcasts tab is now adwaita-free. The per-show settings dialog (speed, Smart Speed, Voice Boost, intro/outro skip, quick-seek overrides, inbox policy), the subscribe prompt with its error-preserving retry, the unsubscribe confirm, and the delete-downloads confirm all run on the owned alert and rows, including a new dropdown row for the inbox policy. Behaviour unchanged.
+
 ## v0.2.5
 
 De-adwaita sub-phase 26f: the shared rows module grows switch and spin rows plus a preferences-group successor (heading + dim description over a boxed list). First consumers: the two Now-bar playing-settings dialogs (per-show and per-book speed / Smart Speed / Voice Boost, quick-seek overrides) now run entirely on owned widgets, including their alert shell from 26e. Live-apply on the playing item is unchanged.

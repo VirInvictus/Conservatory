@@ -1,5 +1,16 @@
 # Patch Notes
 
+## v0.3.0
+
+**The Hyprland-native milestone: Phase 26, de-adwaita, complete.** Conservatory now runs the same feature set on plain GTK4 with zero libadwaita symbols in the workspace, wearing its own flat, tiling-first Kanagawa Dragon stylesheet on all three tabs.
+
+- Every adwaita surface was replaced by owned widgets across v0.2.1 to v0.2.12: shared rows and groups, the alert dialog, status pages, the toast, the shortcuts reference, the Preferences window, the tab switcher with its 550px narrow collapse, and the window shell itself (flat titlebar, no window buttons; your compositor and Ctrl+Q own closing).
+- The look is spec §2.4: flat, square, 1px hairlines, denser spacing, Dragon hexes baked into a generated sheet that outranks user CSS skins. The lifted cover cards deliberately keep their shadow; chrome is flat, content imagery stays lifted.
+- Environment notes for a GNOME-free session (portals, Secret Service, waybar MPRIS, window rules) live in the new `docs/hyprland.md`.
+- No feature regressed, the app runs unchanged under GNOME, and the memory budgets hold; a full re-theme with fewer linked libraries.
+
+Milestone note: 0.3.0 was pulled forward from the original 2.2.0 slot once the Colophon pilot proved the patterns. Next on the runway is 0.4.0 (Phase 19 immersive polish plus Phase 9 scrobbling).
+
 ## v0.2.12
 
 De-adwaita sub-phase 26m, the toolkit cut: **libadwaita is gone.** The dependency leaves the workspace and binary manifests, `adw::Application` becomes `gtk::Application`, and `ForceDark` retires (the owned sheet plus `gtk-application-prefer-dark-theme` carry dark-only now). meson and CI drop the libadwaita dev packages; meson's GTK floor aligns to the real 4.14 pin. Spec, keymap, and README sweep to the plain-GTK posture. `cargo tree` shows zero libadwaita under both feature sets. Same features, same look as v0.2.11.

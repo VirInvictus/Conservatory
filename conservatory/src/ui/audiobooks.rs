@@ -16,9 +16,8 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use adw::prelude::*;
+use gtk::prelude::*;
 use gtk4 as gtk;
-use libadwaita as adw;
 
 use conservatory_audiobooks::edit::{
     BookEdit, SeriesEdit, book_edit_commons, parse_opt_index, parse_opt_rating, parse_opt_year,
@@ -34,7 +33,9 @@ use conservatory_core::mover::MoveMode;
 
 use crate::book_query::filter_books;
 use crate::query::PoolResolver;
+use crate::ui::dialogs::{Alert, Appearance};
 use crate::ui::objects::BookRow;
+use crate::ui::rows;
 
 /// A rejected bulk-edit attempt's state, for the re-present-prefilled loop
 /// (16.5g): the per-field `(key, ticked, entered text)` triples plus the
@@ -668,14 +669,14 @@ impl Inner {
             "Remove {} book(s) from the library? The files stay on disk, so you can re-import them.",
             ids.len()
         );
-        let dialog = adw::AlertDialog::new(Some("Remove from library?"), Some(&body));
+        let dialog = Alert::new(Some("Remove from library?"), Some(&body));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("remove", "Remove");
-        dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
+        dialog.set_response_appearance("remove", Appearance::Destructive);
         dialog.set_default_response(Some("cancel"));
         dialog.set_close_response("cancel");
         let this = self.clone();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "remove" {
                 return;
             }
@@ -733,45 +734,40 @@ impl Inner {
             .ok()
             .and_then(|conn| get_book_playback(&conn, book_id).ok().flatten());
 
-        let group = adw::PreferencesGroup::new();
-        group.set_description(Some(
-            "Smart Speed trims dead air; Voice Boost lifts quiet, uneven narration. \
-             These apply to this book when you play it.",
-        ));
+        let group = rows::group(
+            None,
+            Some(
+                "Smart Speed trims dead air; Voice Boost lifts quiet, uneven narration. \
+                 These apply to this book when you play it.",
+            ),
+        );
 
         // Speed bounds mirror player::profile's MIN/MAX_SPEED; the authoritative
         // clamp stays at resolve_book_profile, so this cap is only a guard rail.
-        let speed = adw::SpinRow::with_range(MIN_SPEED, MAX_SPEED, 0.05);
-        speed.set_title("Playback speed");
+        let (speed_row, speed) = rows::spin_row("Playback speed", None, MIN_SPEED, MAX_SPEED, 0.05);
         speed.set_digits(2);
         speed.set_value(cur.as_ref().and_then(|p| p.speed).unwrap_or(1.0));
 
-        let smart = adw::SwitchRow::new();
-        smart.set_title("Smart Speed");
+        let (smart_row, smart) = rows::switch_row("Smart Speed", None);
         smart.set_active(cur.as_ref().and_then(|p| p.smart_speed).unwrap_or(false));
 
-        let voice = adw::SwitchRow::new();
-        voice.set_title("Voice Boost");
+        let (voice_row, voice) = rows::switch_row("Voice Boost", None);
         voice.set_active(cur.as_ref().and_then(|p| p.voice_boost).unwrap_or(false));
 
-        for row in [
-            speed.upcast_ref::<gtk::Widget>(),
-            smart.upcast_ref(),
-            voice.upcast_ref(),
-        ] {
+        for row in [&speed_row, &smart_row, &voice_row] {
             group.add(row);
         }
 
-        let dialog = adw::AlertDialog::new(Some("Playback settings"), None);
-        dialog.set_extra_child(Some(&group));
+        let dialog = Alert::new(Some("Playback settings"), None);
+        dialog.set_extra_child(Some(group.widget()));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("save", "Save");
-        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("save", Appearance::Suggested);
         dialog.set_default_response(Some("save"));
         dialog.set_close_response("cancel");
 
         let inner = self.clone();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "save" {
                 return;
             }
@@ -924,7 +920,7 @@ impl Inner {
         standalone.set_active(prefill_standalone);
         grid.attach(&standalone, 2, fields.len() as i32, 1, 1);
 
-        let dialog = adw::AlertDialog::new(
+        let dialog = Alert::new(
             Some("Edit book(s)"),
             Some(&format!(
                 "Apply to {} selected book(s). Tick a field to write it; shared values are \
@@ -935,13 +931,13 @@ impl Inner {
         dialog.set_extra_child(Some(&grid));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("apply", "Apply");
-        dialog.set_response_appearance("apply", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("apply", Appearance::Suggested);
         dialog.set_default_response(Some("apply"));
         dialog.set_close_response("cancel");
 
         let this = self.clone();
         let parent_weak = parent.map(|w| w.downgrade());
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp != "apply" {
                 return;
             }
@@ -978,13 +974,13 @@ impl Inner {
         standalone: bool,
         parent: Option<&gtk::Window>,
     ) {
-        let dialog = adw::AlertDialog::new(Some("Edit not applied"), Some(&errors.join("\n")));
+        let dialog = Alert::new(Some("Edit not applied"), Some(&errors.join("\n")));
         dialog.add_response("ok", "Fix Values");
         dialog.set_default_response(Some("ok"));
         dialog.set_close_response("ok");
         let this = self.clone();
         let parent_weak = parent.map(|w| w.downgrade());
-        dialog.connect_response(None, move |_, _| {
+        dialog.connect_response(move |_| {
             let parent = parent_weak.as_ref().and_then(|w| w.upgrade());
             this.prompt_bulk_edit_prefilled(parent.as_ref(), Some((entered.clone(), standalone)));
         });
@@ -1056,15 +1052,15 @@ impl Inner {
                 "{total} file(s) will move; {conflicts} conflict(s) will be skipped (those books stay put)."
             )
         };
-        let dialog = adw::AlertDialog::new(Some("Move files?"), Some(&body));
+        let dialog = Alert::new(Some("Move files?"), Some(&body));
         dialog.add_response("cancel", "Keep in place");
         dialog.add_response("move", "Move");
-        dialog.set_response_appearance("move", adw::ResponseAppearance::Suggested);
+        dialog.set_response_appearance("move", Appearance::Suggested);
         dialog.set_default_response(Some("move"));
         dialog.set_close_response("cancel");
 
         let this = self.clone();
-        dialog.connect_response(None, move |_, resp| {
+        dialog.connect_response(move |resp| {
             if resp == "move" {
                 let mut failed = 0usize;
                 for &id in &ids {

@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.2.7
+
+De-adwaita sub-phase 26h: the Audiobooks tab is now adwaita-free. Remove-from-library, per-book playback settings, the bulk edit grid with its error-and-retry loop, and the re-shelve move confirm all run on the owned alert and rows. Only window.rs (shell + Preferences), sound.rs, and main.rs still name adw types.
+
 ## v0.2.6
 
 De-adwaita sub-phase 26g: the Podcasts tab is now adwaita-free. The per-show settings dialog (speed, Smart Speed, Voice Boost, intro/outro skip, quick-seek overrides, inbox policy), the subscribe prompt with its error-preserving retry, the unsubscribe confirm, and the delete-downloads confirm all run on the owned alert and rows, including a new dropdown row for the inbox policy. Behaviour unchanged.

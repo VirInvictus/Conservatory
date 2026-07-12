@@ -144,7 +144,20 @@ scrollbar slider { background-color: %GRID%; border-radius: 0; min-width: 6px; m
 scrollbar slider:hover { background-color: %FG_DIM%; }
 
 selection { background-color: alpha(%ACCENT%, 0.35); color: %FG%; }
-*:focus-visible { outline: 1px solid %ACCENT%; outline-offset: -1px; }
+/* Keyboard-focus ring, scoped to the discrete interactive controls. NOT the
+   universal `*`: pressing a bare modifier (e.g. Fn+Win = Ctrl+Super to switch
+   workspaces) flips GTK into keyboard-focus-visible mode, and a `*` rule then
+   outlines every cell/row/container in the focus chain at once, flashing the
+   accent across the whole window. Rows show their position through the
+   selection background already, so they do not need a focus outline. */
+button:focus-visible,
+entry:focus-visible,
+spinbutton:focus-visible,
+switch:focus-visible,
+checkbutton:focus-visible,
+check:focus-visible,
+dropdown:focus-visible,
+scale:focus-visible { outline: 1px solid %ACCENT%; outline-offset: -1px; }
 
 /* --- Utility classes the adwaita sheet used to provide --- */
 .title-1 { font-weight: 800; font-size: 170%; }

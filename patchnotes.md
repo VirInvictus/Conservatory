@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.3.7
+
+**Fix: an accent flash across the whole window when pressing a bare modifier (e.g. switching workspaces on a tiling compositor).** The keyboard-focus ring was defined on the universal `*` selector, so when GTK entered keyboard-focus-visible mode (which a bare modifier press like Fn+Win / Ctrl+Super triggers), it outlined every widget in the focus chain at once, flashing the accent across the window before it faded. The focus ring is now scoped to the discrete interactive controls (buttons, entries, switches, sliders); list rows already show their position through the selection highlight, so keyboard navigation stays clear. Purely visual; no behaviour changes.
+
 ## v0.3.6
 
 **Phase 9d: scrobbler parity, now-playing and the submission rule.** Scrobbling grows up from "submit a track when it finishes" to what DeaDBeeF, foobar2000, and the rest actually do.

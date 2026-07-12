@@ -5,15 +5,15 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
-  <img src="https://img.shields.io/badge/GNOME-50%2B-4a86cf" alt="GNOME 50+">
-  <img src="https://img.shields.io/badge/status-v0.0.84%20%C2%B7%20daily%20driver-brightgreen" alt="Status: v0.0.84, daily driver">
+  <img src="https://img.shields.io/badge/GTK-4.14%2B-4a86cf" alt="GTK 4.14+">
+  <img src="https://img.shields.io/badge/status-v0.3.4%20%C2%B7%20daily%20driver-brightgreen" alt="Status: v0.3.4, daily driver">
 </p>
 
 ---
 
 # Conservatory
 
-**Calibre for audio.** A native GNOME app that owns and organizes your music, podcasts, and audiobooks on disk, browses them like foobar2000, and plays them from one queue.
+**Calibre for audio.** A native GTK4 desktop app that owns and organizes your music, podcasts, and audiobooks on disk, browses them like foobar2000, and plays them from one queue.
 
 The database is the source of truth: Conservatory files your audio into a tidy tree, the way Calibre files your books, and plays it back through a libmpv engine good enough to replace deadbeef as your daily player. A music track, a podcast episode, and an audiobook chapter can sit next to each other in the same queue. That mixed queue is the whole point.
 
@@ -140,13 +140,13 @@ Six crates, on the discipline that every non-GUI surface stays CLI-testable. Mus
 - `conservatory-podcasts`: the absorbed Belfry podcast subsystem.
 - `conservatory-audiobooks`: the audiobook subsystem.
 - `conservatory-cli`: the headless binary.
-- `conservatory`: the GTK4 binary (plain GTK4, no libadwaita; spec §2.4).
+- `conservatory`: the GTK4 binary, on plain GTK4 with its own flat Kanagawa Dragon stylesheet (spec §2.4).
 
-**Stack:** Rust 2024, GTK 4.14+ (plain GTK4, libadwaita retired at Phase 26), SQLite via `rusqlite` (bundled, FTS5, single-writer worker + read pool + WAL), `tokio`. libmpv via `libmpv2`, with the audio chain riding ffmpeg's `volume` / `equalizer` / `acompressor` / `alimiter` / `dynaudnorm` / `silenceremove` filters and `scaletempo2` for variable speed. `lofty` for tag read and write, `image` for cover decode and accent extraction, `reqwest` + `feed-rs` + `quick-xml` + `ammonia` for podcasts, `oo7` for libsecret credentials, `zbus` for MPRIS2. The spectrum visualizer taps Conservatory's own output node through `pipewire` (not the whole device, so other apps do not move the bars) and runs its own FFT with `realfft`. Meson wraps Cargo for Flatpak packaging. Memory budget: under 200 MB idle, under 300 MB active on a 50k-track library (spec §13).
+**Stack:** Rust 2024, GTK 4.14+ (plain GTK4, with an owned flat Kanagawa Dragon stylesheet in place of a theming toolkit), SQLite via `rusqlite` (bundled, FTS5, single-writer worker + read pool + WAL), `tokio`. libmpv via `libmpv2`, with the audio chain riding ffmpeg's `volume` / `equalizer` / `acompressor` / `alimiter` / `dynaudnorm` / `silenceremove` filters and `scaletempo2` for variable speed. `lofty` for tag read and write, `image` for cover decode and accent extraction, `reqwest` + `feed-rs` + `quick-xml` + `ammonia` for podcasts, `oo7` for libsecret credentials, `zbus` for MPRIS2. The spectrum visualizer taps Conservatory's own output node through `pipewire` (not the whole device, so other apps do not move the bars) and runs its own FFT with `realfft`. Meson wraps Cargo for Flatpak packaging. Memory budget: under 200 MB idle, under 300 MB active on a 50k-track library (spec §13).
 
 ## Project status
 
-**v0.0.90. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
+**v0.3.4. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
 
 Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [patchnotes](patchnotes.md) the per-release notes):
 
@@ -161,8 +161,13 @@ Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [
 - **12:** the visual identity (Kanagawa Dragon theme, album art across the browse, an enriched now-bar, the spectrum visualizer).
 - **13:** the sleekness pass (a layout fix, empty states, toasts, an internal tidy, bundled typography, and deadbeef-cui browser parity).
 - **14:** a `--debug` diagnostic mode (SQL, IO, network, and memory to stderr on filterable channels). See [`docs/debugging.md`](docs/debugging.md).
+- **17:** player table-stakes (shuffle, repeat, context-aware ReplayGain, queue-vs-playlist clarity).
+- **18** (the `0.2.0` milestone): accent-insensitive search and configurable browse columns.
+- **26** (the `0.3.0` milestone): the Hyprland-native redesign onto plain GTK4 with an owned flat Kanagawa Dragon stylesheet, no external theming toolkit; see [`docs/hyprland.md`](docs/hyprland.md).
+- **9** (in progress, optional, off by default): the ListenBrainz scrobble outbox and a Preferences Sync page; Last.fm and the "now playing" ping are the remaining pieces.
+- **19** (in progress): the waveform seek bar (a loudness-envelope scrubber in the transport bar).
 
-Not built yet: **Phase 9**, optional ListenBrainz / Last.fm scrobbling, off by default. The roadmap has the full picture.
+Not built yet: the rest of **Phase 19** (drag-and-drop import, a full-screen Now Playing surface), Last.fm scrobbling, and the 1.0 endgame (real-library verification and Flatpak packaging). The roadmap has the full picture.
 
 ## Documentation
 

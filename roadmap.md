@@ -703,6 +703,12 @@ Split headless-first (the CLI-testable rule): **9a** lands the outbox, the Liste
 
 - [ ] Last.fm as the optional second target: session auth + `api_sig` signing, behind the same config / prefs / outbox (the `service` column already routes per-listen).
 
+Settled before starting (decisions, not yet code):
+
+- **Prerequisite (Brandon):** a Last.fm API account must be registered; the app key + secret live in local `config.toml` `[scrobble]` (decided config-backed, deliberately not baked into the binary), and the per-user session key lands in libsecret next to the ListenBrainz token.
+- `md-5` (RustCrypto) is approved as a direct dependency for the `api_sig` MD5 signing.
+- Cadence: 9c is its own patch release / commit after 9b.
+
 *Usable artifact:* Last.fm works as an alternative to ListenBrainz. **Tags `0.4.0`** once Phase 19 also lands.
 
 ---

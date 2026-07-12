@@ -25,12 +25,13 @@ use conservatory_core::{
     DuplicateReport, Field, GenreVocab, ImportOptions, ImportReport, LibraryStats, M3uTrack,
     PathTemplate, PlayableItem, PlaybackConfig, SleepMode, StripPlan, TagWrite, TrackDraft,
     TrackEdit, TrackFields, VerifyVerdict, any_path_affecting, build_af_chain, build_album_edit,
-    build_m3u, build_track_edit, commit_strip, compute_accent, compute_stats, ffmpeg_available,
-    find_collisions, find_cover_bytes, find_duplicates, flac_available, format_size,
-    genres_assignment, import_folder, locate_ape, parse_assignment, parse_m3u, plan_strip,
-    read_track, replace_in, replaygain_from_file, resolve_album, resolve_episode_profile,
-    resolve_music_profile, restore_bytes, resync_album_covers, rsgain_available, run_audit,
-    scan_album_files, sync_album_cover, verify_files, write_atomic_plain, write_track_tags,
+    build_m3u, build_track_edit, commit_strip, compute_accent, compute_stats, envelope_for,
+    ffmpeg_available, find_collisions, find_cover_bytes, find_duplicates, flac_available,
+    format_size, genres_assignment, import_folder, locate_ape, parse_assignment, parse_m3u,
+    plan_strip, read_track, replace_in, replaygain_from_file, resolve_album,
+    resolve_episode_profile, resolve_music_profile, restore_bytes, resync_album_covers,
+    rsgain_available, run_audit, scan_album_files, sync_album_cover, verify_files,
+    write_atomic_plain, write_track_tags,
 };
 use conservatory_search::{
     PerspectiveResolver, SearchItem, SqlValue, blend_relevance, collect_text_terms, parse,
@@ -269,6 +270,27 @@ enum Command {
         /// Re-verify even files whose cached size/mtime is unchanged.
         #[arg(long)]
         force: bool,
+    },
+
+    /// Compute the whole-track loudness envelope backing the GUI waveform seek
+    /// bar (Phase 19a): an offline ffmpeg decode reduced to `buckets` normalized
+    /// peaks, cached under `$XDG_CACHE_HOME/conservatory/waveforms/`. Prints an
+    /// ASCII sparkline per track (or the raw arrays with `--json`); the headless
+    /// exercise of the core envelope + cache.
+    Waveform {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Search expression selecting the tracks to render.
+        query: String,
+        /// Library root the relative track paths hang off.
+        #[arg(long)]
+        root: PathBuf,
+        /// Number of envelope buckets (the GUI default is 1500).
+        #[arg(long, default_value_t = 1500)]
+        buckets: usize,
+        /// Emit the full peak/rms arrays as JSON lines instead of a sparkline.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Four-tier duplicate report (Phase 8b): exact-duplicate albums, within-album
@@ -1262,6 +1284,13 @@ fn main() -> Result<()> {
             verbose,
             force,
         }) => block_on(run_verify(db, query, root, verbose, force)),
+        Some(Command::Waveform {
+            db,
+            query,
+            root,
+            buckets,
+            json,
+        }) => block_on(run_waveform(db, query, root, buckets, json)),
         Some(Command::Duplicates { db, tier, format }) => run_duplicates(db, tier, format),
         Some(Command::Audit {
             db,
@@ -3482,6 +3511,90 @@ fn file_size_mtime(path: &Path) -> Option<(i64, i64)> {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     Some((size, mtime))
+}
+
+/// Render an envelope's peaks as a fixed-width ASCII block sparkline, so the
+/// terminal shows the waveform's shape at a glance.
+fn sparkline(peak: &[f32], width: usize) -> String {
+    const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    if peak.is_empty() {
+        return String::new();
+    }
+    (0..width)
+        .map(|col| {
+            // Average the peaks falling in this column's span (downsample).
+            let lo = col * peak.len() / width;
+            let hi = ((col + 1) * peak.len() / width).max(lo + 1).min(peak.len());
+            let v = peak[lo..hi].iter().copied().sum::<f32>() / (hi - lo) as f32;
+            BLOCKS[((v * 7.0).round() as usize).min(7)]
+        })
+        .collect()
+}
+
+async fn run_waveform(
+    db: PathBuf,
+    query: String,
+    root: PathBuf,
+    buckets: usize,
+    json: bool,
+) -> Result<()> {
+    let pool = ReadPool::new(db.clone(), 3).context("opening read pool")?;
+    let ids = resolve_selector(&pool, &query)?;
+    if ids.is_empty() {
+        println!("no tracks match {query:?}");
+        return Ok(());
+    }
+    if !ffmpeg_available() {
+        anyhow::bail!("ffmpeg not found on PATH; install it to compute waveforms");
+    }
+
+    // Matched tracks by relative path, sorted by id for deterministic output.
+    let mut selected: Vec<(i64, String)> = {
+        let conn = pool.open().context("opening pool connection")?;
+        track_render_rows(&conn)
+            .context("reading render rows")?
+            .into_iter()
+            .filter(|r| ids.contains(&r.track_id))
+            .map(|r| (r.track_id, r.file_path))
+            .collect()
+    };
+    selected.sort_by_key(|(id, _)| *id);
+
+    for (track_id, rel) in &selected {
+        let abs = root.join(rel);
+        let env = match envelope_for(&abs, buckets) {
+            Ok(env) => env,
+            Err(e) => {
+                eprintln!("warning: {rel}: {e}");
+                continue;
+            }
+        };
+        if json {
+            let peak = env
+                .peak
+                .iter()
+                .map(|v| format!("{v:.4}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let rms = env
+                .rms
+                .iter()
+                .map(|v| format!("{v:.4}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            println!(
+                "{{\"track_id\":{track_id},\"path\":{rel:?},\"buckets\":{},\"peak\":[{peak}],\"rms\":[{rms}]}}",
+                env.buckets
+            );
+        } else {
+            println!(
+                "{track_id}\t{rel}\t{}\t{}",
+                env.buckets,
+                sparkline(&env.peak, 72)
+            );
+        }
+    }
+    Ok(())
 }
 
 async fn run_verify(

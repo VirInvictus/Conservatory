@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.3.3
+
+**Phase 19a-i: the waveform envelope, headless.** The first slice of the immersive tier lands the whole-track loudness envelope that will back the GUI waveform seek bar, computed and cached off the GTK thread.
+
+- A new core module decodes a track to a normalized peak-and-body envelope with an offline ffmpeg pass (the same external-tool approach as the integrity verifier and the ReplayGain scan; no new dependency). libmpv has no offline decode and the spectrum visualizer's PipeWire tap only sees audio as it plays, so a dedicated decode is the right tool for an envelope you need before playback reaches it.
+- The result is cached under `~/.cache/conservatory/waveforms/`, keyed by file path, modification time, bucket count, and format version, so a track is decoded once and re-read instantly until it changes.
+- A new `waveform` CLI verb exercises the whole path headless: an ASCII sparkline per track by default, or the raw peak/RMS arrays with `--json`.
+- The GTK widget that draws this (replacing the Now-bar seek slider, accent-tinted, click-and-drag to seek) follows next in 19a-ii.
+
 ## v0.3.2
 
 **Phase 9b: scrobbling goes live in the app.** The outbox that 9a built headless now fills from real playback and drains from the running GUI, still off by default and local-first.

@@ -14,7 +14,7 @@ A `0.x.0` / `x.0.0` is a **capability milestone**: a cluster of phases deliverin
 | `0.1.x` | Power-user interaction, UX completeness, player table-stakes | 16, 16.5, 17 | ✅ (through v0.1.26) |
 | **`0.2.0`** | **Grammar & columns** | 18 | ✅ tagged |
 | **`0.3.0`** | **Hyprland-native design (de-adwaita)** | 26 (+ the Phase 25 audits as its verification tail) | ✅ tagged |
-| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (9a v0.3.1, 9b v0.3.2 shipped) |
+| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (9a v0.3.1, 9b v0.3.2, 19a-i v0.3.3 shipped) |
 | **`1.0.0`** | **Verified & packaged** (the endgame) | 20 | planned |
 | `1.1.0` | Metadata intelligence | 21 | committed, beyond 1.0 |
 | `1.2.0` | Curation depth | 22 | committed, beyond 1.0 |
@@ -1139,11 +1139,30 @@ Sub-phase ledger (updated 2026-07-10; each ships one commit, green under `cargo 
 
 ### Phase 19 — Immersive polish
 
-The experience tier: the seek bar and Now Playing become immersive, and import gains a pointer path.
+The experience tier: the seek bar and Now Playing become immersive, and import gains a pointer path. Sub-phased like Phase 9, headless-first where the CLI-testable rule applies.
 
-- [ ] A waveform seek bar (the seek bar as the track's loudness envelope), reusing the Phase 12d PipeWire tap / the offline decode; the accent-tinted scrubber precedent.
+#### Phase 19a — Waveform seek bar
+
+The seek bar becomes the track's loudness envelope, accent-tinted, with a played/unplayed split and click-drag seek. Split headless/GUI: **19a-i** computes + caches the envelope headless; **19a-ii** is the widget that draws it.
+
+##### Phase 19a-i — Envelope compute + cache (headless, CLI) ✅ (v0.3.3)
+
+- [x] `conservatory-core/src/waveform.rs`: an offline `ffmpeg` PCM decode reduced to a fixed bucket count of normalized peak + RMS values (the pure `bucketize` is unit-tested). ffmpeg is the right tool because libmpv has no offline decode and the Phase 12d PipeWire tap is a *live* monitor that only sees audio as it plays; the external-tool idiom matches `verify.rs` / `replaygain.rs`, so no new Rust dependency.
+- [x] Cache under `$XDG_CACHE_HOME/conservatory/waveforms/`, keyed by absolute path + mtime + bucket count + a format version (the `verify.rs` staleness model), in a hand-rolled compact binary so core stays glib-free and serde-free. A cache write failure is non-fatal (the envelope is still returned).
+- [x] CLI `waveform <db> <selector> --root [--buckets N] [--json]`: an ASCII sparkline per track by default, the raw peak/RMS arrays with `--json`. The headless exercise of the whole path.
+- [x] Tests: 8 unit (bucketize normalize / silence / empty / short / zero-buckets clamp, encode-decode round-trip, bad-input rejection, cache-key variance, XDG dir) + 3 integration (decode a committed fixture to a bounded envelope, a synthesized 440 Hz tone normalizes to 1.0, cache round-trip under a temp `XDG_CACHE_HOME`; ffmpeg-absent is a skip, the rsgain precedent).
+
+*Usable artifact:* `conservatory-cli waveform <db> '<expr>' --root <root>` prints each matched track's loudness envelope and caches it for the GUI.
+
+##### Phase 19a-ii — GTK waveform seek widget (planned)
+
+- [ ] A `GtkDrawingArea` + Cairo widget (the Phase 12d spectrum draw precedent) that replaces the Now-bar seek `Scale`: draws the cached envelope, accent-tinted, with a played/unplayed fill split at the play position; click + drag to seek (the same two-path no-loop guard the `Scale` uses). Reusable at a larger size in the NP drawer and 19c full-screen. The envelope loads off the GTK thread on track change, falling back to a flat bar until it lands.
+
+#### Phase 19b — Drag-drop file import + full-screen Now Playing + credits (planned)
+
 - [ ] Full-screen Now Playing (the Hermitage Codex moment at full bleed), drag-drop file import (drop audio onto the window to import through the existing pipeline), and richer navigable-credits metadata from local sources.
-- *Usable artifact:* a waveform scrubber and drag-drop import. Ships alongside Phase 9 under `0.4.0`.
+
+*Usable artifact:* a waveform scrubber and drag-drop import. Ships alongside Phase 9 under `0.4.0`.
 
 ### Phase 9 — Listening history sync (scrobbling)
 

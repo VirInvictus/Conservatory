@@ -34,6 +34,7 @@ pub mod shelf_genre;
 pub mod stats;
 pub mod tags;
 pub mod verify;
+pub mod waveform;
 
 pub use accent::{compute_accent, find_cover_bytes};
 pub use ape::{
@@ -83,6 +84,7 @@ pub use stats::{
 };
 pub use tags::{EmbeddedCover, TagWrite, TrackDraft, read_track, write_track_tags};
 pub use verify::{VerifyVerdict, ffmpeg_available, flac_available, verify_file, verify_files};
+pub use waveform::{WaveformEnvelope, bucketize, compute_envelope, envelope_for};
 
 /// Workspace version, surfaced for the CLI and GUI binaries.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

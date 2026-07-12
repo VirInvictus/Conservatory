@@ -44,6 +44,9 @@ pub enum Error {
     #[error("verify: {0}")]
     Verify(String),
 
+    #[error("waveform: {0}")]
+    Waveform(String),
+
     #[error("dbus: {0}")]
     Dbus(#[from] zbus::Error),
 

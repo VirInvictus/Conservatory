@@ -27,6 +27,7 @@ pub mod host;
 pub mod item;
 pub mod mode;
 pub mod profile;
+pub mod scrobble_progress;
 pub mod session;
 pub mod shuffle;
 pub mod sleep;
@@ -47,6 +48,7 @@ pub use profile::{
     MusicProfile, PlaybackConfig, ReplayGain, quick_seek_target, resolve_book_profile,
     resolve_episode_profile, resolve_music_profile, resolve_skip_amounts,
 };
+pub use scrobble_progress::ScrobbleProgress;
 pub use session::{SessionAccumulator, SessionOwner};
 pub use shuffle::{apply_permutation, shuffle_order};
 pub use sleep::{SleepClock, SleepMode, SleepStatus};

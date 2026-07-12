@@ -14,7 +14,7 @@ A `0.x.0` / `x.0.0` is a **capability milestone**: a cluster of phases deliverin
 | `0.1.x` | Power-user interaction, UX completeness, player table-stakes | 16, 16.5, 17 | ✅ (through v0.1.26) |
 | **`0.2.0`** | **Grammar & columns** | 18 | ✅ tagged |
 | **`0.3.0`** | **Hyprland-native design (de-adwaita)** | 26 (+ the Phase 25 audits as its verification tail) | ✅ tagged |
-| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (Phase 9 complete: 9a v0.3.1, 9b v0.3.2, 9c v0.3.5; 19a v0.3.3–0.3.4 shipped) |
+| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (Phase 9 complete: 9a v0.3.1, 9b v0.3.2, 9c v0.3.5, 9d v0.3.6; 19a v0.3.3–0.3.4 shipped) |
 | **`1.0.0`** | **Verified & packaged** (the endgame) | 20 | planned |
 | `1.1.0` | Metadata intelligence | 21 | committed, beyond 1.0 |
 | `1.2.0` | Curation depth | 22 | committed, beyond 1.0 |
@@ -708,6 +708,17 @@ Split headless-first (the CLI-testable rule): **9a** lands the outbox, the Liste
 
 *Usable artifact:* Last.fm works as an alternative to ListenBrainz. **Tags `0.4.0`** once Phase 19 also lands.
 
+### Phase 9d — Scrobbler parity: now-playing + submission rules ✅ (v0.3.6)
+
+Phases 9a–9c shipped a working, off-by-default outbox for both services, but on the Phase 9b model a scrobble only fired on a natural end-of-file, and there was no now-playing update. This closes the gap to what the reference scrobblers (DeaDBeeF's `lastfm.c`, foobar2000's `foo_scrobble`) actually do.
+
+- [x] **The submission rule.** A new pure `player::scrobble_progress::ScrobbleProgress` (sibling to `session.rs`) tracks a play's start time, duration, and playtime, and encodes the AudioScrobbler rule: a track over 30 seconds scrobbles once playtime reaches half its length or four minutes, whichever comes first; a natural completion qualifies on its own (subject to the 30s floor). The engine begins accounting on load, ticks playtime while playing (pause/seek-immune), and finalizes on every way a play ends (EOF, skip, stop, queue replace, quit), replacing the EOF-only enqueue. The local `play_count` bump stays end-of-file-only (a "play" is a finished track; a "listen" is this rule).
+- [x] **Start-time timestamp.** The listen is stamped with when the play began, not when it ended, threaded through `enqueue_scrobble_for`.
+- [x] **Now playing.** `update_now_playing` on both clients (Last.fm `track.updateNowPlaying`, ListenBrainz `playing_now`), fired best-effort from the GUI on track change (like MPRIS), ephemeral and never queued. Audiobooks excluded.
+- [x] Tests: the eligibility rule and completion qualifier (pure unit tests), the start-time threading (a deterministic worker test), the 30s floor enforced end-to-end and the off-state (engine integration), a real-time `#[ignore]`d full-length-play test, and the now-playing bodies/params + client pings against wiremock.
+
+*Usable artifact:* scrobbling behaves like a first-class scrobbler: a now-playing indicator on the service, partial plays past the threshold counted, short tracks and near-start skips not. Part of the `0.4.0` tier.
+
 ---
 
 ## Phase 10 — Configuration & preferences
@@ -1173,7 +1184,7 @@ The seek bar becomes the track's loudness envelope, accent-tinted, with a played
 
 ### Phase 9 — Listening history sync (scrobbling)
 
-Already specified above (see "Phase 9 — Listening history sync"), now sub-phased 9a/9b/9c; it is the one remaining pre-1.0 *feature*, optional and off by default (ListenBrainz + optional Last.fm, a one-way local-first outbox). **9a shipped v0.3.1** (the outbox, the ListenBrainz client, the config, the CLI, all headless); **9b shipped v0.3.2** (the engine completion hook enqueues real plays, the GUI spawns the submitter, and a Preferences "Sync" page enables + validates ListenBrainz); **9c shipped v0.3.5** (Last.fm as the optional second target: the web-auth session flow, `api_sig` signing, `track.scrobble`, the Preferences Last.fm group, and the CLI `connect` verb). Phase 9 is complete. **Slotted into `0.4.0`** so the immersive tier and the optional history sync ship together. **Tags `0.4.0`** once Phase 19 also lands.
+Already specified above (see "Phase 9 — Listening history sync"), now sub-phased 9a/9b/9c/9d; it is the one remaining pre-1.0 *feature*, optional and off by default (ListenBrainz + optional Last.fm, a one-way local-first outbox). **9a shipped v0.3.1** (the outbox, the ListenBrainz client, the config, the CLI, all headless); **9b shipped v0.3.2** (the engine completion hook enqueues real plays, the GUI spawns the submitter, and a Preferences "Sync" page enables + validates ListenBrainz); **9c shipped v0.3.5** (Last.fm as the optional second target: the web-auth session flow, `api_sig` signing, `track.scrobble`, the Preferences Last.fm group, and the CLI `connect` verb); **9d shipped v0.3.6** (scrobbler parity: the now-playing ping on both services and the real submission rule of 30s-floor + half-or-four-minutes, stamped with the play's start time, replacing the EOF-only enqueue). Phase 9 is complete. **Slotted into `0.4.0`** so the immersive tier and the optional history sync ship together. **Tags `0.4.0`** once Phase 19 also lands.
 
 ## Milestone 1.0.0 — Verified & packaged
 

@@ -1029,6 +1029,69 @@ impl ConservatoryWindow {
         *imp.scrobble_submitter.borrow_mut() = Some(join.abort_handle());
     }
 
+    /// Fire a best-effort "now playing" ping (Phase 9d) when a music track or
+    /// podcast episode starts, if scrobbling is on. Ephemeral, like MPRIS: it
+    /// never touches the outbox and any failure is silent. Audiobooks are never
+    /// scrobbled, so they are skipped. The listen metadata is resolved from the
+    /// same source the eventual scrobble uses (`scrobble_source`), so the ping and
+    /// the completed listen describe the track identically.
+    fn push_now_playing(&self, kind: Option<MediaKind>, id: i64) {
+        if matches!(kind, Some(MediaKind::Audiobook)) {
+            return;
+        }
+        let config = conservatory_core::config::load_default().unwrap_or_default();
+        if !config.scrobble.enabled {
+            return;
+        }
+        let service = ScrobbleService::parse(&config.scrobble.service);
+        let imp = self.imp();
+        let (Some(rt), Some(pool)) = (imp.runtime.get(), imp.pool.get()) else {
+            return;
+        };
+        // Resolve the play's metadata now (a quick pool read); a track with no
+        // artist resolves to None and pings nothing.
+        let Some(src) = pool.open().ok().and_then(|conn| {
+            conservatory_core::db::scrobble_source(&conn, kind.unwrap_or(MediaKind::Track), id)
+                .ok()
+                .flatten()
+        }) else {
+            return;
+        };
+        let listen = conservatory_core::scrobble::Listen {
+            listened_at: 0, // ignored by a now-playing update
+            artist: src.artist,
+            track: src.track,
+            album: src.album,
+            track_number: src.track_number,
+            duration_secs: src.duration_secs,
+            recording_mbid: src.recording_mbid,
+        };
+        let lastfm_key = config.scrobble.lastfm_api_key.clone();
+        let lastfm_secret = config.scrobble.lastfm_api_secret.clone();
+        rt.spawn(async move {
+            let Ok(store) = conservatory_core::CredentialStore::secret_service().await else {
+                return;
+            };
+            let token = match store.get(service.token_ref()).await {
+                Ok(Some(t)) => t,
+                _ => return,
+            };
+            match service {
+                ScrobbleService::ListenBrainz => {
+                    let client = conservatory_core::scrobble::ListenBrainzClient::new(token);
+                    let _ = client.update_now_playing(&listen).await;
+                }
+                ScrobbleService::Lastfm => {
+                    let (Some(key), Some(secret)) = (lastfm_key, lastfm_secret) else {
+                        return;
+                    };
+                    let client = conservatory_core::scrobble::LastfmClient::new(key, secret, token);
+                    let _ = client.update_now_playing(&listen).await;
+                }
+            }
+        });
+    }
+
     /// Push the persisted EQ state into the engine at startup (Phase 5.5b-ii).
     fn apply_persisted_eq(&self) {
         let imp = self.imp();
@@ -4651,6 +4714,11 @@ impl ConservatoryWindow {
                 }
                 // Keep the Now Playing drawer in step with the new item.
                 self.refresh_now_playing(snap.kind, Some(id));
+                // Now-playing ping (Phase 9d): tell the history service what is
+                // playing when a new item actually starts (not a paused resume).
+                if !snap.paused {
+                    self.push_now_playing(snap.kind, id);
+                }
                 // Quick-seek buttons (16.5f): spoken word only, amounts from
                 // the playing episode's show overrides.
                 self.refresh_quick_seek();

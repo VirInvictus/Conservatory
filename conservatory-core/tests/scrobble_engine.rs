@@ -94,7 +94,14 @@ fn play_to_end(player: &conservatory_core::PlayerHandle, items: Vec<PlayableItem
 }
 
 #[test]
-fn scrobble_enabled_enqueues_completed_tracks() {
+fn scrobble_enforces_the_thirty_second_floor_end_to_end() {
+    // Phase 9d: the four fixtures are 0.3s tones, well under the 30-second floor
+    // the reference scrobblers (DeaDBeeF, foo_scrobble) apply. Playing them all
+    // to completion with scrobbling on must enqueue *nothing*: a fully-played
+    // sub-30s track is not a "listen". This also proves the finalize path runs on
+    // every completion (it runs and correctly rejects), replacing Phase 9b's
+    // enqueue-on-any-EOF behaviour. The eligible case is covered by the pure
+    // `ScrobbleProgress` unit tests and the `#[ignore]`d real-time test below.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -109,22 +116,158 @@ fn scrobble_enabled_enqueues_completed_tracks() {
     player.set_scrobble(Some(ScrobbleService::ListenBrainz));
     play_to_end(&player, items);
 
-    // Every completed track queued exactly one listen, bound for the configured
-    // service, with the descriptive metadata snapshotted.
     let conn = pool.open().unwrap();
     assert_eq!(
         count_pending_scrobbles(&conn).unwrap(),
-        4,
-        "each of the four completed tracks should enqueue a listen"
+        0,
+        "sub-30s tracks must not scrobble, even played in full"
     );
-    let rows = pending_scrobbles(&conn, i64::MAX, 50).unwrap();
-    assert_eq!(rows.len(), 4);
-    for row in &rows {
-        assert_eq!(row.service, "listenbrainz");
-        assert_eq!(row.kind, "track");
-        assert!(!row.artist.is_empty(), "artist snapshotted");
-        assert!(!row.track.is_empty(), "title snapshotted");
+
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
+/// Real-time end-to-end proof that an eligible play scrobbles through the engine,
+/// stamped with the play's start time. Ignored by default: it generates a 35s
+/// tone with ffmpeg and plays it in full, so it takes ~35s (mpv's null output
+/// paces at real time). Run with `cargo test -- --ignored scrobble_submits`.
+#[test]
+#[ignore = "real-time: plays a 35s track end to end"]
+fn scrobble_submits_a_full_length_play() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let libdir = tempdir().unwrap();
+    let srcdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+
+    // A 35s tone with real artist/title tags (scrobble_source needs an artist).
+    let track = srcdir.path().join("long.flac");
+    let status = std::process::Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=220:duration=35",
+        ])
+        .args([
+            "-metadata",
+            "artist=Test Artist",
+            "-metadata",
+            "title=Long Tone",
+        ])
+        .arg(&track)
+        .status()
+        .expect("ffmpeg to generate the fixture");
+    assert!(status.success(), "ffmpeg fixture generation failed");
+
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+    let pool = ReadPool::new(db.clone(), 3).unwrap();
+    runtime.block_on(async {
+        let opts = ImportOptions {
+            library_root: libdir.path().to_path_buf(),
+            mode: MoveMode::Copy,
+        };
+        import_folder(&worker, &pool, srcdir.path(), &opts)
+            .await
+            .unwrap();
+    });
+    let cfg = PlaybackConfig::default();
+    let items: Vec<PlayableItem> = {
+        let conn = pool.open().unwrap();
+        search_rows(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|row| {
+                let t = get_track(&conn, row.track_id).unwrap().unwrap();
+                PlayableItem {
+                    track_id: t.id,
+                    source: libdir.path().join(&t.file_path),
+                    profile: resolve_music_profile(&t, &cfg),
+                    album_id: t.album_id,
+                    kind: MediaKind::Track,
+                    streaming: false,
+                    chapters: [].into(),
+                    segments: [].into(),
+                }
+            })
+            .collect()
+    };
+
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.set_scrobble(Some(ScrobbleService::ListenBrainz));
+    player.play_queue(items, 0);
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while !player.snapshot().ended {
+        assert!(Instant::now() < deadline, "35s track did not finish");
+        std::thread::sleep(Duration::from_millis(200));
     }
+    player.shutdown();
+
+    let conn = pool.open().unwrap();
+    let rows = pending_scrobbles(&conn, i64::MAX, 50).unwrap();
+    assert_eq!(rows.len(), 1, "the full-length play should scrobble once");
+    let row = &rows[0];
+    assert_eq!(row.artist, "Test Artist");
+    assert_eq!(row.track, "Long Tone");
+    // The listen is stamped with the play's *start* time, not its completion.
+    assert!(
+        row.listened_at >= before && row.listened_at <= before + 5,
+        "listened_at ({}) should be the start time (~{before})",
+        row.listened_at
+    );
+
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
+#[test]
+fn enqueue_scrobble_for_stamps_the_start_time_and_metadata() {
+    // Phase 9d threads the play's *start* timestamp through to the outbox (the
+    // protocol keys a listen by when it began). This exercises the worker path
+    // deterministically, no playback: a fixed `started_at` must land verbatim as
+    // the row's `listened_at`, with the track metadata snapshotted.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let libdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let (worker, pool, items) = import_fixtures(&runtime, &db, libdir.path());
+
+    let started_at = 1_650_000_000_i64;
+    runtime
+        .block_on(worker.enqueue_scrobble_for(
+            MediaKind::Track,
+            items[0].track_id,
+            "lastfm".to_string(),
+            started_at,
+        ))
+        .unwrap();
+
+    let conn = pool.open().unwrap();
+    let rows = pending_scrobbles(&conn, i64::MAX, 50).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].listened_at, started_at,
+        "start time stamped verbatim"
+    );
+    assert_eq!(rows[0].service, "lastfm");
+    assert_eq!(rows[0].kind, "track");
+    assert!(!rows[0].artist.is_empty(), "artist snapshotted");
+    assert!(!rows[0].track.is_empty(), "title snapshotted");
 
     runtime.block_on(worker.shutdown_ack()).ok();
 }

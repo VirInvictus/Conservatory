@@ -27,6 +27,7 @@ use crate::player::handle::{PlayerCommand, PlayerHandle, PlayerSnapshot};
 use crate::player::host::{HostEvent, MpvHost};
 use crate::player::item::PlayableItem;
 use crate::player::mode::Repeat;
+use crate::player::scrobble_progress::ScrobbleProgress;
 use crate::player::session::{SessionAccumulator, SessionOwner};
 use crate::player::shuffle::{apply_permutation, shuffle_order};
 use crate::player::sleep::{SleepClock, SleepMode};
@@ -111,6 +112,12 @@ struct Engine {
     session: Option<SessionAccumulator>,
     /// When the session was last sampled, for the per-tick wall-clock delta.
     session_tick: Instant,
+    /// The current scrobbleable play's submission-rule accounting (Phase 9d):
+    /// `Some` while a music track or podcast episode is the active item (never a
+    /// book). Ticked with playtime each loop turn and finalized (a listen queued
+    /// if `eligible()` and scrobbling is on) whenever the item leaves the slot.
+    /// Independent of `session`, which is spoken-word-only.
+    scrobble_progress: Option<ScrobbleProgress>,
     /// The armed sleep timer (Phase 6c-iii-d), or `None` when unset. Ticked each
     /// loop turn; the boundary modes are enforced at the EOF / advance points.
     sleep: Option<SleepClock>,
@@ -173,6 +180,7 @@ impl Engine {
             audio_device: None,
             session: None,
             session_tick: Instant::now(),
+            scrobble_progress: None,
             sleep: None,
             sleep_tick: Instant::now(),
             book_segment: 0,
@@ -234,7 +242,7 @@ impl Engine {
     /// time never inflates the saved figure. `time-pos` may be unknown right after
     /// a load; we skip the sample then (Phase 6c-ii).
     fn sample_session(&mut self) {
-        if self.session.is_none() {
+        if self.session.is_none() && self.scrobble_progress.is_none() {
             return;
         }
         let dt = self.session_tick.elapsed().as_secs_f64();
@@ -248,6 +256,16 @@ impl Engine {
             } else {
                 acc.tick(dt, pos);
             }
+        }
+        // Scrobble playtime (Phase 9d): accrue only while playing; learn the
+        // duration once the host decodes it (0 right after load). Read the
+        // duration before the mutable borrow to keep the field borrows disjoint.
+        let duration = self.host.duration().unwrap_or(0.0);
+        if let Some(prog) = self.scrobble_progress.as_mut() {
+            if !idle {
+                prog.tick(dt);
+            }
+            prog.observe_duration(duration);
         }
     }
 
@@ -280,8 +298,11 @@ impl Engine {
                 start,
                 paused,
             } => {
-                // Replacing the queue ends the current episode's session.
+                // Replacing the queue ends the current episode's session and
+                // finalizes the leaving item's scrobble (Phase 9d) before the old
+                // queue is gone.
                 self.close_session();
+                self.finalize_scrobble();
                 self.queue = items;
                 if self.queue.is_empty() {
                     self.current = None;
@@ -516,8 +537,17 @@ impl Engine {
                 self.set_paused(true);
                 self.flush(StateEvent::Quit, true);
                 self.close_session();
+                // A stop ends the current play: submit it if it earned a scrobble
+                // (Phase 9d). The playtime so far decides, not reaching the end.
+                self.finalize_scrobble();
             }
-            PlayerCommand::Shutdown => return true,
+            PlayerCommand::Shutdown => {
+                // A clean shutdown ends the current play: finalize its scrobble
+                // before the loop exits (Phase 9d), so quitting mid-track does not
+                // silently drop a listen that met the threshold.
+                self.finalize_scrobble();
+                return true;
+            }
         }
         self.refresh_snapshot();
         false
@@ -544,10 +574,18 @@ impl Engine {
                         MediaKind::Episode => self.block_complete_episode(id),
                         MediaKind::Audiobook => self.block_complete_book(id),
                     }
-                    // Scrobble the completed play (Phase 9b): music tracks and
-                    // podcast episodes only, and only when scrobbling is on. A
-                    // book is not a "listen"; the helper skips it.
-                    self.block_enqueue_scrobble(kind, id);
+                    // The scrobble is not enqueued here (Phase 9d): a natural EOF
+                    // is one of several ways a play ends, so `finalize_scrobble`
+                    // fires from the advance paths below (and skip / stop / queue
+                    // replace), gated on the submission rule rather than on
+                    // reaching EOF. The play-count bump above stays EOF-only.
+                    //
+                    // But a natural EOF *is* a full listen, so mark the progress
+                    // complete: the advance's finalize then scrobbles it on
+                    // completion (subject to the 30s floor), not on wall-clock.
+                    if let Some(prog) = self.scrobble_progress.as_mut() {
+                        prog.mark_complete();
+                    }
                 }
                 // Append the listening session at the natural boundary, before
                 // advancing (Phase 6c-ii). `advance_after_end`'s `load_current`
@@ -667,6 +705,9 @@ impl Engine {
     /// used to make every album transition audibly gap). The counterpart of
     /// [`Self::advance_after_end`] for the prefetched case.
     fn advance_into_prefetched(&mut self) {
+        // The outgoing track completed (a gapless EOF hand-off): finalize its
+        // scrobble before the bookkeeping moves on (Phase 9d).
+        self.finalize_scrobble();
         self.prefetched = false;
         let next = self.current.map_or(0, |i| i + 1);
         if next >= self.queue.len() {
@@ -690,6 +731,11 @@ impl Engine {
         // session to open; the ended item's was closed by the caller.
         self.session = None;
         self.session_tick = Instant::now();
+        // Start scrobble accounting for the track that just took over gaplessly
+        // (Phase 9d). Only tracks prefetch, so this is always a Track.
+        if let Some((kind, id)) = self.queue.get(next).map(|i| (i.kind, i.track_id)) {
+            self.begin_scrobble(kind, id);
+        }
         self.paused = false;
         self.flush(StateEvent::Seek, false);
         self.maybe_prefetch_next();
@@ -705,6 +751,10 @@ impl Engine {
             self.load_current();
             self.flush(StateEvent::Seek, false);
         } else {
+            // The last item ended and nothing reloads here (a real stop, unless a
+            // Repeat::All wrap follows): finalize its scrobble now (Phase 9d). A
+            // wrap's load_current would find the progress already taken.
+            self.finalize_scrobble();
             // Repeat::All wraps back to the top instead of stopping (Phase 17a). A
             // sleep timer set to "end of queue" is an explicit stop that wins, so
             // the wrap is suppressed when it is armed (the timer then fires below).
@@ -836,6 +886,10 @@ impl Engine {
         // (Phase 6c-ii). Idempotent, so a boundary that already closed (EOF) is a
         // no-op here.
         self.close_session();
+        // Finalize the leaving item's scrobble before the reload replaces it
+        // (Phase 9d): this is the common choke point for a skip, an EOF advance,
+        // a repeat-one restart, and an explicit load. Idempotent.
+        self.finalize_scrobble();
         // The replace-mode loadfile below clears mpv's internal playlist, so any
         // prefetched entry is gone with it; re-derived at the end of this load.
         self.prefetched = false;
@@ -890,6 +944,9 @@ impl Engine {
             MediaKind::Track => None,
         };
         self.session_tick = Instant::now();
+        // Start scrobble accounting for the new item (Phase 9d): a track or an
+        // episode, keyed by the play's start time. A book clears it.
+        self.begin_scrobble(kind, episode_id);
         // With the new item playing, line up the gapless hand-off for its end.
         self.maybe_prefetch_next();
     }
@@ -1144,22 +1201,49 @@ impl Engine {
         });
     }
 
-    /// Enqueue a scrobble for a completed track / episode when scrobbling is on
-    /// (Phase 9b). The listen metadata is resolved atomically off the writer
-    /// connection (`enqueue_scrobble_for`); a book, or the scrobbling-off state,
-    /// is a no-op. Shares the natural-EOF timestamp with the play-count bump.
-    fn block_enqueue_scrobble(&self, kind: MediaKind, id: i64) {
-        let Some(service) = self.scrobble else {
+    /// Start scrobble-progress accounting for a freshly-loaded item (Phase 9d).
+    /// Only music tracks and podcast episodes are scrobbled (a book is not a
+    /// "listen"), so a book clears any progress. Progress runs regardless of
+    /// whether scrobbling is currently on; `finalize_scrobble` makes the on/off
+    /// decision at the end, so toggling mid-track behaves predictably. The
+    /// duration is 0 here if the host has not decoded it yet; `sample_session`
+    /// learns it on the next tick.
+    fn begin_scrobble(&mut self, kind: MediaKind, id: i64) {
+        self.scrobble_progress = match kind {
+            MediaKind::Track | MediaKind::Episode => Some(ScrobbleProgress::new(
+                kind,
+                id,
+                now_secs(),
+                self.host.duration().unwrap_or(0.0),
+            )),
+            MediaKind::Audiobook => None,
+        };
+    }
+
+    /// Finalize the current play's scrobble (Phase 9d): if scrobbling is on and
+    /// the play met the submission rule (`ScrobbleProgress::eligible`), enqueue
+    /// the listen stamped with the play's *start* time (the protocol keys a
+    /// scrobble by when it began, not when it ended). The listen metadata is
+    /// resolved atomically off the writer connection (`enqueue_scrobble_for`).
+    /// Idempotent: it takes the progress, so a second call (a transition that
+    /// funnels through more than one exit point) is a no-op. Called at every
+    /// point the current item leaves the slot: a reload, a gapless hand-off, the
+    /// end of the queue, a stop, a queue replace, and shutdown.
+    fn finalize_scrobble(&mut self) {
+        let Some(prog) = self.scrobble_progress.take() else {
             return;
         };
-        if kind == MediaKind::Audiobook {
+        let Some(service) = self.scrobble else {
+            return; // scrobbling off: the play is over, just discard it.
+        };
+        if !prog.eligible() {
             return;
         }
         let worker = self.worker.clone();
         let svc = service.as_str().to_string();
-        let when = now_secs();
+        let (kind, id, started_at) = (prog.kind, prog.id, prog.started_at);
         self.rt.block_on(async move {
-            let _ = worker.enqueue_scrobble_for(kind, id, svc, when).await;
+            let _ = worker.enqueue_scrobble_for(kind, id, svc, started_at).await;
         });
     }
 

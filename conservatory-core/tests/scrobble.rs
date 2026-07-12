@@ -395,3 +395,41 @@ async fn lastfm_connect_flow_exchanges_token_for_session() {
     assert_eq!(session_key, "sess-xyz");
     assert_eq!(name, "brandon");
 }
+
+#[tokio::test]
+async fn now_playing_pings_both_services() {
+    let sample = Listen {
+        listened_at: 1000,
+        artist: "Aphex Twin".into(),
+        track: "Xtal".into(),
+        album: Some("Selected Ambient Works 85-92".into()),
+        track_number: None,
+        duration_secs: Some(300),
+        recording_mbid: None,
+    };
+
+    // ListenBrainz: a signed POST to submit-listens with listen_type=playing_now.
+    let lb = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/1/submit-listens"))
+        .and(header("Authorization", "Token tok-1"))
+        .and(body_string_contains("playing_now"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"status":"ok"})))
+        .mount(&lb)
+        .await;
+    let lb_client = ListenBrainzClient::new("tok-1").with_base_url(lb.uri());
+    assert!(lb_client.update_now_playing(&sample).await.is_ok());
+
+    // Last.fm: a signed POST with method=track.updateNowPlaying and no timestamp.
+    let lf = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("method=track.updateNowPlaying"))
+        .and(body_string_contains("api_sig="))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"nowplaying": {}})),
+        )
+        .mount(&lf)
+        .await;
+    let lf_client = LastfmClient::new("key", "secret", "sess").with_base_url(lf.uri());
+    assert!(lf_client.update_now_playing(&sample).await.is_ok());
+}

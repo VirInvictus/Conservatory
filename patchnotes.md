@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.3.6
+
+**Phase 9d: scrobbler parity, now-playing and the submission rule.** Scrobbling grows up from "submit a track when it finishes" to what DeaDBeeF, foobar2000, and the rest actually do.
+
+- **Now playing.** When a music track or podcast episode starts, Conservatory tells your history service what you are listening to (Last.fm `track.updateNowPlaying`, ListenBrainz `playing_now`). It is a live, best-effort ping: never queued, silent on failure, and sent only when scrobbling is on. Audiobooks are excluded, as they are from scrobbling generally.
+- **The real submission rule.** A play now scrobbles once it has earned it: a track longer than 30 seconds, played to at least half its length or four minutes (whichever comes first). This replaces the old "only a fully-played track scrobbles" behaviour, so a long track you skip near the end now counts, while a 15-second interlude played in full no longer does. A track that reaches its natural end still scrobbles on completion (subject to the 30-second floor).
+- **The listen is stamped with when the play began**, not when it ended, matching what both services expect and how they de-duplicate.
+- Under the hood the play's progress is tracked independently of the local play-count, which stays end-of-file-only: a "play" for your library is a finished track; a "listen" for a history service is the rule above. The scrobble is submitted on any way a play ends, a natural finish, a skip, a stop, a queue change, or quitting mid-track, so nothing that earned a listen is lost.
+
 ## v0.3.5
 
 **Phase 9c: Last.fm as the optional second scrobble target.** The scrobble subsystem, ListenBrainz-only since Phase 9b, now speaks Last.fm too, behind the same off-by-default config, outbox, and Preferences page.

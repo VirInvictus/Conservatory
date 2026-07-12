@@ -115,11 +115,9 @@ pub trait ListenSubmitter {
     async fn submit(&self, listen: &Listen) -> std::result::Result<(), SubmitError>;
 }
 
-/// Build the ListenBrainz `submit-listens` request body for one completed listen
-/// (`listen_type: "single"`). Pure and unit-tested; the client just POSTs it.
-///
-/// See <https://listenbrainz.readthedocs.io/en/latest/users/api/core.html>.
-pub fn listenbrainz_submit_body(listen: &Listen) -> Value {
+/// The shared `track_metadata` object both ListenBrainz bodies carry (a completed
+/// listen and a now-playing update differ only in `listen_type` / `listened_at`).
+fn listenbrainz_track_metadata(listen: &Listen) -> Value {
     let mut additional = json!({
         "media_player": "Conservatory",
         "submission_client": "Conservatory",
@@ -149,10 +147,31 @@ pub fn listenbrainz_submit_body(listen: &Listen) -> Value {
             .expect("track_metadata is an object")
             .insert("release_name".to_string(), json!(album));
     }
+    track_metadata
+}
 
+/// Build the ListenBrainz `submit-listens` request body for one completed listen
+/// (`listen_type: "single"`). Pure and unit-tested; the client just POSTs it.
+///
+/// See <https://listenbrainz.readthedocs.io/en/latest/users/api/core.html>.
+pub fn listenbrainz_submit_body(listen: &Listen) -> Value {
     json!({
         "listen_type": "single",
-        "payload": [ { "listened_at": listen.listened_at, "track_metadata": track_metadata } ],
+        "payload": [ {
+            "listened_at": listen.listened_at,
+            "track_metadata": listenbrainz_track_metadata(listen),
+        } ],
+    })
+}
+
+/// Build the ListenBrainz `playing_now` body (Phase 9d): the ephemeral "currently
+/// listening" update, sent on track start. It carries no `listened_at` (the
+/// protocol forbids one for `playing_now`); otherwise the track metadata is the
+/// same as a completed listen.
+pub fn listenbrainz_playing_now_body(listen: &Listen) -> Value {
+    json!({
+        "listen_type": "playing_now",
+        "payload": [ { "track_metadata": listenbrainz_track_metadata(listen) } ],
     })
 }
 
@@ -210,6 +229,26 @@ impl ListenBrainzClient {
         } else {
             Ok(None)
         }
+    }
+
+    /// Send an ephemeral "now playing" update (Phase 9d), on track start. Best
+    /// effort: it bypasses the outbox (a live ping, not a completed listen) and
+    /// its outcome is advisory, so the caller ignores the result.
+    pub async fn update_now_playing(
+        &self,
+        listen: &Listen,
+    ) -> std::result::Result<(), SubmitError> {
+        let url = format!("{}/1/submit-listens", self.base_url);
+        let body = listenbrainz_playing_now_body(listen);
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Token {}", self.token))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| SubmitError::Transient(e.to_string()))?;
+        classify_status(resp.status().as_u16())
     }
 }
 
@@ -271,24 +310,21 @@ pub fn lastfm_sign(params: &[(&str, &str)], secret: &str) -> String {
         .collect()
 }
 
-/// Build the (unsigned, `format`-free) `track.scrobble` form parameters for one
-/// completed listen. The client signs this list and appends `api_sig` +
-/// `format=json` before sending; kept secret-free so it is pure and unit-tested.
-/// A single listen uses the unindexed param form (`artist`, not `artist[0]`),
-/// which Last.fm accepts for a one-track scrobble (the outbox is one row = one
-/// listen).
-pub fn lastfm_scrobble_params(
+/// The track params common to `track.scrobble` and `track.updateNowPlaying`:
+/// the method, credentials, and the descriptive fields. The unindexed form
+/// (`artist`, not `artist[0]`) is what Last.fm expects for a single track.
+fn lastfm_track_params(
     listen: &Listen,
     api_key: &str,
     session_key: &str,
+    method: &str,
 ) -> Vec<(String, String)> {
     let mut params = vec![
-        ("method".to_string(), "track.scrobble".to_string()),
+        ("method".to_string(), method.to_string()),
         ("api_key".to_string(), api_key.to_string()),
         ("sk".to_string(), session_key.to_string()),
         ("artist".to_string(), listen.artist.clone()),
         ("track".to_string(), listen.track.clone()),
-        ("timestamp".to_string(), listen.listened_at.to_string()),
     ];
     if let Some(album) = &listen.album {
         params.push(("album".to_string(), album.clone()));
@@ -303,6 +339,32 @@ pub fn lastfm_scrobble_params(
         params.push(("mbid".to_string(), mbid.clone()));
     }
     params
+}
+
+/// Build the (unsigned, `format`-free) `track.scrobble` form parameters for one
+/// completed listen. The client signs this list and appends `api_sig` +
+/// `format=json` before sending; kept secret-free so it is pure and unit-tested.
+pub fn lastfm_scrobble_params(
+    listen: &Listen,
+    api_key: &str,
+    session_key: &str,
+) -> Vec<(String, String)> {
+    let mut params = lastfm_track_params(listen, api_key, session_key, "track.scrobble");
+    // The scrobble carries the play's start time; a now-playing update does not.
+    // Order is irrelevant: the signer sorts before hashing.
+    params.push(("timestamp".to_string(), listen.listened_at.to_string()));
+    params
+}
+
+/// Build the (unsigned, `format`-free) `track.updateNowPlaying` parameters
+/// (Phase 9d): the ephemeral "now playing" ping, sent on track start. Same shape
+/// as a scrobble minus the timestamp.
+pub fn lastfm_now_playing_params(
+    listen: &Listen,
+    api_key: &str,
+    session_key: &str,
+) -> Vec<(String, String)> {
+    lastfm_track_params(listen, api_key, session_key, "track.updateNowPlaying")
 }
 
 /// Map a Last.fm API error code to the submit outcome. 11 (service offline), 16
@@ -453,13 +515,14 @@ impl LastfmClient {
             .to_string();
         Ok((key.to_string(), name))
     }
-}
 
-impl ListenSubmitter for LastfmClient {
-    async fn submit(&self, listen: &Listen) -> std::result::Result<(), SubmitError> {
-        let mut params = lastfm_scrobble_params(listen, &self.api_key, &self.session_key);
-        // Sign the params as they stand, then append the signature and format
-        // (both excluded from the signature).
+    /// Sign a param list, append `api_sig` + `format` (both excluded from the
+    /// signature), POST it as a form, and map the reply's error body (if any) to a
+    /// [`SubmitError`]. Shared by the scrobble submit and the now-playing update.
+    async fn post_signed(
+        &self,
+        mut params: Vec<(String, String)>,
+    ) -> std::result::Result<(), SubmitError> {
         let sig = {
             let refs: Vec<(&str, &str)> = params
                 .iter()
@@ -477,6 +540,23 @@ impl ListenSubmitter for LastfmClient {
             .await
             .map_err(|e| SubmitError::Transient(e.to_string()))?;
         Self::read_json(resp).await.map(|_| ())
+    }
+
+    /// Send a `track.updateNowPlaying` ping (Phase 9d), on track start. Best
+    /// effort: ephemeral (never queued), and the caller ignores the outcome.
+    pub async fn update_now_playing(
+        &self,
+        listen: &Listen,
+    ) -> std::result::Result<(), SubmitError> {
+        let params = lastfm_now_playing_params(listen, &self.api_key, &self.session_key);
+        self.post_signed(params).await
+    }
+}
+
+impl ListenSubmitter for LastfmClient {
+    async fn submit(&self, listen: &Listen) -> std::result::Result<(), SubmitError> {
+        let params = lastfm_scrobble_params(listen, &self.api_key, &self.session_key);
+        self.post_signed(params).await
     }
 }
 
@@ -784,6 +864,32 @@ mod tests {
         // `format` and `api_sig` are added by the client after signing, not here.
         assert!(get("format").is_none());
         assert!(get("api_sig").is_none());
+    }
+
+    #[test]
+    fn listenbrainz_playing_now_body_has_no_timestamp() {
+        let body = listenbrainz_playing_now_body(&sample());
+        assert_eq!(body["listen_type"], "playing_now");
+        let payload = &body["payload"][0];
+        // A now-playing update must not carry listened_at.
+        assert!(payload.get("listened_at").is_none());
+        assert_eq!(payload["track_metadata"]["artist_name"], "Boards of Canada");
+    }
+
+    #[test]
+    fn lastfm_now_playing_params_use_updatenowplaying_without_timestamp() {
+        let params = lastfm_now_playing_params(&sample(), "APIKEY", "SESSION");
+        let get = |k: &str| {
+            params
+                .iter()
+                .find(|(name, _)| name == k)
+                .map(|(_, v)| v.as_str())
+        };
+        assert_eq!(get("method"), Some("track.updateNowPlaying"));
+        assert_eq!(get("artist"), Some("Boards of Canada"));
+        assert_eq!(get("album"), Some("Music Has the Right to Children"));
+        // No timestamp on a now-playing ping (unlike a scrobble).
+        assert!(get("timestamp").is_none());
     }
 
     #[test]

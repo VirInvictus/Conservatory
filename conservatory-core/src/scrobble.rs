@@ -21,6 +21,7 @@
 
 use std::time::Duration;
 
+use md5::{Digest, Md5};
 use serde_json::{Value, json};
 
 use crate::db::models::PendingScrobble;
@@ -237,6 +238,245 @@ pub fn classify_status(status: u16) -> std::result::Result<(), SubmitError> {
         429 => Err(SubmitError::Transient(format!("http {status}"))),
         500..=599 => Err(SubmitError::Transient(format!("http {status}"))),
         _ => Err(SubmitError::Permanent(format!("http {status}"))),
+    }
+}
+
+// --- Last.fm (Phase 9c) --------------------------------------------------
+
+/// The Last.fm API endpoint every method POSTs (scrobbles) or GETs (auth)
+/// against. Overridable for a wiremock test via [`LastfmClient::with_base_url`].
+pub const LASTFM_API_ROOT: &str = "https://ws.audioscrobbler.com/2.0";
+
+/// The user-facing authorization page. The desktop web-auth flow sends the user
+/// here (with the app key and a request token) to approve access.
+pub const LASTFM_AUTH_ROOT: &str = "https://www.last.fm/api/auth/";
+
+/// Sign a Last.fm request: MD5 of every `name` immediately followed by its
+/// `value`, ordered by name, with the shared secret appended, hex lowercase.
+/// `format` and `api_sig` are excluded from the signature by the API contract,
+/// so callers pass only the signed params here and add `format` afterward. Pure
+/// and unit-tested against a known vector.
+pub fn lastfm_sign(params: &[(&str, &str)], secret: &str) -> String {
+    let mut sorted = params.to_vec();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    let mut buf = String::new();
+    for (name, value) in sorted {
+        buf.push_str(name);
+        buf.push_str(value);
+    }
+    buf.push_str(secret);
+    Md5::digest(buf.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Build the (unsigned, `format`-free) `track.scrobble` form parameters for one
+/// completed listen. The client signs this list and appends `api_sig` +
+/// `format=json` before sending; kept secret-free so it is pure and unit-tested.
+/// A single listen uses the unindexed param form (`artist`, not `artist[0]`),
+/// which Last.fm accepts for a one-track scrobble (the outbox is one row = one
+/// listen).
+pub fn lastfm_scrobble_params(
+    listen: &Listen,
+    api_key: &str,
+    session_key: &str,
+) -> Vec<(String, String)> {
+    let mut params = vec![
+        ("method".to_string(), "track.scrobble".to_string()),
+        ("api_key".to_string(), api_key.to_string()),
+        ("sk".to_string(), session_key.to_string()),
+        ("artist".to_string(), listen.artist.clone()),
+        ("track".to_string(), listen.track.clone()),
+        ("timestamp".to_string(), listen.listened_at.to_string()),
+    ];
+    if let Some(album) = &listen.album {
+        params.push(("album".to_string(), album.clone()));
+    }
+    if let Some(n) = listen.track_number {
+        params.push(("trackNumber".to_string(), n.to_string()));
+    }
+    if let Some(d) = listen.duration_secs {
+        params.push(("duration".to_string(), d.to_string()));
+    }
+    if let Some(mbid) = &listen.recording_mbid {
+        params.push(("mbid".to_string(), mbid.clone()));
+    }
+    params
+}
+
+/// Map a Last.fm API error code to the submit outcome. 11 (service offline), 16
+/// (temporarily unavailable), and 29 (rate limit) are transient (retry);
+/// everything else (9 invalid session, bad params / method / api key, suspended)
+/// is permanent (park). Unlike ListenBrainz, Last.fm returns HTTP 200 with an
+/// error body, so this classifies the body, not the status.
+pub fn classify_lastfm_error(code: i64) -> SubmitError {
+    match code {
+        11 | 16 | 29 => SubmitError::Transient(format!("lastfm error {code}")),
+        _ => SubmitError::Permanent(format!("lastfm error {code}")),
+    }
+}
+
+/// A Last.fm client (Phase 9c). Holds the app key + shared secret (config-backed,
+/// spec §14 / roadmap: not baked into the binary) and the user session key
+/// (libsecret). For the connect flow, build one with an empty `session_key` and
+/// use [`get_token`](Self::get_token) / [`get_session`](Self::get_session).
+#[derive(Clone)]
+pub struct LastfmClient {
+    http: reqwest::Client,
+    base_url: String,
+    api_key: String,
+    secret: String,
+    session_key: String,
+}
+
+impl LastfmClient {
+    /// Build a client against the public Last.fm endpoint.
+    pub fn new(
+        api_key: impl Into<String>,
+        secret: impl Into<String>,
+        session_key: impl Into<String>,
+    ) -> Self {
+        Self {
+            http: default_http(),
+            base_url: LASTFM_API_ROOT.to_string(),
+            api_key: api_key.into(),
+            secret: secret.into(),
+            session_key: session_key.into(),
+        }
+    }
+
+    /// Point the client at a different endpoint (a wiremock server in tests).
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into().trim_end_matches('/').to_string();
+        self
+    }
+
+    /// Sign a signed-param set with the shared secret, returning `api_sig`.
+    fn sign(&self, signed: &[(&str, &str)]) -> String {
+        lastfm_sign(signed, &self.secret)
+    }
+
+    /// Parse a Last.fm JSON reply, mapping an `{error, ...}` body to a
+    /// [`SubmitError`] via [`classify_lastfm_error`].
+    async fn read_json(resp: reqwest::Response) -> std::result::Result<Value, SubmitError> {
+        let status = resp.status().as_u16();
+        if !(200..=299).contains(&status) {
+            // A transport-level non-2xx (rare for Last.fm) still classifies
+            // by HTTP status, sharing the ListenBrainz rule.
+            classify_status(status)?;
+        }
+        let body: Value = resp
+            .json()
+            .await
+            .map_err(|e| SubmitError::Transient(e.to_string()))?;
+        if let Some(code) = body.get("error").and_then(Value::as_i64) {
+            return Err(classify_lastfm_error(code));
+        }
+        Ok(body)
+    }
+
+    /// Step 1 of the desktop web-auth flow: fetch an unauthorized request token
+    /// (`auth.getToken`). The user then approves it at [`auth_url`](Self::auth_url).
+    pub async fn get_token(&self) -> std::result::Result<String, SubmitError> {
+        let signed = [
+            ("api_key", self.api_key.as_str()),
+            ("method", "auth.getToken"),
+        ];
+        let sig = self.sign(&signed);
+        let params = [
+            ("api_key", self.api_key.as_str()),
+            ("method", "auth.getToken"),
+            ("api_sig", sig.as_str()),
+            ("format", "json"),
+        ];
+        let resp = self
+            .http
+            .get(&self.base_url)
+            .query(&params)
+            .send()
+            .await
+            .map_err(|e| SubmitError::Transient(e.to_string()))?;
+        let body = Self::read_json(resp).await?;
+        body.get("token")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| SubmitError::Permanent("no token in getToken reply".to_string()))
+    }
+
+    /// The URL to send the user to so they authorize the request `token`.
+    pub fn auth_url(&self, token: &str) -> String {
+        format!(
+            "{LASTFM_AUTH_ROOT}?api_key={}&token={}",
+            self.api_key, token
+        )
+    }
+
+    /// Step 2: exchange an approved request `token` for a permanent session key
+    /// (`auth.getSession`), returning `(session_key, username)`.
+    pub async fn get_session(
+        &self,
+        token: &str,
+    ) -> std::result::Result<(String, String), SubmitError> {
+        let signed = [
+            ("api_key", self.api_key.as_str()),
+            ("method", "auth.getSession"),
+            ("token", token),
+        ];
+        let sig = self.sign(&signed);
+        let params = [
+            ("api_key", self.api_key.as_str()),
+            ("method", "auth.getSession"),
+            ("token", token),
+            ("api_sig", sig.as_str()),
+            ("format", "json"),
+        ];
+        let resp = self
+            .http
+            .get(&self.base_url)
+            .query(&params)
+            .send()
+            .await
+            .map_err(|e| SubmitError::Transient(e.to_string()))?;
+        let body = Self::read_json(resp).await?;
+        let session = body
+            .get("session")
+            .ok_or_else(|| SubmitError::Permanent("no session in getSession reply".to_string()))?;
+        let key = session
+            .get("key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| SubmitError::Permanent("no session key".to_string()))?;
+        let name = session
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        Ok((key.to_string(), name))
+    }
+}
+
+impl ListenSubmitter for LastfmClient {
+    async fn submit(&self, listen: &Listen) -> std::result::Result<(), SubmitError> {
+        let mut params = lastfm_scrobble_params(listen, &self.api_key, &self.session_key);
+        // Sign the params as they stand, then append the signature and format
+        // (both excluded from the signature).
+        let sig = {
+            let refs: Vec<(&str, &str)> = params
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            self.sign(&refs)
+        };
+        params.push(("api_sig".to_string(), sig));
+        params.push(("format".to_string(), "json".to_string()));
+        let resp = self
+            .http
+            .post(&self.base_url)
+            .form(&params)
+            .send()
+            .await
+            .map_err(|e| SubmitError::Transient(e.to_string()))?;
+        Self::read_json(resp).await.map(|_| ())
     }
 }
 
@@ -483,5 +723,84 @@ mod tests {
             classify_status(400),
             Err(SubmitError::Permanent("http 400".to_string()))
         );
+    }
+
+    #[test]
+    fn lastfm_signature_matches_known_vector() {
+        // MD5("api_key" "abc" "method" "auth.getToken" "secret"), the params
+        // sorted by name then the shared secret appended (verified with md5sum).
+        let sig = lastfm_sign(&[("api_key", "abc"), ("method", "auth.getToken")], "secret");
+        assert_eq!(sig, "f86444211049e605f18c05a5964aabfc");
+        // The signer sorts, so param order at the call site does not matter.
+        let reordered = lastfm_sign(&[("method", "auth.getToken"), ("api_key", "abc")], "secret");
+        assert_eq!(sig, reordered);
+    }
+
+    #[test]
+    fn lastfm_error_splits_transient_from_permanent() {
+        // Service down / temporarily unavailable / rate-limited: retry.
+        assert!(matches!(
+            classify_lastfm_error(11),
+            SubmitError::Transient(_)
+        ));
+        assert!(matches!(
+            classify_lastfm_error(16),
+            SubmitError::Transient(_)
+        ));
+        assert!(matches!(
+            classify_lastfm_error(29),
+            SubmitError::Transient(_)
+        ));
+        // Invalid session key (9) and anything else: park, do not retry.
+        assert!(matches!(
+            classify_lastfm_error(9),
+            SubmitError::Permanent(_)
+        ));
+        assert!(matches!(
+            classify_lastfm_error(4),
+            SubmitError::Permanent(_)
+        ));
+    }
+
+    #[test]
+    fn lastfm_scrobble_params_carry_required_and_present_optional() {
+        let params = lastfm_scrobble_params(&sample(), "APIKEY", "SESSION");
+        let get = |k: &str| {
+            params
+                .iter()
+                .find(|(name, _)| name == k)
+                .map(|(_, v)| v.as_str())
+        };
+        assert_eq!(get("method"), Some("track.scrobble"));
+        assert_eq!(get("api_key"), Some("APIKEY"));
+        assert_eq!(get("sk"), Some("SESSION"));
+        assert_eq!(get("artist"), Some("Boards of Canada"));
+        assert_eq!(get("track"), Some("Roygbiv"));
+        assert_eq!(get("timestamp"), Some("1700000000"));
+        assert_eq!(get("album"), Some("Music Has the Right to Children"));
+        assert_eq!(get("trackNumber"), Some("4"));
+        assert_eq!(get("duration"), Some("150"));
+        assert_eq!(get("mbid"), Some("abc-123"));
+        // `format` and `api_sig` are added by the client after signing, not here.
+        assert!(get("format").is_none());
+        assert!(get("api_sig").is_none());
+    }
+
+    #[test]
+    fn lastfm_scrobble_params_omit_absent_optional() {
+        let listen = Listen {
+            album: None,
+            track_number: None,
+            duration_secs: None,
+            recording_mbid: None,
+            ..sample()
+        };
+        let params = lastfm_scrobble_params(&listen, "k", "s");
+        for absent in ["album", "trackNumber", "duration", "mbid"] {
+            assert!(
+                !params.iter().any(|(name, _)| name == absent),
+                "expected {absent} to be omitted"
+            );
+        }
     }
 }

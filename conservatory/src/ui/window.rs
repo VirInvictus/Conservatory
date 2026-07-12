@@ -959,17 +959,20 @@ impl ConservatoryWindow {
         self.resume_saved_queue();
     }
 
-    /// (Re)sync scrobbling from `[scrobble]` (Phase 9b): tell the engine whether
+    /// (Re)sync scrobbling from `[scrobble]` (Phase 9b/9c): tell the engine whether
     /// to enqueue completed plays, and (re)start the background submitter. Called
     /// at startup and whenever Preferences → Sync changes. The outbox is
     /// local-first, so the engine enqueues whenever scrobbling is enabled even
     /// before a token is stored; the submitter only runs once a token/session is
-    /// present, and drains the backlog then. ListenBrainz is the only wired
-    /// target here; Last.fm arrives at Phase 9c.
+    /// present, and drains the backlog then. Both ListenBrainz and Last.fm are
+    /// wired; Last.fm additionally needs its app key + secret in `[scrobble]`.
     fn refresh_scrobbling(&self) {
         let imp = self.imp();
         let config = conservatory_core::config::load_default().unwrap_or_default();
         let service = ScrobbleService::parse(&config.scrobble.service);
+        // The Last.fm app credentials (config-backed); moved into the task below.
+        let lastfm_key = config.scrobble.lastfm_api_key.clone();
+        let lastfm_secret = config.scrobble.lastfm_api_secret.clone();
 
         // Gate the engine's enqueue on the enabled flag.
         if let Some(player) = imp.player.get() {
@@ -1010,7 +1013,16 @@ impl ConservatoryWindow {
                     let _ = conservatory_core::scrobble::run(worker, pool, service, client).await;
                 }
                 ScrobbleService::Lastfm => {
-                    tracing::info!("scrobble: Last.fm submitter arrives at Phase 9c");
+                    // `token` is the stored session key; Last.fm also needs the
+                    // config app credentials. Missing either leaves it idle.
+                    let (Some(key), Some(secret)) = (lastfm_key, lastfm_secret) else {
+                        tracing::info!(
+                            "scrobble: no Last.fm app key/secret in [scrobble]; submitter idle"
+                        );
+                        return;
+                    };
+                    let client = conservatory_core::scrobble::LastfmClient::new(key, secret, token);
+                    let _ = conservatory_core::scrobble::run(worker, pool, service, client).await;
                 }
             }
         });
@@ -1753,6 +1765,215 @@ impl ConservatoryWindow {
                         }
                         Ok(Err(e)) => status.set_text(&format!("Could not clear: {e}")),
                         Err(_) => status.set_text("Clear task failed."),
+                    }
+                });
+            });
+        }
+
+        // The Last.fm group (Phase 9c). The app key + secret are config-backed
+        // (spec §14 / roadmap: not baked into the binary), so they live in
+        // config.toml; the per-user session key comes from the web-auth flow and
+        // is stored in libsecret. Connect fetches a request token and opens the
+        // browser to approve; Finish exchanges the approved token for a session.
+        let lf_group = rows::group(
+            Some("Last.fm"),
+            Some(
+                "Add your Last.fm API key and shared secret to the [scrobble] section of \
+                 config.toml, then Connect. Connect opens last.fm in your browser to approve \
+                 access; return here and click Finish to store your session.",
+            ),
+        );
+
+        let lf_status = gtk::Label::new(None);
+        lf_status.add_css_class("caption");
+        lf_status.add_css_class("dim-label");
+        lf_status.set_halign(gtk::Align::Start);
+        lf_status.set_wrap(true);
+        lf_status.set_margin_start(4);
+
+        let lf_btns = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        lf_btns.set_margin_top(4);
+        let connect = gtk::Button::with_label("Connect Last.fm");
+        let finish = gtk::Button::with_label("Finish");
+        let disconnect = gtk::Button::with_label("Disconnect");
+        finish.set_sensitive(false); // enabled after a successful Connect
+        lf_btns.append(&connect);
+        lf_btns.append(&finish);
+        lf_btns.append(&disconnect);
+        lf_group.add(&lf_btns);
+        lf_group.add(&lf_status);
+        content.append(lf_group.widget());
+
+        // Without the app credentials in config.toml, guide the user and keep
+        // Connect disabled (there is nothing to sign a request with).
+        let has_lf_creds = {
+            let c = config.borrow();
+            c.scrobble.lastfm_api_key.is_some() && c.scrobble.lastfm_api_secret.is_some()
+        };
+        if !has_lf_creds {
+            lf_status.set_text(
+                "Add lastfm_api_key and lastfm_api_secret to [scrobble] in config.toml to enable Last.fm.",
+            );
+            connect.set_sensitive(false);
+        }
+
+        // The request token, shared between Connect (fetch) and Finish (exchange).
+        let pending = Rc::new(RefCell::new(None::<String>));
+
+        {
+            let weak = self.downgrade();
+            let config = config.clone();
+            let status = lf_status.clone();
+            let finish = finish.clone();
+            let pending = pending.clone();
+            connect.connect_clicked(move |btn| {
+                let Some(win) = weak.upgrade() else { return };
+                let Some(rt) = win.imp().runtime.get() else {
+                    return;
+                };
+                let (Some(key), Some(secret)) = ({
+                    let c = config.borrow();
+                    (
+                        c.scrobble.lastfm_api_key.clone(),
+                        c.scrobble.lastfm_api_secret.clone(),
+                    )
+                }) else {
+                    status.set_text("Missing Last.fm app credentials in config.toml.");
+                    return;
+                };
+                btn.set_sensitive(false);
+                status.set_text("Requesting a token…");
+                let handle = rt.spawn(async move {
+                    let client =
+                        conservatory_core::scrobble::LastfmClient::new(key, secret, String::new());
+                    let token = client.get_token().await.map_err(|e| e.to_string())?;
+                    Ok::<(String, String), String>((token.clone(), client.auth_url(&token)))
+                });
+                let status = status.clone();
+                let finish = finish.clone();
+                let pending = pending.clone();
+                let btn = btn.clone();
+                let win = win.clone();
+                glib::spawn_future_local(async move {
+                    match handle.await {
+                        Ok(Ok((token, url))) => {
+                            *pending.borrow_mut() = Some(token);
+                            // Open the approval page in the user's browser.
+                            gtk::UriLauncher::new(&url).launch(
+                                Some(&win),
+                                gio::Cancellable::NONE,
+                                |_| {},
+                            );
+                            status.set_text("Approve access in your browser, then click Finish.");
+                            finish.set_sensitive(true);
+                            btn.set_sensitive(true);
+                        }
+                        Ok(Err(e)) => {
+                            status.set_text(&format!("Could not start Last.fm connect: {e}"));
+                            btn.set_sensitive(true);
+                        }
+                        Err(_) => {
+                            status.set_text("Connect task failed.");
+                            btn.set_sensitive(true);
+                        }
+                    }
+                });
+            });
+        }
+        {
+            let weak = self.downgrade();
+            let config = config.clone();
+            let status = lf_status.clone();
+            let pending = pending.clone();
+            finish.connect_clicked(move |btn| {
+                let Some(win) = weak.upgrade() else { return };
+                let Some(rt) = win.imp().runtime.get() else {
+                    return;
+                };
+                let Some(token) = pending.borrow().clone() else {
+                    status.set_text("Click Connect first.");
+                    return;
+                };
+                let (Some(key), Some(secret)) = ({
+                    let c = config.borrow();
+                    (
+                        c.scrobble.lastfm_api_key.clone(),
+                        c.scrobble.lastfm_api_secret.clone(),
+                    )
+                }) else {
+                    status.set_text("Missing Last.fm app credentials in config.toml.");
+                    return;
+                };
+                btn.set_sensitive(false);
+                status.set_text("Finishing…");
+                let handle = rt.spawn(async move {
+                    let client =
+                        conservatory_core::scrobble::LastfmClient::new(key, secret, String::new());
+                    let (session_key, name) = client
+                        .get_session(&token)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let store = conservatory_core::CredentialStore::secret_service()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    store
+                        .set(ScrobbleService::Lastfm.token_ref(), &session_key)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    Ok::<String, String>(name)
+                });
+                let status = status.clone();
+                let btn = btn.clone();
+                let pending = pending.clone();
+                glib::spawn_future_local(async move {
+                    match handle.await {
+                        Ok(Ok(name)) => {
+                            *pending.borrow_mut() = None;
+                            let who = if name.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" as {name}")
+                            };
+                            status.set_text(&format!(
+                                "Connected{who}. Enable scrobbling above and pick Last.fm."
+                            ));
+                            btn.set_sensitive(false);
+                        }
+                        Ok(Err(e)) => {
+                            status.set_text(&format!("Could not finish: {e}"));
+                            btn.set_sensitive(true);
+                        }
+                        Err(_) => {
+                            status.set_text("Finish task failed.");
+                            btn.set_sensitive(true);
+                        }
+                    }
+                });
+            });
+        }
+        {
+            let weak = self.downgrade();
+            let status = lf_status.clone();
+            disconnect.connect_clicked(move |_| {
+                let Some(win) = weak.upgrade() else { return };
+                let Some(rt) = win.imp().runtime.get() else {
+                    return;
+                };
+                let handle = rt.spawn(async move {
+                    let store = conservatory_core::CredentialStore::secret_service()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    store
+                        .delete(ScrobbleService::Lastfm.token_ref())
+                        .await
+                        .map_err(|e| e.to_string())
+                });
+                let status = status.clone();
+                glib::spawn_future_local(async move {
+                    match handle.await {
+                        Ok(Ok(())) => status.set_text("Disconnected."),
+                        Ok(Err(e)) => status.set_text(&format!("Could not disconnect: {e}")),
+                        Err(_) => status.set_text("Disconnect task failed."),
                     }
                 });
             });

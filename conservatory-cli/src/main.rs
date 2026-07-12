@@ -1153,6 +1153,14 @@ enum ScrobbleAction {
     },
     /// Validate the stored token against the service.
     Test,
+    /// Connect a Last.fm account (the desktop web-auth flow). Run once with no
+    /// argument to get a request token and the approval URL; approve it in a
+    /// browser, then run again with `--token <token>` to store the session key.
+    Connect {
+        /// The approved request token from the first step. Omit to start the flow.
+        #[arg(long)]
+        token: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -5020,11 +5028,30 @@ fn config_cmd(action: ConfigAction) -> Result<()> {
 /// ListenBrainz client. Token storage is libsecret (async), so the whole verb
 /// runs on the async runtime.
 async fn run_scrobble(action: ScrobbleAction) -> Result<()> {
-    use conservatory_core::scrobble::{ListenBrainzClient, ScrobbleService, drain_ready};
+    use conservatory_core::scrobble::{
+        LastfmClient, ListenBrainzClient, ScrobbleService, drain_ready,
+    };
 
     // The configured service, resolved forgivingly (unknown -> ListenBrainz).
     let config = conservatory_core::config::load_default().context("loading config")?;
     let configured = ScrobbleService::parse(&config.scrobble.service);
+
+    // Build the Last.fm client from the config app credentials + a session key;
+    // errors with a helpful hint if either app credential is missing (they are
+    // config-backed by design, not baked into the binary).
+    let lastfm_client = |session_key: String| -> Result<LastfmClient> {
+        let key = config.scrobble.lastfm_api_key.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "no lastfm_api_key in [scrobble]; add your Last.fm API key to config.toml"
+            )
+        })?;
+        let secret = config.scrobble.lastfm_api_secret.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "no lastfm_api_secret in [scrobble]; add your Last.fm shared secret to config.toml"
+            )
+        })?;
+        Ok(LastfmClient::new(key, secret, session_key))
+    };
 
     // Resolve a service string override into a ScrobbleService, else the config's.
     let resolve_service =
@@ -5065,39 +5092,95 @@ async fn run_scrobble(action: ScrobbleAction) -> Result<()> {
             }
         }
         ScrobbleAction::Flush { db } => {
-            if configured != ScrobbleService::ListenBrainz {
-                anyhow::bail!(
-                    "{} scrobbling arrives at Phase 9c; only ListenBrainz is wired",
-                    configured.as_str()
-                );
-            }
             let token = scrobble_token(configured).await?;
-            let client = ListenBrainzClient::new(token);
             let worker = spawn_worker(db.clone()).context("spawning worker")?;
             let pool = ReadPool::new(db, 3).context("opening read pool")?;
             let now = chrono::Utc::now().timestamp();
-            let report = drain_ready(&worker, &pool, configured, &client, now, 50)
-                .await
-                .context("draining outbox")?;
+            // Each service has its own client type; both implement ListenSubmitter,
+            // so the drain is identical past construction.
+            let report = match configured {
+                ScrobbleService::ListenBrainz => {
+                    let client = ListenBrainzClient::new(token);
+                    drain_ready(&worker, &pool, configured, &client, now, 50).await
+                }
+                ScrobbleService::Lastfm => {
+                    let client = lastfm_client(token)?;
+                    drain_ready(&worker, &pool, configured, &client, now, 50).await
+                }
+            }
+            .context("draining outbox")?;
             worker.shutdown_ack().await.context("shutdown ack")?;
             println!(
                 "submitted\t{}\nretried\t{}\nparked\t{}",
                 report.submitted, report.retried, report.parked
             );
         }
-        ScrobbleAction::Test => {
-            if configured != ScrobbleService::ListenBrainz {
+        ScrobbleAction::Test => match configured {
+            ScrobbleService::ListenBrainz => {
+                let token = scrobble_token(configured).await?;
+                let client = ListenBrainzClient::new(token);
+                match client.validate_token().await {
+                    Ok(Some(user)) => println!("valid\t{user}"),
+                    Ok(None) => println!("invalid"),
+                    Err(e) => anyhow::bail!("validation request failed: {e}"),
+                }
+            }
+            // Last.fm has no cheap "validate session" endpoint (a scrobble is the
+            // real proof), so `test` reports whether the app credentials and a
+            // stored session are both present.
+            ScrobbleService::Lastfm => {
+                let store = conservatory_core::CredentialStore::secret_service()
+                    .await
+                    .context("connecting to the secret service")?;
+                let session = store
+                    .get(configured.token_ref())
+                    .await
+                    .context("reading session key")?;
+                let has_creds = config.scrobble.lastfm_api_key.is_some()
+                    && config.scrobble.lastfm_api_secret.is_some();
+                if !has_creds {
+                    println!("not ready\tmissing lastfm_api_key/lastfm_api_secret in [scrobble]");
+                } else if session.is_none() {
+                    println!("not ready\tno session key; run `scrobble connect`");
+                } else {
+                    println!("ready\tapp credentials and session key present");
+                }
+            }
+        },
+        ScrobbleAction::Connect { token } => {
+            if configured != ScrobbleService::Lastfm {
                 anyhow::bail!(
-                    "{} scrobbling arrives at Phase 9c; only ListenBrainz is wired",
-                    configured.as_str()
+                    "connect is the Last.fm web-auth flow; set [scrobble] service = \"lastfm\" first"
                 );
             }
-            let token = scrobble_token(configured).await?;
-            let client = ListenBrainzClient::new(token);
-            match client.validate_token().await {
-                Ok(Some(user)) => println!("valid\t{user}"),
-                Ok(None) => println!("invalid"),
-                Err(e) => anyhow::bail!("validation request failed: {e}"),
+            let client = lastfm_client(String::new())?;
+            match token {
+                // Step 1: fetch a request token and print the approval URL.
+                None => {
+                    let req = client
+                        .get_token()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("getToken failed: {e}"))?;
+                    println!("Open this URL in your browser and approve access:");
+                    println!("  {}", client.auth_url(&req));
+                    println!();
+                    println!("Then finish with:  scrobble connect --token {req}");
+                }
+                // Step 2: exchange the approved token for a session key.
+                Some(req) => {
+                    let (session_key, name) = client
+                        .get_session(&req)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("getSession failed: {e}"))?;
+                    let store = conservatory_core::CredentialStore::secret_service()
+                        .await
+                        .context("connecting to the secret service")?;
+                    store
+                        .set(ScrobbleService::Lastfm.token_ref(), &session_key)
+                        .await
+                        .context("storing session key")?;
+                    println!("connected\t{name}");
+                }
             }
         }
     }
@@ -5113,11 +5196,14 @@ async fn scrobble_token(service: conservatory_core::ScrobbleService) -> Result<S
         .get(service.token_ref())
         .await
         .context("reading token")?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
+        .ok_or_else(|| match service {
+            conservatory_core::ScrobbleService::Lastfm => {
+                anyhow::anyhow!("no Last.fm session stored; run `scrobble connect`")
+            }
+            _ => anyhow::anyhow!(
                 "no {} token stored; run `scrobble token set <token>`",
                 service.as_str()
-            )
+            ),
         })
 }
 

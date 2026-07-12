@@ -144,6 +144,15 @@ pub struct ScrobbleConfig {
     /// `"listenbrainz"` (default) | `"lastfm"`. Parsed forgivingly by
     /// `ScrobbleService::parse`; an unknown value degrades to ListenBrainz.
     pub service: String,
+    /// Phase 9c: the Last.fm application key + shared secret. Deliberately
+    /// config-backed (not baked into the binary), so each user registers their
+    /// own API account. Absent (the default) means Last.fm cannot be used until
+    /// the user fills these in; the per-user session key still lives in
+    /// libsecret, never here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lastfm_api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lastfm_api_secret: Option<String>,
 }
 
 impl Default for ScrobbleConfig {
@@ -152,6 +161,8 @@ impl Default for ScrobbleConfig {
         Self {
             enabled: false,
             service: "listenbrainz".to_string(),
+            lastfm_api_key: None,
+            lastfm_api_secret: None,
         }
     }
 }
@@ -317,13 +328,22 @@ mod tests {
             [scrobble]
             enabled = true
             service = "lastfm"
+            lastfm_api_key = "deadbeef"
+            lastfm_api_secret = "cafef00d"
         "#;
         let config: Config = toml::from_str(text).unwrap();
         assert!(config.scrobble.enabled);
         assert_eq!(config.scrobble.service, "lastfm");
+        assert_eq!(config.scrobble.lastfm_api_key.as_deref(), Some("deadbeef"));
+        assert_eq!(
+            config.scrobble.lastfm_api_secret.as_deref(),
+            Some("cafef00d")
+        );
         // And a full round-trip is lossless.
         let back: Config = toml::from_str(&to_toml_string(&config).unwrap()).unwrap();
         assert_eq!(config, back);
+        // Absent Last.fm creds (the default) stay absent, not serialized as empty.
+        assert!(Config::default().scrobble.lastfm_api_key.is_none());
     }
 
     #[test]

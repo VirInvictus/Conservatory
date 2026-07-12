@@ -47,6 +47,9 @@ oo7 = { workspace = true }
 # feature (added on top of the workspace set) sends it and reads the reply.
 reqwest = { workspace = true, features = ["json"] }
 serde_json = { workspace = true }
+# Phase 9c: the Last.fm `api_sig` MD5 signing (RustCrypto). Last.fm authenticates
+# every request with an MD5 over the sorted params + the shared secret.
+md-5 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

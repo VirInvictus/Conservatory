@@ -14,7 +14,7 @@ A `0.x.0` / `x.0.0` is a **capability milestone**: a cluster of phases deliverin
 | `0.1.x` | Power-user interaction, UX completeness, player table-stakes | 16, 16.5, 17 | ✅ (through v0.1.26) |
 | **`0.2.0`** | **Grammar & columns** | 18 | ✅ tagged |
 | **`0.3.0`** | **Hyprland-native design (de-adwaita)** | 26 (+ the Phase 25 audits as its verification tail) | ✅ tagged |
-| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (9a v0.3.1, 9b v0.3.2, 19a v0.3.3–0.3.4 shipped) |
+| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (Phase 9 complete: 9a v0.3.1, 9b v0.3.2, 9c v0.3.5; 19a v0.3.3–0.3.4 shipped) |
 | **`1.0.0`** | **Verified & packaged** (the endgame) | 20 | planned |
 | `1.1.0` | Metadata intelligence | 21 | committed, beyond 1.0 |
 | `1.2.0` | Curation depth | 22 | committed, beyond 1.0 |
@@ -699,15 +699,12 @@ Split headless-first (the CLI-testable rule): **9a** lands the outbox, the Liste
 
 *Usable artifact:* real completed plays scrobble to ListenBrainz from the running app, off by default.
 
-### Phase 9c — Last.fm (planned)
+### Phase 9c — Last.fm ✅ (v0.3.5)
 
-- [ ] Last.fm as the optional second target: session auth + `api_sig` signing, behind the same config / prefs / outbox (the `service` column already routes per-listen).
-
-Settled before starting (decisions, not yet code):
-
-- **Prerequisite (Brandon):** a Last.fm API account must be registered; the app key + secret live in local `config.toml` `[scrobble]` (decided config-backed, deliberately not baked into the binary), and the per-user session key lands in libsecret next to the ListenBrainz token.
-- `md-5` (RustCrypto) is approved as a direct dependency for the `api_sig` MD5 signing.
-- Cadence: 9c is its own patch release / commit after 9b.
+- [x] Last.fm as the optional second target: the desktop web-auth session flow (`auth.getToken` → browser approval → `auth.getSession`) plus `api_sig` request signing, behind the same config / prefs / outbox (the `service` column already routes per-listen). `track.scrobble` submission with a body-level error classifier (11 / 16 / 29 transient, 9 and the rest permanent), since Last.fm signals failure in the reply body, not the HTTP status.
+- [x] The app key + secret are config-backed in `[scrobble]` (`lastfm_api_key` / `lastfm_api_secret`), deliberately not baked into the binary; the per-user session key lands in libsecret next to the ListenBrainz token. `md-5` (RustCrypto) added for the MD5 signing.
+- [x] Preferences → Sync grows a Last.fm group (Connect → browser approval, Finish → session, Disconnect), and the CLI `scrobble` verb gains `connect` (the two-step flow) with `flush` / `test` now working for Last.fm too.
+- [x] Tests: the signing known-vector, the error classification, the `track.scrobble` params, and the client's submit + connect flow against a wiremock server.
 
 *Usable artifact:* Last.fm works as an alternative to ListenBrainz. **Tags `0.4.0`** once Phase 19 also lands.
 
@@ -1176,7 +1173,7 @@ The seek bar becomes the track's loudness envelope, accent-tinted, with a played
 
 ### Phase 9 — Listening history sync (scrobbling)
 
-Already specified above (see "Phase 9 — Listening history sync"), now sub-phased 9a/9b/9c; it is the one remaining pre-1.0 *feature*, optional and off by default (ListenBrainz + optional Last.fm, a one-way local-first outbox). **9a shipped v0.3.1** (the outbox, the ListenBrainz client, the config, the CLI, all headless); **9b shipped v0.3.2** (the engine completion hook enqueues real plays, the GUI spawns the submitter, and a Preferences "Sync" page enables + validates ListenBrainz); 9c (Last.fm) remains. **Slotted into `0.4.0`** so the immersive tier and the optional history sync ship together. **Tags `0.4.0`.**
+Already specified above (see "Phase 9 — Listening history sync"), now sub-phased 9a/9b/9c; it is the one remaining pre-1.0 *feature*, optional and off by default (ListenBrainz + optional Last.fm, a one-way local-first outbox). **9a shipped v0.3.1** (the outbox, the ListenBrainz client, the config, the CLI, all headless); **9b shipped v0.3.2** (the engine completion hook enqueues real plays, the GUI spawns the submitter, and a Preferences "Sync" page enables + validates ListenBrainz); **9c shipped v0.3.5** (Last.fm as the optional second target: the web-auth session flow, `api_sig` signing, `track.scrobble`, the Preferences Last.fm group, and the CLI `connect` verb). Phase 9 is complete. **Slotted into `0.4.0`** so the immersive tier and the optional history sync ship together. **Tags `0.4.0`** once Phase 19 also lands.
 
 ## Milestone 1.0.0 — Verified & packaged
 

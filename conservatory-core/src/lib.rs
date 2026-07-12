@@ -73,8 +73,8 @@ pub use replaygain::{
     DEFAULT_TARGET_LUFS, replaygain_from_file, rsgain_available, scan_album_files,
 };
 pub use scrobble::{
-    DrainReport, Listen, ListenBrainzClient, ListenSubmitter, ScrobbleService, SubmitError,
-    backoff_secs, drain_ready,
+    DrainReport, LastfmClient, Listen, ListenBrainzClient, ListenSubmitter, ScrobbleService,
+    SubmitError, backoff_secs, drain_ready,
 };
 pub use secret::{BasicAuth, CredentialStore};
 pub use shelf_genre::{AlbumGenreInput, GenreVocab, normalize, resolve_album, resolve_shelf_genre};

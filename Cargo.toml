@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.4"
+version = "0.3.5"
 edition = "2024"
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
@@ -66,6 +66,10 @@ zbus = { version = "5.2", default-features = false, features = ["tokio"] }
 
 # C setlocale: libmpv's mpv_create() requires LC_NUMERIC = "C" (Phase 4c fix).
 libc = "0.2"
+
+# Phase 9c: MD5 for the Last.fm `api_sig` request signing (RustCrypto). Signed
+# off in the roadmap; the crate name is `md-5`, the library is `md5`.
+md-5 = "0.10"
 
 # Serde / config
 serde = { version = "1.0", features = ["derive"] }

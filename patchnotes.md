@@ -1,5 +1,15 @@
 # Patch Notes
 
+## v0.3.5
+
+**Phase 9c: Last.fm as the optional second scrobble target.** The scrobble subsystem, ListenBrainz-only since Phase 9b, now speaks Last.fm too, behind the same off-by-default config, outbox, and Preferences page.
+
+- Completed music tracks and podcast episodes submit through Last.fm's `track.scrobble`, signed per request with an `api_sig` (MD5 over the sorted params plus the shared secret; the new `md-5` dependency). Last.fm reports success or failure in the response body rather than the HTTP status, so it gets its own error classifier: service-down / temporarily-unavailable / rate-limited retry with backoff, a bad session key parks, and nothing is ever dropped. The outbox's `service` column already routed per listen, so both services can hold queued listens at once.
+- The Last.fm application key and shared secret are config-backed, in `[scrobble]` (`lastfm_api_key` / `lastfm_api_secret`), deliberately not baked into the binary: each user registers their own API account. The per-user session key is obtained through Last.fm's desktop web-auth flow and stored in libsecret, next to the ListenBrainz token.
+- Preferences → Sync grows a Last.fm group: Connect opens last.fm in your browser to approve access, Finish exchanges the approved token for a session key, and Disconnect clears it. With the app credentials missing from `config.toml`, the group explains what to add.
+- The CLI `scrobble` verb gains `connect` (the two-step web-auth flow: run it once for the approval URL, then again with `--token <token>` to store the session), and `flush` / `test` now work for Last.fm as well as ListenBrainz.
+- Scope is unchanged from 9b: audiobooks never scrobble, and with `[scrobble] enabled = false` (the default) nothing is contacted.
+
 ## v0.3.4
 
 **Phase 19a-ii: the waveform seek bar.** The Now-bar's seek slider is now the track's loudness envelope. Played audio is drawn in the album accent, the rest dimmed, mirrored about a centre line; a tap or drag anywhere on it seeks.

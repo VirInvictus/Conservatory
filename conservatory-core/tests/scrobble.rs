@@ -6,10 +6,11 @@ use std::sync::Mutex;
 
 use conservatory_core::db::{NewScrobble, ReadPool, count_pending_scrobbles, spawn_worker};
 use conservatory_core::scrobble::{
-    Listen, ListenBrainzClient, ListenSubmitter, ScrobbleService, SubmitError, drain_ready,
+    LastfmClient, Listen, ListenBrainzClient, ListenSubmitter, ScrobbleService, SubmitError,
+    drain_ready,
 };
 use tempfile::tempdir;
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// A programmable submitter: it returns whatever `mode` says and records the
@@ -301,4 +302,96 @@ async fn listenbrainz_client_speaks_the_protocol() {
         cval.validate_token().await.unwrap().as_deref(),
         Some("brandon")
     );
+}
+
+#[tokio::test]
+async fn lastfm_client_scrobbles_and_classifies() {
+    let sample = Listen {
+        listened_at: 1000,
+        artist: "Autechre".into(),
+        track: "Rae".into(),
+        album: None,
+        track_number: None,
+        duration_secs: None,
+        recording_mbid: None,
+    };
+
+    // A signed track.scrobble POST that Last.fm accepts (HTTP 200, no error).
+    let ok = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("method=track.scrobble"))
+        .and(body_string_contains("api_sig="))
+        .and(body_string_contains("sk=sess-1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"scrobbles": {"@attr": {"accepted": 1}}})),
+        )
+        .mount(&ok)
+        .await;
+    let client = LastfmClient::new("key-1", "secret-1", "sess-1").with_base_url(ok.uri());
+    assert!(client.submit(&sample).await.is_ok());
+
+    // HTTP 200 but an error body: 29 (rate limit) is transient, 9 (bad session)
+    // is permanent. Last.fm signals failure in the body, not the status.
+    let rl = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"error": 29, "message": "rate limit"})),
+        )
+        .mount(&rl)
+        .await;
+    let crl = LastfmClient::new("k", "s", "sk").with_base_url(rl.uri());
+    assert!(matches!(
+        crl.submit(&sample).await,
+        Err(SubmitError::Transient(_))
+    ));
+
+    let bad = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"error": 9, "message": "invalid session key"})),
+        )
+        .mount(&bad)
+        .await;
+    let cbad = LastfmClient::new("k", "s", "sk").with_base_url(bad.uri());
+    assert!(matches!(
+        cbad.submit(&sample).await,
+        Err(SubmitError::Permanent(_))
+    ));
+}
+
+#[tokio::test]
+async fn lastfm_connect_flow_exchanges_token_for_session() {
+    // auth.getToken -> a request token, then auth.getSession(token) -> the
+    // permanent session key + username. Both are signed GETs.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(query_param("method", "auth.getToken"))
+        .and(query_param("api_key", "key-1"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"token": "req-tok"})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(query_param("method", "auth.getSession"))
+        .and(query_param("token", "req-tok"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({"session": {"name": "brandon", "key": "sess-xyz", "subscriber": 0}}),
+        ))
+        .mount(&server)
+        .await;
+
+    let client = LastfmClient::new("key-1", "secret-1", "").with_base_url(server.uri());
+    let token = client.get_token().await.unwrap();
+    assert_eq!(token, "req-tok");
+    // The authorization URL carries the app key and the request token.
+    let url = client.auth_url(&token);
+    assert!(url.contains("api_key=key-1"));
+    assert!(url.contains("token=req-tok"));
+    let (session_key, name) = client.get_session(&token).await.unwrap();
+    assert_eq!(session_key, "sess-xyz");
+    assert_eq!(name, "brandon");
 }

@@ -146,7 +146,7 @@ Six crates, on the discipline that every non-GUI surface stays CLI-testable. Mus
 
 ## Project status
 
-**v0.3.4. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
+**v0.3.5. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
 
 Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [patchnotes](patchnotes.md) the per-release notes):
 
@@ -164,10 +164,10 @@ Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [
 - **17:** player table-stakes (shuffle, repeat, context-aware ReplayGain, queue-vs-playlist clarity).
 - **18** (the `0.2.0` milestone): accent-insensitive search and configurable browse columns.
 - **26** (the `0.3.0` milestone): the Hyprland-native redesign onto plain GTK4 with an owned flat Kanagawa Dragon stylesheet, no external theming toolkit; see [`docs/hyprland.md`](docs/hyprland.md).
-- **9** (in progress, optional, off by default): the ListenBrainz scrobble outbox and a Preferences Sync page; Last.fm and the "now playing" ping are the remaining pieces.
+- **9** (optional, off by default): listening-history scrobbling to ListenBrainz or Last.fm, a local-first one-way outbox, enabled and configured in Preferences → Sync. Only the ephemeral "now playing" ping is left as a follow-on.
 - **19** (in progress): the waveform seek bar (a loudness-envelope scrubber in the transport bar).
 
-Not built yet: the rest of **Phase 19** (drag-and-drop import, a full-screen Now Playing surface), Last.fm scrobbling, and the 1.0 endgame (real-library verification and Flatpak packaging). The roadmap has the full picture.
+Not built yet: the rest of **Phase 19** (drag-and-drop import, a full-screen Now Playing surface) and the 1.0 endgame (real-library verification and Flatpak packaging). The roadmap has the full picture.
 
 ## Documentation
 

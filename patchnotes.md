@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.3.8
+
+**Now-playing no longer lingers for the whole track after you stop or close.** The "now playing" ping no longer sends the track duration. Neither Last.fm nor ListenBrainz offers a way to explicitly clear a now-playing status: each expires it after the duration you submit (ListenBrainz falls back to ~10 minutes when there is none). Conservatory had been sending the full track length, so closing the app partway through a song left it showing as "now playing" for the rest of the track. Dropping the duration caps that at the service's short fallback instead. The completed scrobble still carries the duration; only the ephemeral now-playing update omits it.
+
 ## v0.3.7
 
 **Fix: an accent flash across the whole window when pressing a bare modifier (e.g. switching workspaces on a tiling compositor).** The keyboard-focus ring was defined on the universal `*` selector, so when GTK entered keyboard-focus-visible mode (which a bare modifier press like Fn+Win / Ctrl+Super triggers), it outlined every widget in the focus chain at once, flashing the accent across the window before it faded. The focus ring is now scoped to the discrete interactive controls (buttons, entries, switches, sliders); list rows already show their position through the selection highlight, so keyboard navigation stays clear. Purely visual; no behaviour changes.

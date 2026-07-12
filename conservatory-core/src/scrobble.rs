@@ -166,12 +166,22 @@ pub fn listenbrainz_submit_body(listen: &Listen) -> Value {
 
 /// Build the ListenBrainz `playing_now` body (Phase 9d): the ephemeral "currently
 /// listening" update, sent on track start. It carries no `listened_at` (the
-/// protocol forbids one for `playing_now`); otherwise the track metadata is the
-/// same as a completed listen.
+/// protocol forbids one for `playing_now`).
+///
+/// The duration is deliberately omitted: ListenBrainz expires a `playing_now`
+/// after the submitted duration, falling back to ~10 minutes when there is none.
+/// Neither service exposes a way to explicitly clear now-playing, so sending the
+/// full track duration would leave it showing for the rest of a long track after
+/// the user pauses or closes the app. Dropping it caps the lingering at the short
+/// fallback instead.
 pub fn listenbrainz_playing_now_body(listen: &Listen) -> Value {
+    let listen = Listen {
+        duration_secs: None,
+        ..listen.clone()
+    };
     json!({
         "listen_type": "playing_now",
-        "payload": [ { "track_metadata": listenbrainz_track_metadata(listen) } ],
+        "payload": [ { "track_metadata": listenbrainz_track_metadata(&listen) } ],
     })
 }
 
@@ -358,13 +368,20 @@ pub fn lastfm_scrobble_params(
 
 /// Build the (unsigned, `format`-free) `track.updateNowPlaying` parameters
 /// (Phase 9d): the ephemeral "now playing" ping, sent on track start. Same shape
-/// as a scrobble minus the timestamp.
+/// as a scrobble minus the timestamp, and minus the duration: Last.fm has no
+/// "clear now playing" call and expires it on the submitted duration, so omitting
+/// it keeps a paused/closed track from lingering for its full length (see
+/// [`listenbrainz_playing_now_body`]).
 pub fn lastfm_now_playing_params(
     listen: &Listen,
     api_key: &str,
     session_key: &str,
 ) -> Vec<(String, String)> {
-    lastfm_track_params(listen, api_key, session_key, "track.updateNowPlaying")
+    let listen = Listen {
+        duration_secs: None,
+        ..listen.clone()
+    };
+    lastfm_track_params(&listen, api_key, session_key, "track.updateNowPlaying")
 }
 
 /// Map a Last.fm API error code to the submit outcome. 11 (service offline), 16
@@ -874,6 +891,14 @@ mod tests {
         // A now-playing update must not carry listened_at.
         assert!(payload.get("listened_at").is_none());
         assert_eq!(payload["track_metadata"]["artist_name"], "Boards of Canada");
+        // Duration is dropped so the service expires it on its short fallback
+        // rather than holding it for the whole track after a stop/close.
+        assert!(
+            payload["track_metadata"]["additional_info"]
+                .get("duration_ms")
+                .is_none(),
+            "now-playing must omit duration_ms"
+        );
     }
 
     #[test]
@@ -890,6 +915,9 @@ mod tests {
         assert_eq!(get("album"), Some("Music Has the Right to Children"));
         // No timestamp on a now-playing ping (unlike a scrobble).
         assert!(get("timestamp").is_none());
+        // No duration either, so Last.fm expires it on its short default rather
+        // than the full track length after a stop/close.
+        assert!(get("duration").is_none(), "now-playing must omit duration");
     }
 
     #[test]

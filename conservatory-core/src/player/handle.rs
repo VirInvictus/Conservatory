@@ -18,6 +18,7 @@ use crate::player::item::PlayableItem;
 use crate::player::mode::Repeat;
 use crate::player::sleep::{SleepMode, SleepStatus};
 use crate::player::spoken::SmartSpeedLevel;
+use crate::scrobble::ScrobbleService;
 
 /// A command sent from a consumer to the engine thread.
 pub enum PlayerCommand {
@@ -117,6 +118,11 @@ pub enum PlayerCommand {
     /// path (Phase 17b). The playing item keeps playing; its index follows. Applied
     /// in lock-step with `worker.reorder_queue_by_positions` (the same permutation).
     ReorderQueue(Vec<usize>),
+    /// Enable (`Some(service)`) or disable (`None`) scrobbling (Phase 9b). When
+    /// set, a natural end-of-file for a music track / podcast episode enqueues a
+    /// listen bound for `service` into the outbox; audiobooks are never
+    /// scrobbled. Set from `[scrobble]` at startup and on a Preferences change.
+    SetScrobble(Option<ScrobbleService>),
     /// Halt playback and persist, but keep the engine thread alive.
     Stop,
     /// Stop and exit the engine thread (joined by [`PlayerHandle::shutdown`]).
@@ -392,6 +398,12 @@ impl PlayerHandle {
     /// Reorder the live queue by a permutation (`perm[new] = old`), Phase 17b.
     pub fn reorder_queue(&self, perm: Vec<usize>) {
         let _ = self.tx.send(PlayerCommand::ReorderQueue(perm));
+    }
+
+    /// Enable (`Some(service)`) or disable (`None`) scrobbling (Phase 9b). A
+    /// natural track / episode completion then enqueues a listen for `service`.
+    pub fn set_scrobble(&self, service: Option<ScrobbleService>) {
+        let _ = self.tx.send(PlayerCommand::SetScrobble(service));
     }
 
     pub fn stop(&self) {

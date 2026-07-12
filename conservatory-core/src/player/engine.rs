@@ -31,6 +31,7 @@ use crate::player::session::{SessionAccumulator, SessionOwner};
 use crate::player::shuffle::{apply_permutation, shuffle_order};
 use crate::player::sleep::{SleepClock, SleepMode};
 use crate::player::state::{EndReason, StateDebounce, StateEvent};
+use crate::scrobble::ScrobbleService;
 
 /// How long each `pump` blocks waiting for a libmpv event. Short, so a queued
 /// command is acted on within this bound (≤100 ms latency for the transport).
@@ -140,6 +141,10 @@ struct Engine {
     /// the live queue is driven by the GUI (a `ReorderQueue` command), so the DB
     /// queue is persisted in the same step.
     shuffle: bool,
+    /// The scrobble target, or `None` when scrobbling is off (Phase 9b). Set from
+    /// `[scrobble]` at startup and on a Preferences change. When `Some`, a natural
+    /// track / episode EOF enqueues a listen into the outbox; audiobooks never do.
+    scrobble: Option<ScrobbleService>,
 }
 
 impl Engine {
@@ -175,6 +180,7 @@ impl Engine {
             prefetched: false,
             repeat: Repeat::Off,
             shuffle: false,
+            scrobble: None,
         }
     }
 
@@ -505,6 +511,7 @@ impl Engine {
                 }
             }
             PlayerCommand::ReorderQueue(perm) => self.reorder_queue(perm),
+            PlayerCommand::SetScrobble(service) => self.scrobble = service,
             PlayerCommand::Stop => {
                 self.set_paused(true);
                 self.flush(StateEvent::Quit, true);
@@ -537,6 +544,10 @@ impl Engine {
                         MediaKind::Episode => self.block_complete_episode(id),
                         MediaKind::Audiobook => self.block_complete_book(id),
                     }
+                    // Scrobble the completed play (Phase 9b): music tracks and
+                    // podcast episodes only, and only when scrobbling is on. A
+                    // book is not a "listen"; the helper skips it.
+                    self.block_enqueue_scrobble(kind, id);
                 }
                 // Append the listening session at the natural boundary, before
                 // advancing (Phase 6c-ii). `advance_after_end`'s `load_current`
@@ -1130,6 +1141,25 @@ impl Engine {
         let when = now_secs();
         self.rt.block_on(async move {
             let _ = worker.complete_episode(episode_id, Some(when)).await;
+        });
+    }
+
+    /// Enqueue a scrobble for a completed track / episode when scrobbling is on
+    /// (Phase 9b). The listen metadata is resolved atomically off the writer
+    /// connection (`enqueue_scrobble_for`); a book, or the scrobbling-off state,
+    /// is a no-op. Shares the natural-EOF timestamp with the play-count bump.
+    fn block_enqueue_scrobble(&self, kind: MediaKind, id: i64) {
+        let Some(service) = self.scrobble else {
+            return;
+        };
+        if kind == MediaKind::Audiobook {
+            return;
+        }
+        let worker = self.worker.clone();
+        let svc = service.as_str().to_string();
+        let when = now_secs();
+        self.rt.block_on(async move {
+            let _ = worker.enqueue_scrobble_for(kind, id, svc, when).await;
         });
     }
 

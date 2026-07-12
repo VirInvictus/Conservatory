@@ -19,10 +19,10 @@ use tokio::sync::{mpsc, oneshot};
 use crate::db::command::Command;
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, NewScrobble, Playback, PlaybackCursor, PlayedState,
+    EQ_BAND_COUNT, Episode, EqState, MediaKind, NewScrobble, Playback, PlaybackCursor, PlayedState,
     PlaylistKind, PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
 };
-use crate::db::{connection, migrations, probe, writes};
+use crate::db::{connection, migrations, probe, reads, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::{Error, Result};
 use crate::mover::journal::{self, JobState};
@@ -637,6 +637,27 @@ impl WorkerHandle {
         self.dispatch(|reply| Command::EnqueueScrobble {
             scrobble,
             created_at,
+            reply,
+        })
+        .await
+    }
+
+    /// Resolve a completed play's metadata and enqueue its listen in one step
+    /// (Phase 9b). The engine calls this at a natural EOF; the metadata is read
+    /// off the writer connection so the snapshot is atomic. A vanished row (or a
+    /// track with no artist) enqueues nothing.
+    pub async fn enqueue_scrobble_for(
+        &self,
+        kind: MediaKind,
+        id: i64,
+        service: String,
+        listened_at: i64,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::EnqueueScrobbleFor {
+            kind,
+            id,
+            service,
+            listened_at,
             reply,
         })
         .await
@@ -1335,6 +1356,32 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::enqueue_scrobble(conn, &scrobble, created_at));
+        }
+        Command::EnqueueScrobbleFor {
+            kind,
+            id,
+            service,
+            listened_at,
+            reply,
+        } => {
+            let result = reads::scrobble_source(conn, kind, id).and_then(|src| match src {
+                Some(src) => {
+                    let scrobble = NewScrobble {
+                        service,
+                        kind: kind.as_str().to_string(),
+                        listened_at,
+                        artist: src.artist,
+                        track: src.track,
+                        album: src.album,
+                        track_number: src.track_number,
+                        duration_secs: src.duration_secs,
+                        recording_mbid: src.recording_mbid,
+                    };
+                    writes::enqueue_scrobble(conn, &scrobble, listened_at)
+                }
+                None => Ok(()),
+            });
+            let _ = reply.send(result);
         }
         Command::DeleteScrobble { id, reply } => {
             let _ = reply.send(writes::delete_scrobble(conn, id));

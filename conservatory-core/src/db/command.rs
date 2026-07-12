@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, NewScrobble, Playback, PlaybackCursor, PlayedState,
+    EQ_BAND_COUNT, Episode, EqState, MediaKind, NewScrobble, Playback, PlaybackCursor, PlayedState,
     PlaylistKind, PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
@@ -442,6 +442,19 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Resolve a completed play's metadata off the writer connection and enqueue
+    /// it into `scrobble_outbox` in one step (Phase 9b). The engine holds only
+    /// the id + kind; resolving on the writer keeps the snapshot atomic. A
+    /// track / episode whose row has vanished (or a track with no artist)
+    /// enqueues nothing. `created_at` reuses `listened_at`.
+    EnqueueScrobbleFor {
+        kind: MediaKind,
+        id: i64,
+        service: String,
+        listened_at: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Delete an outbox row after a successful submission (Phase 9a).
     DeleteScrobble {
         id: i64,
@@ -679,6 +692,7 @@ impl Command {
             Self::CompleteEpisode { .. } => "complete_episode",
             Self::InsertListeningSession { .. } => "insert_listening_session",
             Self::EnqueueScrobble { .. } => "enqueue_scrobble",
+            Self::EnqueueScrobbleFor { .. } => "enqueue_scrobble_for",
             Self::DeleteScrobble { .. } => "delete_scrobble",
             Self::BumpScrobbleAttempt { .. } => "bump_scrobble_attempt",
             Self::UpsertVerifyResults { .. } => "upsert_verify_results",

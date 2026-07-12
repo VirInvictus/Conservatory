@@ -35,9 +35,9 @@ use conservatory_core::db::{
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
-    Assignment, Config, ImportMode, PlaybackConfig, PlayerHandle, Repeat, TagWrite,
-    any_path_affecting, build_album_edit, build_track_edit, common_value, genres_assignment,
-    parse_assignment, shuffle_order, write_track_tags,
+    Assignment, Config, ImportMode, PlaybackConfig, PlayerHandle, Repeat, ScrobbleService,
+    TagWrite, any_path_affecting, build_album_edit, build_track_edit, common_value,
+    genres_assignment, parse_assignment, shuffle_order, write_track_tags,
 };
 
 use crate::playqueue::{
@@ -195,6 +195,9 @@ mod imp {
         // properties inspector do not apply.
         pub header_edit_group: OnceCell<gtk::Box>,
         pub header_props_btn: OnceCell<gtk::Button>,
+        // The running scrobble submitter's abort handle (Phase 9b), so a
+        // Preferences change can tear it down and respawn with new settings.
+        pub scrobble_submitter: RefCell<Option<tokio::task::AbortHandle>>,
     }
 
     #[glib::object_subclass]
@@ -361,6 +364,11 @@ impl ConservatoryWindow {
                     root,
                 ));
             }
+
+            // Sync the engine's scrobble state from [scrobble] and start the
+            // background submitter if enabled (Phase 9b). Off by default, so this
+            // is inert until the user turns it on in Preferences → Sync.
+            self.refresh_scrobbling();
         }
 
         // The browse panes come from `config.toml [browse].panes` (Phase 10c),
@@ -951,6 +959,64 @@ impl ConservatoryWindow {
         self.resume_saved_queue();
     }
 
+    /// (Re)sync scrobbling from `[scrobble]` (Phase 9b): tell the engine whether
+    /// to enqueue completed plays, and (re)start the background submitter. Called
+    /// at startup and whenever Preferences → Sync changes. The outbox is
+    /// local-first, so the engine enqueues whenever scrobbling is enabled even
+    /// before a token is stored; the submitter only runs once a token/session is
+    /// present, and drains the backlog then. ListenBrainz is the only wired
+    /// target here; Last.fm arrives at Phase 9c.
+    fn refresh_scrobbling(&self) {
+        let imp = self.imp();
+        let config = conservatory_core::config::load_default().unwrap_or_default();
+        let service = ScrobbleService::parse(&config.scrobble.service);
+
+        // Gate the engine's enqueue on the enabled flag.
+        if let Some(player) = imp.player.get() {
+            player.set_scrobble(config.scrobble.enabled.then_some(service));
+        }
+
+        // Tear down any running submitter; a fresh one starts below if enabled.
+        if let Some(handle) = imp.scrobble_submitter.borrow_mut().take() {
+            handle.abort();
+        }
+        if !config.scrobble.enabled {
+            return;
+        }
+        let (Some(rt), Some(worker), Some(pool)) =
+            (imp.runtime.get(), imp.worker.get(), imp.pool.get())
+        else {
+            return;
+        };
+        let worker = worker.clone();
+        let pool = pool.clone();
+        let join = rt.spawn(async move {
+            // Best-effort creds (the podcast idiom): no secret service or no
+            // stored token just leaves the submitter idle; enqueued listens wait.
+            let Ok(store) = conservatory_core::CredentialStore::secret_service().await else {
+                tracing::info!("scrobble: no secret service; submitter idle");
+                return;
+            };
+            let token = match store.get(service.token_ref()).await {
+                Ok(Some(t)) => t,
+                _ => {
+                    tracing::info!("scrobble: no token stored; submitter idle until one is set");
+                    return;
+                }
+            };
+            match service {
+                ScrobbleService::ListenBrainz => {
+                    let client = conservatory_core::scrobble::ListenBrainzClient::new(token);
+                    let _ = conservatory_core::scrobble::run(worker, pool, service, client).await;
+                }
+                ScrobbleService::Lastfm => {
+                    tracing::info!("scrobble: Last.fm submitter arrives at Phase 9c");
+                }
+            }
+        });
+        *imp.scrobble_submitter.borrow_mut() = Some(join.abort_handle());
+    }
+
     /// Push the persisted EQ state into the engine at startup (Phase 5.5b-ii).
     fn apply_persisted_eq(&self) {
         let imp = self.imp();
@@ -1196,6 +1262,7 @@ impl ConservatoryWindow {
             Some("library"),
             "Library",
         );
+        stack.add_titled(&self.build_sync_page(&config), Some("sync"), "Sync");
         stack.add_titled(&sound_page, Some("sound"), "Sound");
         let switcher = gtk::StackSwitcher::builder()
             .stack(&stack)
@@ -1216,9 +1283,15 @@ impl ConservatoryWindow {
         crate::ui::close_on_escape(&dialog);
         {
             let config = config.clone();
+            let weak = self.downgrade();
             dialog.connect_close_request(move |_| {
                 if let Err(e) = conservatory_core::config::save_default(&config.borrow()) {
                     tracing::warn!("saving config failed: {e}");
+                }
+                // Apply the [scrobble] change now that the config is on disk: sync
+                // the engine's enqueue flag and (re)start the submitter (Phase 9b).
+                if let Some(win) = weak.upgrade() {
+                    win.refresh_scrobbling();
                 }
                 glib::Propagation::Proceed
             });
@@ -1523,6 +1596,167 @@ impl ConservatoryWindow {
             sections_group.add(&audiobooks_row);
         }
         content.append(sections_group.widget());
+
+        page
+    }
+
+    /// The Sync preferences page (Phase 9b): the `[scrobble]` section. Enable
+    /// scrobbling and pick the service (config-backed, applied on dialog close via
+    /// `refresh_scrobbling`); the ListenBrainz token is stored in libsecret, never
+    /// config.toml, and validated against the service. Last.fm's own connect flow
+    /// arrives at Phase 9c.
+    fn build_sync_page(&self, config: &Rc<RefCell<Config>>) -> gtk::ScrolledWindow {
+        let (page, content) = pref_page();
+
+        let group = rows::group(
+            Some("Listening history (scrobbling)"),
+            Some(
+                "Submit completed music tracks and podcast episodes to a history service. \
+                 Off by default and local-first: nothing is sent until you enable it, and a \
+                 completed play is queued on your machine first so a listen is never lost. \
+                 Applies on close.",
+            ),
+        );
+
+        let (enable_row, enable) = rows::switch_row("Enable scrobbling", None);
+        enable.set_active(config.borrow().scrobble.enabled);
+        {
+            let config = config.clone();
+            enable.connect_active_notify(move |s| {
+                config.borrow_mut().scrobble.enabled = s.is_active();
+            });
+        }
+        group.add(&enable_row);
+
+        let services = ["ListenBrainz", "Last.fm"];
+        let (service_row, service) = rows::combo_row("Service", None, &services);
+        service.set_selected(
+            match ScrobbleService::parse(&config.borrow().scrobble.service) {
+                ScrobbleService::ListenBrainz => 0,
+                ScrobbleService::Lastfm => 1,
+            },
+        );
+        {
+            let config = config.clone();
+            service.connect_selected_notify(move |c| {
+                let svc = if c.selected() == 1 {
+                    "lastfm"
+                } else {
+                    "listenbrainz"
+                };
+                config.borrow_mut().scrobble.service = svc.to_string();
+            });
+        }
+        group.add(&service_row);
+        content.append(group.widget());
+
+        // The ListenBrainz token (stored in libsecret). Validate resolves the user
+        // name so a bad paste is caught before a play is ever scrobbled.
+        let lb_group = rows::group(
+            Some("ListenBrainz"),
+            Some(
+                "Paste your user token from listenbrainz.org/profile, then Validate. \
+                 Leave the field blank and Validate to check the token already stored.",
+            ),
+        );
+        let (token_row, token) = rows::entry_row("User token", "");
+        lb_group.add(&token_row);
+
+        let status = gtk::Label::new(None);
+        status.add_css_class("caption");
+        status.add_css_class("dim-label");
+        status.set_halign(gtk::Align::Start);
+        status.set_wrap(true);
+        status.set_margin_start(4);
+
+        let btns = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        btns.set_margin_top(4);
+        let validate = gtk::Button::with_label("Validate & save");
+        let clear = gtk::Button::with_label("Clear");
+        btns.append(&validate);
+        btns.append(&clear);
+        lb_group.add(&btns);
+        lb_group.add(&status);
+        content.append(lb_group.widget());
+
+        {
+            let weak = self.downgrade();
+            let token = token.clone();
+            let status = status.clone();
+            validate.connect_clicked(move |btn| {
+                let Some(win) = weak.upgrade() else { return };
+                let Some(rt) = win.imp().runtime.get() else {
+                    return;
+                };
+                let entered = token.text().trim().to_string();
+                btn.set_sensitive(false);
+                status.set_text("Validating…");
+                // A blank field validates the stored token; a filled one stores it
+                // first, then validates.
+                let handle = rt.spawn(async move {
+                    let store = conservatory_core::CredentialStore::secret_service()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let key = ScrobbleService::ListenBrainz.token_ref();
+                    let tok = if entered.is_empty() {
+                        store
+                            .get(key)
+                            .await
+                            .map_err(|e| e.to_string())?
+                            .ok_or_else(|| "No token entered or stored.".to_string())?
+                    } else {
+                        store.set(key, &entered).await.map_err(|e| e.to_string())?;
+                        entered
+                    };
+                    let client = conservatory_core::scrobble::ListenBrainzClient::new(tok);
+                    client.validate_token().await.map_err(|e| e.to_string())
+                });
+                let status = status.clone();
+                let btn = btn.clone();
+                glib::spawn_future_local(async move {
+                    let msg = match handle.await {
+                        Ok(Ok(Some(user))) => format!("Token saved. Validated as {user}."),
+                        Ok(Ok(None)) => "Invalid token.".to_string(),
+                        Ok(Err(e)) => format!("Could not validate: {e}"),
+                        Err(_) => "Validation task failed.".to_string(),
+                    };
+                    status.set_text(&msg);
+                    btn.set_sensitive(true);
+                });
+            });
+        }
+        {
+            let weak = self.downgrade();
+            let token = token.clone();
+            let status = status.clone();
+            clear.connect_clicked(move |_| {
+                let Some(win) = weak.upgrade() else { return };
+                let Some(rt) = win.imp().runtime.get() else {
+                    return;
+                };
+                let handle = rt.spawn(async move {
+                    let store = conservatory_core::CredentialStore::secret_service()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    store
+                        .delete(ScrobbleService::ListenBrainz.token_ref())
+                        .await
+                        .map_err(|e| e.to_string())
+                });
+                let token = token.clone();
+                let status = status.clone();
+                glib::spawn_future_local(async move {
+                    match handle.await {
+                        Ok(Ok(())) => {
+                            token.set_text("");
+                            status.set_text("Token cleared.");
+                        }
+                        Ok(Err(e)) => status.set_text(&format!("Could not clear: {e}")),
+                        Err(_) => status.set_text("Clear task failed."),
+                    }
+                });
+            });
+        }
 
         page
     }

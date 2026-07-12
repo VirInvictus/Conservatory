@@ -660,6 +660,99 @@ pub fn episode_metadata(conn: &Connection, episode_id: i64) -> Result<Option<Now
     .map_err(Into::into)
 }
 
+/// The metadata a completed play needs to become a `scrobble_outbox` row
+/// (Phase 9b), resolved once at completion time. The engine holds only an id +
+/// [`MediaKind`], so this is read off the writer's own connection at enqueue
+/// time (see `WorkerHandle::enqueue_scrobble_for`), keeping the snapshot atomic.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScrobbleSource {
+    pub artist: String,
+    pub track: String,
+    pub album: Option<String>,
+    pub track_number: Option<i64>,
+    pub duration_secs: Option<i64>,
+    pub recording_mbid: Option<String>,
+}
+
+/// Resolve a completed track / episode into its scrobble metadata (Phase 9b).
+/// A track carries its track number and MusicBrainz recording id; an episode
+/// maps its show title to both artist and album (the history services do not
+/// model shows) and has neither. Returns `None` when there is nothing to
+/// scrobble: the row has vanished, a track has no artist to attribute the play
+/// to, or the kind is [`MediaKind::Audiobook`] (a book is never a "listen").
+pub fn scrobble_source(
+    conn: &Connection,
+    kind: MediaKind,
+    id: i64,
+) -> Result<Option<ScrobbleSource>> {
+    match kind {
+        MediaKind::Track => {
+            let row = conn
+                .query_row(
+                    "SELECT ar.name AS artist, t.title AS track, al.title AS album,
+                            t.track_no, t.duration, t.musicbrainz_recording_id AS mbid
+                     FROM tracks t
+                     LEFT JOIN artists ar ON ar.id = t.artist_id
+                     LEFT JOIN albums al ON al.id = t.album_id
+                     WHERE t.id = ?1",
+                    params![id],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<String>>("artist")?,
+                            row.get::<_, String>("track")?,
+                            row.get::<_, Option<String>>("album")?,
+                            row.get::<_, Option<i64>>("track_no")?,
+                            row.get::<_, Option<f64>>("duration")?,
+                            row.get::<_, Option<String>>("mbid")?,
+                        ))
+                    },
+                )
+                .optional()?;
+            // A track with no artist cannot be attributed, so it is skipped
+            // rather than queued as a junk listen.
+            Ok(
+                row.and_then(|(artist, track, album, track_no, duration, mbid)| {
+                    artist.map(|artist| ScrobbleSource {
+                        artist,
+                        track,
+                        album,
+                        track_number: track_no,
+                        duration_secs: duration.map(|d| d.round() as i64),
+                        recording_mbid: mbid,
+                    })
+                }),
+            )
+        }
+        MediaKind::Episode => {
+            let row = conn
+                .query_row(
+                    "SELECT s.title AS show, e.title AS track, e.duration AS duration
+                     FROM episodes e
+                     JOIN shows s ON s.id = e.show_id
+                     WHERE e.id = ?1",
+                    params![id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>("show")?,
+                            row.get::<_, String>("track")?,
+                            row.get::<_, Option<i64>>("duration")?,
+                        ))
+                    },
+                )
+                .optional()?;
+            Ok(row.map(|(show, track, duration)| ScrobbleSource {
+                artist: show.clone(),
+                track,
+                album: Some(show),
+                track_number: None,
+                duration_secs: duration,
+                recording_mbid: None,
+            }))
+        }
+        MediaKind::Audiobook => Ok(None),
+    }
+}
+
 /// A unified-queue entry with the display fields the queue panel renders
 /// (Phase 4b-ii-b). `title`/`artist` come from the joined track (empty/None for
 /// a missing or non-track row; episode/book titles arrive at Phases 6/7).

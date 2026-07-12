@@ -14,7 +14,7 @@ A `0.x.0` / `x.0.0` is a **capability milestone**: a cluster of phases deliverin
 | `0.1.x` | Power-user interaction, UX completeness, player table-stakes | 16, 16.5, 17 | ✅ (through v0.1.26) |
 | **`0.2.0`** | **Grammar & columns** | 18 | ✅ tagged |
 | **`0.3.0`** | **Hyprland-native design (de-adwaita)** | 26 (+ the Phase 25 audits as its verification tail) | ✅ tagged |
-| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (9a shipped v0.3.1) |
+| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (9a v0.3.1, 9b v0.3.2 shipped) |
 | **`1.0.0`** | **Verified & packaged** (the endgame) | 20 | planned |
 | `1.1.0` | Metadata intelligence | 21 | committed, beyond 1.0 |
 | `1.2.0` | Curation depth | 22 | committed, beyond 1.0 |
@@ -690,11 +690,12 @@ Split headless-first (the CLI-testable rule): **9a** lands the outbox, the Liste
 
 *Usable artifact:* the `scrobble` CLI enqueues, inspects, and drains listens to ListenBrainz (or a mock), surviving offline, with the subsystem inert when unused.
 
-### Phase 9b — Engine hook + GUI (planned)
+### Phase 9b — Engine hook + GUI ✅ (v0.3.2)
 
-- [ ] The engine's `EndReason::Eof` completion path enqueues a listen for a natural track / episode completion (guarded by a `scrobble_enabled` flag set from config); the metadata is resolved once through a read then snapshotted into the outbox. Honours scope: music tracks and podcast episodes only; audiobooks excluded (a 14-hour book is not a "listen"). A "now playing" update on load (ephemeral, not queued).
-- [ ] The GUI spawns `scrobble::run` on its runtime (the `mpris::run` precedent); a Preferences "Sync" group enables it, picks the service, and pastes/validates a token.
-- [ ] Tests: the completion hook enqueues exactly once on a qualifying EOF, audiobook excluded, disabled is a true no-op (null-host engine integration).
+- [x] The engine's `EndReason::Eof` completion path enqueues a listen for a natural track / episode completion (guarded by an engine `scrobble` flag set from `[scrobble]` via a new `SetScrobble` command); the metadata is resolved once off the writer connection and snapshotted into the outbox in one atomic step (`WorkerHandle::enqueue_scrobble_for` → the new `reads::scrobble_source`). Honours scope: music tracks and podcast episodes only; audiobooks excluded (a 14-hour book is not a "listen"), enforced both at the engine guard and in `scrobble_source` (a book resolves to `None`).
+- [x] The GUI spawns `scrobble::run` on its runtime (the `mpris::run` precedent, held by an `AbortHandle` for respawn); a Preferences "Sync" page enables scrobbling, picks the service, and stores + validates the ListenBrainz token (libsecret, never the config file). Enable/service apply on dialog close via `refresh_scrobbling`, which syncs the engine flag and restarts the submitter.
+- [x] Tests: the completion hook enqueues exactly once per qualifying EOF (four fixtures → four listens, service + descriptive fields snapshotted), the disabled state is a true no-op (empty outbox), and `scrobble_source` never scrobbles an audiobook (null-host engine integration + a data-layer unit check).
+- [ ] **Deferred:** the ephemeral "now playing" update on load. It bypasses the outbox (a live ping to the service, a different transport than the completed-play queue) and is not needed to scrobble; it lands as a small follow-on rather than bloating the completed-play path.
 
 *Usable artifact:* real completed plays scrobble to ListenBrainz from the running app, off by default.
 
@@ -1146,7 +1147,7 @@ The experience tier: the seek bar and Now Playing become immersive, and import g
 
 ### Phase 9 — Listening history sync (scrobbling)
 
-Already specified above (see "Phase 9 — Listening history sync"), now sub-phased 9a/9b/9c; it is the one remaining pre-1.0 *feature*, optional and off by default (ListenBrainz + optional Last.fm, a one-way local-first outbox). **9a shipped v0.3.1** (the outbox, the ListenBrainz client, the config, the CLI, all headless); 9b (engine hook + GUI) and 9c (Last.fm) remain. **Slotted into `0.4.0`** so the immersive tier and the optional history sync ship together. **Tags `0.4.0`.**
+Already specified above (see "Phase 9 — Listening history sync"), now sub-phased 9a/9b/9c; it is the one remaining pre-1.0 *feature*, optional and off by default (ListenBrainz + optional Last.fm, a one-way local-first outbox). **9a shipped v0.3.1** (the outbox, the ListenBrainz client, the config, the CLI, all headless); **9b shipped v0.3.2** (the engine completion hook enqueues real plays, the GUI spawns the submitter, and a Preferences "Sync" page enables + validates ListenBrainz); 9c (Last.fm) remains. **Slotted into `0.4.0`** so the immersive tier and the optional history sync ship together. **Tags `0.4.0`.**
 
 ## Milestone 1.0.0 — Verified & packaged
 

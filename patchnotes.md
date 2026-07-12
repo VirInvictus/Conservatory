@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.3.2
+
+**Phase 9b: scrobbling goes live in the app.** The outbox that 9a built headless now fills from real playback and drains from the running GUI, still off by default and local-first.
+
+- The player engine's play-completion path (a natural end-of-file) now enqueues a listen when scrobbling is on. The metadata is resolved once, atomically, off the single-writer connection and snapshotted into the outbox, so a later library rename can never corrupt what gets submitted. Scope is honoured: music tracks and podcast episodes scrobble; audiobooks never do (a 14-hour book is not a "listen"), enforced both at the engine and in the resolver.
+- The GUI spawns the background submitter on its runtime (the same pattern as MPRIS), holding an abort handle so a settings change can restart it cleanly.
+- A new Preferences "Sync" page: enable scrobbling, pick the service (ListenBrainz or Last.fm), and paste plus validate your ListenBrainz token. Validation resolves your user name so a bad paste is caught before a single play is sent. The token lives in libsecret, never in the config file; the enable and service settings apply when you close Preferences.
+- ListenBrainz is the wired target here; Last.fm arrives next in 9c. The ephemeral "now playing" ping is deferred as a small follow-on (it is a live update, not part of the completed-play queue).
+
 ## v0.3.1
 
 **Phase 9a: the scrobble outbox and the ListenBrainz client (headless).** The first sub-phase of the 0.4.0 "Immersive & history" milestone lands the local-first spine of listening-history sync (spec §14 carve-out), off by default and fully inert until enabled.

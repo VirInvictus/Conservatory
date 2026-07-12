@@ -1,5 +1,13 @@
 # Patch Notes
 
+## v0.3.4
+
+**Phase 19a-ii: the waveform seek bar.** The Now-bar's seek slider is now the track's loudness envelope. Played audio is drawn in the album accent, the rest dimmed, mirrored about a centre line; a tap or drag anywhere on it seeks.
+
+- The envelope (computed and cached in 19a-i) loads off the GTK thread, so a track change never stalls the interface, and it is applied only if that track is still playing when the decode finishes.
+- Music tracks show the waveform; a podcast episode, an audiobook, or any item without a decodable local file falls back to a flat seek line, so the bar always works as a plain scrubber.
+- The same widget is built to be reused at a larger size in the Now Playing drawer and, later, the full-screen surface.
+
 ## v0.3.3
 
 **Phase 19a-i: the waveform envelope, headless.** The first slice of the immersive tier lands the whole-track loudness envelope that will back the GUI waveform seek bar, computed and cached off the GTK thread.

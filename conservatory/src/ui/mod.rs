@@ -23,6 +23,7 @@ pub mod sound;
 pub mod spectrum;
 pub mod status_page;
 pub mod track_list;
+pub mod waveform;
 pub mod window;
 
 use gtk::gdk;

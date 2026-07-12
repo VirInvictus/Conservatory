@@ -4398,6 +4398,36 @@ impl ConservatoryWindow {
                     _ => None,
                 };
                 now.set_cover(abs.as_deref(), accent);
+                // Waveform envelope (Phase 19a-ii): clear the old shape, then for a
+                // music track decode the new one off the GTK thread and apply it
+                // when it lands (stamped with the generation so a late decode after
+                // another track change is dropped). Episodes / books and any remote
+                // item keep the flat seek bar.
+                let generation = now.waveform.begin_load();
+                if matches!(snap.kind, Some(MediaKind::Track) | None)
+                    && let (Some(rt), Some(root)) = (imp.runtime.get(), imp.library_root.get())
+                    && let Some(rel) = imp
+                        .pool
+                        .get()
+                        .and_then(|pool| pool.open().ok())
+                        .and_then(|conn| conservatory_core::db::get_track(&conn, id).ok().flatten())
+                        .map(|t| t.file_path)
+                {
+                    let abs_audio = root.join(rel);
+                    let handle = rt.spawn_blocking(move || {
+                        conservatory_core::envelope_for(
+                            &abs_audio,
+                            conservatory_core::DEFAULT_BUCKETS,
+                        )
+                        .ok()
+                    });
+                    let waveform = now.waveform.clone();
+                    glib::spawn_future_local(async move {
+                        if let Ok(env) = handle.await {
+                            waveform.apply_envelope(generation, env.map(|e| e.peak));
+                        }
+                    });
+                }
                 // Keep the Now Playing drawer in step with the new item.
                 self.refresh_now_playing(snap.kind, Some(id));
                 // Quick-seek buttons (16.5f): spoken word only, amounts from
@@ -4452,11 +4482,13 @@ impl ConservatoryWindow {
             .set_text(&fmt_position(snap.position, snap.duration));
         match snap.duration {
             Some(d) if d > 0.0 => {
-                now.seek.set_sensitive(true);
-                now.seek.set_range(0.0, d);
-                now.seek.set_value(snap.position.min(d));
+                now.waveform.set_sensitive(true);
+                now.waveform.set_position(snap.position.min(d), Some(d));
             }
-            _ => now.seek.set_sensitive(false),
+            _ => {
+                now.waveform.set_sensitive(false);
+                now.waveform.set_position(snap.position, snap.duration);
+            }
         }
 
         // Status bar tech line (Phase 11b): the cached static fields plus the

@@ -14,7 +14,7 @@ A `0.x.0` / `x.0.0` is a **capability milestone**: a cluster of phases deliverin
 | `0.1.x` | Power-user interaction, UX completeness, player table-stakes | 16, 16.5, 17 | ✅ (through v0.1.26) |
 | **`0.2.0`** | **Grammar & columns** | 18 | ✅ tagged |
 | **`0.3.0`** | **Hyprland-native design (de-adwaita)** | 26 (+ the Phase 25 audits as its verification tail) | ✅ tagged |
-| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (9a v0.3.1, 9b v0.3.2, 19a-i v0.3.3 shipped) |
+| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (9a v0.3.1, 9b v0.3.2, 19a v0.3.3–0.3.4 shipped) |
 | **`1.0.0`** | **Verified & packaged** (the endgame) | 20 | planned |
 | `1.1.0` | Metadata intelligence | 21 | committed, beyond 1.0 |
 | `1.2.0` | Curation depth | 22 | committed, beyond 1.0 |
@@ -1154,9 +1154,13 @@ The seek bar becomes the track's loudness envelope, accent-tinted, with a played
 
 *Usable artifact:* `conservatory-cli waveform <db> '<expr>' --root <root>` prints each matched track's loudness envelope and caches it for the GUI.
 
-##### Phase 19a-ii — GTK waveform seek widget (planned)
+##### Phase 19a-ii — GTK waveform seek widget ✅ (v0.3.4)
 
-- [ ] A `GtkDrawingArea` + Cairo widget (the Phase 12d spectrum draw precedent) that replaces the Now-bar seek `Scale`: draws the cached envelope, accent-tinted, with a played/unplayed fill split at the play position; click + drag to seek (the same two-path no-loop guard the `Scale` uses). Reusable at a larger size in the NP drawer and 19c full-screen. The envelope loads off the GTK thread on track change, falling back to a flat bar until it lands.
+- [x] `conservatory/src/ui/waveform.rs`: a `GtkDrawingArea` + Cairo widget (the Phase 12d spectrum draw precedent) that replaces the Now-bar seek `Scale`. Draws the cached envelope mirrored about a centre line, played portion in the album accent and the rest dimmed; a `GestureDrag` (which also fires on a tap) seeks, keeping the `Scale`'s two-path no-loop guard structurally (the poll's `set_position` only repaints, never seeks). Reusable at a larger size in the NP drawer and 19c full-screen.
+- [x] The envelope loads off the GTK thread (`spawn_blocking` decode → `spawn_future_local` apply, the existing async-to-GTK bridge), stamped with a generation so a decode that finishes after another track change is dropped. Music tracks get the waveform; episodes, books, and any item without a decodable local file fall back to a flat seek line, so the bar always works as a plain scrubber.
+- [x] Tests: `fraction_at` clamping + `unpack_rgb` (pure, unit-tested); the widget itself is verified by build + manual launch (the 3b/3c precedent).
+
+*Usable artifact:* the Now-bar seek bar is the playing track's waveform; drag it to scrub.
 
 #### Phase 19b — Drag-drop file import + full-screen Now Playing + credits (planned)
 

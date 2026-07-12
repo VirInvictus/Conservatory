@@ -27,6 +27,11 @@ use crate::errors::{Error, Result};
 /// mis-decoded.
 pub const CACHE_VERSION: u32 = 1;
 
+/// The default bucket count. Shared by the CLI verb and the GUI widget so both
+/// hit the same cache entry (the bucket count is part of the cache key); 1500 is
+/// generous enough to downsample cleanly to any seek-bar width.
+pub const DEFAULT_BUCKETS: usize = 1500;
+
 /// The decode sample rate. An amplitude envelope needs only the loudness
 /// shape, not frequency content, so a low mono rate keeps the piped PCM small
 /// (a 4-minute track is ~7.7 MB at 8 kHz) while preserving the peaks a viewer

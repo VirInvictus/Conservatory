@@ -11,7 +11,6 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
@@ -20,6 +19,7 @@ use conservatory_core::player::SleepMode;
 use conservatory_core::{PlayerHandle, Repeat, SleepStatus, quick_seek_target};
 
 use crate::ui::accent::AccentProvider;
+use crate::ui::waveform::{WaveformSeek, build_waveform};
 
 /// The Now-bar widgets the window updates each refresh. `root` is what gets
 /// attached as the bottom bar.
@@ -64,7 +64,10 @@ pub struct NowBar {
     /// The window wires the click to a per-show settings dialog.
     pub podcast_btn: gtk::Button,
     pub position: gtk::Label,
-    pub seek: gtk::Scale,
+    /// The waveform seek bar (Phase 19a-ii): draws the track's loudness envelope,
+    /// accent-tinted with a played/unplayed split; a drag seeks. Replaces the old
+    /// `gtk::Scale`.
+    pub waveform: WaveformSeek,
     pub volume: gtk::ScaleButton,
     /// Sleep-timer menu (Phase 6c-iii-d): a moon button whose menu arms a duration
     /// or a boundary timer. Hidden until something is loaded; `S` pops it.
@@ -226,12 +229,7 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         .css_classes(["numeric", "caption"])
         .label("0:00")
         .build();
-    let seek = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 1.0);
-    seek.set_draw_value(false);
-    seek.set_hexpand(true);
-    seek.set_width_request(220);
-    seek.set_sensitive(false);
-    seek.add_css_class("now-bar-seek");
+    let waveform = build_waveform();
     // A ScaleButton with the audio icons (VolumeButton is deprecated since 4.10);
     // its value is the 0..100 volume directly.
     let volume = gtk::ScaleButton::new(
@@ -252,7 +250,7 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
     let right = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     right.set_valign(gtk::Align::Center);
     right.append(&position);
-    right.append(&seek);
+    right.append(&waveform.area);
     right.append(&volume);
     right.append(&sleep_btn);
     root.set_end_widget(Some(&right));
@@ -283,10 +281,7 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
             p.seek(quick_seek_target(snap.position, forward, snap.duration));
         });
         let p = player.clone();
-        seek.connect_change_value(move |_, _, value| {
-            p.seek(value);
-            glib::Propagation::Proceed
-        });
+        waveform.connect_seek(move |secs| p.seek(secs));
         let p = player.clone();
         volume.connect_value_changed(move |_, value| {
             p.set_volume(value.round() as i64);
@@ -313,7 +308,7 @@ pub fn build_now_bar(player: Option<PlayerHandle>) -> NowBar {
         skip_amounts,
         podcast_btn,
         position,
-        seek,
+        waveform,
         volume,
         sleep_btn,
         sleep_label,
@@ -414,8 +409,7 @@ impl NowBar {
         self.artist.set_text("");
         self.position.set_text("0:00");
         self.play_btn.set_icon_name("media-playback-start-symbolic");
-        self.seek.set_sensitive(false);
-        self.seek.set_value(0.0);
+        self.waveform.clear();
         self.set_cover(None, None);
         self.set_status(false, false);
         self.set_chapter_nav_visible(false);
@@ -514,29 +508,22 @@ impl NowBar {
         self.apply_accent(accent);
     }
 
-    /// Tint the cover ring and the seek fill with the album accent. The ring rule
-    /// is the shared cover-ring CSS; the seek rule colours the slider's filled
-    /// trough. `None` clears both back to the Dragon defaults.
+    /// Tint the cover ring with the album accent (the shared cover-ring CSS) and
+    /// hand the accent to the waveform, which draws its own played fill. `None`
+    /// clears both back to the Dragon defaults.
     fn apply_accent(&self, accent: Option<u32>) {
         match accent {
             Some(rgb) => {
-                let hex = rgb & 0x00ff_ffff;
-                let css = format!(
-                    "{}\n.now-bar-seek.cover-acc-{hex:06x} > trough > highlight \
-                     {{ background-color: #{hex:06x}; }}",
-                    crate::ui::accent::cover_ring_css(rgb)
-                );
-                self.accent.set_css(&css);
+                self.accent.set_css(&crate::ui::accent::cover_ring_css(rgb));
                 let cls = crate::ui::accent::accent_class(rgb);
                 self.cover_frame.set_css_classes(&["now-bar-cover", &cls]);
-                self.seek.set_css_classes(&["now-bar-seek", &cls]);
             }
             None => {
                 self.accent.set_css("");
                 self.cover_frame.set_css_classes(&["now-bar-cover"]);
-                self.seek.set_css_classes(&["now-bar-seek"]);
             }
         }
+        self.waveform.set_accent(accent);
     }
 }
 

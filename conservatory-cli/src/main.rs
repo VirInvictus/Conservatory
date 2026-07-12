@@ -285,8 +285,8 @@ enum Command {
         /// Library root the relative track paths hang off.
         #[arg(long)]
         root: PathBuf,
-        /// Number of envelope buckets (the GUI default is 1500).
-        #[arg(long, default_value_t = 1500)]
+        /// Number of envelope buckets (the shared GUI default).
+        #[arg(long, default_value_t = conservatory_core::waveform::DEFAULT_BUCKETS)]
         buckets: usize,
         /// Emit the full peak/rms arrays as JSON lines instead of a sparkline.
         #[arg(long)]

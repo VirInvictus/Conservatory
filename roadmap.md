@@ -1149,6 +1149,12 @@ Sub-phase ledger (updated 2026-07-10; each ships one commit, green under `cargo 
 
 *Usable artifact:* Conservatory runs the same feature set with zero `adw::` symbols in the workspace, its own flat tiling-first stylesheet on all three tabs, and no regression under GNOME; the memory budgets hold and the folded Phase 25 audit items pass against the new shell.
 
+**Post-`0.3.0` design refinement (v0.3.9, 2245e13).** A density and cohesion follow-on to the owned sheet, so the three tabs read as one app rather than three glued together (Brandon feedback, 2026-07-18). Shipped: the settings-button fix (`open_preferences` no longer gates on an open library pool, so the config pages open with no library and the DB-backed Sound page attaches only when one exists); the browse cell grid removed (facet + track separators off); tighter track rows (the per-row cover shrank 40 → 24px, the dominant term in row height); flat borderless header/toolbar icon buttons; and dimmed, lightly-tracked column headers. Podcasts and Audiobooks inherited all of it through the shared theme. Deferred density follow-ons (low-risk, no schema):
+
+- [ ] Tighten the facet-pane rows to match the track list's new density.
+- [ ] Optional faint row line or subtle zebra shading for the browse (it is fully clean now; this is a scannability preference, not a fix).
+- [ ] Default the per-row cover column off (the true deadbeef look: one cover panel, no per-row art); it is already config-toggleable via `[browse].columns`.
+
 ## Milestone 0.4.0 — Immersive & history
 
 ### Phase 19 — Immersive polish

@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.3.9
+
+**A design-cohesion pass across all three tabs, plus a fix for a dead Preferences button.** The browse now reads like one application instead of three, denser and cleaner, without leaving the flat Kanagawa Dragon identity.
+
+- **Preferences opens without a library.** On a fresh launch with no library yet, the gear did nothing: the whole Preferences window was gated on an open library database, so with none it silently no-opped (which meant you could not open Preferences to point it at a library in the first place). The General, Library, and Sync pages edit `config.toml`, not the database, so they now open regardless; the Sound page (the equalizer and DSP, which live in the library database) is shown only when a library is open.
+- **No more cell grid in the browse.** The faceted panes and the track list drew a full row-and-column grid that boxed every value and every song in. It is gone: panes are divided by their drag handles and rows read through hover and selection, the foobar2000 / DeaDBeeF clean-list look.
+- **Denser track rows.** The per-row album thumbnail shrank from 40 to 24 pixels. It was the dominant term in the row height, so the track list is now foobar-tight while still carrying album art on every row.
+- **Flat toolbar chrome.** The header and toolbar icon buttons no longer each sit in a hard 1px box; they read as flat glyphs and fill only on hover.
+- **Quieter column headers.** Column titles are dimmed, a touch smaller, and lightly tracked, so they sit back as labels rather than reading as headings.
+
+Visual throughout, plus the Preferences fix; no schema or data changes.
+
 ## v0.3.8
 
 **Now-playing no longer lingers for the whole track after you stop or close.** The "now playing" ping no longer sends the track duration. Neither Last.fm nor ListenBrainz offers a way to explicitly clear a now-playing status: each expires it after the duration you submit (ListenBrainz falls back to ~10 minutes when there is none). Conservatory had been sending the full track length, so closing the app partway through a song left it showing as "now playing" for the rest of the track. Dropping the duration caps that at the service's short fallback instead. The completed scrobble still carries the duration; only the ephemeral now-playing update omits it.

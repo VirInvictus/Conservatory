@@ -84,8 +84,12 @@ button {
 }
 button:hover { background-color: %GRID%; }
 button:active, button:checked { background-color: %ACCENT%; color: %ON_ACCENT%; border-color: %ACCENT%; }
-button.flat, button.circular { background-color: transparent; border-color: transparent; }
-button.flat:hover, button.circular:hover { background-color: %GRID%; }
+/* Icon-only buttons (headerbar / toolbars) read as flat like the rest of the
+   chrome: a hard 1px border around every gear/list glyph is what made the top
+   bar look boxy. GTK tags icon-only buttons `.image-button`; they de-box here
+   and only fill on hover, keeping the flat identity. */
+button.flat, button.circular, button.image-button { background-color: transparent; border-color: transparent; }
+button.flat:hover, button.circular:hover, button.image-button:hover { background-color: %GRID%; }
 button.suggested-action { background-color: %ACCENT%; color: %ON_ACCENT%; border-color: %ACCENT%; }
 button.destructive-action { background-color: %ERR%; color: %ON_ACCENT%; border-color: %ERR%; }
 button.circular { border-radius: 0; }
@@ -182,7 +186,9 @@ window, popover, dropdown, tooltip { font-family: 'Inter', sans-serif; }
 columnview.data-table > listview > row > cell { padding-top: 1px; padding-bottom: 1px; }
 columnview.data-table > listview > row { transition: background-color 150ms ease; }
 columnview.data-table > listview > row:hover { background: alpha(currentColor, 0.04); }
-columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height: 0; border-width: 0; background-color: transparent; transition: background-color 150ms ease; }
+/* Column headers read as quiet labels, not buttons (the deadbeef/foobar look):
+   dimmed, slightly smaller, a touch of tracking. */
+columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height: 0; border-width: 0; background-color: transparent; color: %FG_DIM%; font-size: 0.92em; letter-spacing: 0.02em; transition: background-color 150ms ease; }
 columnview > header > button:hover { background: alpha(currentColor, 0.08); }
 .rating-stars { color: %ACCENT%; }
 .filter-warn text { background-color: alpha(%WARN%, 0.20); }

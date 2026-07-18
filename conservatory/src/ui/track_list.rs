@@ -50,9 +50,10 @@ pub const COLUMN_CATALOG: &[(&str, &str)] = &[
 ];
 
 const MAX_STARS: i32 = 5;
-/// The browse cover thumbnail edge, in px. A 40px cover gives album-art-per-row
-/// (the deadbeef look) while keeping the table reasonably dense.
-const COVER_PX: i32 = 40;
+/// The browse cover thumbnail edge, in px. A 24px cover keeps album-art-per-row
+/// (the deadbeef look) while driving a dense, foobar-tight row height; it is the
+/// dominant term in the track row's height, so this is the density knob.
+const COVER_PX: i32 = 24;
 const COVER_PLACEHOLDER: &str = "audio-x-generic-symbolic";
 
 /// The leaf table: its backing store (for repopulation), the selection (for
@@ -496,8 +497,10 @@ pub fn build_leaf(
     let selection = gtk::MultiSelection::new(Some(sort_model.clone()));
 
     let view = gtk::ColumnView::new(Some(selection.clone()));
-    view.set_show_row_separators(true);
-    view.set_show_column_separators(true);
+    // No cell grid (spec §2.4 density pass): the row + column separators boxed
+    // every track in; rows read via hover + selection instead (facet_pane matches).
+    view.set_show_row_separators(false);
+    view.set_show_column_separators(false);
     view.add_css_class("data-table");
 
     // Build the configured columns in order (Phase 18b); unknown / duplicate ids

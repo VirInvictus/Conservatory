@@ -1248,6 +1248,76 @@ impl ConservatoryWindow {
     /// equalizer plus the ReplayGain / DSP / output groups, which persist to the
     /// DB singletons. Built fresh each open from the stored state.
     fn open_preferences(&self) {
+        // The config-backed pages (Phase 10b) edit config.toml, not the library
+        // DB, so Preferences must open even before a library exists. Gating the
+        // whole window on a live read pool is what left the gear dead on a first
+        // `cargo run` with no library.db yet: `imp.pool` was unset, so this
+        // returned early and nothing opened. The Sound page (DB-backed EQ / DSP)
+        // is attached separately below, only when a library is open.
+        let stack = gtk::Stack::new();
+        let config = Rc::new(RefCell::new(
+            conservatory_core::config::load_default().unwrap_or_default(),
+        ));
+        stack.add_titled(
+            &self.build_general_page(&config),
+            Some("general"),
+            "General",
+        );
+        stack.add_titled(
+            &self.build_library_page(&config),
+            Some("library"),
+            "Library",
+        );
+        stack.add_titled(&self.build_sync_page(&config), Some("sync"), "Sync");
+        let switcher = gtk::StackSwitcher::builder()
+            .stack(&stack)
+            .halign(gtk::Align::Center)
+            .margin_top(10)
+            .build();
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        column.append(&switcher);
+        column.append(&stack);
+        let dialog = gtk::Window::builder()
+            .title("Preferences")
+            .transient_for(self)
+            .modal(true)
+            .default_width(640)
+            .default_height(560)
+            .child(&column)
+            .build();
+        crate::ui::close_on_escape(&dialog);
+        {
+            let config = config.clone();
+            let weak = self.downgrade();
+            dialog.connect_close_request(move |_| {
+                if let Err(e) = conservatory_core::config::save_default(&config.borrow()) {
+                    tracing::warn!("saving config failed: {e}");
+                }
+                // Apply the [scrobble] change now that the config is on disk: sync
+                // the engine's enqueue flag and (re)start the submitter (Phase 9b).
+                if let Some(win) = weak.upgrade() {
+                    win.refresh_scrobbling();
+                }
+                glib::Propagation::Proceed
+            });
+        }
+
+        // The Sound page (10-band EQ + ReplayGain / DSP / output) reads and
+        // writes the library DB and drives the live player, so it appears only
+        // when a library is open; with none, Preferences is the three config
+        // pages above.
+        self.attach_sound_page(&stack, &dialog);
+
+        dialog.present();
+    }
+
+    /// Build the DB-backed Sound page and add it to the Preferences `stack`. A
+    /// no-op when no library is open: the EQ presets and `audio_state` singletons
+    /// it edits live in the library DB, and live band changes need the player
+    /// engine, neither of which exists without a library. Keeping it out of
+    /// [`Self::open_preferences`] is what lets the config pages open with no
+    /// library (the dead-gear fix).
+    fn attach_sound_page(&self, stack: &gtk::Stack, dialog: &gtk::Window) {
         let Some(pool) = self.imp().pool.get() else {
             return;
         };
@@ -1317,64 +1387,11 @@ impl ConservatoryWindow {
         let (sound_page, sound_box) = pref_page();
         sound_box.append(eq_group.widget());
         sound_box.append(presets_group.widget());
-
-        // The Preferences window (an adw::PreferencesDialog until Phase 26i): a
-        // plain modal window over a text StackSwitcher of three pages. The
-        // config-backed pages (Phase 10b) come first, so Ctrl+, opens on General;
-        // the Sound page (DB-backed audio) follows. The config is loaded once
-        // into a shared cell the row handlers mutate, then saved on close.
-        let stack = gtk::Stack::new();
-        let config = Rc::new(RefCell::new(
-            conservatory_core::config::load_default().unwrap_or_default(),
-        ));
-        stack.add_titled(
-            &self.build_general_page(&config),
-            Some("general"),
-            "General",
-        );
-        stack.add_titled(
-            &self.build_library_page(&config),
-            Some("library"),
-            "Library",
-        );
-        stack.add_titled(&self.build_sync_page(&config), Some("sync"), "Sync");
         stack.add_titled(&sound_page, Some("sound"), "Sound");
-        let switcher = gtk::StackSwitcher::builder()
-            .stack(&stack)
-            .halign(gtk::Align::Center)
-            .margin_top(10)
-            .build();
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        column.append(&switcher);
-        column.append(&stack);
-        let dialog = gtk::Window::builder()
-            .title("Preferences")
-            .transient_for(self)
-            .modal(true)
-            .default_width(640)
-            .default_height(560)
-            .child(&column)
-            .build();
-        crate::ui::close_on_escape(&dialog);
-        {
-            let config = config.clone();
-            let weak = self.downgrade();
-            dialog.connect_close_request(move |_| {
-                if let Err(e) = conservatory_core::config::save_default(&config.borrow()) {
-                    tracing::warn!("saving config failed: {e}");
-                }
-                // Apply the [scrobble] change now that the config is on disk: sync
-                // the engine's enqueue flag and (re)start the submitter (Phase 9b).
-                if let Some(win) = weak.upgrade() {
-                    win.refresh_scrobbling();
-                }
-                glib::Propagation::Proceed
-            });
-        }
 
         // The ReplayGain / DSP / Output groups (Phase 5.5c-ii), backed by the
         // singleton `audio_state` (separate from the EQ's own table above).
-        self.add_audio_groups(&sound_box, &dialog);
+        self.add_audio_groups(&sound_box, dialog);
 
         // Slider drag → live band change + mark the EQ "Custom".
         for (i, slider) in sliders.iter().enumerate() {
@@ -1467,8 +1484,6 @@ impl ConservatoryWindow {
                 glib::Propagation::Proceed
             });
         }
-
-        dialog.present();
     }
 
     /// Toggle the track properties inspector (Phase 11a) and refresh it on open.

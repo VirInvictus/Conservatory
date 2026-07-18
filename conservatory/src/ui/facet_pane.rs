@@ -48,8 +48,11 @@ pub fn build_pane(field: FacetField, on_context: RowContextFn) -> FacetPane {
     let store = gio::ListStore::new::<FacetRow>();
 
     let view = gtk::ColumnView::new(None::<gtk::SelectionModel>);
-    view.set_show_row_separators(true);
-    view.set_show_column_separators(true);
+    // No cell grid (spec §2.4 density pass): row + column separators boxed every
+    // value in and read heavy. Panes are divided by the GtkPaned handles, rows by
+    // hover + selection. The deadbeef/foobar clean-list look.
+    view.set_show_row_separators(false);
+    view.set_show_column_separators(false);
     view.add_css_class("data-table");
 
     // Value column (expands, ellipsizes).

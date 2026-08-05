@@ -8,8 +8,8 @@ and the integration niceties a tiling setup wants.
 
 ## Window rules
 
-The app id is stable: `org.virinvictus.Conservatory` (`main.rs`, unchanged
-across versions, so rules never break on update). The main window tiles
+The app id is stable: `io.github.virinvictus.conservatory` (`main.rs`, settled
+2026-07-26 and unchanged since, so rules never break on update). The main window tiles
 cleanly; dialogs (Preferences, the alert prompts, the shortcuts reference)
 are real windows since Phase 26 and follow normal modal-float behaviour.
 
@@ -17,10 +17,10 @@ are real windows since Phase 26 and follow normal modal-float behaviour.
 # ~/.config/hypr/hyprland.conf
 # Float the dialogs (they are modal transients; most compositors float them
 # already, this makes it explicit):
-windowrulev2 = float, class:^(org\.virinvictus\.Conservatory)$, title:^(Preferences|Keyboard Shortcuts)$
+windowrulev2 = float, class:^(io\.github\.virinvictus\.conservatory)$, title:^(Preferences|Keyboard Shortcuts)$
 
 # Example: pin the whole app to a workspace
-windowrulev2 = workspace 9, class:^(org\.virinvictus\.Conservatory)$
+windowrulev2 = workspace 9, class:^(io\.github\.virinvictus\.conservatory)$
 ```
 
 A dedicated compact / mini-player window that a scratchpad rule can float is

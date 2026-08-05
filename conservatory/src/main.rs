@@ -19,7 +19,7 @@ mod theme;
 mod ui;
 mod viz;
 
-const APP_ID: &str = "org.virinvictus.Conservatory";
+const APP_ID: &str = "io.github.virinvictus.conservatory";
 
 /// Register the bundled fonts (Phase 13d) so the typography (Inter body, Fraunces
 /// headers, IBM Plex Mono technical fields) renders without assuming any font is
@@ -132,8 +132,9 @@ fn main() -> glib::ExitCode {
             .collect();
         let db = positionals.first().cloned().or_else(default_db_path);
         // The library root (Phase 10a): a CLI positional still wins (dev / tooling
-        // override), else it comes from `config.toml`'s `[library] root`. With
-        // neither set there is simply no library to browse, as before.
+        // override), else it comes from `config.toml`'s `[library] root`, whose
+        // default is ~/Conservatory (§16.14). Only with $HOME unset is there no
+        // library to browse.
         let config = conservatory_core::config::load_default().unwrap_or_else(|e| {
             tracing::warn!("config load failed, using defaults: {e}");
             conservatory_core::Config::default()
@@ -190,7 +191,8 @@ fn default_db_path() -> Option<PathBuf> {
 }
 
 /// Resolve the library root: a CLI positional overrides (dev / tooling), else
-/// the config's `[library] root`, else `None` (no library to browse). Pure, so
+/// the config's `[library] root` (default `~/Conservatory`, §16.14), else
+/// `None` (no library to browse; only reachable with `$HOME` unset). Pure, so
 /// the precedence is unit-testable without a GTK display.
 fn resolve_root(
     positional: Option<PathBuf>,
@@ -223,7 +225,21 @@ mod tests {
     }
 
     #[test]
+    fn default_config_root_is_home_conservatory() {
+        // §16.14: the config default is ~/Conservatory, so an unconfigured
+        // launch resolves there rather than to no library at all.
+        let expected = std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join("Conservatory"))
+            .expect("test environment has HOME");
+        assert_eq!(resolve_root(None, &Config::default()), Some(expected));
+    }
+
+    #[test]
     fn no_root_anywhere_is_none() {
-        assert_eq!(resolve_root(None, &Config::default()), None);
+        // Only reachable when $HOME is unset (Config::default() then has no
+        // root); modelled here by clearing the field explicitly.
+        let mut config = Config::default();
+        config.library.root = None;
+        assert_eq!(resolve_root(None, &config), None);
     }
 }

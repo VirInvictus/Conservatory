@@ -66,8 +66,11 @@ impl Default for SectionsConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LibraryConfig {
-    /// The managed library root. `None` until the user sets one (the GTK binary
-    /// then has no library to browse, exactly as today with no CLI arg).
+    /// The managed library root. Defaults to `~/Conservatory` (§16.14, settled
+    /// 2026-08-05: the Calibre idiom of an owned directory at the home root,
+    /// chosen over `~/Music/Conservatory` and its `Music/Conservatory/Music`
+    /// stutter). `None` only when `$HOME` is unset (the GTK binary then has no
+    /// library to browse, exactly as before a default existed).
     pub root: Option<PathBuf>,
     /// The music save-to-disk template (spec §5.7).
     pub path_template: String,
@@ -189,12 +192,19 @@ impl Default for LibraryConfig {
     fn default() -> Self {
         // Spec §10 [library] defaults.
         Self {
-            root: None,
+            root: default_library_root(),
             path_template: DEFAULT_MUSIC_TEMPLATE.to_string(),
             import_mode: ImportMode::Copy,
             embed_tags_on_edit: true,
         }
     }
+}
+
+/// The default managed root, `~/Conservatory` (§16.14). Resolved through
+/// `$HOME` directly, the same way [`config_path`] finds `~/.config`, so the
+/// loader stays glib-free and CLI-testable.
+fn default_library_root() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Conservatory"))
 }
 
 impl Default for GenreConfig {

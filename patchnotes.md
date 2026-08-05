@@ -1,5 +1,11 @@
 # Patch Notes
 
+## v0.3.10
+
+**The default library root is settled: `~/Conservatory` (§16.14).** The last open naming question ahead of 1.0, and the cheapest of the 1.0 blockers. An unconfigured launch now resolves its library root to `~/Conservatory` instead of having no library at all, giving symmetric `Music/`, `Podcasts/`, and `Audiobooks/` subtrees with none of the `~/Music/Conservatory/Music/` stutter that kept this open. The precedent is Calibre, this app's stated model: a program that owns and moves a library gets an owned directory at the home root, the way `~/Calibre Library` does, rather than nesting inside an XDG media dir.
+
+Nothing changes for a configured install: a CLI positional still wins, an explicit `[library] root` in `config.toml` still wins, and the Preferences folder-picker re-points it as before. The default only decides what a fresh, unconfigured launch sees, and it creates nothing on disk; the directory comes into being when an import first files something under it. The rejected alternatives are recorded in spec §16.14.
+
 ## v0.3.9
 
 **A design-cohesion pass across all three tabs, plus a fix for a dead Preferences button.** The browse now reads like one application instead of three, denser and cleaner, without leaving the flat Kanagawa Dragon identity.

@@ -158,6 +158,12 @@ impl Fetcher {
             });
         }
 
+        // Any other non-success status is a failed refresh, not feed content.
+        // Without this a 403/404/500 body would be handed to the feed parser
+        // and, worse, its (usually absent) validators would overwrite the
+        // stored etag/last-modified, poisoning the next conditional GET.
+        let response = response.error_for_status()?;
+
         let etag = header_str(&response, header::ETAG);
         let last_modified = header_str(&response, header::LAST_MODIFIED);
         let cache_control_max_age =

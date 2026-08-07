@@ -49,6 +49,11 @@ pub struct TrackDraft {
     pub genres: Vec<String>,
     pub replaygain_track: Option<f64>,
     pub replaygain_album: Option<f64>,
+    /// Star rating 0–5 read from the file's embedded rating tag, `None` when
+    /// unrated. Seeds `tracks.rating` at import; the DB owns it afterwards and
+    /// it is never written back (§5.6). Sources: ID3v2 `POPM` (0–255 byte,
+    /// foobar/WMP scale), Vorbis `RATING` (0–5 integer), MP4 `rate` (0–100).
+    pub rating: Option<u8>,
     pub format: Option<String>,
     pub bitrate: Option<u32>,
     pub sample_rate: Option<u32>,
@@ -85,6 +90,7 @@ pub fn read_track(path: &Path) -> Result<TrackDraft> {
         genres: Vec::new(),
         replaygain_track: None,
         replaygain_album: None,
+        rating: None,
         format: Some(format_label(tagged.file_type()).to_string()),
         bitrate: props.overall_bitrate(),
         sample_rate: props.sample_rate(),
@@ -95,6 +101,13 @@ pub fn read_track(path: &Path) -> Result<TrackDraft> {
 
     if let Some(tag) = tag {
         fill_from_tag(&mut draft, tag);
+    }
+
+    // lofty's generic tag view drops ID3v2 POPM frames (they stay in the
+    // format-specific remainder), so an MP3/AAC rating needs a second, typed
+    // read. Properties are skipped, so this is a cheap header-only parse.
+    if draft.rating.is_none() {
+        draft.rating = read_popm_rating(path, tagged.file_type());
     }
 
     Ok(draft)
@@ -126,7 +139,88 @@ fn fill_from_tag(draft: &mut TrackDraft, tag: &Tag) {
     draft.replaygain_album = tag
         .get_string(&ItemKey::ReplayGainAlbumGain)
         .and_then(parse_replaygain);
+    // Vorbis RATING / MP4 rate arrive as text under Popularimeter; a POPM
+    // byte written through the generic API arrives as the raw frame payload.
+    draft.rating = tag
+        .get(&ItemKey::Popularimeter)
+        .and_then(|item| match item.value() {
+            ItemValue::Text(s) => stars_from_text(s),
+            ItemValue::Binary(b) => stars_from_popm_payload(b),
+            ItemValue::Locator(_) => None,
+        });
     draft.cover = tag.pictures().first().map(picture_to_cover);
+}
+
+/// Read the first ID3v2 `POPM` frame's rating byte from an MP3/AAC file.
+///
+/// The generic [`Tag`] never surfaces POPM (lofty retains it as an unsupported
+/// frame), so this re-opens the file through the typed reader with properties
+/// disabled. Any failure reads as "unrated".
+fn read_popm_rating(path: &Path, file_type: FileType) -> Option<u8> {
+    use lofty::config::ParseOptions;
+    use lofty::id3::v2::{Frame, FrameId, Id3v2Tag};
+    use std::borrow::Cow;
+
+    fn popm_stars(tag: &Id3v2Tag) -> Option<u8> {
+        match tag.get(&FrameId::Valid(Cow::Borrowed("POPM")))? {
+            Frame::Popularimeter(popm) => stars_from_popm_byte(popm.rating),
+            _ => None,
+        }
+    }
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let opts = ParseOptions::new().read_properties(false);
+    match file_type {
+        FileType::Mpeg => {
+            let f = lofty::mpeg::MpegFile::read_from(&mut file, opts).ok()?;
+            f.id3v2().and_then(popm_stars)
+        }
+        FileType::Aac => {
+            let f = lofty::aac::AacFile::read_from(&mut file, opts).ok()?;
+            f.id3v2().and_then(popm_stars)
+        }
+        _ => None,
+    }
+}
+
+/// Map a POPM rating byte (0–255) to 0–5 stars.
+///
+/// These are Windows Media Player's documented read buckets (1–31, 32–95,
+/// 96–159, 160–223, 224–255), which contain the foobar2000/WMP canonical
+/// write bytes (1, 64, 128, 196, 255) this library is reconciled to (Lattice
+/// `rerate`); MusicBee's 186/242 land correctly too. 0 is unrated.
+fn stars_from_popm_byte(byte: u8) -> Option<u8> {
+    Some(match byte {
+        0 => return None,
+        1..=31 => 1,
+        32..=95 => 2,
+        96..=159 => 3,
+        160..=223 => 4,
+        _ => 5,
+    })
+}
+
+/// Decode a raw POPM frame payload (`email\0 rating-byte [counter…]`) to stars.
+fn stars_from_popm_payload(payload: &[u8]) -> Option<u8> {
+    let nul = payload.iter().position(|&b| b == 0)?;
+    stars_from_popm_byte(*payload.get(nul + 1)?)
+}
+
+/// Interpret a textual rating: 0–5 stars directly, 0–100 as a percent scale
+/// (MediaMonkey / MP4 `rate`), anything above as a POPM byte written as text.
+fn stars_from_text(s: &str) -> Option<u8> {
+    let v: f64 = s.trim().parse().ok()?;
+    if v <= 0.0 {
+        None
+    } else if v <= 5.0 {
+        Some((v.round() as u8).max(1))
+    } else if v <= 100.0 {
+        Some(((v / 20.0).round() as u8).clamp(1, 5))
+    } else if v <= 255.0 {
+        stars_from_popm_byte(v as u8)
+    } else {
+        None
+    }
 }
 
 /// Best-effort: does this file carry Opus `R128_TRACK_GAIN` / `R128_ALBUM_GAIN`
@@ -287,6 +381,46 @@ mod tests {
         assert_eq!(parse_replaygain("0.00"), Some(0.0));
         assert_eq!(parse_replaygain(""), None);
         assert_eq!(parse_replaygain("loud"), None);
+    }
+
+    #[test]
+    fn popm_bytes_bucket_to_the_canonical_stars() {
+        // foobar2000/WMP canonical bytes.
+        for (byte, stars) in [(1, 1), (64, 2), (128, 3), (196, 4), (255, 5)] {
+            assert_eq!(stars_from_popm_byte(byte), Some(stars), "byte {byte}");
+        }
+        // MusicBee's alternates land on the same stars both players show.
+        assert_eq!(stars_from_popm_byte(186), Some(4));
+        assert_eq!(stars_from_popm_byte(242), Some(5));
+        // 0 is unrated, never 0 stars.
+        assert_eq!(stars_from_popm_byte(0), None);
+    }
+
+    #[test]
+    fn popm_payload_skips_email_and_reads_the_byte() {
+        assert_eq!(
+            stars_from_popm_payload(b"no@email\x00\xc4\x00\x00\x00\x00"),
+            Some(4)
+        );
+        assert_eq!(stars_from_popm_payload(b"\x00\xff"), Some(5));
+        assert_eq!(stars_from_popm_payload(b"no-nul-terminator"), None);
+        assert_eq!(stars_from_popm_payload(b"x\x00"), None); // payload truncated
+    }
+
+    #[test]
+    fn text_ratings_cover_the_three_scales() {
+        // Vorbis RATING, clean 0–5 integers (the library convention).
+        assert_eq!(stars_from_text("4"), Some(4));
+        assert_eq!(stars_from_text("5"), Some(5));
+        assert_eq!(stars_from_text("0"), None);
+        // Percent scale (MediaMonkey, MP4 rate).
+        assert_eq!(stars_from_text("80"), Some(4));
+        assert_eq!(stars_from_text("100"), Some(5));
+        // A POPM byte written as text.
+        assert_eq!(stars_from_text("196"), Some(4));
+        // Garbage.
+        assert_eq!(stars_from_text("loud"), None);
+        assert_eq!(stars_from_text(""), None);
     }
 
     #[test]

@@ -1620,8 +1620,10 @@ fn print_book_import_report(r: &conservatory_audiobooks::BookImportReport, forma
     let job = r.job_id.map(|j| j.to_string());
     match format {
         Format::Json => println!(
-            "{{\"title\":{:?},\"authors\":{},\"narrators\":{},\"chapters\":{},\"files\":{},\"book_id\":{},\"job_id\":{},\"conflicts\":{}}}",
-            title,
+            // json_str, not `{:?}`: Debug escapes control chars as `\u{7}`
+            // (braced, not valid JSON).
+            "{{\"title\":{},\"authors\":{},\"narrators\":{},\"chapters\":{},\"files\":{},\"book_id\":{},\"job_id\":{},\"conflicts\":{}}}",
+            json_str(title),
             r.authors,
             r.narrators,
             r.chapters,
@@ -5558,7 +5560,7 @@ fn podcast_debug_chain(db: PathBuf, episode_id: i64) -> Result<()> {
 
 /// A minimal JSON string literal (quote + escape) for the hand-rolled `--json`
 /// output (serde is not a CLI dependency).
-#[cfg(feature = "podcasts")]
+#[cfg(any(feature = "podcasts", feature = "audiobooks"))]
 fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');

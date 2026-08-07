@@ -266,6 +266,23 @@ fn perspective_row(name: &str) -> gtk::ListBoxRow {
     row
 }
 
+/// A sidebar section header: the heading label with its actions inline on the
+/// right, anchored to the section they act on (no floating toolbars — those
+/// read as orphans in the flat idiom). The buttons arrive flat, quiet until
+/// hovered.
+fn sidebar_section_header(heading: &gtk::Label, actions: &[&gtk::Widget]) -> gtk::Box {
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    header.set_margin_top(6);
+    header.set_margin_bottom(2);
+    header.set_margin_start(12);
+    header.set_margin_end(6);
+    header.append(heading);
+    for action in actions {
+        header.append(*action);
+    }
+    header
+}
+
 /// A Playlists-sidebar row (Phase 16d-ii): a kind icon (static list vs smart
 /// query) beside the name.
 fn playlist_row(name: &str, is_smart: bool) -> gtk::ListBoxRow {
@@ -422,7 +439,12 @@ impl ConservatoryWindow {
         let split = gtk::Paned::new(gtk::Orientation::Vertical);
         split.set_start_child(Some(&facet_row));
         split.set_end_child(Some(&leaf.stack));
-        split.set_resize_start_child(true);
+        // Growth goes to the track list, never the facet panes: with both
+        // resize flags set, a window that opens small (tiled beside another
+        // window) and later grows hands the new height to the *facets*,
+        // leaving the track list a sliver at the bottom. The facet row keeps
+        // its set height; the user can still drag the divider.
+        split.set_resize_start_child(false);
         split.set_resize_end_child(true);
         split.set_position(300);
         // Fill both axes so the browse grows into space freed by a collapsing
@@ -3473,9 +3495,7 @@ impl ConservatoryWindow {
                 })
             })
             .unwrap_or_default();
-        for &id in ids {
-            let _ = rt.block_on(worker.delete_track(id));
-        }
+        let _ = rt.block_on(worker.delete_tracks(ids.to_vec()));
         if let Some(player) = imp.player.get() {
             crate::playqueue::remove_engine_items(player, &doomed);
         }
@@ -3730,15 +3750,13 @@ impl ConservatoryWindow {
         let album_edit = build_album_edit(&assignments);
         let genres = genres_assignment(&assignments);
 
+        // Batched worker calls: one round-trip (and one transaction) per kind,
+        // never one per row — a Ctrl+A bulk edit must not freeze the GTK thread.
         if !track_edit.is_empty() {
-            for &tid in track_ids {
-                let _ = rt.block_on(worker.update_track(tid, track_edit.clone()));
-            }
+            let _ = rt.block_on(worker.update_tracks(track_ids.to_vec(), track_edit.clone()));
         }
         if let Some(g) = &genres {
-            for &tid in track_ids {
-                let _ = rt.block_on(worker.set_track_genres(tid, g.clone()));
-            }
+            let _ = rt.block_on(worker.set_tracks_genres(track_ids.to_vec(), g.clone()));
         }
         if !album_edit.is_empty() {
             for &aid in &albums {
@@ -5379,8 +5397,10 @@ impl ConservatoryWindow {
         }
     }
 
-    /// The left Perspectives column: a list (Default + saved searches) over a
-    /// save/delete action bar.
+    /// The left Perspectives column: each section is a header row (label +
+    /// inline flat actions, anchored where they act) over its list. Floating
+    /// mid-rail toolbars read as orphans in the flat idiom, so the actions
+    /// live in the headers instead.
     fn build_sidebar(&self) -> gtk::Widget {
         let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
         sidebar.set_width_request(170);
@@ -5389,10 +5409,7 @@ impl ConservatoryWindow {
         let heading = gtk::Label::builder()
             .label("Perspectives")
             .xalign(0.0)
-            .margin_top(8)
-            .margin_bottom(4)
-            .margin_start(12)
-            .margin_end(12)
+            .hexpand(true)
             .css_classes(["heading"])
             .build();
 
@@ -5410,14 +5427,12 @@ impl ConservatoryWindow {
             .child(&list)
             .build();
 
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        actions.add_css_class("toolbar");
         let save_btn = gtk::Button::from_icon_name("document-save-symbolic");
         save_btn.set_tooltip_text(Some("Save the current filter as a Perspective"));
-        save_btn.set_hexpand(true);
+        save_btn.add_css_class("flat");
         let del_btn = gtk::Button::from_icon_name("user-trash-symbolic");
         del_btn.set_tooltip_text(Some("Delete the selected Perspective"));
-        del_btn.set_hexpand(true);
+        del_btn.add_css_class("flat");
         let weak = self.downgrade();
         save_btn.connect_clicked(move |_| {
             if let Some(win) = weak.upgrade() {
@@ -5430,12 +5445,11 @@ impl ConservatoryWindow {
                 win.delete_selected_perspective();
             }
         });
-        actions.append(&save_btn);
-        actions.append(&del_btn);
+        let header =
+            sidebar_section_header(&heading, &[save_btn.upcast_ref(), del_btn.upcast_ref()]);
 
-        sidebar.append(&heading);
+        sidebar.append(&header);
         sidebar.append(&list_scroller);
-        sidebar.append(&actions);
         let _ = self.imp().sidebar_list.set(list);
 
         // --- Playlists section (Phase 16d-ii): below Perspectives, sharing the
@@ -5445,10 +5459,7 @@ impl ConservatoryWindow {
         let pl_heading = gtk::Label::builder()
             .label("Playlists")
             .xalign(0.0)
-            .margin_top(8)
-            .margin_bottom(4)
-            .margin_start(12)
-            .margin_end(12)
+            .hexpand(true)
             .css_classes(["heading"])
             .build();
 
@@ -5497,25 +5508,22 @@ impl ConservatoryWindow {
             .icon_name("list-add-symbolic")
             .tooltip_text("New playlist")
             .menu_model(&create_menu)
-            .hexpand(true)
+            .css_classes(["flat"])
             .build();
         let pl_del = gtk::Button::from_icon_name("user-trash-symbolic");
         pl_del.set_tooltip_text(Some("Delete the selected playlist"));
-        pl_del.set_hexpand(true);
+        pl_del.add_css_class("flat");
         let weak = self.downgrade();
         pl_del.connect_clicked(move |_| {
             if let Some(win) = weak.upgrade() {
                 win.delete_selected_playlist();
             }
         });
-        let pl_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        pl_actions.add_css_class("toolbar");
-        pl_actions.append(&pl_create);
-        pl_actions.append(&pl_del);
+        let pl_header =
+            sidebar_section_header(&pl_heading, &[pl_create.upcast_ref(), pl_del.upcast_ref()]);
 
-        sidebar.append(&pl_heading);
+        sidebar.append(&pl_header);
         sidebar.append(&pl_scroller);
-        sidebar.append(&pl_actions);
         let _ = self.imp().playlist_list.set(pl_list);
 
         sidebar.upcast()

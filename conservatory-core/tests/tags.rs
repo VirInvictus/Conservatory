@@ -67,6 +67,17 @@ fn id3v2_collapses_to_a_single_genre() {
 }
 
 #[test]
+fn all_formats_read_the_embedded_rating() {
+    // Each fixture carries a 4-star rating in its native convention: POPM
+    // byte 196 (mp3), RATING=4 (flac/opus), rate=80 (m4a). The mp3 path
+    // exercises the typed ID3v2 re-read (lofty's generic tag drops POPM).
+    for name in ["sample.flac", "sample.mp3", "sample.opus", "sample.m4a"] {
+        let draft = read_track(&fixture(name)).expect("reading fixture");
+        assert_eq!(draft.rating, Some(4), "{name} rating");
+    }
+}
+
+#[test]
 fn opus_reports_48khz_others_44_1() {
     // Opus always decodes at 48 kHz; the rest keep the 44.1 kHz source rate.
     let opus = read_track(&fixture("sample.opus")).unwrap();

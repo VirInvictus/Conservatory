@@ -151,6 +151,7 @@ mod tests {
             genres: vec![],
             replaygain_track: None,
             replaygain_album: None,
+            rating: None,
             format: Some("flac".into()),
             bitrate: None,
             sample_rate: None,

@@ -68,11 +68,26 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Batched [`Self::UpdateTrack`]: one edit across a selection, one
+    /// transaction (bulk edit stays a single GTK-thread round-trip).
+    UpdateTracks {
+        track_ids: Vec<i64>,
+        edit: TrackEdit,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Apply an album-level field edit (Phase 5a). Album-level fields are
     /// path-affecting; the caller re-renders and moves.
     UpdateAlbum {
         album_id: i64,
         edit: AlbumEdit,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Batched [`Self::SetTrackGenres`]: one genre set across a selection.
+    SetTracksGenres {
+        track_ids: Vec<i64>,
+        genres: Vec<String>,
         reply: oneshot::Sender<Result<()>>,
     },
 
@@ -228,6 +243,12 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Batched [`Self::DeleteTrack`]: one transaction, one renumber pass.
+    DeleteTracks {
+        track_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Insert tracks into the queue at `at`, shifting later entries up (the Play
     /// Next path, Phase 16a; mirrors the engine `InsertItems`).
     InsertQueueTracksAt {
@@ -247,6 +268,12 @@ pub(crate) enum Command {
     /// left on disk. Cascades/triggers clean up dependents.
     DeleteBook {
         book_id: i64,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Batched [`Self::DeleteBook`] (the [`Self::DeleteTracks`] twin).
+    DeleteBooks {
+        book_ids: Vec<i64>,
         reply: oneshot::Sender<Result<()>>,
     },
 
@@ -399,6 +426,21 @@ pub(crate) enum Command {
     /// Toggle an episode's starred flag (triage), preserving played/position.
     SetEpisodeStarred {
         episode_id: i64,
+        starred: bool,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Batched [`Self::SetEpisodePlayed`]: one triage action across a selection.
+    SetEpisodesPlayed {
+        episode_ids: Vec<i64>,
+        state: PlayedState,
+        when: Option<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Batched [`Self::SetEpisodeStarred`]: one star flip across a selection.
+    SetEpisodesStarred {
+        episode_ids: Vec<i64>,
         starred: bool,
         reply: oneshot::Sender<Result<()>>,
     },
@@ -640,8 +682,10 @@ impl Command {
             Self::SetAlbumShelfGenre { .. } => "set_album_shelf_genre",
             Self::InsertAlbum { .. } => "insert_album",
             Self::UpdateTrack { .. } => "update_track",
+            Self::UpdateTracks { .. } => "update_tracks",
             Self::UpdateAlbum { .. } => "update_album",
             Self::SetTrackGenres { .. } => "set_track_genres",
+            Self::SetTracksGenres { .. } => "set_tracks_genres",
             Self::SetTrackReplayGain { .. } => "set_track_replaygain",
             Self::SetAlbumCoverPath { .. } => "set_album_cover_path",
             Self::InsertTrack { .. } => "insert_track",
@@ -661,9 +705,11 @@ impl Command {
             Self::IncrementPlayCount { .. } => "increment_play_count",
             Self::EnqueueTracks { .. } => "enqueue_tracks",
             Self::DeleteTrack { .. } => "delete_track",
+            Self::DeleteTracks { .. } => "delete_tracks",
             Self::InsertQueueTracksAt { .. } => "insert_queue_tracks_at",
             Self::InsertQueueBooksAt { .. } => "insert_queue_books_at",
             Self::DeleteBook { .. } => "delete_book",
+            Self::DeleteBooks { .. } => "delete_books",
             Self::ReplaceQueueWithTracks { .. } => "replace_queue_with_tracks",
             Self::EnqueueEpisodes { .. } => "enqueue_episodes",
             Self::ReplaceQueueWithEpisodes { .. } => "replace_queue_with_episodes",
@@ -687,7 +733,9 @@ impl Command {
             Self::ClearEpisodeAudioPath { .. } => "clear_episode_audio_path",
             Self::UpsertPlayback { .. } => "upsert_playback",
             Self::SetEpisodePlayed { .. } => "set_episode_played",
+            Self::SetEpisodesPlayed { .. } => "set_episodes_played",
             Self::SetEpisodeStarred { .. } => "set_episode_starred",
+            Self::SetEpisodesStarred { .. } => "set_episodes_starred",
             Self::SetEpisodePosition { .. } => "set_episode_position",
             Self::CompleteEpisode { .. } => "complete_episode",
             Self::InsertListeningSession { .. } => "insert_listening_session",

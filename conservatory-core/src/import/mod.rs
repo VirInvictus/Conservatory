@@ -238,7 +238,7 @@ pub async fn import_folder(
             sample_rate: draft.sample_rate.map(|s| s as i32),
             replaygain_track: draft.replaygain_track,
             replaygain_album: draft.replaygain_album,
-            rating: 0,
+            rating: draft.rating.unwrap_or(0),
             play_count: 0,
             last_played: None,
             starred: false,

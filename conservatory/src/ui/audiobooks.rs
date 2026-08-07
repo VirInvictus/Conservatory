@@ -685,9 +685,7 @@ impl Inner {
             let doomed = crate::playqueue::engine_indexes_where(&this.pool, |r| {
                 r.book_id.map(|b| ids.contains(&b)).unwrap_or(false)
             });
-            for &id in &ids {
-                let _ = this.rt.block_on(this.worker.delete_book(id));
-            }
+            let _ = this.rt.block_on(this.worker.delete_books(ids.clone()));
             if let Some(player) = this.player.as_ref() {
                 crate::playqueue::remove_engine_items(player, &doomed);
             }

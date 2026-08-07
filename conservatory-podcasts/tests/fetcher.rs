@@ -116,6 +116,26 @@ async fn rate_limit_without_retry_after_still_applies_a_default_cooldown() {
 }
 
 #[tokio::test]
+async fn server_error_is_a_fetch_error_not_feed_content() {
+    // A 500 (outage page, WAF, misbehaving host) must surface as Err so the
+    // refresh records Failed; it must never be handed to the feed parser or
+    // allowed to overwrite the stored etag/last-modified.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/feed.xml"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("<html>oops</html>"))
+        .mount(&server)
+        .await;
+
+    let fetcher = Fetcher::new().unwrap();
+    let err = fetcher
+        .fetch(&format!("{}/feed.xml", server.uri()), None, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, FetchError::Http(_)), "got {err:?}");
+}
+
+#[tokio::test]
 async fn invalid_url_is_reported() {
     let fetcher = Fetcher::new().unwrap();
     let err = fetcher.fetch("not a url", None, None).await.unwrap_err();

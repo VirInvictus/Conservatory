@@ -303,7 +303,7 @@ fn write_field(f: &mut fmt::Formatter<'_>, field: Field, kind: &MatchKind) -> fm
     match kind {
         MatchKind::Substring(v) => write!(f, "{name}:{}", quote_if_needed(v)),
         MatchKind::Exact(v) => write!(f, "{name}:={}", quote_if_needed(v)),
-        MatchKind::Regex(v) => write!(f, "{name}:~{v}"),
+        MatchKind::Regex(v) => write!(f, "{name}:~{}", quote_if_needed(v)),
         MatchKind::Fuzzy(v) => write!(f, "{name}:?{}", quote_if_needed(v)),
         MatchKind::HasAny => write!(f, "{name}:true"),
         MatchKind::HasNone => write!(f, "{name}:false"),
@@ -341,11 +341,19 @@ fn paren(expr: &Expr) -> String {
     }
 }
 
-/// Quote a value that contains whitespace or a leading operator so it re-parses.
+/// Quote a value so it re-parses as one token: any tokenizer boundary char
+/// (they split a bareword mid-string, not just at the front), a `..` (range),
+/// or a bare boolean keyword all force quotes.
 fn quote_if_needed(s: &str) -> String {
+    let boundary = |c: char| {
+        c.is_whitespace() || matches!(c, '(' | ')' | ':' | '"' | '~' | '?' | '!' | '<' | '>' | '=')
+    };
     let needs = s.is_empty()
-        || s.chars().any(char::is_whitespace)
-        || s.starts_with(['=', '~', '?', '!', '(', ')', '"']);
+        || s.chars().any(boundary)
+        || s.contains("..")
+        || s.eq_ignore_ascii_case("and")
+        || s.eq_ignore_ascii_case("or")
+        || s.eq_ignore_ascii_case("not");
     if needs {
         format!("\"{}\"", s.replace('"', "\\\""))
     } else {

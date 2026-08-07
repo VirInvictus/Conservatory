@@ -87,6 +87,17 @@ impl WorkerHandle {
         .await
     }
 
+    /// Batched [`Self::update_track`]: one edit across a selection in one
+    /// transaction (a bulk edit is one round-trip, however large the selection).
+    pub async fn update_tracks(&self, track_ids: Vec<i64>, edit: TrackEdit) -> Result<()> {
+        self.dispatch(|reply| Command::UpdateTracks {
+            track_ids,
+            edit,
+            reply,
+        })
+        .await
+    }
+
     /// Apply an album-level field edit (Phase 5a). Album-level fields are
     /// path-affecting; re-render and move after.
     pub async fn update_album(&self, album_id: i64, edit: AlbumEdit) -> Result<()> {
@@ -102,6 +113,17 @@ impl WorkerHandle {
     pub async fn set_track_genres(&self, track_id: i64, genres: Vec<String>) -> Result<()> {
         self.dispatch(|reply| Command::SetTrackGenres {
             track_id,
+            genres,
+            reply,
+        })
+        .await
+    }
+
+    /// Batched [`Self::set_track_genres`] (the bulk-edit companion to
+    /// [`Self::update_tracks`]).
+    pub async fn set_tracks_genres(&self, track_ids: Vec<i64>, genres: Vec<String>) -> Result<()> {
+        self.dispatch(|reply| Command::SetTracksGenres {
+            track_ids,
             genres,
             reply,
         })
@@ -350,6 +372,13 @@ impl WorkerHandle {
             .await
     }
 
+    /// Batched [`Self::delete_track`]: one transaction, one renumber pass, one
+    /// round-trip for the whole selection.
+    pub async fn delete_tracks(&self, track_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::DeleteTracks { track_ids, reply })
+            .await
+    }
+
     /// Insert tracks into the queue at `at` (the Play Next path, Phase 16a).
     pub async fn insert_queue_tracks_at(&self, at: i64, track_ids: Vec<i64>) -> Result<()> {
         self.dispatch(|reply| Command::InsertQueueTracksAt {
@@ -373,6 +402,12 @@ impl WorkerHandle {
     /// Remove a book from the library (16.5h). DB-only unlink; files stay.
     pub async fn delete_book(&self, book_id: i64) -> Result<()> {
         self.dispatch(|reply| Command::DeleteBook { book_id, reply })
+            .await
+    }
+
+    /// Batched [`Self::delete_book`] (the [`Self::delete_tracks`] twin).
+    pub async fn delete_books(&self, book_ids: Vec<i64>) -> Result<()> {
+        self.dispatch(|reply| Command::DeleteBooks { book_ids, reply })
             .await
     }
 
@@ -570,6 +605,33 @@ impl WorkerHandle {
     pub async fn set_episode_starred(&self, episode_id: i64, starred: bool) -> Result<()> {
         self.dispatch(|reply| Command::SetEpisodeStarred {
             episode_id,
+            starred,
+            reply,
+        })
+        .await
+    }
+
+    /// Batched [`Self::set_episode_played`]: one triage action across a
+    /// selection, one transaction, one round-trip.
+    pub async fn set_episodes_played(
+        &self,
+        episode_ids: Vec<i64>,
+        state: PlayedState,
+        when: Option<i64>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::SetEpisodesPlayed {
+            episode_ids,
+            state,
+            when,
+            reply,
+        })
+        .await
+    }
+
+    /// Batched [`Self::set_episode_starred`]: one star flip across a selection.
+    pub async fn set_episodes_starred(&self, episode_ids: Vec<i64>, starred: bool) -> Result<()> {
+        self.dispatch(|reply| Command::SetEpisodesStarred {
+            episode_ids,
             starred,
             reply,
         })
@@ -992,6 +1054,13 @@ fn handle(conn: &mut Connection, command: Command) {
         } => {
             let _ = reply.send(writes::update_track(conn, track_id, &edit));
         }
+        Command::UpdateTracks {
+            track_ids,
+            edit,
+            reply,
+        } => {
+            let _ = reply.send(writes::update_tracks(conn, &track_ids, &edit));
+        }
         Command::UpdateAlbum {
             album_id,
             edit,
@@ -1005,6 +1074,13 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::set_track_genres(conn, track_id, &genres));
+        }
+        Command::SetTracksGenres {
+            track_ids,
+            genres,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_tracks_genres(conn, &track_ids, &genres));
         }
         Command::SetTrackReplayGain {
             track_id,
@@ -1173,6 +1249,9 @@ fn handle(conn: &mut Connection, command: Command) {
         Command::DeleteTrack { track_id, reply } => {
             let _ = reply.send(writes::delete_track(conn, track_id));
         }
+        Command::DeleteTracks { track_ids, reply } => {
+            let _ = reply.send(writes::delete_tracks(conn, &track_ids));
+        }
         Command::InsertQueueTracksAt {
             at,
             track_ids,
@@ -1189,6 +1268,9 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::DeleteBook { book_id, reply } => {
             let _ = reply.send(writes::delete_book(conn, book_id));
+        }
+        Command::DeleteBooks { book_ids, reply } => {
+            let _ = reply.send(writes::delete_books(conn, &book_ids));
         }
         Command::ReplaceQueueWithTracks { track_ids, reply } => {
             let _ = reply.send(writes::replace_queue_with_tracks(conn, &track_ids));
@@ -1311,6 +1393,21 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::set_episode_starred(conn, episode_id, starred));
+        }
+        Command::SetEpisodesPlayed {
+            episode_ids,
+            state,
+            when,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_episodes_played(conn, &episode_ids, state, when));
+        }
+        Command::SetEpisodesStarred {
+            episode_ids,
+            starred,
+            reply,
+        } => {
+            let _ = reply.send(writes::set_episodes_starred(conn, &episode_ids, starred));
         }
         Command::SetEpisodePosition {
             episode_id,

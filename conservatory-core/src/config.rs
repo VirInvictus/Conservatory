@@ -282,12 +282,31 @@ pub fn to_toml_string(config: &Config) -> Result<String> {
 }
 
 /// Serialize `config` to `path` (creating the parent dir), overwriting it.
+///
+/// Atomic: temp file in the same directory, fsync, rename (the same discipline
+/// as `mover::fsops::copy_across`). A malformed config is a hard startup error
+/// (`load` refuses to guess), so a crash mid-write must never be able to leave
+/// a truncated `config.toml` behind.
 pub fn save(path: &Path, config: &Config) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, to_toml_string(config)?)?;
-    Ok(())
+    let mut temp_name = path.file_name().unwrap_or_default().to_os_string();
+    temp_name.push(".part");
+    let temp = path.with_file_name(temp_name);
+
+    let result = (|| -> Result<()> {
+        std::fs::write(&temp, to_toml_string(config)?)?;
+        let f = std::fs::File::open(&temp)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&temp, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 /// Load from the default [`config_path`].

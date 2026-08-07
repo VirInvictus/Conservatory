@@ -100,6 +100,16 @@ fn write_tags(path: &Path, tag_type: TagType, cover: Vec<u8>) {
         ItemValue::Text("-7.20 dB".to_string()),
     ));
 
+    // A 4-star rating in each format's native convention: ID3v2 gets a raw
+    // POPM payload (email NUL rating-byte, foobar/WMP scale), MP4 gets the
+    // 0-100 `rate` atom, Vorbis gets a plain 0-5 RATING comment.
+    let rating = match tag_type {
+        TagType::Id3v2 => ItemValue::Binary(b"no@email\x00\xc4".to_vec()),
+        TagType::Mp4Ilst => ItemValue::Text("80".to_string()),
+        _ => ItemValue::Text("4".to_string()),
+    };
+    tag.insert(TagItem::new(ItemKey::Popularimeter, rating));
+
     tag.push_picture(Picture::new_unchecked(
         PictureType::CoverFront,
         Some(MimeType::Png),

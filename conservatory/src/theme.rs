@@ -84,6 +84,10 @@ button {
 }
 button:hover { background-color: %GRID%; }
 button:active, button:checked { background-color: %ACCENT%; color: %ON_ACCENT%; border-color: %ACCENT%; }
+/* Insensitive controls must read as such: without this the flat sheet leaves
+   a disabled button visually identical to a live one. */
+button:disabled { color: %FG_DIM%; border-color: alpha(%GRID%, 0.5); background-color: transparent; }
+entry:disabled, spinbutton:disabled, dropdown:disabled, switch:disabled, check:disabled, scale:disabled { opacity: 0.55; }
 /* Icon-only buttons (headerbar / toolbars) read as flat like the rest of the
    chrome: a hard 1px border around every gear/list glyph is what made the top
    bar look boxy. GTK tags icon-only buttons `.image-button`; they de-box here
@@ -192,6 +196,12 @@ columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height
 columnview > header > button:hover { background: alpha(currentColor, 0.08); }
 .rating-stars { color: %ACCENT%; }
 .filter-warn text { background-color: alpha(%WARN%, 0.20); }
+/* Empty-state call-to-action buttons. GTK/Adwaita convention names the class
+   `pill`; here it renders in the house idiom (flat, square, hard border) as a
+   roomier bordered button rather than a rounded capsule. */
+button.pill { padding: 6px 18px; background-color: %BG_CARD%; border-color: %FG_DIM%; }
+button.pill:hover { background-color: %GRID%; }
+.status-bar { padding: 2px 12px; border-top: 1px solid %GRID%; }
 .now-bar { padding: 6px 12px; border-top: 1px solid %GRID%; }
 .now-bar-cover { border-radius: 6px; box-shadow: 0 1px 5px rgba(0,0,0,0.40); background: alpha(currentColor, 0.06); }
 .queue-row { padding: 4px 8px; border-radius: 0; }
@@ -299,6 +309,8 @@ mod tests {
             ".boxed-list",
             "switch",
             "scale > trough",
+            "button.pill",
+            ".status-bar",
         ] {
             assert!(sheet.contains(needle), "missing rule {needle}");
         }

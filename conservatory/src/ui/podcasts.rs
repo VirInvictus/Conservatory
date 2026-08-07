@@ -267,11 +267,10 @@ impl Inner {
         let rows = self.selected_rows();
         let Some(first) = rows.first() else { return };
         let starred = !first.starred();
-        for row in &rows {
-            let _ = self
-                .rt
-                .block_on(self.worker.set_episode_starred(row.id(), starred));
-        }
+        let ids: Vec<i64> = rows.iter().map(|r| r.id()).collect();
+        let _ = self
+            .rt
+            .block_on(self.worker.set_episodes_starred(ids, starred));
         if rows.len() > 1 {
             let verb = if starred { "Starred" } else { "Unstarred" };
             self.toast(&format!("{verb} {} episodes", rows.len()));
@@ -281,11 +280,10 @@ impl Inner {
 
     fn write_played_batch(&self, rows: &[EpisodeRow], state: PlayedState) {
         let when = (state == PlayedState::PlayedFully).then(now_secs);
-        for row in rows {
-            let _ = self
-                .rt
-                .block_on(self.worker.set_episode_played(row.id(), state, when));
-        }
+        let ids: Vec<i64> = rows.iter().map(|r| r.id()).collect();
+        let _ = self
+            .rt
+            .block_on(self.worker.set_episodes_played(ids, state, when));
         if rows.len() > 1 {
             let verb = match state {
                 PlayedState::PlayedFully => "Marked played",

@@ -108,6 +108,23 @@ pub(crate) fn update_track(conn: &Connection, track_id: i64, edit: &TrackEdit) -
     Ok(())
 }
 
+/// Batched [`update_track`]: one edit applied to a whole selection in a single
+/// transaction, so a bulk edit is one worker round-trip (and one commit), not
+/// one per row — a Ctrl+A bulk edit must never freeze the GTK thread behind
+/// thousands of sequential commands.
+pub(crate) fn update_tracks(
+    conn: &mut Connection,
+    track_ids: &[i64],
+    edit: &TrackEdit,
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    for &id in track_ids {
+        update_track(&tx, id, edit)?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// Apply an album-level field edit (Phase 5a). Album-level edits change the whole
 /// album (every track under it). `shelf_genre`, `album`, `album_artist`, and
 /// `year` are path-affecting: the caller re-renders and moves (spec §5.4).
@@ -150,6 +167,28 @@ pub(crate) fn set_track_genres(
     genres: &[String],
 ) -> Result<()> {
     let tx = conn.transaction()?;
+    set_track_genres_in(&tx, track_id, genres)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Batched [`set_track_genres`]: one genre set across a selection, one
+/// transaction (the bulk-edit companion to [`update_tracks`]).
+pub(crate) fn set_tracks_genres(
+    conn: &mut Connection,
+    track_ids: &[i64],
+    genres: &[String],
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    for &id in track_ids {
+        set_track_genres_in(&tx, id, genres)?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// The genre replace for one track, inside the caller's open transaction.
+fn set_track_genres_in(tx: &Connection, track_id: i64, genres: &[String]) -> Result<()> {
     tx.execute(
         "DELETE FROM track_genres WHERE track_id = ?1",
         params![track_id],
@@ -170,7 +209,6 @@ pub(crate) fn set_track_genres(
             params![track_id, genre_id],
         )?;
     }
-    tx.commit()?;
     Ok(())
 }
 
@@ -535,8 +573,17 @@ pub(crate) fn enqueue_tracks(conn: &mut Connection, track_ids: &[i64]) -> Result
 /// so the delete and the renumber commit as one transaction (the contiguity
 /// invariant every position-keyed op relies on; see [`compact_positions`]).
 pub(crate) fn delete_track(conn: &mut Connection, track_id: i64) -> Result<()> {
+    delete_tracks(conn, &[track_id])
+}
+
+/// Batched [`delete_track`]: the whole selection deletes and the positions
+/// renumber in one transaction (and one [`compact_positions`] pass), so a
+/// large delete is one worker round-trip.
+pub(crate) fn delete_tracks(conn: &mut Connection, track_ids: &[i64]) -> Result<()> {
     let tx = conn.transaction()?;
-    tx.execute("DELETE FROM tracks WHERE id = ?1", params![track_id])?;
+    for &id in track_ids {
+        tx.execute("DELETE FROM tracks WHERE id = ?1", params![id])?;
+    }
     compact_positions(&tx)?;
     tx.commit()?;
     Ok(())
@@ -1106,6 +1153,37 @@ pub(crate) fn set_episode_played(
     Ok(())
 }
 
+/// Batched [`set_episode_played`]: one triage action across a selection in one
+/// transaction (marking a whole Inbox played is one worker round-trip).
+pub(crate) fn set_episodes_played(
+    conn: &mut Connection,
+    episode_ids: &[i64],
+    state: PlayedState,
+    when: Option<i64>,
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    for &id in episode_ids {
+        set_episode_played(&tx, id, state, when)?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Batched [`set_episode_starred`]: one star flip across a selection, one
+/// transaction.
+pub(crate) fn set_episodes_starred(
+    conn: &mut Connection,
+    episode_ids: &[i64],
+    starred: bool,
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    for &id in episode_ids {
+        set_episode_starred(&tx, id, starred)?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// Toggle an episode's `starred` flag without touching played/position (6b-ii-b).
 /// Creates the playback row if absent.
 pub(crate) fn set_episode_starred(conn: &Connection, episode_id: i64, starred: bool) -> Result<()> {
@@ -1390,8 +1468,16 @@ pub(crate) fn get_or_create_series(conn: &Connection, name: &str) -> Result<i64>
 /// cascade can hole queue / playlist positions, so the delete and the renumber
 /// commit together ([`compact_positions`]).
 pub(crate) fn delete_book(conn: &mut Connection, book_id: i64) -> Result<()> {
+    delete_books(conn, &[book_id])
+}
+
+/// Batched [`delete_book`] (the [`delete_tracks`] twin): one transaction, one
+/// renumber pass, one worker round-trip for a shelf selection.
+pub(crate) fn delete_books(conn: &mut Connection, book_ids: &[i64]) -> Result<()> {
     let tx = conn.transaction()?;
-    tx.execute("DELETE FROM books WHERE id = ?1", params![book_id])?;
+    for &id in book_ids {
+        tx.execute("DELETE FROM books WHERE id = ?1", params![id])?;
+    }
     compact_positions(&tx)?;
     tx.commit()?;
     Ok(())

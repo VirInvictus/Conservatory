@@ -497,6 +497,16 @@ mod tests {
             "series:?stormlite",
             "is:finished",
             "author:tolkien AND NOT is:finished",
+            // Values that only survive because Display re-quotes them: real
+            // regex syntax, tokenizer boundary chars mid-value, `..`, and
+            // bare boolean keywords as free text.
+            "title:~\"^(a|b)$\"",
+            "title:~\"live!\"",
+            "artist:\"AC=DC\"",
+            "album:\"What?\"",
+            "title:\"a..b\"",
+            "\"or\" boards",
+            "\"not\"",
         ] {
             round_trip(input);
         }

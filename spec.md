@@ -455,7 +455,7 @@ Although the database owns organization, Conservatory **writes curated metadata 
 
 ### 5.6 Re-Import Contract
 
-Conservatory is not filesystem-canonical, so the Belfry rescan contract does not apply unchanged. The contract here is weaker and explicit: **the managed tree plus embedded tags can rebuild a library's tracks, albums, and artists**; the database-exclusive data that a re-import cannot recover is the *curated* layer (shelf-genre overrides, ratings, play counts, starred, Perspectives, queue, podcast triage/listening state). That curated layer is what the nightly DB backup and the JSON export protect. The integration suite verifies the rebuildable subset against a fixture library.
+Conservatory is not filesystem-canonical, so the Belfry rescan contract does not apply unchanged. The contract here is weaker and explicit: **the managed tree plus embedded tags can rebuild a library's tracks, albums, and artists**; the database-exclusive data that a re-import cannot recover is the *curated* layer (shelf-genre overrides, ratings beyond what the files' own rating tags re-seed (§7.1), play counts, starred, Perspectives, queue, podcast triage/listening state). That curated layer is what the nightly DB backup and the JSON export protect. The integration suite verifies the rebuildable subset against a fixture library.
 
 ### 5.7 Audiobooks On-Disk: a rendered template (owned, like music)
 
@@ -525,6 +525,8 @@ Output selection covers the **device** (the PipeWire picker, Phase 4c-ii) and th
 ### 7.1 Tag Read/Write
 
 `lofty` (broad format coverage, read + write) is the leading candidate; `symphonia` is the fallback/decoder reference. Subject to the dependency sign-off rule (§11). Reads feed import; writes feed embedded-tag write-back (§5.5).
+
+**Ratings are read, never written.** Import seeds `tracks.rating` from the file's embedded rating tag when one exists: ID3v2 `POPM` (0–255 byte, bucketed on the foobar2000/WMP canonical values), Vorbis `RATING` (0–5 integer), MP4 `rate` (0–100). After import the database owns the rating; write-back (§5.5) never embeds it, per the §5.6 curated-layer rule. An existing rating in the files therefore survives a rebuild-from-tree, but a rating changed only in Conservatory does not; that delta is what the DB backup protects.
 
 ### 7.2 Genre Normalization
 

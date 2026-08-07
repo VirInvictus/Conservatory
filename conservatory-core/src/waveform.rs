@@ -240,11 +240,23 @@ pub fn envelope_for(abs_path: &Path, buckets: usize) -> Result<WaveformEnvelope>
 }
 
 /// Write `env` to `path`, creating the cache directory on first use.
+///
+/// Same-dir temp + rename so two writers racing on one key (GUI prefetch vs
+/// the CLI `waveform` verb) can never interleave a partial file. No fsync: a
+/// torn cache entry after a crash is only a re-decode (`decode_cache` treats
+/// any mismatch as a miss), not data loss.
 fn store(path: &Path, env: &WaveformEnvelope) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(path, encode(env))
+    let mut temp_name = path.file_name().unwrap_or_default().to_os_string();
+    temp_name.push(format!(".part-{}", std::process::id()));
+    let temp = path.with_file_name(temp_name);
+    let result = std::fs::write(&temp, encode(env)).and_then(|()| std::fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 #[cfg(test)]

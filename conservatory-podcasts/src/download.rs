@@ -52,7 +52,7 @@ pub async fn download_episode_with_progress(
         .as_deref()
         .ok_or_else(|| FetchError::Download("episode has no audio URL".into()))?;
 
-    let filename = filename_for(url, episode.mime_type.as_deref());
+    let filename = filename_for(url, episode.mime_type.as_deref(), episode.id);
     let rel = format!("{}/{}", episode.folder_path, filename);
     let dst = root.join(&rel);
     let dir = dst
@@ -126,7 +126,12 @@ pub fn download_fraction(written: u64, expected: Option<u64>) -> Option<f64> {
 
 /// The URL's last path segment when it looks like a filename, else a name
 /// synthesized from the MIME type.
-fn filename_for(url: &str, mime: Option<&str>) -> String {
+///
+/// The synthesized fallback carries the episode id: shows whose enclosure URLs
+/// have no filename (`.../play`, tokenized CDN paths) would otherwise give
+/// every episode the identical name, and two episodes that also share a
+/// `(pub_date, title)`-derived folder would silently overwrite each other.
+fn filename_for(url: &str, mime: Option<&str>, episode_id: i64) -> String {
     reqwest::Url::parse(url)
         .ok()
         .and_then(|u| {
@@ -134,7 +139,7 @@ fn filename_for(url: &str, mime: Option<&str>) -> String {
                 .and_then(|mut segs| segs.next_back().map(str::to_string))
         })
         .filter(|s| !s.is_empty() && s.contains('.'))
-        .unwrap_or_else(|| format!("episode.{}", ext_for_mime(mime)))
+        .unwrap_or_else(|| format!("episode-{episode_id}.{}", ext_for_mime(mime)))
 }
 
 fn ext_for_mime(mime: Option<&str>) -> &'static str {
@@ -148,10 +153,17 @@ fn ext_for_mime(mime: Option<&str>) -> &'static str {
     }
 }
 
-/// `foo.mp3` -> `foo.mp3.part` (a sibling, so the rename is a same-dir move).
+/// `foo.mp3` -> `foo.mp3.part-<pid>-<nanos>` (a sibling, so the rename is a
+/// same-dir move). Unique per attempt: two concurrent downloads of the same
+/// episode must never interleave writes into one shared temp file — each gets
+/// its own, and the atomic rename means the last finisher wins whole.
 fn part_path(dst: &Path) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
     let mut s = dst.as_os_str().to_owned();
-    s.push(".part");
+    s.push(format!(".part-{}-{nanos}", std::process::id()));
     PathBuf::from(s)
 }
 
@@ -162,27 +174,32 @@ mod tests {
     #[test]
     fn filename_from_url_basename() {
         assert_eq!(
-            filename_for("https://cdn.example/ep-12.mp3", None),
+            filename_for("https://cdn.example/ep-12.mp3", None, 7),
             "ep-12.mp3"
         );
         // Query strings are ignored (path only).
         assert_eq!(
-            filename_for("https://cdn.example/audio/ep-12.m4a?token=abc", None),
+            filename_for("https://cdn.example/audio/ep-12.m4a?token=abc", None, 7),
             "ep-12.m4a"
         );
     }
 
     #[test]
-    fn filename_falls_back_to_mime() {
+    fn filename_falls_back_to_mime_with_episode_id() {
+        // The id keeps extension-less enclosure URLs from colliding across
+        // episodes that share a folder.
         assert_eq!(
-            filename_for("https://cdn.example/stream", Some("audio/mpeg")),
-            "episode.mp3"
+            filename_for("https://cdn.example/stream", Some("audio/mpeg"), 12),
+            "episode-12.mp3"
         );
         assert_eq!(
-            filename_for("https://cdn.example/", Some("audio/mp4")),
-            "episode.m4a"
+            filename_for("https://cdn.example/", Some("audio/mp4"), 3),
+            "episode-3.m4a"
         );
-        assert_eq!(filename_for("https://cdn.example/x", None), "episode.bin");
+        assert_eq!(
+            filename_for("https://cdn.example/x", None, 9),
+            "episode-9.bin"
+        );
     }
 
     #[test]
@@ -195,10 +212,14 @@ mod tests {
     }
 
     #[test]
-    fn part_path_appends_suffix() {
-        assert_eq!(
-            part_path(Path::new("/lib/Podcasts/s/e/a.mp3")),
-            PathBuf::from("/lib/Podcasts/s/e/a.mp3.part")
+    fn part_path_is_a_unique_sibling() {
+        let a = part_path(Path::new("/lib/Podcasts/s/e/a.mp3"));
+        assert!(
+            a.to_string_lossy()
+                .starts_with("/lib/Podcasts/s/e/a.mp3.part-"),
+            "got {a:?}"
         );
+        // Same dir (sibling), so the rename stays a same-filesystem move.
+        assert_eq!(a.parent(), Some(Path::new("/lib/Podcasts/s/e")));
     }
 }

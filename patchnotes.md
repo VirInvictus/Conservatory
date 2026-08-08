@@ -1,5 +1,22 @@
 # Patch Notes
 
+## v0.3.12
+
+**Drag-drop file import (Phase 19b-i), the first of the split 19b items.** Drop
+audio files or folders anywhere on the window and they import through the exact
+pipeline the CLI uses: the same scan (single file or recursive folder, the same
+extension set), the same two-pass conflict guarantee, and the configured
+copy-or-move mode from Preferences → Library → Import mode. Multiple dropped
+items import sequentially so each one's conflict checks see the previous one's
+rows. The work runs off the GTK thread (the OPML-import bridge idiom) and lands
+back as a toast summarizing tracks imported, unreadable files skipped, and
+conflicts refused, followed by a full browse refresh. A drop without an open
+library toasts instead of failing silently. The empty-library call-to-action's
+"Import is CLI-only until the Phase 19 drag-drop lands" message is now
+half-true (the CLI text remains for headless use); the interactive path exists.
+GUI wiring is display-pass; the pipeline itself keeps its core integration
+tests.
+
 ## v0.3.11
 
 **Ratings finally come in from the files, plus a full bugfix, hardening, and design sweep.** The headline is the one you could see: a meticulously rated library imported with every star column empty. Import now reads the embedded rating and seeds `tracks.rating` with it.

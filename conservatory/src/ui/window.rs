@@ -779,6 +779,7 @@ impl ConservatoryWindow {
         self.install_queue_keys(&queue_panel.list);
         self.install_view_keys();
         self.install_queue_context_menu(&queue_panel.list);
+        self.install_file_drop();
         let _ = imp.queue_panel.set(queue_panel);
 
         // Double-click / Enter on a track plays the visible list from that row
@@ -3104,6 +3105,100 @@ impl ConservatoryWindow {
     /// gesture has a keyboard equivalent, so each verb reuses an existing action /
     /// shortcut path). The `PopoverMenu` is parented to the leaf `ColumnView` once
     /// and re-pointed per click; the `win.`-prefixed actions drive the verbs.
+    /// 19b-i — drag-drop file import. Dropping audio files or folders
+    /// anywhere on the window imports them through the same
+    /// `import_folder` pipeline the CLI uses, honoring the configured
+    /// copy/move mode (Preferences → Library → Import mode). A drop is
+    /// only meaningful with an open library; otherwise it toasts.
+    fn install_file_drop(&self) {
+        let drop = gtk::DropTarget::new(
+            gtk::gdk::FileList::static_type(),
+            gtk::gdk::DragAction::COPY,
+        );
+        let win = self.downgrade();
+        drop.connect_drop(move |_, value, _x, _y| {
+            let Some(win) = win.upgrade() else {
+                return false;
+            };
+            let Ok(list) = value.get::<gtk::gdk::FileList>() else {
+                return false;
+            };
+            let paths: Vec<std::path::PathBuf> =
+                list.files().iter().filter_map(|f| f.path()).collect();
+            if paths.is_empty() {
+                return false;
+            }
+            win.import_dropped_paths(paths);
+            true
+        });
+        self.add_controller(drop);
+    }
+
+    /// Run the dropped paths through the import pipeline off the GTK
+    /// thread (the OPML-import bridge idiom: `rt.spawn` for the work,
+    /// `glib::spawn_future_local` to land the report back in a toast +
+    /// `populate_initial`). Sources are imported sequentially so their
+    /// conflict checks see each other's rows.
+    fn import_dropped_paths(&self, paths: Vec<std::path::PathBuf>) {
+        let imp = self.imp();
+        let (Some(rt), Some(worker), Some(pool), Some(root)) = (
+            imp.runtime.get(),
+            imp.worker.get().cloned(),
+            imp.pool.get().cloned(),
+            imp.library_root.get().cloned(),
+        ) else {
+            self.toast("Open a library before dropping files to import");
+            return;
+        };
+        let mode = conservatory_core::config::load_default()
+            .unwrap_or_default()
+            .library
+            .import_mode
+            .to_move_mode();
+        let opts = conservatory_core::import::ImportOptions {
+            library_root: root,
+            mode,
+        };
+        self.toast(&format!(
+            "Importing {} dropped item(s)\u{2026}",
+            paths.len()
+        ));
+        let handle = rt.spawn(async move {
+            let mut tracks = 0usize;
+            let mut skipped = 0usize;
+            let mut conflicts = 0usize;
+            for path in &paths {
+                let report =
+                    conservatory_core::import::import_folder(&worker, &pool, path, &opts).await?;
+                tracks += report.tracks;
+                skipped += report.skipped_unreadable;
+                conflicts += report.conflicts.len();
+            }
+            Ok::<_, conservatory_core::errors::Error>((tracks, skipped, conflicts))
+        });
+        let win = self.downgrade();
+        glib::spawn_future_local(async move {
+            let Some(win) = win.upgrade() else {
+                return;
+            };
+            match handle.await {
+                Ok(Ok((tracks, skipped, conflicts))) => {
+                    let mut msg = format!("Imported {tracks} track(s)");
+                    if skipped > 0 {
+                        msg.push_str(&format!(", {skipped} unreadable skipped"));
+                    }
+                    if conflicts > 0 {
+                        msg.push_str(&format!(", {conflicts} conflict(s) refused"));
+                    }
+                    win.toast(&msg);
+                    win.populate_initial();
+                }
+                Ok(Err(e)) => win.toast(&format!("Import failed: {e}")),
+                Err(e) => win.toast(&format!("Import task failed: {e}")),
+            }
+        });
+    }
+
     fn install_track_context_menu(&self) {
         let imp = self.imp();
         let Some(leaf) = imp.leaf.get() else {

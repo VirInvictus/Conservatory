@@ -1188,9 +1188,13 @@ The seek bar becomes the track's loudness envelope, accent-tinted, with a played
 size were gating the `0.4.0` tag as a single line, and the vaguest one would
 have held the other two hostage.)
 
-- [ ] **19b-i — Drag-drop file import:** drop audio onto the window to import
-      through the existing pipeline. Small: a GTK drop target over the import
-      path that already exists.
+- [x] **19b-i — Drag-drop file import** *(shipped v0.3.12, 2026-08-08)*: a
+      window-level `gtk::DropTarget` (`gdk::FileList`) feeds dropped files or
+      folders through `import_folder` with the configured copy/move mode,
+      sequentially so conflict checks compose, off the GTK thread via the
+      OPML-import bridge idiom, with a toast report + `populate_initial`
+      refresh. Drop-with-no-library toasts. Display pass (a real drop) pending
+      Brandon's desk; the pipeline keeps its core integration tests.
 - [ ] **19b-ii — Full-screen Now Playing:** the Hermitage Codex moment at full
       bleed. A real new surface (the 19a-ii waveform widget is built to be
       reused here at a larger size).

@@ -1184,7 +1184,21 @@ The seek bar becomes the track's loudness envelope, accent-tinted, with a played
 
 #### Phase 19b — Drag-drop file import + full-screen Now Playing + credits (planned)
 
-- [ ] Full-screen Now Playing (the Hermitage Codex moment at full bleed), drag-drop file import (drop audio onto the window to import through the existing pipeline), and richer navigable-credits metadata from local sources.
+(Split 2026-08-08 from one bundled checkbox: three features of very different
+size were gating the `0.4.0` tag as a single line, and the vaguest one would
+have held the other two hostage.)
+
+- [ ] **19b-i — Drag-drop file import:** drop audio onto the window to import
+      through the existing pipeline. Small: a GTK drop target over the import
+      path that already exists.
+- [ ] **19b-ii — Full-screen Now Playing:** the Hermitage Codex moment at full
+      bleed. A real new surface (the 19a-ii waveform widget is built to be
+      reused here at a larger size).
+- [ ] **19b-iii — Richer navigable-credits metadata from local sources.**
+      **Scope undefined; needs a design decision before it is buildable** (which
+      credits, from which tags, navigable how, and whether the schema grows).
+      Settle scope first or explicitly bump this item out of `0.4.0`; it must
+      not hold the tag while undefined.
 
 *Usable artifact:* a waveform scrubber and drag-drop import. Ships alongside Phase 9 under `0.4.0`.
 
@@ -1203,6 +1217,7 @@ No new features: the readiness gate that earns the `1.0.0` tag, gathering the tr
 - [x] **Library-root decision (§16.14)** *(settled 2026-08-05: `~/Conservatory`, shipped v0.3.10)*. Brandon picked the owned-directory-at-home-root option, on the Calibre precedent (`~/Calibre Library`): symmetric `{Music,Podcasts,Audiobooks}/`, no `Music/Conservatory/Music` stutter. `LibraryConfig::default()` now resolves `$HOME/Conservatory` (glib-free, same `$HOME` idiom as `config_path`); a CLI positional and an explicit `[library] root` still override. The rejected alternatives are recorded in spec §16.14.
 - [x] **App-id decision** *(settled 2026-07-26: `io.github.virinvictus.conservatory`)*. Three spellings had been in play, with the docs contradicting the code. `org.gnome.Conservatory` was struck as unavailable: GNOME Circle does not grant `org.gnome.*` ids and Circle members keep their own, so the spec's "if accepted into GNOME Circle" premise was simply wrong. `org.virinvictus.Conservatory`, which the code had carried since early on, was struck because Flathub requires the prefix be a domain the author controls and `virinvictus.org` is not owned (`VirInvictus.github.io` carries no `CNAME`); it stays valid only for local, sideloaded builds. The winner is verifiable on Flathub today and its lowercase final segment matches the three siblings already on that form (`atrium`, `hermitage`, `framework`). Synced in the same pass: `spec.md` §12 and §15, `conservatory/src/main.rs:22`, `docs/hyprland.md` (prose plus both `windowrulev2` examples), and the Phase 25 item below. *(Surfaced by the 2026-07-23 reconciliation sweep, which deliberately did not pick a winner.)* **Follow-on, not this project's to fix:** `Colophon` and `Viaduct` ship `org.virinvictus.*` manifests and will hit the same Flathub wall; raised for their own roadmaps.
 - [ ] **Flatpak + AppStream:** the manifest under `io.github.virinvictus.conservatory`, a validating `metainfo.xml` (releases tag, 16:9 screenshots, SPDX license, `appstreamcli validate` clean), the Meson packaging wrapper wired end-to-end, and GNOME Circle readiness (§12). The final icon pass (a conservatory silhouette, §15).
+- [ ] **Bundle the four shelled-out external tools in the Flatpak** *(added 2026-08-08; the sandbox has no host PATH, so without bundling every feature below silently degrades to its absent-tool fallback)*: `rsgain` (ReplayGain scanning, `conservatory-core/src/replaygain.rs`), `flac` (integrity test-decode, `conservatory-core/src/verify.rs`), `ffmpeg` (strict-decode verify in `verify.rs` + the 19a waveform envelope, `conservatory-core/src/waveform.rs`), and `ffprobe` (M4B chapter reads, `conservatory-audiobooks/src/ffprobe.rs`). Each becomes a manifest module (or rides a shared ffmpeg extension where Flathub offers one); the native (non-Flatpak) build keeps using the host tools. Flagged in `ATTRIBUTIONS.md`.
 - *Usable artifact:* a `v1.0.0` tag the move logic, the memory budget, and a real installable Flatpak build have all earned, numbers recorded. **Tags `1.0.0`.**
 
 ## Beyond 1.0 (committed tiers)

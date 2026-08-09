@@ -22,6 +22,7 @@ pub mod dedup;
 pub mod edit;
 pub mod errors;
 pub mod import;
+pub mod lyrics;
 pub mod mover;
 pub mod mpris;
 pub mod path_template;

@@ -1,5 +1,38 @@
 # Patch Notes
 
+## v0.3.14
+
+**Packaging, first real pass.** Conservatory now has an AppStream metainfo, a
+desktop entry, an installable icon and a Flatpak manifest, where before it had
+none of them and `meson.build` installed only fonts.
+
+Both validators run as **meson tests** rather than as something to remember:
+`appstreamcli validate --pedantic` and `desktop-file-validate` fail the build if
+either file stops validating. The cheapest place to learn that a Flathub blocker
+exists is at build time, not at submission.
+
+`meson.build` said `version: '0.0.1'` while VERSION said 0.3.13. It now reads
+`files('VERSION')`, so it cannot drift again; hard-coding the correct number
+would only have reset the clock on the same bug.
+
+The desktop entry is deliberately NOT named `.desktop.in`, unlike Atrium's. That
+suffix promises an i18n substitution step, Conservatory has no `po/` yet, and
+`desktop-file-validate` refuses any filename not ending in `.desktop`, so the
+convention would have been both a lie and a broken test.
+
+**What is still missing is written into the manifest itself** rather than left to
+be rediscovered: offline cargo sources (a hard Flathub requirement), the meson
+wrapper actually invoking cargo, and bundling rsgain / flac / ffmpeg / ffprobe,
+which are on the host `$PATH` today and will not be inside a sandbox. The icon is
+still the placeholder glasshouse, and the metainfo screenshots stay commented out
+until the real mark lands, because a screenshot showing a placeholder icon is
+worse than no screenshot.
+
+A local `flatpak-builder` run was attempted and is honestly reported as NOT
+having succeeded: it cannot yet, since meson does not invoke cargo, so there is no
+binary to install.
+
+
 ## v0.3.13
 
 **The accent stopped recolouring the app.** dragonRed is a syntax accent, and the

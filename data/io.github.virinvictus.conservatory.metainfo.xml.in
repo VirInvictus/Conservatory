@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.virinvictus.conservatory</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Conservatory</name>
+  <summary>Own and organise your music, podcasts and audiobooks</summary>
+
+  <description>
+    <p>
+      Conservatory is Calibre for audio. It owns your library rather than
+      merely indexing it: the database is the source of truth and the app
+      moves the files on disk to match, so the shape of your collection is
+      something you decide once and the program maintains.
+    </p>
+    <p>
+      Browse is a faceted Columns UI surface in the foobar2000 tradition,
+      playback is a libmpv engine built for daily driving, and one unified
+      queue interleaves music tracks, podcast episodes and audiobooks so a
+      chapter can sit next to an album track without ceremony.
+    </p>
+    <p>Music</p>
+    <ul>
+      <li>Faceted browse over genre, album artist and album, with configurable columns</li>
+      <li>Search grammar with accent folding, field prefixes and boolean logic</li>
+      <li>Bulk tag editing with a dry-run preview and an undo journal</li>
+      <li>Library health: integrity checks, duplicate finding, APEv2 strip, m3u import and export</li>
+      <li>Ten-band equaliser, a DSP rack, ReplayGain and a spectrum visualiser</li>
+      <li>Waveform seek bar drawn from a precomputed loudness envelope</li>
+    </ul>
+    <p>Podcasts and audiobooks</p>
+    <ul>
+      <li>Inbox, Queue and Played triage, with per-show overrides</li>
+      <li>Smart Speed and Voice Boost for spoken word</li>
+      <li>Audiobook shelf with resume, chapters and bulk edit</li>
+      <li>Sleep timer for anything playing, not episodes alone</li>
+    </ul>
+    <p>Throughout</p>
+    <ul>
+      <li>Local-first: no accounts, no telemetry, works offline</li>
+      <li>Scrobbling to ListenBrainz and Last.fm, opt-in</li>
+      <li>MPRIS2, so media keys and desktop widgets work</li>
+      <li>Plain GTK4 under an owned Kanagawa Dragon stylesheet</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.virinvictus.conservatory.desktop</launchable>
+  <icon type="stock">io.github.virinvictus.conservatory</icon>
+
+  <url type="homepage">https://github.com/VirInvictus/Conservatory</url>
+  <url type="bugtracker">https://github.com/VirInvictus/Conservatory/issues</url>
+  <url type="vcs-browser">https://github.com/VirInvictus/Conservatory</url>
+
+  <developer id="io.github.virinvictus">
+    <name>Brandon LaRocque</name>
+  </developer>
+
+  <provides>
+    <binary>conservatory</binary>
+  </provides>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Player</category>
+    <category>Music</category>
+  </categories>
+
+  <keywords>
+    <keyword>music</keyword>
+    <keyword>audio</keyword>
+    <keyword>podcast</keyword>
+    <keyword>audiobook</keyword>
+    <keyword>library</keyword>
+    <keyword>player</keyword>
+    <keyword>tags</keyword>
+  </keywords>
+
+  <recommends>
+    <display_length compare="ge">768</display_length>
+  </recommends>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <content_rating type="oars-1.1"/>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#c4b28a</color>
+    <color type="primary" scheme_preference="dark">#181616</color>
+  </branding>
+
+  <!-- Screenshots are a Flathub requirement and are captured against the
+       real Kanagawa Dragon look, at 16:9, from the demo library rather than
+       Brandon's own. Left commented until the final icon pass lands, because
+       a screenshot showing a placeholder icon is worse than none. -->
+  <!--
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/VirInvictus/Conservatory/main/docs/screenshots/library.png</image>
+      <caption>The music library: faceted browse over a rated track list</caption>
+    </screenshot>
+  </screenshots>
+  -->
+
+  <releases>
+    <release version="@VERSION@" date="@RELEASE_DATE@"/>
+  </releases>
+</component>

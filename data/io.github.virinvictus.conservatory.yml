@@ -1,0 +1,97 @@
+# Flatpak manifest for Conservatory.
+#
+# Build:
+#   flatpak-builder --user --install --force-clean build-dir \
+#     data/io.github.virinvictus.conservatory.yml
+#
+# Run:
+#   flatpak run io.github.virinvictus.conservatory
+#
+# Targets the GNOME 50 runtime, matching every other manifest in the portfolio
+# (Atrium, Hermitage, Viaduct, Framework, Colophon). Version consolidation is
+# deliberate: a manifest left on an older branch pins a second multi-GB SDK that
+# `flatpak uninstall --unused` will not reclaim while the manifest asks for it.
+#
+# STATUS: not yet Flathub-submittable, and the gaps are known rather than
+# forgotten. See the notes at the bottom.
+---
+app-id: io.github.virinvictus.conservatory
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: conservatory
+
+# Skip flatpak-builder's appstreamcli-compose pass: librsvg's pixbuf loader is
+# not reliably present on modern Fedora hosts, and GTK4 renders SVG natively
+# without it. Flathub re-runs compose with its own toolchain at submission, so
+# this only affects local builds. The metainfo is validated separately by the
+# meson test, so skipping compose does not skip checking it.
+appstream-compose: false
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/conservatory/cargo
+    CARGO_NET_OFFLINE: 'true'
+
+# Sandbox permissions.
+#
+# Wider than Atrium's on purpose, and each widening has a reason:
+#
+#   --filesystem=home        Conservatory OWNS AND MOVES files. The library root
+#                            defaults to ~/Conservatory but the user may point it
+#                            anywhere, and imports are dragged in from anywhere.
+#   --socket=pulseaudio      it is an audio player.
+#   --share=network          podcast feeds and episode downloads, and the opt-in
+#                            ListenBrainz / Last.fm scrobblers. Music playback
+#                            itself never needs it.
+#   --talk-name=...secrets   scrobbler tokens go to the secret service via oo7,
+#                            not to a plaintext config file.
+#   --own-name=...MediaPlayer2.conservatory  MPRIS2, so media keys and desktop
+#                            widgets can see and control playback.
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=dri
+  - --filesystem=home
+  - --talk-name=org.freedesktop.secrets
+  - --own-name=org.mpris.MediaPlayer2.conservatory
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/man
+  - /share/doc
+  - '*.la'
+  - '*.a'
+
+modules:
+
+  - name: conservatory
+    buildsystem: meson
+    sources:
+      - type: dir
+        path: ../
+
+# NOT YET DONE, tracked rather than hidden:
+#
+# 1. Offline cargo sources. Flathub requires the build to run with no network,
+#    which means a checked-in data/cargo-sources.json generated from Cargo.lock
+#    (Atrium does this with a vendored flatpak-cargo-generator.py). Until that
+#    exists this manifest builds only with --share=network at build time.
+#
+# 2. The meson wrapper does not yet invoke cargo. It installs the data files,
+#    fonts and icon, but the binary itself is still a plain `cargo build`.
+#
+# 3. Four shelled-out tools (rsgain, flac, ffmpeg, ffprobe) are on the host
+#    today. A Flatpak has no host $PATH, so each must either be bundled as its
+#    own module here or the feature that uses it must degrade honestly rather
+#    than failing at the point of use. Roadmap Phase 20 carries this.
+#
+# 4. The icon is still the placeholder glasshouse from logo.svg, and the
+#    metainfo screenshots stay commented out until the real mark lands.

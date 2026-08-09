@@ -1202,6 +1202,20 @@ have held the other two hostage.)
       technical detail, and lyrics. Escape walks back down. Lyrics are local
       only, from an `.lrc` sidecar or the embedded tag, via the new
       `conservatory-core::lyrics`.)
+- [~] **Phase 20 packaging, first pass (v0.3.14).** Landed: the AppStream
+      metainfo (validates `--pedantic` clean), the `.desktop` entry (validates
+      clean), a scalable icon install, the Flatpak manifest on GNOME 50 matching
+      every sibling manifest, and both validators wired as **meson tests** so a
+      file that stops validating fails the build rather than a Flathub
+      submission months later. `meson.build`'s hard-coded `version: '0.0.1'` is
+      replaced by `files('VERSION')`; it had drifted from 0.3.13, which is
+      exactly what the single-source rule exists to prevent.
+      **NOT done, and each is written into the manifest rather than left
+      implicit:** offline cargo sources (`cargo-sources.json` from Cargo.lock,
+      a hard Flathub requirement), the meson wrapper actually invoking cargo,
+      bundling the four shelled-out tools (rsgain / flac / ffmpeg / ffprobe,
+      which have no host `$PATH` inside a sandbox), the real icon, and the
+      16:9 screenshots that wait on it.
 - [ ] **19b-iii — Richer navigable-credits metadata from local sources.**
       **Scope undefined; needs a design decision before it is buildable** (which
       credits, from which tags, navigable how, and whether the schema grows).

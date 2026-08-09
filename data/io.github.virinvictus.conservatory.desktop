@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Conservatory
+GenericName=Music Library
+Comment=Calibre for audio: own and organise music, podcasts and audiobooks
+Exec=conservatory
+Icon=io.github.virinvictus.conservatory
+Terminal=false
+Type=Application
+StartupNotify=true
+StartupWMClass=io.github.virinvictus.conservatory
+Categories=GTK;AudioVideo;Audio;Player;Music;
+Keywords=music;audio;podcast;audiobook;library;player;tags;foobar2000;

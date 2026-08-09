@@ -1195,9 +1195,13 @@ have held the other two hostage.)
       OPML-import bridge idiom, with a toast report + `populate_initial`
       refresh. Drop-with-no-library toasts. Display pass (a real drop) pending
       Brandon's desk; the pipeline keeps its core integration tests.
-- [ ] **19b-ii — Full-screen Now Playing:** the Hermitage Codex moment at full
-      bleed. A real new surface (the 19a-ii waveform widget is built to be
-      reused here at a larger size).
+- [x] **19b-ii — Full-screen Now Playing:** the Hermitage Codex moment at full
+      bleed. (v0.3.13 — a third stage rather than a replacement: the Now-bar
+      stays stage 1, the drawer stays stage 2 unchanged, and a new expand button
+      opens stage 3 as a view-stack page with a hero cover, a framed visualizer,
+      technical detail, and lyrics. Escape walks back down. Lyrics are local
+      only, from an `.lrc` sidecar or the embedded tag, via the new
+      `conservatory-core::lyrics`.)
 - [ ] **19b-iii — Richer navigable-credits metadata from local sources.**
       **Scope undefined; needs a design decision before it is buildable** (which
       credits, from which tags, navigable how, and whether the schema grows).

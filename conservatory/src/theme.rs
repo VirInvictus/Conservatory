@@ -220,6 +220,17 @@ button.pill:hover { background-color: %GRID%; }
 .inspector-cover { border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 6px 18px rgba(0,0,0,0.30); background: alpha(currentColor, 0.06); }
 .now-playing-cover { border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 6px 18px rgba(0,0,0,0.30); background: alpha(currentColor, 0.06); }
 .now-playing-drawer { border-top: 1px solid %GRID%; }
+/* Stage 3 (19b-ii). Built to be left open, so it stays quiet: a deeper shadow
+   under the hero cover to seat it, a framed visualizer, and lyrics that sit back
+   until their line comes round. */
+.now-playing-full { background-color: %BG_WINDOW%; }
+.now-playing-cover-hero { border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.34), 0 14px 40px rgba(0,0,0,0.38); }
+.now-playing-vis { border: 1px solid %GRID%; border-radius: 6px; background: alpha(currentColor, 0.03); }
+.lyric-line { color: alpha(%FG%, 0.42); padding: 3px 0; font-size: 1.05em; }
+/* The lit line is the one thing on the page that moves, so it earns full
+   contrast and a little weight; everything else recedes behind it. */
+.lyric-line-active { color: %FG%; font-weight: 700; }
+.lyric-plain { color: alpha(%FG%, 0.72); }
 .now-playing-info { background-color: alpha(%BG_WINDOW%, 0.72); border-radius: 0; padding: 8px 14px; }
 .spectrum { background: alpha(currentColor, 0.03); }
 .toast { background-color: %BG_CARD%; color: %FG%; border: 1px solid %GRID%; border-radius: 0; padding: 6px 12px; }

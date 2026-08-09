@@ -30,6 +30,8 @@ use crate::ui::now_bar::{fmt_sleep_remaining, sleep_boundary_label};
 /// The drawer: the revealer to place, plus the live widgets it fills.
 pub struct NowPlayingPanel {
     pub revealer: gtk::Revealer,
+    /// Opens stage 3 (the full page). The window owns what that means.
+    pub expand: gtk::Button,
     title: gtk::Label,
     /// The `artist · album` (track) / show (episode) / author (book) line.
     subtitle: gtk::Label,
@@ -164,6 +166,16 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
     chip.set_margin_bottom(14);
     chip.append(&cover_frame);
     chip.append(&text_col);
+    // Stage 2 to stage 3. Lives on the chip rather than the Now-bar because it
+    // is a step further into this surface, not a new one: the drawer is what it
+    // expands from.
+    let expand = gtk::Button::builder()
+        .icon_name("view-fullscreen-symbolic")
+        .tooltip_text("Full Now Playing")
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::Center)
+        .build();
+    chip.append(&expand);
 
     // The full-bleed hero: the spectrum fills the overlay, the chip floats over it.
     let spectrum = crate::ui::spectrum::build_spectrum();
@@ -206,6 +218,7 @@ pub fn build_now_playing_panel() -> NowPlayingPanel {
 
     NowPlayingPanel {
         revealer,
+        expand,
         title,
         subtitle,
         cover,

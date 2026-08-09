@@ -50,6 +50,7 @@ use crate::ui::facet_pane::{FacetPane, build_pane};
 use crate::ui::fields::{collect_assignments, inspector_fields};
 use crate::ui::inspector::{Inspector, build_inspector};
 use crate::ui::now_bar::{NowBar, build_now_bar};
+use crate::ui::now_playing_full::{NowPlayingFull, build_now_playing_full};
 use crate::ui::now_playing_panel::{NowPlayingPanel, build_now_playing_panel};
 use crate::ui::objects::TrackRow;
 use crate::ui::queue_panel::{QueuePanel, build_queue_panel};
@@ -126,6 +127,11 @@ mod imp {
         // future visualizer home. Refreshed on track change, toggled by the
         // Now-bar cover/title click, a header button, or Ctrl+I.
         pub now_playing: OnceCell<NowPlayingPanel>,
+        /// Stage 3: the full Now Playing page, a view-stack page of its own.
+        pub now_playing_full: OnceCell<NowPlayingFull>,
+        /// The view the full page was opened from, so Escape can walk back
+        /// to it rather than guessing at a default tab.
+        pub view_before_full: RefCell<Option<String>>,
         pub inspector: OnceCell<Inspector>,
         // The status bar footer (Phase 11b, spec §3.2): `status_left` is the
         // playing track's technical line, `status_right` the active view's
@@ -541,6 +547,10 @@ impl ConservatoryWindow {
         // The bottom Now Playing drawer (v0.0.38): built here so the toolbar
         // content can stack it above the Now-bar (it slides up from the bottom).
         let now_playing = build_now_playing_panel();
+        // Stage 3 (19b-ii). A page of the view stack rather than a second
+        // window: 1 -> 2 -> 3 reads as one surface expanding, and Escape
+        // walks back down the same way it came.
+        let now_playing_full = build_now_playing_full();
 
         // The slim flat headerbar (26k2, spec §2.4): a real titlebar with no
         // window buttons; closing is Ctrl+Q plus the compositor's own binds.
@@ -750,6 +760,7 @@ impl ConservatoryWindow {
         }
 
         self.set_child(Some(&body));
+        stack.add_named(&now_playing_full.root, Some("nowplaying-full"));
         let _ = imp.view_stack.set(stack);
         let _ = imp.toast_revealer.set(toast_revealer);
         let _ = imp.toast_label.set(toast_label);
@@ -771,7 +782,20 @@ impl ConservatoryWindow {
         let _ = imp.leaf.set(leaf);
         let _ = imp.filter_entry.set(filter.clone());
         let _ = imp.now_bar.set(now_bar);
+        let weak = self.downgrade();
+        now_playing.expand.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.open_now_playing_full();
+            }
+        });
+        let weak = self.downgrade();
+        now_playing_full.back.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.close_now_playing_full();
+            }
+        });
         let _ = imp.now_playing.set(now_playing);
+        let _ = imp.now_playing_full.set(now_playing_full);
         let _ = imp.inspector.set(inspector);
         let _ = imp.status_left.set(status_left);
         let _ = imp.status_right.set(status_right);
@@ -4238,6 +4262,24 @@ impl ConservatoryWindow {
                 glib::Propagation::Stop
             })),
         ));
+        // Escape walks stage 3 back down to stage 2. Deliberately Proceed when
+        // the page is not up: Escape belongs to dialogs, the search entry and
+        // the queue everywhere else, and a global handler that swallowed it
+        // would break all of them to serve one surface.
+        let weak = self.downgrade();
+        global.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string("Escape"),
+            Some(gtk::CallbackAction::new(move |_, _| {
+                let Some(win) = weak.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
+                if !win.now_playing_full_is_open() {
+                    return glib::Propagation::Proceed;
+                }
+                win.close_now_playing_full();
+                glib::Propagation::Stop
+            })),
+        ));
         let weak = self.downgrade();
         global.add_shortcut(gtk::Shortcut::new(
             gtk::ShortcutTrigger::parse_string("<Control>i"),
@@ -4726,9 +4768,18 @@ impl ConservatoryWindow {
         // Gate the spectrum capture on real playback (Phase 12d isolation): the tap
         // targets our own mpv output node, which exists only while audio flows, so
         // the visualizer reacts to Conservatory alone and never the microphone.
+        let playing = snap.track_id.is_some() && !snap.paused && !snap.ended && !snap.buffering;
         if let Some(panel) = imp.now_playing.get() {
-            let playing = snap.track_id.is_some() && !snap.paused && !snap.ended && !snap.buffering;
             panel.set_playing(playing);
+        }
+        // Stage 3 rides the same tick: the spectrum gate, and the lyric
+        // highlight following the playhead. `tick` returns immediately unless
+        // the playhead actually crossed into a new line, so this is cheap.
+        if let Some(full) = imp.now_playing_full.get()
+            && self.now_playing_full_is_open()
+        {
+            full.set_playing(playing);
+            full.tick(snap.position);
         }
 
         // Keep the stop-after-current toggle's checkmark in step with the engine,
@@ -4842,6 +4893,9 @@ impl ConservatoryWindow {
                 }
                 // Keep the Now Playing drawer in step with the new item.
                 self.refresh_now_playing(snap.kind, Some(id));
+                // ...and stage 3, which needs the new track's lyrics and detail,
+                // not just a new title.
+                self.refresh_now_playing_full();
                 // Now-playing ping (Phase 9d): tell the history service what is
                 // playing when a new item actually starts (not a paused resume).
                 if !snap.paused {
@@ -5381,6 +5435,137 @@ impl ConservatoryWindow {
             // dressed up as "Now Playing".
             let id = if snap.ended { None } else { snap.track_id };
             self.refresh_now_playing(snap.kind, id);
+        }
+    }
+
+    /// Stage 2 to stage 3: swap the content area for the full Now Playing page.
+    ///
+    /// The drawer closes on the way in. Leaving it open would stack two copies
+    /// of the same information with two live spectrum taps, and the drawer is
+    /// what the Escape path restores, so closing it here is also what makes
+    /// going back land on stage 2 rather than stage 1.
+    fn open_now_playing_full(&self) {
+        let imp = self.imp();
+        let (Some(stack), Some(full)) = (imp.view_stack.get(), imp.now_playing_full.get()) else {
+            return;
+        };
+        if let Some(name) = stack.visible_child_name()
+            && name != "nowplaying-full"
+        {
+            *imp.view_before_full.borrow_mut() = Some(name.to_string());
+        }
+        if let Some(panel) = imp.now_playing.get()
+            && panel.is_open()
+        {
+            panel.toggle();
+        }
+        stack.set_visible_child_name("nowplaying-full");
+        let _ = full;
+        self.refresh_now_playing_full();
+    }
+
+    /// Stage 3 back to stage 2: restore the view we came from and re-open the
+    /// drawer, so the walk down is symmetrical with the walk up.
+    fn close_now_playing_full(&self) {
+        let imp = self.imp();
+        let Some(stack) = imp.view_stack.get() else {
+            return;
+        };
+        if stack.visible_child_name().as_deref() != Some("nowplaying-full") {
+            return;
+        }
+        let previous = imp.view_before_full.borrow_mut().take();
+        if let Some(name) = previous {
+            stack.set_visible_child_name(&name);
+        }
+        if let Some(panel) = imp.now_playing.get()
+            && !panel.is_open()
+        {
+            self.toggle_now_playing();
+        }
+    }
+
+    /// True while stage 3 is the visible view.
+    fn now_playing_full_is_open(&self) -> bool {
+        self.imp()
+            .view_stack
+            .get()
+            .and_then(|s| s.visible_child_name())
+            .as_deref()
+            == Some("nowplaying-full")
+    }
+
+    /// Fill stage 3 from the current snapshot: identity, cover, technical
+    /// detail, and lyrics. A no-op while the page is not visible, mirroring the
+    /// drawer's guard so an advancing queue does no needless reads.
+    fn refresh_now_playing_full(&self) {
+        let imp = self.imp();
+        let Some(full) = imp.now_playing_full.get() else {
+            return;
+        };
+        if !self.now_playing_full_is_open() {
+            return;
+        }
+        let (Some(player), Some(pool)) = (imp.player.get(), imp.pool.get()) else {
+            full.clear();
+            return;
+        };
+        let snap = player.snapshot();
+        let id = if snap.ended { None } else { snap.track_id };
+        let (Some(id), Ok(conn)) = (id, pool.open()) else {
+            full.clear();
+            return;
+        };
+        // Same gate the drawer uses: the spectrum tap targets our own mpv
+        // output node, which only exists while audio is actually flowing.
+        full.set_playing(
+            snap.track_id.is_some() && !snap.paused && !snap.ended && !snap.buffering,
+        );
+
+        // Tracks are the case with technical detail and lyrics to show. Episodes
+        // and books still get identity and cover; their own extras (chapters,
+        // Smart Speed) stay on the drawer, which is where they are functional.
+        match snap.kind {
+            Some(MediaKind::Track) | None => {
+                use conservatory_core::db::{get_track, track_metadata};
+                let (Ok(Some(np)), Ok(Some(track))) =
+                    (track_metadata(&conn, id), get_track(&conn, id))
+                else {
+                    full.clear();
+                    return;
+                };
+                full.set_now_playing(&np.title, &np.artist.clone().unwrap_or_default());
+                let cover_abs = match (imp.library_root.get(), np.album_cover_path.as_deref()) {
+                    (Some(root), Some(cp)) => Some(root.join(cp)),
+                    _ => None,
+                };
+                full.set_cover(cover_abs.as_deref(), np.album_accent_rgb);
+                full.set_metadata(&crate::ui::now_playing_full::track_meta_rows(&track));
+                let audio_abs = imp
+                    .library_root
+                    .get()
+                    .map(|root| root.join(&track.file_path));
+                full.set_lyrics(audio_abs.and_then(|p| conservatory_core::lyrics::load_for(&p)));
+            }
+            _ => {
+                use conservatory_core::db::{book_metadata, episode_metadata};
+                let np = match snap.kind {
+                    Some(MediaKind::Audiobook) => book_metadata(&conn, id).ok().flatten(),
+                    _ => episode_metadata(&conn, id).ok().flatten(),
+                };
+                let Some(np) = np else {
+                    full.clear();
+                    return;
+                };
+                full.set_now_playing(&np.title, &np.artist.clone().unwrap_or_default());
+                let cover_abs = match (imp.library_root.get(), np.album_cover_path.as_deref()) {
+                    (Some(root), Some(cp)) => Some(root.join(cp)),
+                    _ => None,
+                };
+                full.set_cover(cover_abs.as_deref(), np.album_accent_rgb);
+                full.set_metadata(&[]);
+                full.set_lyrics(None);
+            }
         }
     }
 

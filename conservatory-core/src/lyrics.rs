@@ -91,10 +91,10 @@ fn embedded(audio: &Path) -> Option<String> {
     // and the lyrics may live on either.
     let tags = tagged.primary_tag().into_iter().chain(tagged.tags().iter());
     for tag in tags {
-        if let Some(text) = tag.get_string(&ItemKey::Lyrics) {
-            if !text.trim().is_empty() {
-                return Some(text.to_string());
-            }
+        if let Some(text) = tag.get_string(&ItemKey::Lyrics)
+            && !text.trim().is_empty()
+        {
+            return Some(text.to_string());
         }
     }
     None

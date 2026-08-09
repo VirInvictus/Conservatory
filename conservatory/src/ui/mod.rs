@@ -12,6 +12,7 @@ pub mod facet_pane;
 pub mod fields;
 pub mod inspector;
 pub mod now_bar;
+pub mod now_playing_full;
 pub mod now_playing_panel;
 pub mod objects;
 #[cfg(feature = "podcasts")]

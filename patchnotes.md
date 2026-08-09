@@ -1,5 +1,34 @@
 # Patch Notes
 
+## v0.3.13
+
+**Full Now Playing (Phase 19b-ii), the second of the split 19b items.** Now
+Playing becomes three stages rather than two, and the first two are untouched.
+The Now-bar is still stage 1 and the slide-up drawer is still stage 2; a new
+expand button on the drawer opens **stage 3**, a page that takes over the
+content area with a hero album cover, a framed visualizer, the track's technical
+detail, and lyrics. Escape or the back button walks it down to stage 2, and the
+drawer re-opens, so the way out is the way in reversed.
+
+Stage 3 is built to be **left open** rather than glanced at. Nothing on it moves
+except the visualizer and the lyric highlight, the metadata is stated in words
+rather than field names, and anything unknown is omitted instead of printed as a
+dash.
+
+**Lyrics, from local sources only.** A new `conservatory-core::lyrics` reads an
+`.lrc` sidecar beside the audio file, falling back to the embedded tag through
+lofty. The sidecar wins because LRC lines are timestamped, so the current line
+lights as it plays. There is deliberately no online lookup: it would make the
+library non-functional offline and hand a third party the user's listening.
+Nothing is cached in the database, so there is no migration and no staleness.
+The parser handles what shows up in real files, including several timestamps on
+one line for a repeated chorus, and it keeps timestamped empty lines because
+that is how an LRC marks an instrumental break.
+
+The detail panel deliberately uses only columns `tracks` already has. Richer
+credits are 19b-iii, whose scope is still undefined, and this surface must not
+become the back door that drags it into the `0.4.0` tag.
+
 ## v0.3.12
 
 **Drag-drop file import (Phase 19b-i), the first of the split 19b items.** Drop

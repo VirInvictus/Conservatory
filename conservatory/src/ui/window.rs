@@ -5518,9 +5518,7 @@ impl ConservatoryWindow {
         };
         // Same gate the drawer uses: the spectrum tap targets our own mpv
         // output node, which only exists while audio is actually flowing.
-        full.set_playing(
-            snap.track_id.is_some() && !snap.paused && !snap.ended && !snap.buffering,
-        );
+        full.set_playing(snap.track_id.is_some() && !snap.paused && !snap.ended && !snap.buffering);
 
         // Tracks are the case with technical detail and lyrics to show. Episodes
         // and books still get identity and cover; their own extras (chapters,

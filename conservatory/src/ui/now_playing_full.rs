@@ -482,9 +482,7 @@ mod tests {
     }
 
     fn value_for<'a>(rows: &'a [(String, String)], key: &str) -> Option<&'a str> {
-        rows.iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
+        rows.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
     }
 
     #[test]

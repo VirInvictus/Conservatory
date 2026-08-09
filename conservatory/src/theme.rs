@@ -299,8 +299,8 @@ mod tests {
     fn every_palette_hex_reaches_the_sheet() {
         let sheet = sheet();
         for hex in [
-            BG_WINDOW, BG_VIEW, BG_HEADER, BG_CARD, FG, FG_DIM, GRID, BG_RAISED, ACCENT,
-            ON_ACCENT, WARN, OK,
+            BG_WINDOW, BG_VIEW, BG_HEADER, BG_CARD, FG, FG_DIM, GRID, BG_RAISED, ACCENT, ON_ACCENT,
+            WARN, OK,
         ] {
             assert!(sheet.contains(hex), "missing {hex}");
         }

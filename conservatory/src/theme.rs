@@ -26,6 +26,7 @@ pub const BG_CARD: &str = "#1d1c19"; // dragonBlack2
 pub const FG: &str = "#c5c9c5"; // dragonWhite
 pub const FG_DIM: &str = "#a6a69c"; // dragonGray
 pub const GRID: &str = "#393836"; // dragonBlack5 (hairlines, borders)
+pub const BG_RAISED: &str = "#282727"; // dragonBlack4 (pressed/checked surfaces)
 pub const ACCENT: &str = "#c4746e"; // dragonRed (waveRed reserved for errors)
 pub const ON_ACCENT: &str = "#12120f"; // dragonBlack1
 pub const WARN: &str = "#c4b28a"; // dragonYellow
@@ -58,7 +59,13 @@ columnview, listview, list { background-color: %BG_VIEW%; color: %FG%; }
 columnview > header { background-color: %BG_VIEW%; border-bottom: 1px solid %GRID%; }
 row { border-radius: 0; }
 row.activatable:hover { background-color: alpha(currentColor, 0.06); }
-row:selected { background-color: alpha(%ACCENT%, 0.35); color: %FG%; }
+/* A selected row LIFTS and gets an accent edge; it is not washed in red.
+   alpha(dragonRed, 0.35) over the dark view reads as maroon, and because a
+   selection persists (the facet panes always have an [All] row selected, the
+   podcast triage always has a list selected) that wash was permanent chrome
+   rather than a highlight. The 2px inset edge keeps the accent as a signature
+   and reads better against the Columns-UI density this browse surface copies. */
+row:selected { background-color: %BG_RAISED%; color: %FG%; box-shadow: inset 2px 0 0 %ACCENT%; }
 .navigation-sidebar { background-color: %BG_VIEW%; }
 .navigation-sidebar > row { padding: 4px 8px; border-radius: 0; }
 
@@ -83,7 +90,20 @@ button {
   padding: 2px 10px;
 }
 button:hover { background-color: %GRID%; }
-button:active, button:checked { background-color: %ACCENT%; color: %ON_ACCENT%; border-color: %ACCENT%; }
+/* A checked button is LIT, not PAINTED. dragonRed is a syntax accent: spread
+   across a persistent surface like the Music/Podcasts/Audiobooks tab bar it
+   stops reading as Kanagawa and starts reading as a pink highlighter, and
+   docs/theme.md is explicit that the accent tints highlights only and does not
+   recolour the window. So the surface lifts to dragonBlack4 and the accent
+   arrives as text plus a 2px underline, which is far more legible about which
+   tab is active than a slab of colour was. */
+button:active { background-color: %BG_RAISED%; color: %FG%; border-color: %GRID%; }
+button:checked {
+  background-color: %BG_RAISED%;
+  color: %ACCENT%;
+  border-color: %GRID%;
+  box-shadow: inset 0 -2px 0 %ACCENT%;
+}
 /* Insensitive controls must read as such: without this the flat sheet leaves
    a disabled button visually identical to a live one. */
 button:disabled { color: %FG_DIM%; border-color: alpha(%GRID%, 0.5); background-color: transparent; }
@@ -111,7 +131,7 @@ popover > contents {
   padding: 4px;
 }
 popover.menu modelbutton { border-radius: 0; padding: 5px 8px; }
-modelbutton:hover { background-color: %ACCENT%; color: %ON_ACCENT%; }
+modelbutton:hover { background-color: %BG_RAISED%; color: %FG%; }
 popover.menu separator { background-color: %GRID%; min-height: 1px; margin: 4px 0; }
 
 entry, spinbutton {
@@ -194,7 +214,7 @@ columnview.data-table > listview > row:hover { background: alpha(currentColor, 0
    dimmed, slightly smaller, a touch of tracking. */
 columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height: 0; border-width: 0; background-color: transparent; color: %FG_DIM%; font-size: 0.92em; letter-spacing: 0.02em; transition: background-color 150ms ease; }
 columnview > header > button:hover { background: alpha(currentColor, 0.08); }
-.rating-stars { color: %ACCENT%; }
+.rating-stars { color: %WARN%; }  /* dragonYellow: gold reads as a rating; a column of red stars shouted */
 .filter-warn text { background-color: alpha(%WARN%, 0.20); }
 /* Empty-state call-to-action buttons. GTK/Adwaita convention names the class
    `pill`; here it renders in the house idiom (flat, square, hard border) as a
@@ -247,6 +267,7 @@ pub fn sheet() -> String {
         .replace("%FG_DIM%", FG_DIM)
         .replace("%FG%", FG)
         .replace("%GRID%", GRID)
+        .replace("%BG_RAISED%", BG_RAISED)
         .replace("%ACCENT%", ACCENT)
         .replace("%ON_ACCENT%", ON_ACCENT)
         .replace("%WARN%", WARN)
@@ -278,7 +299,8 @@ mod tests {
     fn every_palette_hex_reaches_the_sheet() {
         let sheet = sheet();
         for hex in [
-            BG_WINDOW, BG_VIEW, BG_HEADER, BG_CARD, FG, FG_DIM, GRID, ACCENT, ON_ACCENT, WARN, OK,
+            BG_WINDOW, BG_VIEW, BG_HEADER, BG_CARD, FG, FG_DIM, GRID, BG_RAISED, ACCENT,
+            ON_ACCENT, WARN, OK,
         ] {
             assert!(sheet.contains(hex), "missing {hex}");
         }
@@ -292,6 +314,7 @@ mod tests {
             "%FG%",
             "%FG_DIM%",
             "%GRID%",
+            "%BG_RAISED%",
             "%ACCENT%",
             "%ON_ACCENT%",
             "%WARN%",

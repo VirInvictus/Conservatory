@@ -2,6 +2,27 @@
 
 ## v0.3.13
 
+**The accent stopped recolouring the app.** dragonRed is a syntax accent, and the
+sheet was using it as a large solid fill: the Music/Podcasts/Audiobooks tab bar
+was a slab of it, and every selected row was washed in `alpha(dragonRed, 0.35)`,
+which over the dark view reads as maroon. Because selections persist (the facet
+panes always have an `[All]` row selected, podcast triage always has a list
+selected), that wash was permanent chrome rather than a highlight, and the app
+read as pink rather than Kanagawa Dragon. `docs/theme.md` had said all along
+that the accent "tints highlights only; it does not recolour the window".
+
+Now a checked tab and a selected row **lift** to dragonBlack4 and take the accent
+as an edge and as text: a 2px underline under the active tab, a 2px inset bar on
+a selected row. Which tab is active and which row is selected are both clearer
+than they were as slabs of colour. Menu items no longer flash solid red on
+hover. The rating column moved from dragonRed to dragonYellow, because a whole
+column of red stars was the loudest thing on screen and gold is what a rating
+looks like.
+
+The accent still appears where it earns it: the active-tab underline, selected
+text, the seek bar, switches and checkboxes, `.suggested-action`, and the
+per-album cover ring.
+
 **Full Now Playing (Phase 19b-ii), the second of the split 19b items.** Now
 Playing becomes three stages rather than two, and the first two are untouched.
 The Now-bar is still stage 1 and the slide-up drawer is still stage 2; a new

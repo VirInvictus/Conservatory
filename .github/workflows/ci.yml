@@ -18,7 +18,7 @@ jobs:
       matrix:
         action: [fmt, clippy, test]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The GUI binary (Phase 3b) needs GTK4 (plain GTK4 only since Phase 26);
       # the core playback host (Phase 4a) links the system libmpv; rusqlite
@@ -60,7 +60,7 @@ jobs:
     name: music-only (no default features)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # core (and thus the music-only binaries) links the system libmpv at
       # Phase 4a, so this job needs it too.

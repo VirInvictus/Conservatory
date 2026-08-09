@@ -13,6 +13,10 @@
 
 # Conservatory
 
+<p align="center">
+  <img src="docs/screenshots/library.png" alt="Conservatory's music library: three-column Columns UI facets over genre, album artist, and album, with a rated track list and the player bar">
+</p>
+
 **Calibre for audio.** A native GTK4 desktop app that owns and organizes your music, podcasts, and audiobooks on disk, browses them like foobar2000, and plays them from one queue.
 
 The database is the source of truth: Conservatory files your audio into a tidy tree, the way Calibre files your books, and plays it back through a libmpv engine good enough to replace deadbeef as your daily player. A music track, a podcast episode, and an audiobook chapter can sit next to each other in the same queue. That mixed queue is the whole point.

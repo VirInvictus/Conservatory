@@ -197,8 +197,8 @@ GPL-3.0-or-later. The license is forced by the GPL libraries the player links, n
 
 If Conservatory's useful to you and you'd like to chip in:
 
-```
-bc1qkge6zr45tzqfwfmvma2ylumt6mg7wlwmhr05yv
-```
-
-https://liberapay.com/bdkl/
+- liberapay · [liberapay.com/bdkl](https://liberapay.com/bdkl/)
+- bitcoin
+  ```
+  bc1qkge6zr45tzqfwfmvma2ylumt6mg7wlwmhr05yv
+  ```

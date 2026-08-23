@@ -22,6 +22,7 @@ audiobooks = ["dep:conservatory-audiobooks"]
 # GTK4 lands at Phase 3b (the faceted browse window); plain GTK4 only since
 # Phase 26. The build needs the system gtk4 dev libraries (CI installs them).
 [dependencies]
+vir-gtk = { git = "https://github.com/VirInvictus/vir-gtk.git" }
 conservatory-core = { path = "../conservatory-core" }
 conservatory-search = { path = "../conservatory-search" }
 conservatory-podcasts = { path = "../conservatory-podcasts", optional = true }

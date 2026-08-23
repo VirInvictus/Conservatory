@@ -19,19 +19,6 @@
 use gtk4 as gtk;
 
 // The Dragon roles (the raw palette lives in docs/theme.md).
-pub const BG_WINDOW: &str = "#181616"; // dragonBlack3
-pub const BG_VIEW: &str = "#12120f"; // dragonBlack1
-pub const BG_HEADER: &str = "#1d1c19"; // dragonBlack2
-pub const BG_CARD: &str = "#1d1c19"; // dragonBlack2
-pub const FG: &str = "#c5c9c5"; // dragonWhite
-pub const FG_DIM: &str = "#a6a69c"; // dragonGray
-pub const GRID: &str = "#393836"; // dragonBlack5 (hairlines, borders)
-pub const BG_RAISED: &str = "#282727"; // dragonBlack4 (pressed/checked surfaces)
-pub const ACCENT: &str = "#c4746e"; // dragonRed (waveRed reserved for errors)
-pub const ON_ACCENT: &str = "#12120f"; // dragonBlack1
-pub const WARN: &str = "#c4b28a"; // dragonYellow
-pub const ERR: &str = "#c4746e"; // dragonRed
-pub const OK: &str = "#87a987"; // dragonGreen
 
 /// The sheet template. `%TOKENS%` are replaced with the hexes above by
 /// [`sheet`]; no other substitution happens, so plain CSS braces are safe.
@@ -258,96 +245,14 @@ button.pill:hover { background-color: %GRID%; }
 
 /// The full generated sheet: the template with every `%TOKEN%` replaced by
 /// its baked Dragon hex.
+
 pub fn sheet() -> String {
-    TEMPLATE
-        .replace("%BG_WINDOW%", BG_WINDOW)
-        .replace("%BG_VIEW%", BG_VIEW)
-        .replace("%BG_HEADER%", BG_HEADER)
-        .replace("%BG_CARD%", BG_CARD)
-        .replace("%FG_DIM%", FG_DIM)
-        .replace("%FG%", FG)
-        .replace("%GRID%", GRID)
-        .replace("%BG_RAISED%", BG_RAISED)
-        .replace("%ACCENT%", ACCENT)
-        .replace("%ON_ACCENT%", ON_ACCENT)
-        .replace("%WARN%", WARN)
-        .replace("%ERR%", ERR)
-        .replace("%OK%", OK)
+    let mut p = vir_gtk::theme::Palette::dragon();
+    p.accent = "#c4746e"; // dragonRed
+    p.on_accent = "#12120f";
+    p.replace_tokens(TEMPLATE)
 }
 
-/// Install the sheet display-wide, one step above USER priority: a themed
-/// `~/.config/gtk-4.0/gtk.css` loads at USER (800) and outranks APPLICATION
-/// (600), silently half-overriding an in-app theme (the Colophon discovery);
-/// USER + 1 keeps the owned sheet authoritative over it.
 pub fn install() {
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(&sheet());
-    if let Some(display) = gtk::gdk::Display::default() {
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_USER + 1,
-        );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_palette_hex_reaches_the_sheet() {
-        let sheet = sheet();
-        for hex in [
-            BG_WINDOW, BG_VIEW, BG_HEADER, BG_CARD, FG, FG_DIM, GRID, BG_RAISED, ACCENT, ON_ACCENT,
-            WARN, OK,
-        ] {
-            assert!(sheet.contains(hex), "missing {hex}");
-        }
-        // Every placeholder was replaced (bare `%` is fine: font sizes use it;
-        // ERR aliases ACCENT, so it is covered above).
-        for token in [
-            "%BG_WINDOW%",
-            "%BG_VIEW%",
-            "%BG_HEADER%",
-            "%BG_CARD%",
-            "%FG%",
-            "%FG_DIM%",
-            "%GRID%",
-            "%BG_RAISED%",
-            "%ACCENT%",
-            "%ON_ACCENT%",
-            "%WARN%",
-            "%ERR%",
-            "%OK%",
-        ] {
-            assert!(!sheet.contains(token), "unreplaced {token}");
-        }
-    }
-
-    #[test]
-    fn exactly_three_font_family_rules() {
-        // The Phase 13d typography and nothing else (the no-assumed-fonts rule).
-        assert_eq!(sheet().matches("font-family").count(), 3);
-    }
-
-    #[test]
-    fn key_owned_rules_exist() {
-        let sheet = sheet();
-        for needle in [
-            "headerbar",
-            ".destructive-action",
-            ".suggested-action",
-            ".toast",
-            ".dim-label",
-            ".boxed-list",
-            "switch",
-            "scale > trough",
-            "button.pill",
-            ".status-bar",
-        ] {
-            assert!(sheet.contains(needle), "missing rule {needle}");
-        }
-        assert!(!sheet.contains("@define-color"));
-    }
+    vir_gtk::theme::install_stylesheet(&sheet());
 }

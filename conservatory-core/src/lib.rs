@@ -89,3 +89,4 @@ pub use waveform::{DEFAULT_BUCKETS, WaveformEnvelope, bucketize, compute_envelop
 
 /// Workspace version, surfaced for the CLI and GUI binaries.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub mod search;

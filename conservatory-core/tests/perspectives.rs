@@ -3,13 +3,15 @@
 //! be referenced from another expression.
 
 use conservatory_core::db::{ReadPool, list_perspectives, perspective_expression, spawn_worker};
-use conservatory_search::{PerspectiveResolver, parse, parse_with_resolver};
+use vir_search::parse::{PerspectiveResolver, parse_with_resolver};
+use vir_search::parse::parse;
+use conservatory_core::search::{Field, State, SortKey};
 use tempfile::tempdir;
 
 /// The production resolver shape: look the name up in the perspectives table.
 struct PoolResolver(ReadPool);
 
-impl PerspectiveResolver for PoolResolver {
+impl PerspectiveResolver<Field, State> for PoolResolver {
     fn expression(&self, name: &str) -> Option<String> {
         let conn = self.0.open().ok()?;
         perspective_expression(&conn, name).ok().flatten()
@@ -59,8 +61,8 @@ async fn crud_and_vl_resolution() {
     // vl:Favourites expands to the stored expression at parse time, so it equals
     // parsing that text directly.
     let resolver = PoolResolver(pool);
-    let direct = parse("rating:5");
-    let via_vl = parse_with_resolver("vl:Favourites", &resolver);
+    let direct = parse::<Field, State, SortKey>("rating:5");
+    let via_vl = parse_with_resolver::<Field, State, SortKey, _>("vl:Favourites", &resolver);
     assert_eq!(
         via_vl.expr, direct.expr,
         "vl: resolves to the saved expression"
@@ -68,7 +70,7 @@ async fn crud_and_vl_resolution() {
     assert!(via_vl.warnings.is_empty());
 
     // An unknown name degrades (forgiving), it does not error.
-    let missing = parse_with_resolver("vl:NoSuchThing", &resolver);
+    let missing = parse_with_resolver::<Field, State, SortKey, _>("vl:NoSuchThing", &resolver);
     assert!(!missing.warnings.is_empty(), "unknown perspective warns");
 
     worker.delete_perspective(fav_id).await.unwrap();

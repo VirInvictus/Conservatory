@@ -33,10 +33,9 @@ use conservatory_core::{
     rsgain_available, run_audit, scan_album_files, sync_album_cover, verify_files,
     write_atomic_plain, write_track_tags,
 };
-use conservatory_search::{
-    PerspectiveResolver, SearchItem, SqlValue, blend_relevance, collect_text_terms, parse,
-    parse_with_resolver, try_translate,
-};
+use vir_search::parse::{PerspectiveResolver, parse_with_resolver, parse};
+use conservatory_core::search::{SearchItem, SqlValue, evaluate, try_translate, Field as SearchField, State as SearchState, SortKey};
+use vir_search::rank::{blend_relevance, collect_text_terms};
 
 /// Output format for the report-producing verbs (spec §9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -1793,7 +1792,7 @@ async fn run_audiobook_set(args: AudiobookSetArgs) -> Result<()> {
 #[cfg(feature = "audiobooks")]
 fn run_audiobook_list(db: PathBuf, expr: Option<String>, format: Format) -> Result<()> {
     use conservatory_core::db::{list_book_rows, sort_shelf};
-    use conservatory_search::evaluate;
+    use conservatory_core::search::evaluate;
 
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
     let conn = pool.open().context("opening pool connection")?;
@@ -1805,7 +1804,7 @@ fn run_audiobook_list(db: PathBuf, expr: Option<String>, format: Format) -> Resu
     // `vl:` degrades to text, the same as the `search` verb (no resolver here).
     if let Some(query) = expr.as_deref().filter(|q| !q.trim().is_empty()) {
         let today = Utc::now().date_naive();
-        let parsed = parse(query);
+        let parsed = parse::<SearchField, SearchState, SortKey>(query);
         for w in &parsed.warnings {
             eprintln!("warning: {w}");
         }
@@ -2990,7 +2989,7 @@ impl DbPerspectiveResolver {
     }
 }
 
-impl PerspectiveResolver for DbPerspectiveResolver {
+impl PerspectiveResolver<SearchField, SearchState> for DbPerspectiveResolver {
     fn expression(&self, name: &str) -> Option<String> {
         self.by_name.get(&name.to_ascii_lowercase()).cloned()
     }
@@ -3000,7 +2999,7 @@ fn resolve_selector(pool: &ReadPool, query: &str) -> Result<std::collections::Ha
     let conn = pool.open().context("opening pool connection")?;
     let today = Utc::now().date_naive();
     let resolver = DbPerspectiveResolver::load(&conn)?;
-    let parsed = parse_with_resolver(query, &resolver);
+    let parsed = parse_with_resolver::<SearchField, SearchState, SortKey, _>(query, &resolver);
     for w in &parsed.warnings {
         eprintln!("warning: {w}");
     }
@@ -3015,7 +3014,7 @@ fn resolve_selector(pool: &ReadPool, query: &str) -> Result<std::collections::Ha
         None => search_rows(&conn)
             .context("loading rows")?
             .into_iter()
-            .filter(|r| conservatory_search::evaluate(&parsed.expr, &to_item(r), today))
+            .filter(|r| conservatory_core::search::evaluate(&parsed.expr, &to_item(r), today))
             .map(|r| r.track_id)
             .collect(),
     };
@@ -4741,7 +4740,7 @@ fn materialize_smart(
     let conn = pool.open().context("opening pool connection")?;
     let today = Utc::now().date_naive();
     let resolver = DbPerspectiveResolver::load(&conn)?;
-    let parsed = parse_with_resolver(query, &resolver);
+    let parsed = parse_with_resolver::<SearchField, SearchState, SortKey, _>(query, &resolver);
     for w in &parsed.warnings {
         eprintln!("warning: {w}");
     }
@@ -4755,7 +4754,7 @@ fn materialize_smart(
             let mut rows: Vec<_> = search_rows(&conn)
                 .context("loading rows")?
                 .into_iter()
-                .filter(|r| conservatory_search::evaluate(&parsed.expr, &to_item(r), today))
+                .filter(|r| conservatory_core::search::evaluate(&parsed.expr, &to_item(r), today))
                 .collect();
             sort_search_rows(&mut rows, order);
             let mut ids: Vec<i64> = rows.into_iter().map(|r| r.track_id).collect();
@@ -5281,7 +5280,7 @@ fn search(db: PathBuf, query: String, format: Format) -> Result<()> {
         }
         None => rows
             .into_iter()
-            .filter(|r| conservatory_search::evaluate(&parsed.expr, &to_item(r), today))
+            .filter(|r| conservatory_core::search::evaluate(&parsed.expr, &to_item(r), today))
             .collect(),
     };
 
@@ -5332,10 +5331,10 @@ fn search(db: PathBuf, query: String, format: Format) -> Result<()> {
 /// bm25 (in `bm`) blended with recency; else by title.
 fn order_results(
     rows: &mut [SearchRow],
-    parsed: &conservatory_search::ParseResult,
+    parsed: &vir_search::parse::ParseResult<SearchField, SearchState, SortKey>,
     bm: &std::collections::HashMap<i64, f64>,
 ) {
-    use conservatory_search::SortKey;
+    use conservatory_core::search::SortKey;
     if let Some(spec) = parsed.sorts.first() {
         rows.sort_by(|a, b| {
             let ord = match spec.key {
@@ -6109,7 +6108,8 @@ mod audiobook_filter_tests {
     use super::book_search_item;
     use chrono::NaiveDate;
     use conservatory_core::db::BookListRow;
-    use conservatory_search::{evaluate, parse};
+    use conservatory_core::search::{evaluate, Field as SearchField, State as SearchState, SortKey};
+use vir_search::parse::parse;
 
     fn row() -> BookListRow {
         BookListRow {
@@ -6134,7 +6134,7 @@ mod audiobook_filter_tests {
 
     fn matches(expr: &str) -> bool {
         let today = NaiveDate::from_ymd_opt(2026, 6, 28).unwrap();
-        evaluate(&parse(expr).expr, &book_search_item(&row()), today)
+        evaluate(&parse::<SearchField, SearchState, SortKey>(expr).expr, &book_search_item(&row()), today)
     }
 
     #[test]

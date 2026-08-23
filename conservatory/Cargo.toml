@@ -24,7 +24,7 @@ audiobooks = ["dep:conservatory-audiobooks"]
 [dependencies]
 vir-gtk = { git = "https://github.com/VirInvictus/vir-gtk.git" }
 conservatory-core = { path = "../conservatory-core" }
-conservatory-search = { path = "../conservatory-search" }
+vir-search = { git = "https://github.com/VirInvictus/vir-search.git" }
 conservatory-podcasts = { path = "../conservatory-podcasts", optional = true }
 conservatory-audiobooks = { path = "../conservatory-audiobooks", optional = true }
 gtk4 = { workspace = true }

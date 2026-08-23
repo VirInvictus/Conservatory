@@ -821,7 +821,7 @@ pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
 }
 
 /// A track projected for search (Phase 3a). The CLI/GUI maps this to
-/// `conservatory_search::SearchItem` for the in-memory fallback path; `track_id`
+/// `crate::search::SearchItem` for the in-memory fallback path; `track_id`
 /// pairs a match back to its row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchRow {
@@ -896,7 +896,7 @@ pub fn search_rows(conn: &Connection) -> Result<Vec<SearchRow>> {
 }
 
 /// A bindable value for the search SQL path, mirroring
-/// `conservatory_search::SqlValue` so the CLI/GUI need not depend on rusqlite.
+/// `crate::search::SqlValue` so the CLI/GUI need not depend on rusqlite.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SqlParam {
     Text(String),
@@ -906,7 +906,7 @@ pub enum SqlParam {
 
 /// Run a translated search `WHERE` fragment against `tracks`, returning the
 /// matching track ids (Phase 3a SQL fast path). The fragment and `params` come
-/// from `conservatory_search::try_translate`; binding happens here so the crate
+/// from `crate::search::try_translate`; binding happens here so the crate
 /// stays storage-agnostic.
 pub fn search_track_ids(
     conn: &Connection,
@@ -976,7 +976,7 @@ pub fn static_playlist_track_ids(conn: &Connection, playlist_id: i64) -> Result<
 
 /// The smart-playlist SQL path (Phase 16d): `SELECT id FROM tracks WHERE
 /// <where_sql> ORDER BY <order> LIMIT <n>`. `where_sql` + `params` come from the
-/// caller's `conservatory_search::try_translate` (core stays search-free at
+/// caller's `crate::search::try_translate` (core stays search-free at
 /// runtime); `order` is a fixed whitelist fragment and `limit` an integer, so
 /// there is no injection surface. The eval fallback (regex / fuzzy queries that
 /// do not translate) is the caller's concern, since it needs the grammar.
@@ -1025,7 +1025,7 @@ fn order_sql(order: PlaylistOrder) -> &'static str {
 
 /// FTS5 `bm25` scores for a `track_fts MATCH` query, keyed by track id (Phase 3a
 /// ranking). Lower `bm25` magnitude is a better match; the caller blends it with
-/// recency via `conservatory_search::blend_relevance`.
+/// recency via `crate::search::blend_relevance`.
 pub fn fts_rank(conn: &Connection, match_query: &str) -> Result<HashMap<i64, f64>> {
     let mut stmt =
         conn.prepare("SELECT rowid, bm25(track_fts) FROM track_fts WHERE track_fts MATCH ?1")?;

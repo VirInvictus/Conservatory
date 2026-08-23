@@ -10,7 +10,8 @@
 use chrono::NaiveDate;
 
 use conservatory_core::db::BookListRow;
-use conservatory_search::{PerspectiveResolver, SearchItem, evaluate, parse_with_resolver};
+use vir_search::parse::{PerspectiveResolver, parse_with_resolver};
+use conservatory_core::search::{SearchItem, evaluate, Field, State, SortKey};
 
 /// Filter `rows` by the filter-bar `query`, preserving the shelf order (the
 /// grammar only removes books; `sort_shelf` already ordered them). Returns the
@@ -19,13 +20,13 @@ use conservatory_search::{PerspectiveResolver, SearchItem, evaluate, parse_with_
 pub fn filter_books(
     rows: &[BookListRow],
     query: &str,
-    resolver: &dyn PerspectiveResolver,
+    resolver: &impl PerspectiveResolver<Field, State>,
     today: NaiveDate,
 ) -> (Vec<BookListRow>, Vec<String>) {
     if query.trim().is_empty() {
         return (rows.to_vec(), Vec::new());
     }
-    let parsed = parse_with_resolver(query, resolver);
+    let parsed = parse_with_resolver::<Field, State, SortKey, _>(query, resolver);
     let kept = rows
         .iter()
         .filter(|r| evaluate(&parsed.expr, &book_item(r), today))
@@ -73,7 +74,7 @@ mod tests {
 
     /// A resolver with no saved Perspectives (every `vl:` is unknown).
     struct NoPerspectives;
-    impl PerspectiveResolver for NoPerspectives {
+    impl PerspectiveResolver<Field, State> for NoPerspectives {
         fn expression(&self, _name: &str) -> Option<String> {
             None
         }

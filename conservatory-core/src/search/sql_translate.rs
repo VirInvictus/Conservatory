@@ -12,8 +12,9 @@
 
 use chrono::NaiveDate;
 
-use crate::ast::{Comparator, Expr, Field, MatchKind, State, Value};
-use crate::dates;
+use vir_search::ast::{Comparator, Expr, MatchKind, Value};
+use super::domain::{Field, State};
+use vir_search::dates;
 
 /// A bindable parameter value, carrying no driver types.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,13 +33,13 @@ pub struct SqlClause {
 
 /// Translate the whole expression, or `None` if any node can't be expressed in
 /// SQL (the caller then evaluates in memory).
-pub fn try_translate(expr: &Expr, today: NaiveDate) -> Option<SqlClause> {
+pub fn try_translate(expr: &Expr<Field, State>, today: NaiveDate) -> Option<SqlClause> {
     let mut params = Vec::new();
     let sql = node(expr, today, &mut params)?;
     Some(SqlClause { sql, params })
 }
 
-fn node(expr: &Expr, today: NaiveDate, p: &mut Vec<SqlValue>) -> Option<String> {
+fn node(expr: &Expr<Field, State>, today: NaiveDate, p: &mut Vec<SqlValue>) -> Option<String> {
     Some(match expr {
         Expr::Empty => "1=1".to_string(),
         Expr::Text(s) => {
@@ -55,7 +56,7 @@ fn node(expr: &Expr, today: NaiveDate, p: &mut Vec<SqlValue>) -> Option<String> 
     })
 }
 
-fn join(items: &[Expr], op: &str, today: NaiveDate, p: &mut Vec<SqlValue>) -> Option<String> {
+fn join(items: &[Expr<Field, State>], op: &str, today: NaiveDate, p: &mut Vec<SqlValue>) -> Option<String> {
     let parts: Option<Vec<String>> = items.iter().map(|e| node(e, today, p)).collect();
     Some(format!("({})", parts?.join(&format!(" {op} "))))
 }
@@ -280,14 +281,14 @@ fn fts_phrase(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::parse;
+    use vir_search::parse::parse;
 
     fn today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 6, 20).unwrap()
     }
 
     fn tr(expr: &str) -> Option<SqlClause> {
-        try_translate(&parse(expr).expr, today())
+        try_translate(&parse::<Field, State, crate::search::domain::SortKey>(expr).expr, today())
     }
 
     #[test]

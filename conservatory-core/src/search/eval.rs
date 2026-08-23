@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use chrono::NaiveDate;
 use regex::Regex;
 
-use crate::ast::{Comparator, Expr, Field, MatchKind, State, Value};
-use crate::dates;
-use crate::fold::fold;
+use vir_search::ast::{Comparator, Expr, MatchKind, Value};
+use super::domain::{Field, State};
+use vir_search::dates;
+use vir_search::fold::fold;
 
 /// The searchable projection of a library item (a track or, on the audiobook
 /// shelf, a book). The consumer fills this from a DB read; the crate owns it so
@@ -42,11 +43,11 @@ pub struct SearchItem {
 
 /// Evaluate `expr` against `item`. `today` resolves relative date keywords (the
 /// caller passes a stable date so eval and `sql_translate` agree).
-pub fn evaluate(expr: &Expr, item: &SearchItem, today: NaiveDate) -> bool {
+pub fn evaluate(expr: &Expr<Field, State>, item: &SearchItem, today: NaiveDate) -> bool {
     eval(expr, item, today)
 }
 
-fn eval(expr: &Expr, item: &SearchItem, today: NaiveDate) -> bool {
+fn eval(expr: &Expr<Field, State>, item: &SearchItem, today: NaiveDate) -> bool {
     match expr {
         Expr::Empty => true,
         Expr::Text(s) => text_any(item, s),
@@ -281,7 +282,7 @@ fn damerau_levenshtein(a: &str, b: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::DateSpec;
+    use vir_search::ast::DateSpec;
 
     fn item() -> SearchItem {
         SearchItem {
@@ -326,11 +327,11 @@ mod tests {
     }
 
     fn run(expr: &str) -> bool {
-        evaluate(&crate::parse::parse(expr).expr, &item(), today())
+        evaluate(&vir_search::parse::parse::<Field, State, crate::search::SortKey>(expr).expr, &item(), today())
     }
 
     fn run_book(expr: &str) -> bool {
-        evaluate(&crate::parse::parse(expr).expr, &book(), today())
+        evaluate(&vir_search::parse::parse::<Field, State, crate::search::SortKey>(expr).expr, &book(), today())
     }
 
     #[test]
@@ -339,7 +340,7 @@ mod tests {
         it.artist = Some("Björk".into());
         it.album = Some("Homogénic".into());
         it.title = "Jóga".into();
-        let ev = |q: &str| evaluate(&crate::parse::parse(q).expr, &it, today());
+        let ev = |q: &str| evaluate(&vir_search::parse::parse::<Field, State, crate::search::SortKey>(q).expr, &it, today());
         // Bare text folds (text_any), both ASCII needle → accented value and back.
         assert!(ev("bjork"));
         assert!(ev("joga"));
@@ -437,12 +438,12 @@ mod tests {
         let (start, _) = dates::resolve_range(&DateSpec::Today, today());
         it.added = Some(start + 100);
         assert!(evaluate(
-            &crate::parse::parse("added:today").expr,
+            &vir_search::parse::parse::<Field, State, crate::search::SortKey>("added:today").expr,
             &it,
             today()
         ));
         assert!(!evaluate(
-            &crate::parse::parse("added:yesterday").expr,
+            &vir_search::parse::parse::<Field, State, crate::search::SortKey>("added:yesterday").expr,
             &it,
             today()
         ));

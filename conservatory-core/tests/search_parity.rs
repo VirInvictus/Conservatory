@@ -11,7 +11,8 @@ use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
     ReadPool, SearchRow, SqlParam, search_rows, search_track_ids, spawn_worker,
 };
-use conservatory_search::{SearchItem, SqlValue, evaluate, parse, try_translate};
+use conservatory_core::search::{SearchItem, SqlValue, evaluate, try_translate, Field, State, SortKey};
+use vir_search::parse::parse;
 use tempfile::tempdir;
 
 fn to_item(r: &SearchRow) -> SearchItem {
@@ -78,7 +79,7 @@ async fn sql_and_eval_agree_on_the_translatable_subset() {
     ];
 
     for expr in expressions {
-        let parsed = parse(expr);
+        let parsed = parse::<Field, State, SortKey>(expr);
         let clause = try_translate(&parsed.expr, today)
             .unwrap_or_else(|| panic!("{expr:?} should translate"));
 
@@ -103,8 +104,8 @@ async fn sql_and_eval_agree_on_the_translatable_subset() {
 #[tokio::test]
 async fn regex_does_not_translate_so_eval_runs() {
     let today = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap();
-    assert!(try_translate(&parse("title:~^track").expr, today).is_none());
-    assert!(try_translate(&parse("artist:?artst").expr, today).is_none());
+    assert!(try_translate(&parse::<Field, State, SortKey>("title:~^track").expr, today).is_none());
+    assert!(try_translate(&parse::<Field, State, SortKey>("artist:?artst").expr, today).is_none());
 }
 
 /// Phase 18a: bare-text search folds accents on the SQL fast path. A track whose
@@ -175,7 +176,7 @@ async fn bare_text_folds_accents_through_fts() {
 
     // Bare ASCII text finds the accented artist / album / title through FTS.
     for q in ["bjork", "homogenic", "joga"] {
-        let parsed = parse(q);
+        let parsed = parse::<Field, State, SortKey>(q);
         let clause = try_translate(&parsed.expr, today)
             .unwrap_or_else(|| panic!("{q:?} should translate to an FTS clause"));
         let params: Vec<SqlParam> = clause.params.iter().map(to_param).collect();

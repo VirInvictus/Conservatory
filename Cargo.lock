@@ -608,7 +608,6 @@ dependencies = [
  "conservatory-audiobooks",
  "conservatory-core",
  "conservatory-podcasts",
- "conservatory-search",
  "gtk4",
  "pipewire",
  "tempfile",
@@ -616,6 +615,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vir-gtk",
+ "vir-search",
 ]
 
 [[package]]
@@ -644,10 +644,10 @@ dependencies = [
  "conservatory-audiobooks",
  "conservatory-core",
  "conservatory-podcasts",
- "conservatory-search",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "vir-search",
 ]
 
 [[package]]
@@ -655,7 +655,6 @@ name = "conservatory-core"
 version = "0.3.14"
 dependencies = [
  "chrono",
- "conservatory-search",
  "image",
  "libc",
  "libmpv2",
@@ -663,6 +662,7 @@ dependencies = [
  "md-5",
  "oo7",
  "realfft",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",
@@ -673,6 +673,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "unicode-normalization",
+ "vir-search",
  "wiremock",
  "zbus 5.18.0",
 ]
@@ -695,15 +696,6 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
-]
-
-[[package]]
-name = "conservatory-search"
-version = "0.3.14"
-dependencies = [
- "chrono",
- "regex",
- "unicode-normalization",
 ]
 
 [[package]]
@@ -3591,6 +3583,16 @@ source = "git+https://github.com/VirInvictus/vir-gtk.git#4899f273c9a03ff105cb85b
 dependencies = [
  "gtk4",
  "tracing",
+]
+
+[[package]]
+name = "vir-search"
+version = "1.0.0"
+source = "git+https://github.com/VirInvictus/vir-search.git#c631efce8cb6e1559d09961f638aa643cfb08fc0"
+dependencies = [
+ "chrono",
+ "regex",
+ "unicode-normalization",
 ]
 
 [[package]]

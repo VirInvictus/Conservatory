@@ -13,15 +13,14 @@ use conservatory_core::db::{
     FacetFilter, PlaylistOrder, ReadPool, SearchRow, SqlParam, TrackBrief, facet_tracks,
     ordered_track_ids, perspective_expression, search_rows, search_track_ids,
 };
-use conservatory_search::{
-    PerspectiveResolver, SearchItem, SqlValue, evaluate, parse_with_resolver, try_translate,
-};
+use vir_search::parse::{PerspectiveResolver, parse_with_resolver};
+use conservatory_core::search::{SearchItem, SqlValue, evaluate, try_translate, Field, State, SortKey};
 
 /// Resolves `vl:NAME` against the saved Perspectives table (Phase 3c). Opens a
 /// fresh read handle per lookup; lookups are rare (only on `vl:` in the bar).
 pub(crate) struct PoolResolver<'a>(pub(crate) &'a ReadPool);
 
-impl PerspectiveResolver for PoolResolver<'_> {
+impl PerspectiveResolver<Field, State> for PoolResolver<'_> {
     fn expression(&self, name: &str) -> Option<String> {
         let conn = self.0.open().ok()?;
         perspective_expression(&conn, name).ok().flatten()
@@ -50,7 +49,7 @@ pub fn query_leaf(
     // SQL fast path when the whole expression translates; else in-memory eval
     // over the search rows (the all-or-nothing dual path, mirroring the CLI).
     // `vl:NAME` expands from the saved Perspectives at parse time.
-    let parsed = parse_with_resolver(query, &PoolResolver(pool));
+    let parsed = parse_with_resolver::<Field, State, SortKey, _>(query, &PoolResolver(pool));
     let matched: HashSet<i64> = match try_translate(&parsed.expr, today) {
         Some(clause) => {
             let params: Vec<SqlParam> = clause.params.iter().map(to_param).collect();
@@ -84,7 +83,7 @@ pub fn materialize_smart(
     let Ok(conn) = pool.open() else {
         return Vec::new();
     };
-    let parsed = parse_with_resolver(query, &PoolResolver(pool));
+    let parsed = parse_with_resolver::<Field, State, SortKey, _>(query, &PoolResolver(pool));
     match try_translate(&parsed.expr, today) {
         Some(clause) => {
             let params: Vec<SqlParam> = clause.params.iter().map(to_param).collect();

@@ -11,6 +11,7 @@ authors.workspace = true
 # read pool, and migration runner. Each crate is already in the agreed
 # workspace catalog (spec §11); later sub-phases activate the rest.
 [dependencies]
+regex = { workspace = true }
 tokio = { workspace = true }
 rusqlite = { workspace = true }
 thiserror = { workspace = true }
@@ -51,6 +52,8 @@ serde_json = { workspace = true }
 # every request with an MD5 over the sorted params + the shared secret.
 md-5 = { workspace = true }
 
+vir-search = { git = "https://github.com/VirInvictus/vir-search.git" }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 serde_json = { workspace = true }
@@ -59,4 +62,4 @@ serde_json = { workspace = true }
 wiremock = { workspace = true }
 # Test-only: the Phase 3a SQL-vs-eval parity test exercises both search paths
 # against a fixture DB. Core does not depend on the search crate at runtime.
-conservatory-search = { path = "../conservatory-search" }
+

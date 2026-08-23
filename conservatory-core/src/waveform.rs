@@ -124,7 +124,9 @@ fn decode_pcm(abs_path: &Path) -> Result<Vec<f32>> {
     }
     let samples = out
         .stdout
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     Ok(samples)
@@ -205,7 +207,7 @@ fn decode_cache(bytes: &[u8]) -> Option<WaveformEnvelope> {
     }
     let mut peak = Vec::with_capacity(buckets);
     let mut rms = Vec::with_capacity(buckets);
-    for pair in body.chunks_exact(4) {
+    for pair in body.as_chunks::<4>().0 {
         peak.push(dequantize(u16::from_le_bytes([pair[0], pair[1]])));
         rms.push(dequantize(u16::from_le_bytes([pair[2], pair[3]])));
     }

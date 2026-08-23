@@ -10,8 +10,8 @@
 use chrono::NaiveDate;
 
 use conservatory_core::db::BookListRow;
+use conservatory_core::search::{Field, SearchItem, SortKey, State, evaluate};
 use vir_search::parse::{PerspectiveResolver, parse_with_resolver};
-use conservatory_core::search::{SearchItem, evaluate, Field, State, SortKey};
 
 /// Filter `rows` by the filter-bar `query`, preserving the shelf order (the
 /// grammar only removes books; `sort_shelf` already ordered them). Returns the

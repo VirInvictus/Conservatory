@@ -3,10 +3,10 @@
 //! be referenced from another expression.
 
 use conservatory_core::db::{ReadPool, list_perspectives, perspective_expression, spawn_worker};
-use vir_search::parse::{PerspectiveResolver, parse_with_resolver};
-use vir_search::parse::parse;
-use conservatory_core::search::{Field, State, SortKey};
+use conservatory_core::search::{Field, SortKey, State};
 use tempfile::tempdir;
+use vir_search::parse::parse;
+use vir_search::parse::{PerspectiveResolver, parse_with_resolver};
 
 /// The production resolver shape: look the name up in the perspectives table.
 struct PoolResolver(ReadPool);

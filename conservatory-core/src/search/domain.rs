@@ -1,4 +1,4 @@
-use vir_search::ast::{FieldType, ParseField, ParseState, ParseSort};
+use vir_search::ast::{FieldType, ParseField, ParseSort, ParseState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
@@ -78,16 +78,26 @@ impl Field {
 }
 
 impl std::fmt::Display for Field {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.as_str()) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
 }
 impl ParseField for Field {
-    fn parse(name: &str) -> Option<Self> { Self::parse(name) }
+    fn parse(name: &str) -> Option<Self> {
+        Self::parse(name)
+    }
     fn field_type(&self) -> FieldType {
-        if self.is_date() { FieldType::Date }
-        else if self.is_numeric() {
-            if matches!(self, Self::Duration) { FieldType::Real } else { FieldType::Int }
+        if self.is_date() {
+            FieldType::Date
+        } else if self.is_numeric() {
+            if matches!(self, Self::Duration) {
+                FieldType::Real
+            } else {
+                FieldType::Int
+            }
+        } else {
+            FieldType::String
         }
-        else { FieldType::String }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,10 +131,14 @@ impl State {
 }
 
 impl std::fmt::Display for State {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.as_str()) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
 }
 impl ParseState for State {
-    fn parse(name: &str) -> Option<Self> { Self::parse(name) }
+    fn parse(name: &str) -> Option<Self> {
+        Self::parse(name)
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortKey {
@@ -164,8 +178,12 @@ impl SortKey {
 }
 
 impl std::fmt::Display for SortKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.as_str()) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
 }
 impl ParseSort for SortKey {
-    fn parse(name: &str) -> Option<Self> { Self::parse(name) }
+    fn parse(name: &str) -> Option<Self> {
+        Self::parse(name)
+    }
 }

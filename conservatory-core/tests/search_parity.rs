@@ -11,9 +11,11 @@ use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
     ReadPool, SearchRow, SqlParam, search_rows, search_track_ids, spawn_worker,
 };
-use conservatory_core::search::{SearchItem, SqlValue, evaluate, try_translate, Field, State, SortKey};
-use vir_search::parse::parse;
+use conservatory_core::search::{
+    Field, SearchItem, SortKey, SqlValue, State, evaluate, try_translate,
+};
 use tempfile::tempdir;
+use vir_search::parse::parse;
 
 fn to_item(r: &SearchRow) -> SearchItem {
     SearchItem {

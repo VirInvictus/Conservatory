@@ -12,8 +12,8 @@
 
 use chrono::NaiveDate;
 
-use vir_search::ast::{Comparator, Expr, MatchKind, Value};
 use super::domain::{Field, State};
+use vir_search::ast::{Comparator, Expr, MatchKind, Value};
 use vir_search::dates;
 
 /// A bindable parameter value, carrying no driver types.
@@ -56,7 +56,12 @@ fn node(expr: &Expr<Field, State>, today: NaiveDate, p: &mut Vec<SqlValue>) -> O
     })
 }
 
-fn join(items: &[Expr<Field, State>], op: &str, today: NaiveDate, p: &mut Vec<SqlValue>) -> Option<String> {
+fn join(
+    items: &[Expr<Field, State>],
+    op: &str,
+    today: NaiveDate,
+    p: &mut Vec<SqlValue>,
+) -> Option<String> {
     let parts: Option<Vec<String>> = items.iter().map(|e| node(e, today, p)).collect();
     Some(format!("({})", parts?.join(&format!(" {op} "))))
 }
@@ -288,7 +293,10 @@ mod tests {
     }
 
     fn tr(expr: &str) -> Option<SqlClause> {
-        try_translate(&parse::<Field, State, crate::search::domain::SortKey>(expr).expr, today())
+        try_translate(
+            &parse::<Field, State, crate::search::domain::SortKey>(expr).expr,
+            today(),
+        )
     }
 
     #[test]

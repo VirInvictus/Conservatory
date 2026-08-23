@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use chrono::NaiveDate;
 use regex::Regex;
 
-use vir_search::ast::{Comparator, Expr, MatchKind, Value};
 use super::domain::{Field, State};
+use vir_search::ast::{Comparator, Expr, MatchKind, Value};
 use vir_search::dates;
 use vir_search::fold::fold;
 
@@ -327,11 +327,19 @@ mod tests {
     }
 
     fn run(expr: &str) -> bool {
-        evaluate(&vir_search::parse::parse::<Field, State, crate::search::SortKey>(expr).expr, &item(), today())
+        evaluate(
+            &vir_search::parse::parse::<Field, State, crate::search::SortKey>(expr).expr,
+            &item(),
+            today(),
+        )
     }
 
     fn run_book(expr: &str) -> bool {
-        evaluate(&vir_search::parse::parse::<Field, State, crate::search::SortKey>(expr).expr, &book(), today())
+        evaluate(
+            &vir_search::parse::parse::<Field, State, crate::search::SortKey>(expr).expr,
+            &book(),
+            today(),
+        )
     }
 
     #[test]
@@ -340,7 +348,13 @@ mod tests {
         it.artist = Some("Björk".into());
         it.album = Some("Homogénic".into());
         it.title = "Jóga".into();
-        let ev = |q: &str| evaluate(&vir_search::parse::parse::<Field, State, crate::search::SortKey>(q).expr, &it, today());
+        let ev = |q: &str| {
+            evaluate(
+                &vir_search::parse::parse::<Field, State, crate::search::SortKey>(q).expr,
+                &it,
+                today(),
+            )
+        };
         // Bare text folds (text_any), both ASCII needle → accented value and back.
         assert!(ev("bjork"));
         assert!(ev("joga"));
@@ -443,7 +457,8 @@ mod tests {
             today()
         ));
         assert!(!evaluate(
-            &vir_search::parse::parse::<Field, State, crate::search::SortKey>("added:yesterday").expr,
+            &vir_search::parse::parse::<Field, State, crate::search::SortKey>("added:yesterday")
+                .expr,
             &it,
             today()
         ));

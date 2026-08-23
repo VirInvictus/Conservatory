@@ -20,6 +20,10 @@ use conservatory_core::db::{
     track_id_by_path, track_metadata, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, journal, organize_ops};
+use conservatory_core::search::{
+    Field as SearchField, SearchItem, SortKey, SqlValue, State as SearchState, evaluate,
+    try_translate,
+};
 use conservatory_core::{
     AlbumEdit, Assignment, AuditOptions, AuditReport, DEFAULT_TARGET_LUFS, DedupOptions,
     DuplicateReport, Field, GenreVocab, ImportOptions, ImportReport, LibraryStats, M3uTrack,
@@ -33,8 +37,7 @@ use conservatory_core::{
     rsgain_available, run_audit, scan_album_files, sync_album_cover, verify_files,
     write_atomic_plain, write_track_tags,
 };
-use vir_search::parse::{PerspectiveResolver, parse_with_resolver, parse};
-use conservatory_core::search::{SearchItem, SqlValue, evaluate, try_translate, Field as SearchField, State as SearchState, SortKey};
+use vir_search::parse::{PerspectiveResolver, parse, parse_with_resolver};
 use vir_search::rank::{blend_relevance, collect_text_terms};
 
 /// Output format for the report-producing verbs (spec §9).
@@ -6108,8 +6111,10 @@ mod audiobook_filter_tests {
     use super::book_search_item;
     use chrono::NaiveDate;
     use conservatory_core::db::BookListRow;
-    use conservatory_core::search::{evaluate, Field as SearchField, State as SearchState, SortKey};
-use vir_search::parse::parse;
+    use conservatory_core::search::{
+        Field as SearchField, SortKey, State as SearchState, evaluate,
+    };
+    use vir_search::parse::parse;
 
     fn row() -> BookListRow {
         BookListRow {
@@ -6134,7 +6139,11 @@ use vir_search::parse::parse;
 
     fn matches(expr: &str) -> bool {
         let today = NaiveDate::from_ymd_opt(2026, 6, 28).unwrap();
-        evaluate(&parse::<SearchField, SearchState, SortKey>(expr).expr, &book_search_item(&row()), today)
+        evaluate(
+            &parse::<SearchField, SearchState, SortKey>(expr).expr,
+            &book_search_item(&row()),
+            today,
+        )
     }
 
     #[test]

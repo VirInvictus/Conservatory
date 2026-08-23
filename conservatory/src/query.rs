@@ -13,8 +13,10 @@ use conservatory_core::db::{
     FacetFilter, PlaylistOrder, ReadPool, SearchRow, SqlParam, TrackBrief, facet_tracks,
     ordered_track_ids, perspective_expression, search_rows, search_track_ids,
 };
+use conservatory_core::search::{
+    Field, SearchItem, SortKey, SqlValue, State, evaluate, try_translate,
+};
 use vir_search::parse::{PerspectiveResolver, parse_with_resolver};
-use conservatory_core::search::{SearchItem, SqlValue, evaluate, try_translate, Field, State, SortKey};
 
 /// Resolves `vl:NAME` against the saved Perspectives table (Phase 3c). Opens a
 /// fresh read handle per lookup; lookups are rare (only on `vl:` in the bar).

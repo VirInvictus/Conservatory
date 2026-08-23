@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.4.0 (2026-08-23)
+
+- **Refactor:** Migrated internal search parser (`conservatory-search`) to the shared `vir-search` crate.
+- **Refactor:** Extracted common GTK UI components and theming into the shared `vir-gtk` crate.
+
+## v0.3.15 (2026-08-23)
+
+- **Build:** chore: fix clippy `chunks_exact_to_as_chunks` lint
+
 ## v0.3.14
 
 **Packaging, first real pass.** Conservatory now has an AppStream metainfo, a

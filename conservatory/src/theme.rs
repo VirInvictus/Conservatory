@@ -16,7 +16,6 @@
 //! (Inter body, Fraunces headers, IBM Plex Mono technical), enforced by a
 //! unit test, fonts bundled via fontconfig in `main.rs`.
 
-use gtk4 as gtk;
 
 // The Dragon roles (the raw palette lives in docs/theme.md).
 
@@ -246,7 +245,6 @@ button.pill:hover { background-color: %GRID%; }
 /// The full generated sheet: the template with every `%TOKEN%` replaced by
 /// its baked Dragon hex.
 
-pub fn sheet() -> String {
     let mut p = vir_gtk::theme::Palette::dragon();
     p.accent = "#c4746e"; // dragonRed
     p.on_accent = "#12120f";

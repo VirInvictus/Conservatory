@@ -1,5 +1,8 @@
 # Patch Notes
 
+## v0.4.1 (2026-08-24)
+
+- **Build:** Fixed broken CI by correcting unused imports and resolving conditional feature-gate compilation issues for music-only builds.
 ## v0.4.0 (2026-08-23)
 
 - **Refactor:** Migrated internal search parser (`conservatory-search`) to the shared `vir-search` crate.

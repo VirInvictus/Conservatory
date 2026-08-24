@@ -1295,3 +1295,19 @@ Reframe (Brandon, 2026-07-10, with Phase 26 pulled forward to `0.3.0`): the audi
 - [ ] **New doc: `docs/hyprland.md`.** The `windowrulev2` recipe for floating and pinning the compact Now Playing window to a scratchpad workspace, the Secret Service setup one-liner for private podcast feeds, the working waybar `mpris` module config, and the required portal packages, so the environment-specific setup lives in one place rather than tribal knowledge (the `docs/` convention from the "Continuous" section at the top of this file).
 
 *Usable artifact:* a compact Now Playing mode exists that a `windowrulev2` rule can float onto a scratchpad, with an explicit toggle and a narrow-geometry auto-engage. The GNOME/default-desktop experience is unchanged pixel-for-pixel.
+
+## Phase 7: Codebase Sweep & Fixes (2026-08-23)
+*Context: Found sorting bugs, broken cover moves, and non-ASCII slug collisions.*
+
+### Bugs to Fix
+- [ ] **Author Shelf Sorting:** Sort audiobook authors by their parsed `sort_name` (last-name-first) rather than `author_display` (given name).
+- [ ] **Multi-Disc Path Splitting:** Fix `apply_db_path` dynamically walking up a single `parent()` to correctly locate the album root, preventing covers from saving into disc subfolders.
+- [ ] **Journaled Cover Moves:** Move `follow_cover` inside the `mover::apply` transaction so that cover art moves are properly recorded in the undo journal.
+- [ ] **Missing Accent Updates:** Pass the computed `accent_rgb` to `set_album_cover_path` during track imports into pre-existing albums.
+- [ ] **Non-ASCII Slug Collapse:** Replace strict ASCII alphanumeric filtering in `slugify()` with unidecode/diacritic folding so foreign podcast titles don't collapse into `"untitled"` collisions.
+
+### Refactoring & Growth
+- [ ] **Standalone Scrobbler Crate:** Extract the `scrobble.rs` subsystem (ListenBrainz/Last.fm queues) into an independent library crate (`vir-scrobble`).
+- [ ] **Unified Name Sorting:** Consolidate `person_sort_name` and `derive_sort_name` into a central `conservatory-core::names` module.
+- [ ] **Recursive Audiobook Importer:** Expand `import_book` to recurse directories, discovering multiple author/book structures at once.
+- [ ] **Docs Sync:** Correct `README.md` workspace version, remove phantom `conservatory-search` references, and document actual CLI verbs (`import`, `organize`, `shelf-genre-set`).

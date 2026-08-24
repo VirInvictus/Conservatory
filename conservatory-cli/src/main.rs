@@ -21,7 +21,7 @@ use conservatory_core::db::{
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, journal, organize_ops};
 use conservatory_core::search::{
-    Field as SearchField, SearchItem, SortKey, SqlValue, State as SearchState, evaluate,
+    Field as SearchField, SearchItem, SortKey, SqlValue, State as SearchState, 
     try_translate,
 };
 use conservatory_core::{
@@ -6112,7 +6112,7 @@ mod audiobook_filter_tests {
     use chrono::NaiveDate;
     use conservatory_core::db::BookListRow;
     use conservatory_core::search::{
-        Field as SearchField, SortKey, State as SearchState, evaluate,
+        Field as SearchField, SortKey, State as SearchState, 
     };
     use vir_search::parse::parse;
 

@@ -602,7 +602,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory"
-version = "0.3.14"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "conservatory-audiobooks",
@@ -620,7 +620,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-audiobooks"
-version = "0.3.14"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "conservatory-core",
@@ -636,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-cli"
-version = "0.3.14"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -652,7 +652,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-core"
-version = "0.3.14"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "image",
@@ -680,7 +680,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-podcasts"
-version = "0.3.14"
+version = "0.4.0"
 dependencies = [
  "ammonia",
  "chrono",

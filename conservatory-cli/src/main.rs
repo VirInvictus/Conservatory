@@ -21,8 +21,7 @@ use conservatory_core::db::{
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, journal, organize_ops};
 use conservatory_core::search::{
-    Field as SearchField, SearchItem, SortKey, SqlValue, State as SearchState, 
-    try_translate,
+    Field as SearchField, SearchItem, SortKey, SqlValue, State as SearchState, try_translate,
 };
 use conservatory_core::{
     AlbumEdit, Assignment, AuditOptions, AuditReport, DEFAULT_TARGET_LUFS, DedupOptions,
@@ -1810,7 +1809,9 @@ fn run_audiobook_list(db: PathBuf, expr: Option<String>, format: Format) -> Resu
         for w in &parsed.warnings {
             eprintln!("warning: {w}");
         }
-        rows.retain(|r| conservatory_core::search::eval::evaluate(&parsed.expr, &book_search_item(r), today));
+        rows.retain(|r| {
+            conservatory_core::search::eval::evaluate(&parsed.expr, &book_search_item(r), today)
+        });
     }
 
     print_book_rows(&rows, format);
@@ -4756,7 +4757,9 @@ fn materialize_smart(
             let mut rows: Vec<_> = search_rows(&conn)
                 .context("loading rows")?
                 .into_iter()
-                .filter(|r| conservatory_core::search::eval::evaluate(&parsed.expr, &to_item(r), today))
+                .filter(|r| {
+                    conservatory_core::search::eval::evaluate(&parsed.expr, &to_item(r), today)
+                })
                 .collect();
             sort_search_rows(&mut rows, order);
             let mut ids: Vec<i64> = rows.into_iter().map(|r| r.track_id).collect();
@@ -6110,9 +6113,7 @@ mod audiobook_filter_tests {
     use super::book_search_item;
     use chrono::NaiveDate;
     use conservatory_core::db::BookListRow;
-    use conservatory_core::search::{
-        Field as SearchField, SortKey, State as SearchState, 
-    };
+    use conservatory_core::search::{Field as SearchField, SortKey, State as SearchState};
     use vir_search::parse::parse;
 
     fn row() -> BookListRow {

@@ -1795,7 +1795,6 @@ async fn run_audiobook_set(args: AudiobookSetArgs) -> Result<()> {
 #[cfg(feature = "audiobooks")]
 fn run_audiobook_list(db: PathBuf, expr: Option<String>, format: Format) -> Result<()> {
     use conservatory_core::db::{list_book_rows, sort_shelf};
-    use conservatory_core::search::evaluate;
 
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
     let conn = pool.open().context("opening pool connection")?;
@@ -3017,7 +3016,7 @@ fn resolve_selector(pool: &ReadPool, query: &str) -> Result<std::collections::Ha
         None => search_rows(&conn)
             .context("loading rows")?
             .into_iter()
-            .filter(|r| conservatory_core::search::conservatory_core::search::eval::evaluate(&parsed.expr, &to_item(r), today))
+            .filter(|r| conservatory_core::search::eval::evaluate(&parsed.expr, &to_item(r), today))
             .map(|r| r.track_id)
             .collect(),
     };
@@ -4757,7 +4756,7 @@ fn materialize_smart(
             let mut rows: Vec<_> = search_rows(&conn)
                 .context("loading rows")?
                 .into_iter()
-                .filter(|r| conservatory_core::search::conservatory_core::search::eval::evaluate(&parsed.expr, &to_item(r), today))
+                .filter(|r| conservatory_core::search::eval::evaluate(&parsed.expr, &to_item(r), today))
                 .collect();
             sort_search_rows(&mut rows, order);
             let mut ids: Vec<i64> = rows.into_iter().map(|r| r.track_id).collect();
@@ -5283,7 +5282,7 @@ fn search(db: PathBuf, query: String, format: Format) -> Result<()> {
         }
         None => rows
             .into_iter()
-            .filter(|r| conservatory_core::search::conservatory_core::search::eval::evaluate(&parsed.expr, &to_item(r), today))
+            .filter(|r| conservatory_core::search::eval::evaluate(&parsed.expr, &to_item(r), today))
             .collect(),
     };
 

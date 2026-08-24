@@ -15,10 +15,7 @@
 //! Typography carries over from Phase 13d: exactly three `font-family` rules
 //! (Inter body, Fraunces headers, IBM Plex Mono technical), enforced by a
 //! unit test, fonts bundled via fontconfig in `main.rs`.
-
-
 // The Dragon roles (the raw palette lives in docs/theme.md).
-
 /// The sheet template. `%TOKENS%` are replaced with the hexes above by
 /// [`sheet`]; no other substitution happens, so plain CSS braces are safe.
 const TEMPLATE: &str = "\
@@ -27,7 +24,6 @@ window { background-color: %BG_WINDOW%; color: %FG%; }
 window.csd { border-radius: 0; box-shadow: none; }
 decoration { border-radius: 0; box-shadow: none; }
 .background { background-color: %BG_WINDOW%; color: %FG%; }
-
 headerbar {
   background-color: %BG_HEADER%;
   background-image: none;
@@ -38,9 +34,7 @@ headerbar {
   padding: 0 4px;
 }
 headerbar button { min-height: 24px; }
-
 paned > separator { background-color: %GRID%; background-image: none; min-width: 1px; min-height: 1px; }
-
 columnview, listview, list { background-color: %BG_VIEW%; color: %FG%; }
 columnview > header { background-color: %BG_VIEW%; border-bottom: 1px solid %GRID%; }
 row { border-radius: 0; }
@@ -54,7 +48,6 @@ row.activatable:hover { background-color: alpha(currentColor, 0.06); }
 row:selected { background-color: %BG_RAISED%; color: %FG%; box-shadow: inset 2px 0 0 %ACCENT%; }
 .navigation-sidebar { background-color: %BG_VIEW%; }
 .navigation-sidebar > row { padding: 4px 8px; border-radius: 0; }
-
 .card, list.boxed-list {
   background-color: %BG_CARD%;
   color: %FG%;
@@ -64,7 +57,6 @@ row:selected { background-color: %BG_RAISED%; color: %FG%; box-shadow: inset 2px
 }
 list.boxed-list > row { border-bottom: 1px solid %GRID%; }
 list.boxed-list > row:last-child { border-bottom: none; }
-
 button {
   background-color: %BG_CARD%;
   background-image: none;
@@ -106,7 +98,6 @@ button.circular { border-radius: 0; }
 .linked > button:not(:first-child) { border-left-width: 0; }
 .toolbar { padding: 4px 6px; }
 .osd { background-color: alpha(%BG_WINDOW%, 0.80); color: %FG%; border-radius: 0; }
-
 popover > arrow { background-color: %BG_CARD%; }
 popover > contents {
   background-color: %BG_CARD%;
@@ -119,7 +110,6 @@ popover > contents {
 popover.menu modelbutton { border-radius: 0; padding: 5px 8px; }
 modelbutton:hover { background-color: %BG_RAISED%; color: %FG%; }
 popover.menu separator { background-color: %GRID%; min-height: 1px; margin: 4px 0; }
-
 entry, spinbutton {
   background-color: %BG_VIEW%;
   color: %FG%;
@@ -131,19 +121,15 @@ entry:focus-within, spinbutton:focus-within { border-color: %ACCENT%; }
 spinbutton > button { border-width: 0; background-color: transparent; }
 spinbutton > button:hover { background-color: %GRID%; }
 dropdown > button { background-color: %BG_CARD%; }
-
 switch { background-color: %GRID%; border: 1px solid %GRID%; border-radius: 0; }
 switch:checked { background-color: %ACCENT%; border-color: %ACCENT%; }
 switch > slider { background-color: %FG%; border: 1px solid %GRID%; border-radius: 0; min-width: 18px; min-height: 18px; }
-
 check { background-color: %BG_VIEW%; border: 1px solid %GRID%; border-radius: 0; }
 check:checked { background-color: %ACCENT%; color: %ON_ACCENT%; border-color: %ACCENT%; }
-
 scale > trough { background-color: %GRID%; border-radius: 0; }
 scale > trough > highlight { background-color: %ACCENT%; border-radius: 0; }
 scale > trough > slider { background-color: %FG%; border: 1px solid %GRID%; border-radius: 0; box-shadow: none; }
 scale > marks-after, scale > marks-before { color: %FG_DIM%; }
-
 tooltip, tooltip.background {
   background-color: %BG_HEADER%;
   color: %FG%;
@@ -152,11 +138,9 @@ tooltip, tooltip.background {
   box-shadow: none;
   padding: 4px 8px;
 }
-
 scrollbar { background-color: transparent; }
 scrollbar slider { background-color: %GRID%; border-radius: 0; min-width: 6px; min-height: 6px; }
 scrollbar slider:hover { background-color: %FG_DIM%; }
-
 selection { background-color: alpha(%ACCENT%, 0.35); color: %FG%; }
 /* Keyboard-focus ring, scoped to the discrete interactive controls. NOT the
    universal `*`: pressing a bare modifier (e.g. Fn+Win = Ctrl+Super to switch
@@ -172,7 +156,6 @@ checkbutton:focus-visible,
 check:focus-visible,
 dropdown:focus-visible,
 scale:focus-visible { outline: 1px solid %ACCENT%; outline-offset: -1px; }
-
 /* --- Utility classes the adwaita sheet used to provide --- */
 .title-1 { font-weight: 800; font-size: 170%; }
 .title-2 { font-weight: 800; font-size: 140%; }
@@ -186,12 +169,10 @@ scale:focus-visible { outline: 1px solid %ACCENT%; outline-offset: -1px; }
 .success { color: %OK%; }
 .accent { color: %ACCENT%; }
 .numeric { font-feature-settings: 'tnum'; }
-
 /* --- Typography (Phase 13d): the only three font rules, test-enforced --- */
 window, popover, dropdown, tooltip { font-family: 'Inter', sans-serif; }
 .title-1, .title-2, .title-3, .title-4, .large-title, .heading { font-family: 'Fraunces', serif; }
 .tech { font-family: 'IBM Plex Mono', monospace; }
-
 /* --- App-owned rules (migrated from the old main.rs sheet) --- */
 columnview.data-table > listview > row > cell { padding-top: 1px; padding-bottom: 1px; }
 columnview.data-table > listview > row { transition: background-color 150ms ease; }
@@ -241,16 +222,14 @@ button.pill:hover { background-color: %GRID%; }
 .spectrum { background: alpha(currentColor, 0.03); }
 .toast { background-color: %BG_CARD%; color: %FG%; border: 1px solid %GRID%; border-radius: 0; padding: 6px 12px; }
 ";
-
 /// The full generated sheet: the template with every `%TOKEN%` replaced by
 /// its baked Dragon hex.
-
+pub fn sheet() -> String {
     let mut p = vir_gtk::theme::Palette::dragon();
     p.accent = "#c4746e"; // dragonRed
     p.on_accent = "#12120f";
     p.replace_tokens(TEMPLATE)
 }
-
 pub fn install() {
     vir_gtk::theme::install_stylesheet(&sheet());
 }

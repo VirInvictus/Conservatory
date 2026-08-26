@@ -602,7 +602,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory"
-version = "0.4.0"
+version = "0.4.2"
 dependencies = [
  "chrono",
  "conservatory-audiobooks",
@@ -620,7 +620,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-audiobooks"
-version = "0.4.0"
+version = "0.4.2"
 dependencies = [
  "chrono",
  "conservatory-core",
@@ -636,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-cli"
-version = "0.4.0"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -652,7 +652,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-core"
-version = "0.4.0"
+version = "0.4.2"
 dependencies = [
  "chrono",
  "image",
@@ -680,7 +680,7 @@ dependencies = [
 
 [[package]]
 name = "conservatory-podcasts"
-version = "0.4.0"
+version = "0.4.2"
 dependencies = [
  "ammonia",
  "chrono",
@@ -1211,7 +1211,7 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3578,8 +3578,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vir-gtk"
-version = "1.0.0"
-source = "git+https://github.com/VirInvictus/vir-gtk.git#4899f273c9a03ff105cb85beddf545bb24ee76e5"
+version = "1.0.2"
+source = "git+https://github.com/VirInvictus/vir-gtk.git#1ac027a46c2e4f0a37399041132eb0f597e3fc1a"
 dependencies = [
  "gtk4",
  "tracing",
@@ -3587,8 +3587,8 @@ dependencies = [
 
 [[package]]
 name = "vir-search"
-version = "1.0.0"
-source = "git+https://github.com/VirInvictus/vir-search.git#c631efce8cb6e1559d09961f638aa643cfb08fc0"
+version = "1.0.2"
+source = "git+https://github.com/VirInvictus/vir-search.git#0b377bdb4ce552360bcd1d1e06cd16d284bc5a5e"
 dependencies = [
  "chrono",
  "regex",

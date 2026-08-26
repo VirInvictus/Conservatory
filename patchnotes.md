@@ -1,5 +1,9 @@
 # Patch Notes
 
+## v0.4.2 (2026-08-25)
+
+- **Build:** Refreshed dependency locks: `vir-search` 1.0.2 (parser fixes plus the tomorrow/lastweek/nextweek date keywords) and `vir-gtk` 1.0.2.
+
 ## v0.4.1 (2026-08-24)
 
 - **Build:** Fixed broken CI by correcting unused imports and resolving conditional feature-gate compilation issues for music-only builds.

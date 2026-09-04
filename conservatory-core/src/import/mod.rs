@@ -276,12 +276,15 @@ pub async fn import_folder(
     // Cover to disk (Phase 5d): the move has created the album folders, so write
     // each album's cover.jpg and record its path. Best-effort: a cover failure
     // never fails an otherwise-successful import (covers are re-derivable).
+    // The computed accent rides along: for a *matched* (pre-existing) album the
+    // insert above never ran, so this is the only place the accent can land
+    // (the sweep fix; previously a NULL accent survived every re-import).
     for (idx, pa) in planned_albums.iter().enumerate() {
         if let (Some(bytes), Some(folder_rel)) = (&pa.cover, &pa.folder_rel) {
             let folder = folder_rel.to_string_lossy();
             if let Ok(cover_path) = crate::covers::sync_album_cover(root, &folder, bytes, None)
                 && let Err(e) = worker
-                    .set_album_cover_path(album_ids[idx], Some(cover_path), None)
+                    .set_album_cover_path(album_ids[idx], Some(cover_path), pa.accent)
                     .await
             {
                 // A cover failure never fails the import (covers re-derive), but a

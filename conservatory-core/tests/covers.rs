@@ -190,3 +190,87 @@ async fn organize_all(worker: &WorkerHandle, pool: &ReadPool, root: &Path) -> i6
     .await
     .unwrap()
 }
+
+/// Re-import into a *matched* (pre-existing) album writes the freshly computed
+/// `accent_rgb`. Regression for the 2026-08-23 sweep: the post-move cover write
+/// passed a `None` accent, so a matched album (whose insert never ran) kept
+/// whatever accent it had; a stale one could never refresh. The test seeds a
+/// sentinel accent through the worker, re-imports a new track of the same
+/// album, and requires the computed accent to have replaced it. (A NULL accent
+/// on a matched album is the same bug seen from the empty side: the writer's
+/// COALESCE is only ever fed by this call.)
+#[tokio::test]
+async fn reimport_into_existing_album_backfills_accent() {
+    let dir = tempdir().unwrap();
+    let (pool, worker, lib) = managed_lib(dir.path()).await;
+
+    // The accent the first import computed from the fixture's embedded art.
+    let original = {
+        let conn = pool.open().unwrap();
+        get_album(&conn, 1)
+            .unwrap()
+            .unwrap()
+            .accent_rgb
+            .expect("seeded")
+    };
+
+    // A sentinel the re-import must overwrite with the recomputed accent.
+    {
+        let conn = pool.open().unwrap();
+        let cover = get_album(&conn, 1).unwrap().unwrap().cover_path;
+        drop(conn);
+        worker
+            .set_album_cover_path(1, cover, Some(0xDEAD_BEEF))
+            .await
+            .unwrap();
+    }
+
+    // A new file tagged as the SAME album but a different track, so its
+    // rendered destination differs and no TargetExists conflict fires: the
+    // real-world "import disc two later" path into a matched album.
+    let src2 = dir.path().join("src2");
+    std::fs::create_dir_all(&src2).unwrap();
+    let extra = src2.join("extra.flac");
+    std::fs::copy(fixture_audio("sample.flac"), &extra).unwrap();
+    let draft = conservatory_core::read_track(&extra).unwrap();
+    conservatory_core::write_track_tags(
+        &extra,
+        &conservatory_core::TagWrite {
+            title: "Second Track".into(),
+            track_artist: draft.artist.clone(),
+            track_artist_sort: draft.artist_sort.clone(),
+            album: draft.album.clone(),
+            album_artist: draft.album_artist.clone(),
+            album_artist_sort: draft.album_artist_sort.clone(),
+            year: draft.year,
+            track_no: Some(9),
+            disc_no: draft.disc_no,
+            genres: draft.genres.clone(),
+        },
+    )
+    .unwrap();
+
+    let report = import_folder(
+        &worker,
+        &pool,
+        &src2,
+        &ImportOptions {
+            library_root: lib,
+            mode: MoveMode::Copy,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(report.conflicts.is_empty(), "no conflicts: {:?}", report.conflicts);
+    assert_eq!(report.tracks, 1, "the extra track imported");
+
+    let conn = pool.open().unwrap();
+    let album = get_album(&conn, 1).unwrap().unwrap();
+    assert_eq!(album.id, 1, "matched the existing album, not a new one");
+    assert_eq!(
+        album.accent_rgb,
+        Some(original),
+        "the re-import recomputed and wrote the accent, replacing the sentinel"
+    );
+    worker.shutdown_ack().await.unwrap();
+}

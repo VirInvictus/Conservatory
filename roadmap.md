@@ -1222,12 +1222,20 @@ have held the other two hostage.)
       submission months later. `meson.build`'s hard-coded `version: '0.0.1'` is
       replaced by `files('VERSION')`; it had drifted from 0.3.13, which is
       exactly what the single-source rule exists to prevent.
+      **Done 2026-09-04 (the AUDIT_THREE lane): offline cargo sources —
+      `data/cargo-sources.json` vendored from Cargo.lock via the Atrium
+      generator (`scripts/flatpak-cargo-generator.py`, MIT), the two git deps
+      pinned at their lock commits — and the meson wrapper actually invoking
+      cargo (`custom_target` around `cargo build --release --workspace`, the
+      Atrium pattern), verified host-side: meson compile builds both binaries,
+      a DESTDIR stage lands them in `usr/local/bin` beside the data files, the
+      staged CLI executes, and both meson validators pass.
       **NOT done, and each is written into the manifest rather than left
-      implicit:** offline cargo sources (`cargo-sources.json` from Cargo.lock,
-      a hard Flathub requirement), the meson wrapper actually invoking cargo,
-      bundling the four shelled-out tools (rsgain / flac / ffmpeg / ffprobe,
-      which have no host `$PATH` inside a sandbox), the real icon, and the
-      16:9 screenshots that wait on it.
+      implicit:** a libmpv manifest module (the hard blocker for a full
+      sandboxed build: meson gates configure on it and org.gnome.Sdk does not
+      ship it), bundling the four shelled-out tools (rsgain / flac / ffmpeg /
+      ffprobe, which have no host `$PATH` inside a sandbox; the §5.8
+      decision), the real icon, and the 16:9 screenshots that wait on it.
 - [ ] **19b-iii — Richer navigable-credits metadata from local sources.**
       **Scope undefined; needs a design decision before it is buildable** (which
       credits, from which tags, navigable how, and whether the schema grows).

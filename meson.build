@@ -10,16 +10,46 @@ project(
 )
 
 # Conservatory is built with Cargo. Meson is the wrapper for Flatpak
-# packaging and distribution layout: it handles GSettings schema
-# compilation, AppStream metainfo, the .desktop file, and icon install.
-# Direct development uses cargo. Real Cargo integration and the data/
-# install targets ship with the GTK phases (Phase 3+, see roadmap.md);
-# this scaffold establishes the directory layout and dependency checks.
+# packaging and distribution layout: it invokes the cargo release build and
+# installs the binaries plus the GNOME-shaped data files (GSettings-era schema
+# compile, AppStream metainfo, the .desktop file, fonts, icon). Direct
+# development still uses cargo directly; meson test runs the two packaging
+# validators so a file that stops validating fails at build time.
 
 # Plain GTK4 only since Phase 26 (spec §2.4); 4.14 matches the Cargo v4_14 pin.
 dependency('gtk4', version: '>= 4.14')
 dependency('mpv', version: '>= 0.36')
 dependency('sqlite3', version: '>= 3.38')
+
+# The Rust build (Phase 20): a thin orchestration layer around
+# `cargo build --release`, the Atrium pattern. Cargo is the source of truth for
+# compilation; meson handles the GNOME-shaped install layout (binaries into
+# $bindir, fonts / desktop entry / metainfo / icon into $datadir) so the
+# project ships through Flatpak and any distro that expects a meson buildsystem.
+# `build_always_stale` lets cargo handle its own incremental logic instead of
+# meson tracking the Rust source tree; CARGO_TARGET_DIR keeps the Rust
+# artifacts inside the meson build dir so a DESTDIR stage never sees them.
+cargo = find_program('cargo')
+cargo_options = ['--manifest-path', meson.project_source_root() / 'Cargo.toml']
+cargo_options += ['--release']
+cargo_options += ['--workspace']
+
+cargo_build = custom_target(
+    'cargo-build',
+    build_by_default: true,
+    build_always_stale: true,
+    output: ['conservatory', 'conservatory-cli'],
+    console: true,
+    install: true,
+    install_dir: [get_option('bindir'), get_option('bindir')],
+    command: [
+        'env',
+        'CARGO_TARGET_DIR=' + meson.project_build_root() / 'cargo-target',
+        cargo, 'build', cargo_options,
+        '&&', 'cp', meson.project_build_root() / 'cargo-target' / 'release' / 'conservatory', '@OUTPUT0@',
+        '&&', 'cp', meson.project_build_root() / 'cargo-target' / 'release' / 'conservatory-cli', '@OUTPUT1@',
+    ],
+)
 
 # Bundled OFL fonts (Phase 13d): Inter (body), Fraunces (headers), IBM Plex Mono
 # (technical text). Installed into the data fonts dir so the packaged build's

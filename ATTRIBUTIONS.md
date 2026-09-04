@@ -67,6 +67,13 @@ External services (optional, off by default, spec §14 carve-out): **ListenBrain
 
 System libraries: `libpipewire-0.3` (Phase 12d, via the `pipewire` crate; the visualizer captures the default sink monitor because libmpv has no PCM tap, the constraint documented in `docs/libmpv-profiles.md`), `libmpv` (Phase 4a; built with the ffmpeg filter library `volume`, `equalizer`, `acompressor`, `alimiter`, `dynaudnorm` for the Phase 5.5 music DSP chain and `silenceremove`, `rubberband`, `loudnorm` for the Phase 6c spoken-word profile; the Phase 5.5c DSP modules pull in **no new Rust dependency**, riding the already-linked libmpv/ffmpeg; on Fedora that means RPM Fusion's `ffmpeg-libs`, not `ffmpeg-free-libs`), `gtk4`, and `libsecret` (via `oo7`, Phase 6). `libadwaita` was a dependency from Phase 3b until Phase 26 dropped it for plain GTK4 under the owned stylesheet (spec §2.4); it is listed no more. libmpv links ffmpeg/librubberband, the GPL-forcing chain documented above; the `libmpv2` Rust bindings are MIT but the linked library carries the GPL obligation. Per-dependency notes fill in as each lands.
 
+## Build tooling
+
+`scripts/flatpak-cargo-generator.py` is vendored from flatpak-builder-tools
+(MIT) by way of Atrium's identical copy: it turns Cargo.lock into the
+`data/cargo-sources.json` source list the Flatpak build consumes. It is a
+build-time script, not linked code, so it does not touch the GPL chain above.
+
 ## Bundled fonts
 
 The typography (Phase 13d) ships its own fonts so the app never assumes a host font is installed (spec §7.2.9). All three are SIL Open Font License 1.1, which explicitly permits bundling. The font files and a per-family `OFL.txt` live in `data/fonts/`; the dev build registers that directory with fontconfig at startup, and the Flatpak installs the files so fontconfig finds them.

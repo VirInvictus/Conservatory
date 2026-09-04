@@ -4,6 +4,11 @@
 #   flatpak-builder --user --install --force-clean build-dir \
 #     data/io.github.virinvictus.conservatory.yml
 #
+# The build is offline-shaped: data/cargo-sources.json vendors every crate in
+# Cargo.lock (git deps pinned at their lock commits). Regenerate it whenever
+# Cargo.lock changes:
+#   uv run scripts/flatpak-cargo-generator.py Cargo.lock -o data/cargo-sources.json
+#
 # Run:
 #   flatpak run io.github.virinvictus.conservatory
 #
@@ -75,23 +80,29 @@ modules:
   - name: conservatory
     buildsystem: meson
     sources:
+      # Local builds use the working tree. For a Flathub submission PR,
+      # replace the dir source with the tagged release (the Atrium form:
+      # type git + url + tag + commit). Don't copy build artifacts into
+      # the sandbox; a warm target/ is multiple GB and the offline build
+      # must not see it anyway.
       - type: dir
         path: ../
+        skip:
+          - .git
+          - target
+          - .flatpak-builder
+          - build-dir
+      - cargo-sources.json
 
 # NOT YET DONE, tracked rather than hidden:
 #
-# 1. Offline cargo sources. Flathub requires the build to run with no network,
-#    which means a checked-in data/cargo-sources.json generated from Cargo.lock
-#    (Atrium does this with a vendored flatpak-cargo-generator.py). Until that
-#    exists this manifest builds only with --share=network at build time.
+# 1. Build dependencies inside the sandbox: libmpv (the playback host; meson
+#    dependency('mpv') gates configure) is not in org.gnome.Sdk, and the four
+#    shelled-out tools (rsgain, flac, ffmpeg, ffprobe) are host $PATH today.
+#    Each needs a manifest module here, or (for the tools) the feature must
+#    degrade honestly rather than failing at the point of use. Roadmap Phase 20
+#    carries this; the libmpv module is the one hard blocker for a full
+#    sandboxed build.
 #
-# 2. The meson wrapper does not yet invoke cargo. It installs the data files,
-#    fonts and icon, but the binary itself is still a plain `cargo build`.
-#
-# 3. Four shelled-out tools (rsgain, flac, ffmpeg, ffprobe) are on the host
-#    today. A Flatpak has no host $PATH, so each must either be bundled as its
-#    own module here or the feature that uses it must degrade honestly rather
-#    than failing at the point of use. Roadmap Phase 20 carries this.
-#
-# 4. The icon is still the placeholder glasshouse from logo.svg, and the
+# 2. The icon is still the placeholder glasshouse from logo.svg, and the
 #    metainfo screenshots stay commented out until the real mark lands.

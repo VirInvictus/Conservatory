@@ -251,6 +251,14 @@ fn apply_db_path(
                 "UPDATE book_chapters SET file_path = ?3 WHERE book_id = ?1 AND file_path = ?2",
                 params![book_id, from, to],
             )?;
+            // The book's cover op rides the same journal (its `from` is the
+            // old cover path, not a chapter path, so this fires only for it;
+            // the match guard keeps every other op a no-op here). Like the
+            // chapter rewrite it is guarded and undo-symmetric.
+            tx.execute(
+                "UPDATE books SET cover_path = ?3 WHERE id = ?1 AND cover_path = ?2",
+                params![book_id, from, to],
+            )?;
         }
         tx.execute(
             "UPDATE books SET folder_path = ?2 WHERE id = ?1",

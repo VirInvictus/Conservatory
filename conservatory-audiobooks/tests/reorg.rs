@@ -332,3 +332,67 @@ async fn conflicting_destination_is_refused() {
 
     fx.worker.shutdown_ack().await.unwrap();
 }
+
+/// The cover rides the same journal as the audio: a reorganize moves the cover
+/// file, rewrites `books.cover_path` inside the job, and undo restores both
+/// (regression for the 2026-08-23 sweep, where the cover followed the move
+/// outside the journal and undo never brought it back).
+#[tokio::test]
+async fn cover_moves_inside_the_journal_and_undo_restores_it() {
+    let fx = fixture().await;
+    let book = seed_series_book(&fx, 2).await;
+    let old_folder =
+        "Audiobooks/Sanderson, Brandon/The Stormlight Archive/01. The Way of Kings (2010)";
+    let cover_rel = format!("{old_folder}/cover.jpg");
+    stage(&fx.root, &cover_rel, b"cover-bytes");
+    fx.worker
+        .set_book_cover_path(book, Some(cover_rel.clone()), None)
+        .await
+        .unwrap();
+
+    apply_book_edit(
+        &fx.worker,
+        book,
+        &BookEdit {
+            title: Some("Words of Radiance".into()),
+            series_index: Some(2.0),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let new_folder =
+        "Audiobooks/Sanderson, Brandon/The Stormlight Archive/02. Words of Radiance (2010)";
+    // The plan now carries the cover op alongside the two chapter ops.
+    let plan = plan_book_reorg(&fx.pool, book, &fx.root).unwrap();
+    assert_eq!(plan.ops.len(), 3, "two chapters + the cover");
+
+    let job = apply_book_reorg(&fx.worker, &fx.pool, book, &fx.root, MoveMode::Move)
+        .await
+        .unwrap()
+        .expect("a move ran");
+    let new_cover = format!("{new_folder}/cover.jpg");
+    assert!(!fx.root.join(&cover_rel).exists(), "old cover relocated");
+    assert_eq!(fs::read(fx.root.join(&new_cover)).unwrap(), b"cover-bytes");
+    let conn = fx.pool.open().unwrap();
+    assert_eq!(
+        get_book(&conn, book).unwrap().unwrap().cover_path,
+        Some(new_cover.clone()),
+        "cover_path rewritten inside the job"
+    );
+    drop(conn);
+
+    mover::undo(&fx.worker, &fx.pool, job).await.unwrap();
+    assert!(!fx.root.join(&new_cover).exists(), "undo restored the tree");
+    assert_eq!(fs::read(fx.root.join(&cover_rel)).unwrap(), b"cover-bytes");
+    let conn = fx.pool.open().unwrap();
+    assert_eq!(
+        get_book(&conn, book).unwrap().unwrap().cover_path,
+        Some(cover_rel),
+        "cover_path restored with the job's from sides"
+    );
+    drop(conn);
+
+    fx.worker.shutdown_ack().await.unwrap();
+}

@@ -5,10 +5,12 @@
 //!
 //! Two halves, mirroring import's resolve/persist split and music's plan/apply:
 //! [`plan_book_reorg`] is a pure read + dry-run (the move preview), and
-//! [`apply_book_reorg`] runs the journaled move and follows the cover. The mover
-//! needs no audiobook-specific change: a `MoveOp` carrying `book_id` rewrites every
+//! [`apply_book_reorg`] runs the journaled move. The mover needs no
+//! audiobook-specific change: a `MoveOp` carrying `book_id` rewrites every
 //! `book_chapters` row of the book whose `file_path` matches the moved file and
-//! sets `books.folder_path`, the same under `Organize` as under `Import`.
+//! sets `books.folder_path`, the same under `Organize` as under `Import`. The
+//! cover rides the same journal as its own op (the 2026-08-23 sweep), so the
+//! file, the `books.cover_path` pointer, and the undo path all move together.
 //!
 //! Move ops are built **per unique physical file** (a single M4B backs many
 //! chapters, so it moves once), exactly like the importer.
@@ -23,7 +25,7 @@ use conservatory_core::db::{
 };
 use conservatory_core::errors::Error as CoreError;
 use conservatory_core::mover::{self, Conflict, MoveKind, MoveMode, MoveOp};
-use conservatory_core::{BookFields, PathTemplate, sync_album_cover};
+use conservatory_core::{BookFields, PathTemplate};
 
 use crate::edit::{BookEdit, SeriesEdit};
 use crate::error::Result;
@@ -117,10 +119,10 @@ pub fn plan_book_reorg(pool: &ReadPool, book_id: i64, root: &Path) -> Result<Boo
     })
 }
 
-/// Apply a reorganize: re-read the (now edited) book, run the journaled move, and
-/// follow the cover into the new folder. Returns the move job id, or `None` when
-/// nothing moved (the folder was already correct). Heals any interrupted job
-/// first, the import / music-organize ordering.
+/// Apply a reorganize: re-read the (now edited) book and run the journaled move
+/// (the cover moves inside the job; see `build_ops`). Returns the move job id,
+/// or `None` when nothing moved (the folder was already correct). Heals any
+/// interrupted job first, the import / music-organize ordering.
 pub async fn apply_book_reorg(
     worker: &WorkerHandle,
     pool: &ReadPool,
@@ -138,7 +140,7 @@ pub async fn apply_book_reorg(
         (book, authors, series, chapters)
     };
 
-    let (ops, new_folder) = build_ops(&book, &authors, series.as_ref(), &chapters, root, book_id);
+    let (ops, _new_folder) = build_ops(&book, &authors, series.as_ref(), &chapters, root, book_id);
     let plan = mover::plan(ops.clone());
     // Nothing to move only when the plan is genuinely empty (every op is an
     // in-place skip) *and* clean. A conflict also empties `plan.ops`, so it must
@@ -158,38 +160,10 @@ pub async fn apply_book_reorg(
         ops,
     )
     .await?;
-
-    follow_cover(worker, &book, &new_folder, root).await;
+    // The cover moved inside the job (a journaled op, see `build_ops`), so
+    // nothing follows the move here any more: the file, `books.cover_path`,
+    // and the undo path are all the mover's business.
     Ok(Some(job_id))
-}
-
-/// Move the book's `cover.jpg` into the new folder and update `books.cover_path`
-/// (best-effort: covers re-derive, and the accent already lives on the book row,
-/// so a failure here never fails the move).
-async fn follow_cover(worker: &WorkerHandle, book: &Book, new_folder: &str, root: &Path) {
-    let Some(old_rel) = book.cover_path.as_deref() else {
-        return;
-    };
-    let bytes = match std::fs::read(root.join(old_rel)) {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!(book_id = book.id, error = %e, "book cover not found to follow the move");
-            return;
-        }
-    };
-    match sync_album_cover(root, new_folder, &bytes, Some(old_rel)) {
-        Ok(new_cover) => {
-            if let Err(e) = worker
-                .set_book_cover_path(book.id, Some(new_cover), None)
-                .await
-            {
-                tracing::warn!(book_id = book.id, error = %e, "book cover path not updated after move");
-            }
-        }
-        Err(e) => {
-            tracing::warn!(book_id = book.id, error = %e, "book cover not written to new folder")
-        }
-    }
 }
 
 /// Build the per-unique-file move ops + the rendered folder string. The author
@@ -226,6 +200,34 @@ fn build_ops(
             db_old: Some(ch.file_path.clone()),
             db_new: Some(new_rel),
         });
+    }
+    // The cover rides the same journal (the 2026-08-23 sweep): a journaled op
+    // moves the file, rewrites `books.cover_path` under its (book_id, from)
+    // guard, and undoes with the job, so a crash between the audio move and
+    // the cover follow can no longer strand either. Missing-cover books get
+    // no op (best-effort, the old follow_cover warn-and-continue stance);
+    // `plan` would otherwise refuse the whole job on the absent source.
+    if let Some(cover_rel) = &book.cover_path {
+        let src = root.join(cover_rel);
+        if src.exists() {
+            let name = Path::new(cover_rel)
+                .file_name()
+                .map(|n| n.to_os_string())
+                .unwrap_or_default();
+            let new_rel = folder_rel
+                .join(&name)
+                .to_string_lossy()
+                .into_owned();
+            ops.push(MoveOp {
+                track_id: None,
+                album_id: None,
+                book_id: Some(book_id),
+                src,
+                dst: root.join(&new_rel),
+                db_old: Some(cover_rel.clone()),
+                db_new: Some(new_rel),
+            });
+        }
     }
     (ops, folder_str)
 }

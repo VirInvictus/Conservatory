@@ -16,8 +16,9 @@
 //! built **per unique source file**, not per chapter: each op carries the
 //! `book_id`, and the mover rewrites every chapter of the book whose `file_path`
 //! matches the moved file (spec §5.7, migration 0012). Scope is **one book per
-//! call** (a folder or a single `.m4b`); a whole-`Author/*`-tree batch is a
-//! later add.
+//! call** for [`import_book`] (a folder or a single `.m4b`);
+//! [`import_book_tree`] walks a directory tree and imports every book folder
+//! it discovers, one single-book pipeline per root (the 2026-08-23 sweep).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -29,7 +30,7 @@ use conservatory_core::mover::{self, Conflict, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{BookFields, PathTemplate, compute_accent, sync_album_cover};
 
 use crate::error::{ReadError, Result};
-use crate::read_book;
+use crate::{discover_book_roots, read_book};
 
 /// How a book import runs (the audiobook analogue of core's `ImportOptions`).
 #[derive(Debug, Clone)]
@@ -63,6 +64,40 @@ struct FileMove {
     dst: PathBuf,
     db_old: String,
     db_new: String,
+}
+
+/// Import a source that may hold many books (the 2026-08-23 sweep's recursive
+/// importer). A single file imports as its one book; a folder imports as one
+/// book when it holds audio directly; a directory *tree* imports every
+/// [`discover_book_roots`] folder under it (an `Author/` shelf lands as many
+/// books). Each book rides the normal single-book pipeline, so its report
+/// carries its own conflicts (a conflicting book imports nothing; the other
+/// books still import), and the walk stops at the first book the reader
+/// cannot read (books before it stay imported; the error names the folder).
+pub async fn import_book_tree(
+    worker: &WorkerHandle,
+    pool: &ReadPool,
+    source: &Path,
+    opts: &BookImportOptions,
+) -> Result<Vec<BookImportReport>> {
+    let roots = if source.is_dir() {
+        let roots = discover_book_roots(source)?;
+        // A folder that holds audio directly (or is empty of audio) is the
+        // single-book call this function wraps; only a multi-book tree splits.
+        if roots.len() <= 1 {
+            vec![source.to_path_buf()]
+        } else {
+            roots
+        }
+    } else {
+        vec![source.to_path_buf()]
+    };
+
+    let mut reports = Vec::with_capacity(roots.len());
+    for root in &roots {
+        reports.push(import_book(worker, pool, root, opts).await?);
+    }
+    Ok(reports)
 }
 
 /// Import a single book (a folder or a single audio file) into the library.

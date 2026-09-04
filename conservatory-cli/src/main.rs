@@ -1574,9 +1574,10 @@ fn audiobook_debug_read(path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Import one book into the managed tree (Phase 7a-iii). Mirrors `run_import`:
-/// spawn the worker + read pool, run the journaled mover, print a report; a
-/// conflict refuses the import (nonzero exit) with nothing written.
+/// Import book(s) into the managed tree (Phase 7a-iii; tree discovery from the
+/// 2026-08-23 sweep). Mirrors `run_import`: spawn the worker + read pool, run
+/// the journaled mover, print a report per book; a conflict refuses that book
+/// (nonzero exit, that book unwritten) while the other books of a tree import.
 #[cfg(feature = "audiobooks")]
 async fn run_audiobook_import(
     db: PathBuf,
@@ -1585,7 +1586,7 @@ async fn run_audiobook_import(
     r#move: bool,
     format: Format,
 ) -> Result<()> {
-    use conservatory_audiobooks::{BookImportOptions, import_book};
+    use conservatory_audiobooks::{BookImportOptions, import_book_tree};
 
     let worker = spawn_worker(db.clone()).context("spawning worker")?;
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
@@ -1600,16 +1601,19 @@ async fn run_audiobook_import(
             MoveMode::Copy
         },
     };
-    let report = import_book(&worker, &pool, &source, &opts)
+    let reports = import_book_tree(&worker, &pool, &source, &opts)
         .await
         .context("import")?;
     worker.shutdown_ack().await.context("shutdown ack")?;
 
-    print_book_import_report(&report, format);
-    if !report.conflicts.is_empty() {
+    for report in &reports {
+        print_book_import_report(report, format);
+    }
+    let conflicts: usize = reports.iter().map(|r| r.conflicts.len()).sum();
+    if conflicts > 0 {
+        let skipped = reports.iter().filter(|r| !r.conflicts.is_empty()).count();
         anyhow::bail!(
-            "import refused: {} conflict(s); nothing imported",
-            report.conflicts.len()
+            "import refused for {skipped} book(s): {conflicts} conflict(s); the other books imported"
         );
     }
     Ok(())

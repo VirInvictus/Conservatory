@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 pub use chapters::ChapterDraft;
 pub use edit::{BookEdit, SeriesEdit};
 pub use error::{ReadError, Result};
-pub use import::{BookImportOptions, BookImportReport, import_book};
+pub use import::{BookImportOptions, BookImportReport, import_book, import_book_tree};
 // The unified home for the person sort rule is core's `names` module (the
 // 2026-08-23 sweep's consolidation); re-exported so the plugin's callers and
 // its own modules keep one import path.
@@ -173,6 +173,96 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Find the book folders under `root`: the directories whose audio
+/// [`read_book`] would treat as one book each (the 2026-08-23 sweep's
+/// recursive importer). A directory holding audio directly is a candidate,
+/// with two folds so the common shapes come out right:
+///
+/// - a disc-shaped folder (`CD1`, `Disc 2`, `Part 3`, `04`) defers to the
+///   book folder above it, so a multi-disc book is one book, not one per
+///   disc. Purely numeric names of four digits or more stay book folders
+///   (a title like `1984` is not a disc, the folder-inference precedent);
+/// - a candidate nested inside another candidate folds into it (loose audio
+///   in `Title/` plus a `Title/Extras/` folder is one book, since
+///   [`read_book`] walks the whole subtree).
+///
+/// Returns the roots sorted, deterministic order. Pure: reads directory
+/// entries only.
+pub fn discover_book_roots(root: &Path) -> Result<Vec<PathBuf>> {
+    fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+        let mut has_audio = false;
+        let mut subdirs = Vec::new();
+        for entry in std::fs::read_dir(dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                subdirs.push(path);
+            } else if is_audiobook_audio(&path) {
+                has_audio = true;
+            }
+        }
+        if has_audio {
+            out.push(dir.to_path_buf());
+        }
+        for d in subdirs {
+            collect(&d, out)?;
+        }
+        Ok(())
+    }
+
+    let mut candidates = Vec::new();
+    collect(root, &mut candidates)?;
+
+    let mut roots: Vec<PathBuf> = candidates
+        .into_iter()
+        .map(|dir| {
+            let mut cur = dir;
+            while is_disc_dir(&cur) {
+                match cur.parent() {
+                    Some(p) => cur = p.to_path_buf(),
+                    None => break,
+                }
+            }
+            cur
+        })
+        .collect();
+    roots.sort();
+    roots.dedup();
+    // Fold descendants into an ancestor root (they would be re-collected by
+    // `read_book`'s own subtree walk anyway).
+    let mut kept: Vec<PathBuf> = Vec::new();
+    for r in roots {
+        if kept.iter().any(|k| r.starts_with(k)) {
+            continue;
+        }
+        kept.push(r);
+    }
+    Ok(kept)
+}
+
+/// Does this directory look like a disc/media subfolder rather than a book
+/// folder? Conservative on purpose: `CD…`/`Disc…`/`Disk…`/`Part…`/`Pt…`
+/// followed by a number, or a purely numeric name of up to three digits
+/// (longer numeric names are book titles, the `1984` precedent).
+fn is_disc_dir(dir: &Path) -> bool {
+    let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let name = name.trim().to_ascii_lowercase();
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    if digits(&name) {
+        return name.len() <= 3;
+    }
+    for prefix in ["cd", "disc", "disk", "part", "pt"] {
+        if let Some(rest) = name.strip_prefix(prefix) {
+            let rest = rest.trim_start_matches([' ', '-', '_', '.']);
+            if digits(rest) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 const AUDIO_EXTS: &[&str] = &["m4b", "m4a", "mp3", "opus", "ogg", "flac", "aac", "wav"];
 
 fn is_audiobook_audio(path: &Path) -> bool {
@@ -216,5 +306,18 @@ mod tests {
             vec!["b".to_string()]
         );
         assert!(first_nonempty(vec![vec![], vec![]]).is_empty());
+    }
+
+    #[test]
+    fn disc_dir_names_are_conservative() {
+        let d = |name: &str| PathBuf::from("x").join(name);
+        // The recognized shapes.
+        for name in ["CD1", "cd 2", "Disc-3", "disk 04", "Part 3", "pt2", "04", "2"] {
+            assert!(is_disc_dir(&d(name)), "{name} is a disc folder");
+        }
+        // Book folders a naive pattern would eat.
+        for name in ["1984", "2001", "CD Book", "Parting", "Discography"] {
+            assert!(!is_disc_dir(&d(name)), "{name} is a book folder");
+        }
     }
 }

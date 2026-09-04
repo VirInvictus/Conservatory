@@ -155,3 +155,59 @@ fn eq_state_parse_is_forgiving() {
     let csv = EqState::format_bands(&bands);
     assert_eq!(EqState::parse_bands(&csv), bands);
 }
+
+/// The parametric band set (the 5.5b follow-on) round-trips through the worker,
+/// rejects an invalid set atomically, and is empty by default.
+#[tokio::test]
+async fn peq_bands_round_trip_and_validate() {
+    let (_dir, worker, pool) = fresh();
+    use conservatory_core::db::{PeqBand, list_peq_bands};
+
+    // Empty by default.
+    {
+        let conn = pool.open().unwrap();
+        assert!(list_peq_bands(&conn).unwrap().is_empty());
+    }
+
+    let bands = vec![
+        PeqBand {
+            idx: 0,
+            frequency: 250.0,
+            q: 2.0,
+            gain_db: -6.0,
+        },
+        PeqBand {
+            idx: 1,
+            frequency: 4000.0,
+            q: 0.7,
+            gain_db: 3.5,
+        },
+    ];
+    worker.set_peq_bands(bands.clone()).await.unwrap();
+    {
+        let conn = pool.open().unwrap();
+        assert_eq!(list_peq_bands(&conn).unwrap(), bands);
+    }
+
+    // Replace-all: removing band 0 leaves band 1 with its identity.
+    worker.set_peq_bands(vec![bands[1]]).await.unwrap();
+    {
+        let conn = pool.open().unwrap();
+        assert_eq!(list_peq_bands(&conn).unwrap(), vec![bands[1]]);
+    }
+
+    // An out-of-range band is rejected and leaves the stored set untouched.
+    let bad = PeqBand {
+        idx: 0,
+        frequency: 5.0,
+        q: 1.0,
+        gain_db: 0.0,
+    };
+    assert!(worker.set_peq_bands(vec![bands[1], bad]).await.is_err());
+    {
+        let conn = pool.open().unwrap();
+        assert_eq!(list_peq_bands(&conn).unwrap(), vec![bands[1]]);
+    }
+
+    worker.shutdown_ack().await.unwrap();
+}

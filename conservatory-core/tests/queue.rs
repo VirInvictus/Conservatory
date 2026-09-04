@@ -482,6 +482,80 @@ fn engine_applies_a_live_eq_band_change_without_stopping() {
     runtime.block_on(worker.shutdown_ack()).ok();
 }
 
+/// The parametric band set (the 5.5b follow-on): `set_peq_bands` (structural)
+/// and `set_peq_band_gain` (the shipped live command path, retargeted at
+/// `p<idx>`) while playing, and the item still reaches EOF. Exercises the real
+/// mpv `af` rebuild + `af-command` paths through a null audio output.
+#[test]
+fn engine_applies_peq_changes_without_stopping() {
+    use conservatory_core::db::PeqBand;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+    let item = || PlayableItem {
+        track_id: 1,
+        source: fixtures_dir.join("sample.flac"),
+        profile: conservatory_core::resolve_episode_profile(None),
+        album_id: None,
+        kind: MediaKind::Track,
+        streaming: false,
+        chapters: [].into(),
+        segments: [].into(),
+    };
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    let peq = vec![
+        PeqBand {
+            idx: 0,
+            frequency: 250.0,
+            q: 2.0,
+            gain_db: -6.0,
+        },
+        PeqBand {
+            idx: 1,
+            frequency: 4000.0,
+            q: 0.7,
+            gain_db: 3.0,
+        },
+    ];
+    player.set_peq_bands(peq);
+    player.play_queue(vec![item()], 0);
+    std::thread::sleep(Duration::from_millis(120));
+    // A live gain edit on a defined band, then a structural set change (band
+    // removal) mid-playback; both must leave the engine playing to EOF.
+    player.set_peq_band_gain(0, -3.0);
+    player.set_peq_bands(vec![PeqBand {
+        idx: 1,
+        frequency: 4000.0,
+        q: 0.7,
+        gain_db: 3.0,
+    }]);
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if player.snapshot().ended {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "playback did not finish after PEQ changes"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    player.shutdown();
+    runtime.block_on(worker.shutdown_ack()).ok();
+}
+
 /// An episode played to EOF lands exactly one append-only `listening_sessions`
 /// row through the engine's start-on-load / close-on-boundary wiring (Phase
 /// 6c-ii). The null fast-decode has no real silence, so the saved figure is ~0

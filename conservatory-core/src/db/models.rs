@@ -610,6 +610,43 @@ pub struct EqPreset {
     pub bands: [f64; EQ_BAND_COUNT],
 }
 
+/// The most parametric bands the `@eq` stage carries (the 5.5b follow-on). Not
+/// a hard filter limit — a reason to exceed this is a design conversation.
+pub const PEQ_MAX_BANDS: usize = 8;
+
+/// Bounds for a parametric band's parameters, enforced by the write path. The
+/// gain bound matches the graphic EQ's CLI clamp; the Q range keeps the biquad
+/// in a stable peaking shape; the frequency range spans the audible band.
+pub const PEQ_FREQ_RANGE: (f64, f64) = (20.0, 20000.0);
+pub const PEQ_Q_RANGE: (f64, f64) = (0.1, 16.0);
+pub const PEQ_GAIN_RANGE: (f64, f64) = (-24.0, 24.0);
+
+/// One user-defined parametric band (the 5.5b follow-on): a peaking biquad at
+/// an arbitrary centre frequency, rendered as `equalizer@p<idx>` after the
+/// graphic bands in the `@eq` stage. `idx` is the band's stable identity (the
+/// render order and the live af-command target name).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PeqBand {
+    pub idx: i64,
+    pub frequency: f64,
+    pub q: f64,
+    pub gain_db: f64,
+}
+
+impl PeqBand {
+    /// Whether the parameters are within the enforced ranges (the write path
+    /// rejects out-of-range bands; this is the model-side check shared with it).
+    pub fn is_valid(&self) -> bool {
+        let (fmin, fmax) = PEQ_FREQ_RANGE;
+        let (qmin, qmax) = PEQ_Q_RANGE;
+        let (gmin, gmax) = PEQ_GAIN_RANGE;
+        self.idx >= 0
+            && (fmin..=fmax).contains(&self.frequency)
+            && (qmin..=qmax).contains(&self.q)
+            && (gmin..=gmax).contains(&self.gain_db)
+    }
+}
+
 /// One DSP module's state (Phase 5.5c): an `enabled` flag plus its settings. The
 /// settings persist even while the module is off, so toggling a tuned module
 /// back on restores its parameters rather than resetting them; only `enabled`

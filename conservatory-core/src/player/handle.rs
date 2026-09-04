@@ -11,7 +11,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use crate::db::models::ResamplerQuality;
+use crate::db::models::{PeqBand, ResamplerQuality};
 use crate::db::{DspState, EqState, MediaKind};
 use crate::player::host::AudioDevice;
 use crate::player::item::PlayableItem;
@@ -81,6 +81,15 @@ pub enum PlayerCommand {
     SetEqBand {
         index: usize,
         gain: f64,
+    },
+    /// Replace the parametric band set (the 5.5b follow-on); a structural
+    /// rebuild when playing, else from the next loaded item.
+    SetPeqBands(Vec<PeqBand>),
+    /// Set one parametric band's gain live (the shipped `SetEqBand` command
+    /// path, retargeted at `p<idx>`).
+    SetPeqBandGain {
+        idx: i64,
+        gain_db: f64,
     },
     /// Set the active DSP modules (Phase 5.5c); applied live when playing (a
     /// structural rebuild), else from the next loaded item.
@@ -349,6 +358,16 @@ impl PlayerHandle {
     /// Set one EQ band's gain live (Phase 5.5b-ii): the slider-drag path.
     pub fn set_eq_band(&self, index: usize, gain: f64) {
         let _ = self.tx.send(PlayerCommand::SetEqBand { index, gain });
+    }
+
+    /// Replace the parametric band set (the 5.5b follow-on).
+    pub fn set_peq_bands(&self, peq: Vec<PeqBand>) {
+        let _ = self.tx.send(PlayerCommand::SetPeqBands(peq));
+    }
+
+    /// Set one parametric band's gain live.
+    pub fn set_peq_band_gain(&self, idx: i64, gain_db: f64) {
+        let _ = self.tx.send(PlayerCommand::SetPeqBandGain { idx, gain_db });
     }
 
     /// Set the active DSP modules (Phase 5.5c): compressor / limiter / leveler.

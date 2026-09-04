@@ -472,6 +472,15 @@ impl Engine {
                 // The slider-drag path: live, gap-free, via `af-command`.
                 let _ = self.host.set_eq_band(index, gain);
             }
+            PlayerCommand::SetPeqBands(peq) => {
+                // The parametric set: applied live when playing (structural
+                // rebuild), else from the next load.
+                self.host.set_peq(peq);
+            }
+            PlayerCommand::SetPeqBandGain { idx, gain_db } => {
+                // The live gain path, retargeted at `p<idx>`.
+                let _ = self.host.set_peq_band_gain(idx, gain_db);
+            }
             PlayerCommand::SetDsp(dsp) => {
                 // The DSP modules: applied live when playing (structural rebuild),
                 // else from the next load.

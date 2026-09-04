@@ -107,6 +107,10 @@ cargo run -p conservatory-cli -- organize library.db ~/Music/Conservatory --appl
 # Search it with the full grammar
 cargo run -p conservatory-cli -- search library.db 'genre:ambient AND year:>=1990'
 
+# Shape the tone: the 10-band graphic EQ plus user-defined parametric bands
+cargo run -p conservatory-cli -- eq set library.db 2 3
+cargo run -p conservatory-cli -- peq set library.db 0 250 2 -6
+
 # Subscribe to a podcast and pull its episodes
 cargo run -p conservatory-cli -- podcast add library.db https://example.com/feed.xml
 cargo run -p conservatory-cli -- podcast refresh library.db

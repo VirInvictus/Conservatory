@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2), `0008` (the equalizer: `eq_presets` + `eq_state`, Phase 5.5b), `0009` (the audio config: `audio_state`, Phase 5.5c), `0010` (the 16 built-in EQ presets, Phase 5.5b follow-on), `0011` (the audiobook tables + `book_fts` + the queue `book_id` foreign key, Phase 7a-i), `0012` (the move journal `book_id` column, so audiobooks move through the journaled mover, Phase 7a-iii), `0013` (the audiobook playback cursor: `playback_state.book_id` plus a media-agnostic `listening_sessions`, Phase 7c-ii), `0014` (the integrity-verify results table, Phase 8a), `0015` (the stray-APE strip undo journal, Phase 8c-iii), `0016` (the global Smart Speed level column on `audio_state`, the Phase 6c follow-on), `0017` (playlists: `playlists` + `playlist_entries`, Phase 16d), `0018` (shuffle / repeat state on `audio_state`, Phase 17), `0019` (the accent-folding FTS rebuild, Phase 18a), and `0020` (the `scrobble_outbox` listen queue, Phase 9a; see `docs/scrobble.md`). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
+> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2), `0008` (the equalizer: `eq_presets` + `eq_state`, Phase 5.5b), `0009` (the audio config: `audio_state`, Phase 5.5c), `0010` (the 16 built-in EQ presets, Phase 5.5b follow-on), `0011` (the audiobook tables + `book_fts` + the queue `book_id` foreign key, Phase 7a-i), `0012` (the move journal `book_id` column, so audiobooks move through the journaled mover, Phase 7a-iii), `0013` (the audiobook playback cursor: `playback_state.book_id` plus a media-agnostic `listening_sessions`, Phase 7c-ii), `0014` (the integrity-verify results table, Phase 8a), `0015` (the stray-APE strip undo journal, Phase 8c-iii), `0016` (the global Smart Speed level column on `audio_state`, the Phase 6c follow-on), `0017` (playlists: `playlists` + `playlist_entries`, Phase 16d), `0018` (shuffle / repeat state on `audio_state`, Phase 17), `0019` (the accent-folding FTS rebuild, Phase 18a), `0020` (the `scrobble_outbox` listen queue, Phase 9a; see `docs/scrobble.md`), and `0021` (the parametric equalizer: `peq_bands`, the 5.5b follow-on). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
 
 ## Connection discipline
 
@@ -171,6 +171,28 @@ CREATE TABLE eq_state (
     id          INTEGER PRIMARY KEY CHECK (id = 0),  -- singleton
     preset_name TEXT,                                -- selected preset; NULL = custom
     bands       TEXT NOT NULL                        -- live band values, CSV of 10 gains, dB
+);
+```
+
+### `peq_bands` (0021, the 5.5b follow-on)
+
+The user-defined **parametric** bands, rendered into the same `@eq` stage after
+the graphic bands as named `equalizer@p<idx>` peaking biquads (arbitrary centre
+frequency, Q, gain; the graphic bands are the fixed ISO centres, octave-wide).
+`idx` is the band's stable identity: it orders the stage and names the live
+`af-command` gain target. At most `PEQ_MAX_BANDS` (8) bands; the write path
+validates frequency (20-20000 Hz), Q (0.1-16), and gain (±24 dB) and replaces
+the set in one transaction. An empty table contributes no stage content (the
+`@eq` stage then depends on the graphic EQ alone). Deliberately **not**
+`anequalizer`: its `change` command hangs the mpv command pipeline on the
+current stack (measured 2026-09-04; see the roadmap 5.5b re-scope).
+
+```sql
+CREATE TABLE peq_bands (
+    idx       INTEGER PRIMARY KEY,  -- band identity: render order + live target p<idx>
+    frequency REAL NOT NULL,          -- centre frequency, Hz (20 .. 20000)
+    q         REAL NOT NULL,          -- Q factor (0.1 .. 16)
+    gain_db   REAL NOT NULL           -- gain, dB (-24 .. 24)
 );
 ```
 

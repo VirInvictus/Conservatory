@@ -10,6 +10,7 @@ The 2026-08-23 codebase sweep (roadmap Phase 27), landed as fix + regression com
 - **Fixed:** importing additional tracks into an existing album writes the freshly computed cover accent; a NULL or stale accent no longer survives every re-import.
 - **Fixed:** podcast slugs fold diacritics (NFKD) and keep non-Latin letters, so foreign titles no longer all collapse into the literal `untitled` folder and collide. ASCII titles slug byte-for-byte as before.
 - **Added:** recursive audiobook import: `audiobook import` on a directory tree discovers and imports every book folder; disc subfolders (`CD1`, `Disc 2`) merge into their book. The CLI prints one report per book.
+- **Added:** the parametric equalizer (the 5.5b follow-on): user-defined peaking bands at an arbitrary frequency / Q / gain, alongside the 10-band graphic EQ in the same `@eq` chain stage. New migration `0021`, the `conservatory-cli peq show / set / remove / clear` verbs, live per-band gain edits (the shipped command path), and playback application at next load. Deliberately built on the named-biquad machinery instead of `anequalizer`, whose live `change` command hangs the mpv command pipeline on the current FFmpeg (measured; see the roadmap 5.5b re-scope).
 - **Internal:** the name-sort rules (`person_sort_name`, `derive_sort_name`) consolidated into `conservatory-core::names`.
 
 ## v0.4.3 (2026-09-04)

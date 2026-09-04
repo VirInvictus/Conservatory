@@ -12,9 +12,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPerson, BookPlayback, Chapter,
     CompSettings, DspState, EQ_BAND_COUNT, Episode, EqPreset, EqState, InboxPolicy,
-    LevelerSettings, LimiterSettings, MediaKind, ModuleState, PendingScrobble, Perspective,
-    Playback, PlayedState, Playlist, PlaylistKind, PlaylistOrder, QueueItem, ResamplerQuality,
-    Series, Show, ShowSettings, Tag, Track, VerifyResultRow,
+    LevelerSettings, LimiterSettings, MediaKind, ModuleState, PendingScrobble, PeqBand,
+    Perspective, Playback, PlayedState, Playlist, PlaylistKind, PlaylistOrder, QueueItem,
+    ResamplerQuality, Series, Show, ShowSettings, Tag, Track, VerifyResultRow,
 };
 use crate::errors::Result;
 use crate::verify::VerifyVerdict;
@@ -1693,6 +1693,21 @@ pub fn get_eq_state(conn: &Connection) -> Result<EqState> {
         },
         None => EqState::flat(),
     })
+}
+
+/// The user-defined parametric bands (the 5.5b follow-on), in `idx` order. An
+/// empty set is the no-op: the `@eq` stage then depends on the graphic EQ alone.
+pub fn list_peq_bands(conn: &Connection) -> Result<Vec<PeqBand>> {
+    let mut stmt = conn.prepare("SELECT idx, frequency, q, gain_db FROM peq_bands ORDER BY idx")?;
+    let rows = stmt.query_map([], |row| {
+        Ok(PeqBand {
+            idx: row.get("idx")?,
+            frequency: row.get("frequency")?,
+            q: row.get("q")?,
+            gain_db: row.get("gain_db")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
 }
 
 /// Every named EQ preset, alphabetical (`Flat` is seeded by the migration).

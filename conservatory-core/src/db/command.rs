@@ -12,8 +12,8 @@ use tokio::sync::oneshot;
 
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, MediaKind, NewScrobble, Playback, PlaybackCursor, PlayedState,
-    PlaylistKind, PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
+    EQ_BAND_COUNT, Episode, EqState, MediaKind, NewScrobble, PeqBand, Playback, PlaybackCursor,
+    PlayedState, PlaylistKind, PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
@@ -193,6 +193,12 @@ pub(crate) enum Command {
     /// Overwrite the singleton active EQ state (Phase 5.5b).
     SetEqState {
         state: EqState,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
+    /// Replace the whole parametric band set (the 5.5b follow-on).
+    SetPeqBands {
+        bands: Vec<PeqBand>,
         reply: oneshot::Sender<Result<()>>,
     },
 
@@ -698,6 +704,7 @@ impl Command {
             Self::SavePerspective { .. } => "save_perspective",
             Self::DeletePerspective { .. } => "delete_perspective",
             Self::SetEqState { .. } => "set_eq_state",
+            Self::SetPeqBands { .. } => "set_peq_bands",
             Self::SaveEqPreset { .. } => "save_eq_preset",
             Self::DeleteEqPreset { .. } => "delete_eq_preset",
             Self::SetAudioState { .. } => "set_audio_state",

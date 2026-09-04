@@ -457,6 +457,15 @@ enum Command {
         action: EqAction,
     },
 
+    /// The parametric equalizer (the 5.5b follow-on, spec §6.2): user-defined
+    /// peaking bands at an arbitrary frequency / Q / gain, rendered into the
+    /// `@eq` stage after the graphic bands. Applied to playback from the next
+    /// loaded track.
+    Peq {
+        #[command(subcommand)]
+        action: PeqAction,
+    },
+
     /// The DSP modules (Phase 5.5c, spec §6.2): show or toggle the compressor,
     /// brick-wall limiter, and volume leveler. Applied to playback from the next
     /// loaded track.
@@ -712,6 +721,43 @@ impl SmartSpeedArg {
             Self::Aggressive => "aggressive",
         }
     }
+}
+
+/// Parametric-EQ verbs (the 5.5b follow-on).
+#[derive(Subcommand)]
+enum PeqAction {
+    /// Print every parametric band and the resolved `@eq` stage. Read-only.
+    Show {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
+    /// Add or replace one band (frequency 20-20000 Hz, Q 0.1-16, gain clamped
+    /// to ±24 dB; at most 8 bands, indexes 0-7).
+    #[command(allow_negative_numbers = true)]
+    Set {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Band index, 0-7 (the band's stable identity).
+        idx: i64,
+        /// Centre frequency in Hz.
+        frequency: f64,
+        /// Q factor (higher = narrower).
+        q: f64,
+        /// Gain in dB (may be negative).
+        gain: f64,
+    },
+    /// Remove one band by index.
+    Remove {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Band index to remove.
+        idx: i64,
+    },
+    /// Remove every parametric band.
+    Clear {
+        /// Path to the SQLite database.
+        db: PathBuf,
+    },
 }
 
 /// DSP-module verbs (Phase 5.5c). Each module's parameters persist while it is
@@ -1336,6 +1382,7 @@ fn main() -> Result<()> {
         #[cfg(feature = "podcasts")]
         Some(Command::ExportOpml { db, out }) => block_on(run_export_opml(db, out)),
         Some(Command::Eq { action }) => eq(action),
+        Some(Command::Peq { action }) => peq(action),
         Some(Command::Dsp { action }) => dsp(action),
         Some(Command::Output { action }) => output(action),
         Some(Command::DebugFacets { db }) => debug_facets(db),
@@ -1885,6 +1932,9 @@ fn run_audiobook_play(
         if let Ok(eq) = conservatory_core::db::get_eq_state(&conn) {
             player.set_eq(eq);
         }
+        if let Ok(peq) = conservatory_core::db::list_peq_bands(&conn) {
+            player.set_peq_bands(peq);
+        }
         if let Ok(audio) = conservatory_core::db::get_audio_state(&conn) {
             player.set_dsp(audio.dsp);
         }
@@ -2138,7 +2188,7 @@ fn eq(action: EqAction) -> Result<()> {
 }
 
 fn eq_show(db: PathBuf) -> Result<()> {
-    use conservatory_core::db::{EQ_CENTRES, get_eq_state};
+    use conservatory_core::db::{EQ_CENTRES, get_eq_state, list_peq_bands};
     let pool = ReadPool::new(db, 1).context("opening read pool")?;
     let conn = pool.open().context("opening pool connection")?;
     let state = get_eq_state(&conn).context("reading EQ state")?;
@@ -2146,7 +2196,14 @@ fn eq_show(db: PathBuf) -> Result<()> {
     for (i, (centre, gain)) in EQ_CENTRES.iter().zip(state.bands.iter()).enumerate() {
         println!("  [{i}] {centre:>6} Hz  {gain:+.1} dB");
     }
-    let chain = conservatory_core::eq_stage(&state);
+    let peq = list_peq_bands(&conn).context("reading parametric bands")?;
+    for b in &peq {
+        println!(
+            "  p{} {:+>8.1} Hz  Q {}  {:+.1} dB",
+            b.idx, b.frequency, b.q, b.gain_db
+        );
+    }
+    let chain = conservatory_core::eq_stage(&state, &peq);
     println!(
         "af @eq:  {}",
         chain.as_deref().unwrap_or("(flat — no stage)")
@@ -2176,6 +2233,113 @@ async fn run_eq_set(db: PathBuf, band: usize, gain: f64) -> Result<()> {
         .context("saving EQ state")?;
     worker.shutdown_ack().await.context("shutdown ack")?;
     println!("Set band {band} to {clamped:+.1} dB.");
+    Ok(())
+}
+
+/// Parametric-EQ verb dispatcher (the 5.5b follow-on).
+fn peq(action: PeqAction) -> Result<()> {
+    match action {
+        PeqAction::Show { db } => peq_show(db),
+        PeqAction::Set {
+            db,
+            idx,
+            frequency,
+            q,
+            gain,
+        } => block_on(run_peq_set(db, idx, frequency, q, gain)),
+        PeqAction::Remove { db, idx } => block_on(run_peq_remove(db, idx)),
+        PeqAction::Clear { db } => block_on(run_peq_clear(db)),
+    }
+}
+
+fn peq_show(db: PathBuf) -> Result<()> {
+    use conservatory_core::db::{get_eq_state, list_peq_bands};
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let bands = list_peq_bands(&conn).context("reading parametric bands")?;
+    if bands.is_empty() {
+        println!("(no parametric bands)");
+    }
+    for b in &bands {
+        println!(
+            "  p{}  {:>8.1} Hz  Q {:<5} {:+.1} dB",
+            b.idx, b.frequency, b.q, b.gain_db
+        );
+    }
+    let eq = get_eq_state(&conn).context("reading EQ state")?;
+    let chain = conservatory_core::eq_stage(&eq, &bands);
+    println!(
+        "af @eq:  {}",
+        chain.as_deref().unwrap_or("(flat - no stage)")
+    );
+    Ok(())
+}
+
+async fn run_peq_set(db: PathBuf, idx: i64, frequency: f64, q: f64, gain: f64) -> Result<()> {
+    use conservatory_core::db::{PEQ_MAX_BANDS, list_peq_bands};
+    anyhow::ensure!(
+        (0..PEQ_MAX_BANDS as i64).contains(&idx),
+        "band index must be 0..={}",
+        PEQ_MAX_BANDS - 1
+    );
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let mut bands = {
+        let conn = pool.open().context("opening pool connection")?;
+        list_peq_bands(&conn).context("reading parametric bands")?
+    };
+    if let Some(existing) = bands.iter_mut().find(|b| b.idx == idx) {
+        existing.frequency = frequency;
+        existing.q = q;
+        existing.gain_db = gain.clamp(-24.0, 24.0);
+    } else {
+        bands.push(conservatory_core::db::PeqBand {
+            idx,
+            frequency,
+            q,
+            gain_db: gain.clamp(-24.0, 24.0),
+        });
+        bands.sort_by_key(|b| b.idx);
+    }
+    worker
+        .set_peq_bands(bands)
+        .await
+        .context("saving parametric bands")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!(
+        "Set band p{idx} to {frequency} Hz, Q {q}, {:+.1} dB.",
+        gain.clamp(-24.0, 24.0)
+    );
+    Ok(())
+}
+
+async fn run_peq_remove(db: PathBuf, idx: i64) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    let pool = ReadPool::new(db, 1).context("opening read pool")?;
+    let mut bands = {
+        let conn = pool.open().context("opening pool connection")?;
+        conservatory_core::db::list_peq_bands(&conn).context("reading parametric bands")?
+    };
+    let before = bands.len();
+    bands.retain(|b| b.idx != idx);
+    anyhow::ensure!(bands.len() < before, "no band p{idx}");
+    worker
+        .set_peq_bands(bands)
+        .await
+        .context("saving parametric bands")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Removed band p{idx}.");
+    Ok(())
+}
+
+async fn run_peq_clear(db: PathBuf) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    worker
+        .set_peq_bands(Vec::new())
+        .await
+        .context("clearing parametric bands")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("Cleared every parametric band.");
     Ok(())
 }
 
@@ -2496,11 +2660,13 @@ fn debug_dsp(db: PathBuf, track_id: Option<i64>) -> Result<()> {
     let cfg = PlaybackConfig::default();
     let profile = resolve_music_profile(&track, &cfg);
     let eq = conservatory_core::db::get_eq_state(&conn).context("reading EQ state")?;
+    let peq = conservatory_core::db::list_peq_bands(&conn).context("reading parametric bands")?;
     let audio = conservatory_core::db::get_audio_state(&conn).context("reading audio state")?;
     let dsp = &audio.dsp;
     let chain = build_af_chain(
         &profile,
         &eq,
+        &peq,
         dsp,
         conservatory_core::player::SmartSpeedLevel::from_db(&audio.smart_speed_level),
     );
@@ -4571,6 +4737,9 @@ fn play(db: PathBuf, root: PathBuf, track_id: Option<i64>, sleep: Option<String>
         if let Ok(eq) = conservatory_core::db::get_eq_state(&conn) {
             player.set_eq(eq);
         }
+        if let Ok(peq) = conservatory_core::db::list_peq_bands(&conn) {
+            player.set_peq_bands(peq);
+        }
         if let Ok(audio) = conservatory_core::db::get_audio_state(&conn) {
             player.set_dsp(audio.dsp);
         }
@@ -5532,7 +5701,7 @@ fn fmt_duration(seconds: f64) -> String {
 /// EQ + DSP, exactly as `MpvHost::load` would build it. Read-only.
 #[cfg(feature = "podcasts")]
 fn podcast_debug_chain(db: PathBuf, episode_id: i64) -> Result<()> {
-    use conservatory_core::db::{get_audio_state, get_eq_state, get_show_settings};
+    use conservatory_core::db::{get_audio_state, get_eq_state, get_show_settings, list_peq_bands};
     use conservatory_core::resolve_episode_profile;
 
     let pool = ReadPool::new(db, 1).context("opening read pool")?;
@@ -5543,11 +5712,13 @@ fn podcast_debug_chain(db: PathBuf, episode_id: i64) -> Result<()> {
     let settings = get_show_settings(&conn, episode.show_id).context("reading show settings")?;
     let profile = resolve_episode_profile(settings.as_ref());
     let eq = get_eq_state(&conn).context("reading EQ state")?;
+    let peq = list_peq_bands(&conn).context("reading parametric bands")?;
     let audio = get_audio_state(&conn).context("reading audio state")?;
     let dsp = &audio.dsp;
     let chain = build_af_chain(
         &profile,
         &eq,
+        &peq,
         dsp,
         conservatory_core::player::SmartSpeedLevel::from_db(&audio.smart_speed_level),
     );

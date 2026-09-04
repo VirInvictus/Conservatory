@@ -8,11 +8,12 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, NewScrobble, Playback, PlaybackCursor, PlayedState,
-    PlaylistKind, PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
+    EQ_BAND_COUNT, Episode, EqState, NewScrobble, PEQ_FREQ_RANGE, PEQ_GAIN_RANGE, PEQ_MAX_BANDS,
+    PEQ_Q_RANGE, PeqBand, Playback, PlaybackCursor, PlayedState, PlaylistKind, PlaylistOrder, Show,
+    ShowSettings, Track, VerifyResultRow,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
-use crate::errors::Result;
+use crate::errors::{Error, Result};
 use crate::names::derive_sort_name;
 
 pub(crate) fn insert_artist(conn: &Connection, artist: &Artist) -> Result<i64> {
@@ -360,6 +361,45 @@ pub(crate) fn set_eq_state(conn: &Connection, state: &EqState) -> Result<()> {
         "UPDATE eq_state SET preset_name = ?1, bands = ?2 WHERE id = 0",
         params![state.preset, EqState::format_bands(&state.bands)],
     )?;
+    Ok(())
+}
+
+/// Replace the whole parametric band set (the 5.5b follow-on). Replace-all keeps
+/// `idx` the band's stable identity (the caller assigns indexes) and makes add /
+/// remove / edit one path, the `replace_book_chapters` shape. Every band is
+/// validated before anything is written, so a rejected set leaves the stored
+/// one untouched.
+pub(crate) fn set_peq_bands(conn: &mut Connection, bands: &[PeqBand]) -> Result<()> {
+    if bands.len() > PEQ_MAX_BANDS {
+        return Err(Error::Edit(format!(
+            "at most {PEQ_MAX_BANDS} parametric bands (got {})",
+            bands.len()
+        )));
+    }
+    if let Some(bad) = bands.iter().find(|b| !b.is_valid()) {
+        return Err(Error::Edit(format!(
+            "parametric band {} out of range: frequency {} Hz ({}..{}), q {} ({}..{}), gain {} dB ({}..{})",
+            bad.idx,
+            bad.frequency,
+            PEQ_FREQ_RANGE.0,
+            PEQ_FREQ_RANGE.1,
+            bad.q,
+            PEQ_Q_RANGE.0,
+            PEQ_Q_RANGE.1,
+            bad.gain_db,
+            PEQ_GAIN_RANGE.0,
+            PEQ_GAIN_RANGE.1,
+        )));
+    }
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM peq_bands", [])?;
+    for b in bands {
+        tx.execute(
+            "INSERT INTO peq_bands (idx, frequency, q, gain_db) VALUES (?1, ?2, ?3, ?4)",
+            params![b.idx, b.frequency, b.q, b.gain_db],
+        )?;
+    }
+    tx.commit()?;
     Ok(())
 }
 

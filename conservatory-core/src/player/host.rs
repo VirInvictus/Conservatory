@@ -16,7 +16,7 @@ use libmpv2::events::Event;
 use libmpv2::mpv_node::MpvNode;
 use libmpv2::{EndFileReason, Mpv, mpv_end_file_reason};
 
-use crate::db::models::{DspState, EqState, ResamplerQuality};
+use crate::db::models::{DspState, EqState, PeqBand, ResamplerQuality};
 use crate::errors::{Error, Result};
 use crate::player::profile::MusicProfile;
 use crate::player::spoken::SmartSpeedLevel;
@@ -51,6 +51,10 @@ pub struct MpvHost {
     /// load. Defaults to flat (no `@eq` stage); the engine updates it via
     /// [`MpvHost::set_eq`] / [`MpvHost::set_eq_band`].
     eq: EqState,
+    /// The user-defined parametric bands (the 5.5b follow-on), rendered into the
+    /// same `@eq` stage after the graphic bands. The engine updates it via
+    /// [`MpvHost::set_peq`] (structural) / [`MpvHost::set_peq_band_gain`] (live).
+    peq: Vec<PeqBand>,
     /// The active DSP modules (Phase 5.5c: compressor / limiter / leveler),
     /// applied into the `af` chain on each load. Defaults to off (no dynamics
     /// stages); the engine updates it via [`MpvHost::set_dsp`].
@@ -123,6 +127,7 @@ impl MpvHost {
         Ok(Self {
             mpv,
             eq: EqState::flat(),
+            peq: Vec::new(),
             dsp: DspState::off(),
             smart_speed_level: SmartSpeedLevel::default(),
             current_profile: None,
@@ -138,6 +143,32 @@ impl MpvHost {
     pub fn set_eq(&mut self, eq: EqState) {
         self.eq = eq;
         let _ = self.rebuild_af();
+    }
+
+    /// Set the whole parametric band set (the 5.5b follow-on). Always a
+    /// structural `af` rebuild (the `set_eq` shape): band shape changes cannot
+    /// ride a live parameter command, so there is nothing gap-free to fall back
+    /// to. Stored for the next load when nothing is playing.
+    pub fn set_peq(&mut self, peq: Vec<PeqBand>) {
+        self.peq = peq;
+        let _ = self.rebuild_af();
+    }
+
+    /// Live gain edit on one parametric band (the shipped `set_eq_band` command
+    /// path, retargeted at `p<idx>`). No-op when the band is not defined (its
+    /// `equalizer@p<idx>` is not in the stage).
+    pub fn set_peq_band_gain(&mut self, idx: i64, gain_db: f64) -> Result<()> {
+        if !self.peq.iter().any(|b| b.idx == idx) {
+            return Ok(());
+        }
+        if let Some(band) = self.peq.iter_mut().find(|b| b.idx == idx) {
+            band.gain_db = gain_db;
+        }
+        if self.current_profile.is_none() {
+            return Ok(());
+        }
+        let (label, cmd, arg, target) = crate::player::chain::peq_band_gain_command(idx, gain_db);
+        self.af_command(label, cmd, &arg, &target)
     }
 
     /// Set the active DSP modules (Phase 5.5c: compressor / limiter / leveler).
@@ -218,6 +249,7 @@ impl MpvHost {
         let af = crate::player::chain::build_af_chain(
             &profile,
             &self.eq,
+            &self.peq,
             &self.dsp,
             self.smart_speed_level,
         );
@@ -258,6 +290,7 @@ impl MpvHost {
         let af = crate::player::chain::build_af_chain(
             profile,
             &self.eq,
+            &self.peq,
             &self.dsp,
             self.smart_speed_level,
         );

@@ -104,10 +104,14 @@ const MIGRATIONS: &[Migration] = &[
         version: 20,
         sql: include_str!("migrations/0020_scrobble_outbox.sql"),
     },
+    Migration {
+        version: 21,
+        sql: include_str!("migrations/0021_peq_bands.sql"),
+    },
 ];
 
 /// The `user_version` a fully-migrated database reaches.
-pub const CURRENT_VERSION: i32 = 20;
+pub const CURRENT_VERSION: i32 = 21;
 
 /// Apply any unapplied migrations. Idempotent: running this on a
 /// fully-migrated database is a no-op.

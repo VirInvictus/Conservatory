@@ -30,8 +30,8 @@ use conservatory_core::db::{
     EQ_CENTRES, EqState, FacetField, FacetFilter, MediaKind, Perspective, Playlist, PlaylistKind,
     PlaylistOrder, ReadPool, ResamplerQuality, WorkerHandle, facet_rows, get_album, get_artist,
     get_audio_state, get_eq_preset, get_eq_state, get_track, get_tracks, list_eq_presets,
-    list_perspectives, list_playlists, load_queue_display, read_playback_state, show_settings_map,
-    spawn_worker, static_playlist_track_ids, track_render_rows, writeback_rows,
+    list_peq_bands, list_perspectives, list_playlists, load_queue_display, read_playback_state,
+    show_settings_map, spawn_worker, static_playlist_track_ids, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
@@ -1145,10 +1145,15 @@ impl ConservatoryWindow {
         let (Some(pool), Some(player)) = (imp.pool.get(), imp.player.get()) else {
             return;
         };
-        if let Ok(conn) = pool.open()
-            && let Ok(eq) = get_eq_state(&conn)
-        {
-            player.set_eq(eq);
+        if let Ok(conn) = pool.open() {
+            if let Ok(eq) = get_eq_state(&conn) {
+                player.set_eq(eq);
+            }
+            // The parametric bands ride the same launch push (the 5.5b
+            // follow-on); an empty set is a harmless no-op.
+            if let Ok(peq) = list_peq_bands(&conn) {
+                player.set_peq_bands(peq);
+            }
         }
     }
 

@@ -19,8 +19,8 @@ use tokio::sync::{mpsc, oneshot};
 use crate::db::command::Command;
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, MediaKind, NewScrobble, Playback, PlaybackCursor, PlayedState,
-    PlaylistKind, PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
+    EQ_BAND_COUNT, Episode, EqState, MediaKind, NewScrobble, PeqBand, Playback, PlaybackCursor,
+    PlayedState, PlaylistKind, PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::db::{connection, migrations, probe, reads, writes};
 use crate::edit::{AlbumEdit, TrackEdit};
@@ -321,6 +321,12 @@ impl WorkerHandle {
     /// Overwrite the singleton active EQ state (Phase 5.5b).
     pub async fn set_eq_state(&self, state: EqState) -> Result<()> {
         self.dispatch(|reply| Command::SetEqState { state, reply })
+            .await
+    }
+
+    /// Replace the whole parametric band set (the 5.5b follow-on).
+    pub async fn set_peq_bands(&self, bands: Vec<PeqBand>) -> Result<()> {
+        self.dispatch(|reply| Command::SetPeqBands { bands, reply })
             .await
     }
 
@@ -1223,6 +1229,9 @@ fn handle(conn: &mut Connection, command: Command) {
         }
         Command::SetEqState { state, reply } => {
             let _ = reply.send(writes::set_eq_state(conn, &state));
+        }
+        Command::SetPeqBands { bands, reply } => {
+            let _ = reply.send(writes::set_peq_bands(conn, &bands));
         }
         Command::SaveEqPreset { name, bands, reply } => {
             let _ = reply.send(writes::save_eq_preset(conn, &name, &bands));

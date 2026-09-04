@@ -18,20 +18,23 @@
 //! Speed is **not** a stage: mpv auto-inserts `scaletempo2` on `--speed`
 //! (`audio-pitch-correction`), so it stays a flat property on the host.
 
-use crate::db::models::{DspState, EQ_CENTRES, EqState};
+use crate::db::models::{DspState, EQ_CENTRES, EqState, PeqBand};
 use crate::player::dsp::{comp_stage, leveler_stage, limiter_stage};
 use crate::player::profile::MusicProfile;
 use crate::player::spoken::{SmartSpeedLevel, smart_speed_stage, voice_boost_stages};
 
-/// Build the mpv `af` chain string for `profile` + the active `eq` + the `dsp`
-/// modules + the Smart Speed `level`. Returns `""` when no stages are active
-/// (which clears mpv's `af`). 5.5a added the `@rg` head stage; 5.5b added `@eq`
-/// (the graphic equalizer); 5.5c adds the `@comp` / `@limit` / `@boost` dynamics
-/// stages. Stage order is signal flow: ReplayGain → EQ → compressor → limiter →
-/// leveler (spec §6.2). `level` only matters when `profile.smart_speed` is on.
+/// Build the mpv `af` chain string for `profile` + the active `eq` (graphic and
+/// parametric bands) + the `dsp` modules + the Smart Speed `level`. Returns `""`
+/// when no stages are active (which clears mpv's `af`). 5.5a added the `@rg`
+/// head stage; 5.5b added `@eq` (the graphic equalizer, later joined by the
+/// parametric bands in the same stage); 5.5c adds the `@comp` / `@limit` /
+/// `@boost` dynamics stages. Stage order is signal flow: ReplayGain → EQ →
+/// compressor → limiter → leveler (spec §6.2). `level` only matters when
+/// `profile.smart_speed` is on.
 pub fn build_af_chain(
     profile: &MusicProfile,
     eq: &EqState,
+    peq: &[PeqBand],
     dsp: &DspState,
     smart_speed_level: SmartSpeedLevel,
 ) -> String {
@@ -43,10 +46,11 @@ pub fn build_af_chain(
         stages.push(format!("@rg:lavfi=[volume={}dB]", fmt_db(db)));
     }
 
-    // @eq: the graphic equalizer (a flat EQ contributes no stage — the no-op
-    // chain). Each band is a named `equalizer` peaking filter so 5.5b-ii can
-    // address it live via `af-command`.
-    if let Some(stage) = eq_stage(eq) {
+    // @eq: the graphic equalizer plus the parametric bands (a flat graphic EQ
+    // and no parametric bands contribute no stage — the no-op chain). Each band
+    // is a named `equalizer` peaking filter so the live `af-command` path can
+    // address it.
+    if let Some(stage) = eq_stage(eq, peq) {
         stages.push(stage);
     }
 
@@ -66,20 +70,32 @@ pub fn build_af_chain(
     stages.join(",")
 }
 
-/// The `@eq` stage for `eq`, or `None` when the EQ is flat (the no-op chain). A
-/// stack of named `equalizer` peaking bands at the ISO centres, each one octave
-/// wide, under a single `@eq` lavfi label.
-pub fn eq_stage(eq: &EqState) -> Option<String> {
-    if eq.is_flat() {
+/// The `@eq` stage for the graphic `eq` plus the parametric `peq` bands, or
+/// `None` when the graphic EQ is flat and no parametric bands are defined (the
+/// no-op chain). The graphic bands are named `equalizer@b<i>` at the ISO
+/// centres, one octave wide; the parametric bands are named `equalizer@p<idx>`
+/// at their arbitrary centre with their Q, and sort after the graphic bands.
+/// All under a single `@eq` lavfi label.
+pub fn eq_stage(eq: &EqState, peq: &[PeqBand]) -> Option<String> {
+    let mut filters: Vec<String> = Vec::new();
+    if !eq.is_flat() {
+        filters.extend(EQ_CENTRES.iter().zip(eq.bands.iter()).enumerate().map(
+            |(i, (centre, gain))| format!("equalizer@b{i}=f={centre}:t=o:w=1:g={}", fmt_db(*gain)),
+        ));
+    }
+    for band in peq {
+        filters.push(format!(
+            "equalizer@p{}=f={}:t=q:q={}:g={}",
+            band.idx,
+            band.frequency,
+            band.q,
+            fmt_db(band.gain_db)
+        ));
+    }
+    if filters.is_empty() {
         return None;
     }
-    let bands: Vec<String> = EQ_CENTRES
-        .iter()
-        .zip(eq.bands.iter())
-        .enumerate()
-        .map(|(i, (centre, gain))| format!("equalizer@b{i}=f={centre}:t=o:w=1:g={}", fmt_db(*gain)))
-        .collect();
-    Some(format!("@eq:lavfi=[{}]", bands.join(",")))
+    Some(format!("@eq:lavfi=[{}]", filters.join(",")))
 }
 
 /// The mpv `af-command` arguments to set EQ band `index` to `gain` dB live
@@ -88,6 +104,14 @@ pub fn eq_stage(eq: &EqState) -> Option<String> {
 /// instance inside the `@eq` lavfi graph (see [`eq_stage`]). Pure.
 pub fn eq_band_command(index: usize, gain: f64) -> (&'static str, &'static str, String, String) {
     ("@eq", "gain", fmt_db(gain), format!("b{index}"))
+}
+
+/// The mpv `af-command` arguments for a parametric band's live gain edit (the
+/// 5.5b follow-on): `("@eq", "gain", "<dB>", "p<idx>")`, the same shipped
+/// command path as [`eq_band_command`]. Frequency and Q edits are structural
+/// rebuilds, not live commands. Pure.
+pub fn peq_band_gain_command(idx: i64, gain: f64) -> (&'static str, &'static str, String, String) {
+    ("@eq", "gain", fmt_db(gain), format!("p{idx}"))
 }
 
 /// Format a dB value for the filter string with a minimal representation
@@ -133,6 +157,7 @@ mod tests {
             build_af_chain(
                 &profile(Some(-6.0)),
                 &flat(),
+                &[],
                 &off(),
                 SmartSpeedLevel::default()
             ),
@@ -142,6 +167,7 @@ mod tests {
             build_af_chain(
                 &profile(Some(-6.5)),
                 &flat(),
+                &[],
                 &off(),
                 SmartSpeedLevel::default()
             ),
@@ -152,7 +178,13 @@ mod tests {
     #[test]
     fn no_replaygain_and_flat_eq_is_an_empty_chain() {
         assert_eq!(
-            build_af_chain(&profile(None), &flat(), &off(), SmartSpeedLevel::default()),
+            build_af_chain(
+                &profile(None),
+                &flat(),
+                &[],
+                &off(),
+                SmartSpeedLevel::default()
+            ),
             ""
         );
     }
@@ -164,12 +196,14 @@ mod tests {
         let a = build_af_chain(
             &profile(Some(-6.0)),
             &flat(),
+            &[],
             &off(),
             SmartSpeedLevel::default(),
         );
         let b = build_af_chain(
             &profile(Some(-3.0)),
             &flat(),
+            &[],
             &off(),
             SmartSpeedLevel::default(),
         );
@@ -184,6 +218,7 @@ mod tests {
             build_af_chain(
                 &profile(Some(-6.9 + 0.1)),
                 &flat(),
+                &[],
                 &off(),
                 SmartSpeedLevel::default()
             ),
@@ -193,7 +228,7 @@ mod tests {
 
     #[test]
     fn flat_eq_contributes_no_stage() {
-        assert_eq!(eq_stage(&flat()), None);
+        assert_eq!(eq_stage(&flat(), &[]), None);
     }
 
     #[test]
@@ -201,7 +236,7 @@ mod tests {
         let mut eq = EqState::flat();
         eq.bands[0] = 6.0; // 31 Hz +6 dB
         eq.bands[9] = -4.5; // 16 kHz -4.5 dB
-        let stage = eq_stage(&eq).expect("non-flat EQ has a stage");
+        let stage = eq_stage(&eq, &[]).expect("non-flat EQ has a stage");
         assert!(stage.starts_with("@eq:lavfi=["));
         assert!(stage.contains("equalizer@b0=f=31:t=o:w=1:g=6"));
         assert!(stage.contains("equalizer@b9=f=16000:t=o:w=1:g=-4.5"));
@@ -228,6 +263,7 @@ mod tests {
         let chain = build_af_chain(
             &profile(Some(-6.0)),
             &eq,
+            &[],
             &off(),
             SmartSpeedLevel::default(),
         );
@@ -256,7 +292,13 @@ mod tests {
                 settings: LevelerSettings::default(),
             },
         };
-        let chain = build_af_chain(&profile(Some(-6.0)), &eq, &dsp, SmartSpeedLevel::default());
+        let chain = build_af_chain(
+            &profile(Some(-6.0)),
+            &eq,
+            &[],
+            &dsp,
+            SmartSpeedLevel::default(),
+        );
         let positions: Vec<usize> = ["@rg", "@eq", "@comp", "@limit", "@boost"]
             .iter()
             .map(|label| {
@@ -276,6 +318,7 @@ mod tests {
         let chain = build_af_chain(
             &profile(Some(-6.0)),
             &flat(),
+            &[],
             &off(),
             SmartSpeedLevel::default(),
         );
@@ -290,7 +333,7 @@ mod tests {
         let mut p = profile(None);
         p.smart_speed = true;
         p.voice_boost = true;
-        let chain = build_af_chain(&p, &flat(), &off(), SmartSpeedLevel::default());
+        let chain = build_af_chain(&p, &flat(), &[], &off(), SmartSpeedLevel::default());
         assert!(chain.contains("@ss:lavfi=[silenceremove="), "{chain}");
         assert!(chain.contains("@vbcomp:lavfi=[acompressor="), "{chain}");
         assert!(chain.contains("@vbnorm:lavfi=[dynaudnorm="), "{chain}");
@@ -306,11 +349,88 @@ mod tests {
         let chain = build_af_chain(
             &profile(Some(-6.0)),
             &flat(),
+            &[],
             &off(),
             SmartSpeedLevel::default(),
         );
         assert!(!chain.contains("@ss"), "{chain}");
         assert!(!chain.contains("@vb"), "{chain}");
         assert_eq!(chain, "@rg:lavfi=[volume=-6dB]");
+    }
+
+    #[test]
+    fn peq_bands_render_into_the_eq_stage() {
+        // Parametric bands alone (flat graphic): the stage exists, named p<idx>
+        // peaking biquads at their arbitrary centre and Q.
+        let peq = vec![PeqBand {
+            idx: 0,
+            frequency: 250.0,
+            q: 2.0,
+            gain_db: -6.0,
+        }];
+        let stage = eq_stage(&EqState::flat(), &peq).expect("stage present");
+        assert!(stage.contains("equalizer@p0=f=250:t=q:q=2:g=-6"), "{stage}");
+        assert!(!stage.contains("equalizer@b"), "{stage}");
+
+        // Together with a non-flat graphic EQ: graphic bands first, then p<idx>.
+        let mut eq = EqState::flat();
+        eq.bands[0] = 6.0;
+        let stage = eq_stage(&eq, &peq).expect("stage present");
+        assert!(
+            stage.contains("equalizer@b0=f=31:t=o:w=1:g=6")
+                && stage.contains("equalizer@p0=f=250:t=q:q=2:g=-6"),
+            "{stage}"
+        );
+
+        // A defined band at 0 dB still counts as content (the user put it there).
+        let zero = vec![PeqBand {
+            idx: 0,
+            frequency: 1000.0,
+            q: 1.0,
+            gain_db: 0.0,
+        }];
+        assert!(eq_stage(&EqState::flat(), &zero).is_some());
+
+        // Neither present: the no-op chain.
+        assert!(eq_stage(&EqState::flat(), &[]).is_none());
+    }
+
+    #[test]
+    fn peq_band_gain_command_targets_the_named_band() {
+        let (label, cmd, arg, target) = peq_band_gain_command(2, -4.5);
+        assert_eq!(
+            (label, cmd, arg.as_str(), target.as_str()),
+            ("@eq", "gain", "-4.5", "p2")
+        );
+    }
+
+    #[test]
+    fn build_af_chain_carries_the_parametric_stage() {
+        let peq = vec![PeqBand {
+            idx: 1,
+            frequency: 100.0,
+            q: 0.5,
+            gain_db: 3.0,
+        }];
+        let chain = build_af_chain(
+            &profile(None),
+            &EqState::flat(),
+            &peq,
+            &DspState::off(),
+            SmartSpeedLevel::default(),
+        );
+        assert!(
+            chain.contains("@eq:lavfi=[equalizer@p1=f=100:t=q:q=0.5:g=3]"),
+            "{chain}"
+        );
+        // And with no PEQ the chain is byte-identical to the pre-PEQ shape.
+        let plain = build_af_chain(
+            &profile(None),
+            &EqState::flat(),
+            &[],
+            &DspState::off(),
+            SmartSpeedLevel::default(),
+        );
+        assert!(!plain.contains("@eq"), "{plain}");
     }
 }

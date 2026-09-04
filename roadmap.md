@@ -1233,6 +1233,30 @@ have held the other two hostage.)
       credits, from which tags, navigable how, and whether the schema grows).
       Settle scope first or explicitly bump this item out of `0.4.0`; it must
       not hold the tag while undefined.
+      **Design brief written 2026-09-04 (the settle-first path); approve or
+      amend and this becomes buildable.**
+      - *Which credits:* lofty (already the tag engine) reads and writes the
+        whole People & Organizations ItemKey family mapped per format
+        (Composer, Conductor, Lyricist, Performer, Producer, Engineer, Mixer,
+        Arranger, Remixer, MusicianCredits). **Recommendation for v1: Composer,
+        Performer, Producer** — the three a library is actually browsed by
+        (classical, compilations, audiophile labels); the rest come along
+        cheaply later since the mechanism is role-generic.
+      - *From where:* embedded tags at import, via the existing `read_track`
+        draft (multi-value split like genres); write-back rides `TagWrite` so
+        §5.5 portability holds. No scraping; online metadata stays Phase 21
+        review-then-apply.
+      - *Schema (the real decision):* **Option A (recommended):** migration
+        `0022` adds `track_credits (track_id, artist_id, role)` reusing the
+        existing `artists` rows (sort_name included, the `book_people`
+        precedent). Navigable = clickable credit → `composer:"X"` search (a new
+        vir-search field), plus an inspector credits section. Roughly one
+        sub-phase. **Option B:** no schema; credits folded into FTS + inspector
+        text only (searchable, not navigable); cheapest. **Option C:** a full
+        Composer facet pane like Genre; only worth it for a classical-heavy
+        library; a full phase.
+      - *Pick:* A, B, or C (or bump the item out of `0.4.0`); A keeps the
+        Calibre-shaped promise at sub-phase cost.
 
 *Usable artifact:* a waveform scrubber and drag-drop import. Ships alongside Phase 9 under `0.4.0`.
 
@@ -1320,7 +1344,7 @@ Reframe (Brandon, 2026-07-10, with Phase 26 pulled forward to `0.3.0`): the audi
 - [x] **Non-ASCII Slug Collapse:** Replace strict ASCII alphanumeric filtering in `slugify()` with unidecode/diacritic folding so foreign podcast titles don't collapse into `"untitled"` collisions. *(Fixed 2026-09-04: NFKD folds Latin diacritics to ASCII via the in-tree `unicode-normalization` (no new crate), other scripts keep their letters per the path-template sanitizer convention, the katakana voicing mark is preserved, and the byte cap cuts on a char boundary. ASCII titles slug byte-for-byte as before.)*
 
 ### Refactoring & Growth
-- [ ] **Standalone Scrobbler Crate:** Extract the `scrobble.rs` subsystem (ListenBrainz/Last.fm queues) into an independent library crate (`vir-scrobble`).
+- [x] **Standalone Scrobbler Crate:** Extract the `scrobble.rs` subsystem (ListenBrainz/Last.fm queues) into an independent library crate (`vir-scrobble`). *(Deferred by Brandon 2026-09-04 on the proposal below: no second consumer exists, so extraction would be speculative crate maintenance; keep the seams clean and revisit when one appears.)*
   **Graduation proposal, recorded 2026-09-04 (AUDIT_THREE Stage 3); go/no-go is Brandon's.** The 940-line module splits cleanly along its own seam: the protocol half (the `Listen` type, request bodies, Last.fm `api_sig` signing, both clients, error classification, backoff) is domain-agnostic and wiremock-tested, and could stand alone as `vir-scrobble` beside vir-gtk/vir-search. The outbox half stays here regardless: the drain loop reads `pending_scrobbles` from *Conservatory's* database, and the schema is core-owned, so that coupling is not extractable without exporting the schema (the wrong direction). Trade-offs: extraction buys a clean reusable crate for the day a second consumer exists (a dashboard, Atrium, an export tool), but commits us to a public crate's README/spec/release cadence, and no second consumer exists today, so the crate would be speculative. **Recommendation: defer** (keep the module in core, keep its seams clean); revisit when a second consumer appears. The extraction itself would also run the spec §11 dependency sign-off ritual.
 - [x] **Unified Name Sorting:** Consolidate `person_sort_name` and `derive_sort_name` into a central `conservatory-core::names` module. *(Done 2026-09-04: `conservatory-core::names`, tests and all; the audiobooks crate re-exports `person_sort_name` so its callers keep one import path.)*
 - [x] **Recursive Audiobook Importer:** Expand `import_book` to recurse directories, discovering multiple author/book structures at once. *(Done 2026-09-04 as `import_book_tree` + `discover_book_roots`: disc-shaped subfolders fold into their book folder so a multi-disc book stays one book, the CLI `audiobook import` verb imports whole trees, and each book reports on its own.)*
@@ -1352,20 +1376,30 @@ Fixed in the same pass (the `0.4.3` docs/version repair):
   shipped Phase 7, Audiobooks), and the Phase 11 deferred-list spectrum box is
   ticked (shipped as 12d).
 
-Open, awaiting Brandon (not decided silently; AUDIT_THREE §5 references in
-parens):
+Decisions settled by Brandon 2026-09-04 (were open under AUDIT_THREE §5):
 
-- **Tag ledger.** The last tag is v0.3.0 while patchnotes records releases
-  through v0.4.2: roughly twenty shipped releases untagged. Resume tagging at
-  0.4.2+ (backfill vs forward-only is part of the call) or record a waiver that
-  tags are dropped for this repo (§5.13, workspace-wide tag policy §5.12).
-- **19b-iii credits scope.** The item itself says it must not hold the 0.4.0
-  tag while undefined: settle scope or bump it explicitly (§5.7).
+- **Tag ledger (§5.13): forward-only from now.** No backfilling of the ~20
+  untagged releases; the next tagged release carries an annotated `v` tag with
+  its patchnotes entry as the message (the standing git habit), and tags ride
+  every release after.
+- **vir-scrobble (§5.7-adjacent): deferred** per the proposal below the
+  Standalone Scrobbler Crate box.
+- **19b-iii (§5.7): the settle-first path**, via the design brief now written
+  into the Phase 19b-iii box (recommendation: Option A, Composer / Performer /
+  Producer). One reading to approve or amend.
+
+Still open, awaiting Brandon:
+
+- **19b-iii approval** (the brief) or an explicit bump out of `0.4.0`.
 - **0.4.0 gate.** 19b-i's display pass (a real drag-drop at Brandon's desk) plus
   whatever 19b-iii resolves to; then the tag.
 - **1.0.0 gate sessions.** The 50k real-library memory gate and the
   full-library move-safety pass need a working copy of the real library and
-  Brandon's hardware; schedule the session (§5.8).
+  Brandon's hardware; schedule the session (§5.8). The Phase 20 Flatpak prep
+  (offline cargo sources, meson invoking cargo) is agent work and does not
+  wait on this.
+- **Audible re-check** of the shipped 5.5b-ii live EQ sliders on the current
+  stack (the 5.5b note; bundle with a display-pass session).
 - **vir-search lock.** The lock pins 1.0.2 while the local checkout is 1.0.3;
   the dep is branch-tracking. Per the audit's interference rules the consumer
   re-lock rides Stage 1's release wave, not this repo's lane.

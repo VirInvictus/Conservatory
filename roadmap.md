@@ -230,7 +230,7 @@ The GTK half is itself sizable, so it splits again: **4b-ii-a** makes the window
 - [x] Launch-resume: on GUI startup `resume_saved_queue` loads the saved DB queue into the engine **paused at the cursor** (a new `paused` flag on the engine's `SetQueue`, exposed as `PlayerHandle::resume`), so reopening the app is silent until play.
 - [x] `Ctrl+Enter` appends the browse selection to the queue (DB tail via `enqueue_tracks` + live engine tail via the new `AppendItems` command, which starts playing if the queue was idle); plain Enter / double-click still replaces.
 - [x] Tests: engine null-host integration — append-to-idle starts playing, a second append extends the tail, and a fresh engine resumes the whole queue paused at the cursor.
-- [ ] **Deferred:** a cover thumbnail in the Now-bar (blocked: `albums.cover_path` is unpopulated until cover-to-disk lands, spec §7.4); the audible within-album gapless prototype (mpv internal playlist append, spec §16.9); the `playback_state` explicit queue-entry reference; the library root sourced from config (Phase 10) rather than a CLI arg.
+- [x] **Deferred items — all four since resolved (verdict pass 2026-09-04):** the **cover thumbnail in the Now-bar** shipped as Phase 12c (the accent-ringed cover, `now_bar.rs`), unblocked when cover-to-disk landed at 5d; the **audible within-album gapless prototype** shipped as the engine's prefetch (`append_next` + `clear_prefetch`, the engine syncing its bookkeeping at mpv's boundary crossing instead of reloading; patchnotes: "Album transitions no longer gap"); the **`playback_state` explicit queue-entry reference** is *superseded, deliberately not built*: migrations `0007`/`0013` gave the cursor a per-kind identity `(kind, track_id | episode_id | book_id)` instead, which survives queue renumbering and reorders without a position-coupled foreign key; and the **library root sourced from config** shipped at v0.3.10 (§16.14, `LibraryConfig::default()`).
 
 *Usable artifact:* reopen the app and pick up where you left off (paused at the cursor); `Ctrl+Enter` appends the selection to a playing queue.
 
@@ -353,7 +353,9 @@ Split headless-first: **5.5b-i** lands the graphic EQ in the chain + persistence
 
 - [x] Live per-band gain via `af-command` (`host.af_command` → `equalizer@b<n>`'s `gain` command, gap-free; ffmpeg's `equalizer` supports it). `host.set_eq_band` does the live path when the `@eq` stage is present, and a **structural rebuild** only at the flat↔non-flat boundary (the stage appears / disappears) or on a preset switch (`set_eq` applies-when-playing). The host now keeps the `current_profile` so it can rebuild mid-playback. Engine `SetEqBand` + `PlayerHandle::set_eq_band`; a pure `eq_band_command` (unit-tested: a band change maps to `af-command @eq gain <dB> b<n>`).
 - [x] First GTK preferences surface: a "Sound" `adw::PreferencesPage` in an `adw::PreferencesDialog` (the app's first; Phase 10 builds on it), opened by a header button or `Ctrl+,`. An Equalizer group of 10 vertical sliders (−12..+12 dB, 0-detent) under their ISO centre labels + a preset `ComboRow` (the saved presets + "Custom") + Save as… / Delete / Reset. Sliders drive the engine live and select "Custom"; preset/reset push the whole state; persistence is on close (slider edits) and immediate (explicit actions). The persisted EQ is also pushed to the engine at startup (`apply_persisted_eq`), which the GUI never did before.
-- [ ] (Later) the parametric option via `anequalizer` (per-band freq/Q/gain, live `change`).
+- [ ] (Later) the parametric option, re-scoped 2026-09-04 after audio measurement (see below): **parametric bands as named `equalizer@p<k>` biquads inside the `@eq` stage, not `anequalizer`.** User-defined bands (arbitrary centre frequency, Q, gain) persisted in their own table (migration, the 0008 precedent), rendered into the `@eq` stage after the graphic bands, applied at load; per-band *gain* edits ride the shipped live `af-command` gain path; *frequency/Q* edits are structural rebuilds (the flat↔non-flat precedent — rare edits, and the live commands for them are not trustworthy, see the finding). CLI verbs (`peq list/set/clear`), engine `SetPeq`, persistence, tests; the GTK editor is explicitly out of this box's scope.
+  **Why not `anequalizer` (the box's original design): measured on this machine (FFmpeg 8.1.2, current mpv), 2026-09-04.** The static filter is fine: a −40 dB notch at 1 kHz measured −59 dB RMS on a sine through the real mpv chain. But its `change` command — the basis of this box's "live `change`" design — **hangs the mpv command pipeline**: a scripted `af-command … change …` against a labelled anequalizer never returned, on an input where a no-op control callback fired normally. The engine issues commands synchronously on the player thread, so a hung command would stall playback control; the box as written is unshippable on the current stack. Secondary reason: `anequalizer` takes per-channel parameters (`c0`/`c1` duplication, fragile across mono/multichannel), while the biquad route reuses the named-band machinery, the live gain path, and the `fmt_db`/stage idiom already in `chain.rs`. The wav-level measurement rig (generate a sine, play through the host to a WAV, RMS the windows) is the right regression harness for this box when it is implemented.
+- [ ] (Brandon, needs ears) audibly re-verify the shipped 5.5b-ii live sliders on the current stack. The live-path engine test proves the command is issued and playback continues, and the 2025-era hands-on acceptance stands, but the probes above could not confirm *audible* application of live filter commands on FFmpeg 8.1 (mpv reports success even for labels that do not resolve, so success codes are not evidence; the frequency-command probe left the notch unmoved, though that rig had its own unexplained logging gap). Drag a band, hear it move; if it no longer moves, the fix direction is structural-rebuild-on-edit for everything, measured against the same wav rig.
 - [x] Tests: the `eq_band_command` mapping (no chain rebuild); an engine null-host integration that mutates bands live mid-playback and still reaches EOF (the real mpv `af-command` path); the `match_preset` projection; build + manual for the dialog. Music-only build green.
 
 *Usable artifact:* (5.5b-i) a graphic equalizer with persisted presets via the CLI, applied to playback; **(5.5b-ii) the same with live sliders in the Sound preferences dialog — drag a band and hear it move.** **Phase 5.5b is complete.**
@@ -1357,3 +1359,18 @@ parens):
 - **vir-search lock.** The lock pins 1.0.2 while the local checkout is 1.0.3;
   the dep is branch-tracking. Per the audit's interference rules the consumer
   re-lock rides Stage 1's release wave, not this repo's lane.
+
+Second burst, same day (the audit's "deferred player/browser clusters" line):
+
+- **Phase 4's stale deferred box is settled** (all four sub-items resolved; see
+  the Phase 4b-ii-c tick for the per-item verdicts). The genuinely open
+  browser-cluster boxes that remain are the GUI/display ones: the rating
+  drag-sweep (Phase 16.5), the static-playlist drag-reorder, and the facet-pane
+  density pass (0.3.0 deferral); they are hands-on display work, not agent-lane
+  code.
+- **The parametric EQ box is re-scoped on measurement, not taste:** the
+  anequalizer design it named hangs the mpv command pipeline on the current
+  stack (audio-level and command-level evidence in the 5.5b note above). The
+  re-scoped design (named biquad bands) is written and ready to implement as
+  the next headless slice, plus a new Brandon box for an audible re-check of
+  the shipped live sliders on FFmpeg 8.1.

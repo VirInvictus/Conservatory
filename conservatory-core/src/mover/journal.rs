@@ -6,7 +6,7 @@
 //! multi-statement write is one transaction so the journal row and the DB path
 //! update it implies never diverge (docs/mover.md).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -163,7 +163,17 @@ pub(crate) fn complete_operation(
         "UPDATE move_operations SET state = ?2 WHERE id = ?1",
         params![op_id, OpState::Done.as_str()],
     )?;
-    apply_db_path(&tx, track_id, album_id, book_id, db_old_path, db_new_path)?;
+    let job_id = op_job_id(&tx, op_id)?;
+    apply_db_path(
+        &tx,
+        job_id,
+        track_id,
+        album_id,
+        book_id,
+        db_old_path,
+        db_new_path,
+        false,
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -186,24 +196,37 @@ pub(crate) fn revert_operation(
         "UPDATE move_operations SET state = ?2 WHERE id = ?1",
         params![op_id, OpState::Pending.as_str()],
     )?;
-    apply_db_path(&tx, track_id, album_id, book_id, db_new_path, db_old_path)?;
+    let job_id = op_job_id(&tx, op_id)?;
+    apply_db_path(
+        &tx,
+        job_id,
+        track_id,
+        album_id,
+        book_id,
+        db_new_path,
+        db_old_path,
+        true,
+    )?;
     tx.commit()?;
     Ok(())
 }
 
 /// Point the moved row's path columns at `to`: a track's `file_path` and its
-/// album's `folder_path` (the file's parent), or a book's chapter rows and its
-/// `folder_path`. The book chapters are matched by (`book_id`, `from`), so a
-/// single M4B that backs many chapters rewrites all of them in one statement
-/// while a per-chapter file rewrites exactly its one row. A `None` `to` leaves
-/// the rows untouched (the track/album branch ignores `from`).
+/// album's `folder_path` (the album root, see [`album_folder_root`]), or a
+/// book's chapter rows and its `folder_path`. The book chapters are matched by
+/// (`book_id`, `from`), so a single M4B that backs many chapters rewrites all
+/// of them in one statement while a per-chapter file rewrites exactly its one
+/// row. A `None` `to` leaves the rows untouched (the track/album branch ignores
+/// `from`).
 fn apply_db_path(
     tx: &Connection,
+    job_id: Option<i64>,
     track_id: Option<i64>,
     album_id: Option<i64>,
     book_id: Option<i64>,
     from: Option<&str>,
     to: Option<&str>,
+    reverting: bool,
 ) -> Result<()> {
     let Some(to) = to else { return Ok(()) };
     if let Some(track_id) = track_id {
@@ -213,9 +236,13 @@ fn apply_db_path(
         )?;
     }
     if let Some(album_id) = album_id {
+        let folder = match job_id {
+            Some(job_id) => album_folder_root(tx, job_id, album_id, to, reverting)?,
+            None => parent_string(to),
+        };
         tx.execute(
             "UPDATE albums SET folder_path = ?2 WHERE id = ?1",
-            params![album_id, parent_string(to)],
+            params![album_id, folder],
         )?;
     }
     if let Some(book_id) = book_id {
@@ -231,6 +258,78 @@ fn apply_db_path(
         )?;
     }
     Ok(())
+}
+
+/// The job id an operation row belongs to, read back inside the completing
+/// transaction so the album-folder fold can see the whole job.
+fn op_job_id(tx: &Connection, op_id: i64) -> Result<Option<i64>> {
+    Ok(tx
+        .query_row(
+            "SELECT job_id FROM move_operations WHERE id = ?1",
+            params![op_id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// The album folder a completed (or reverted) move leaves behind: the deepest
+/// directory every one of the job's destination paths for the album shares,
+/// folded with this op's own destination. A flat album's ops all share one
+/// parent, so this equals the single `parent()` it used to return; an album
+/// whose template renders a disc level converges on the folder *above* the
+/// disc subfolders, so covers (written into `folder_path`) land at the album
+/// root instead of inside `CD1/` (the 2026-08-23 sweep). The fold reads the
+/// journal's planned rows for the whole job, not the ops applied so far, so
+/// the result is order-independent and stable across the crash-safe
+/// roll-forward; an undo folds the same rows' `from` sides.
+fn album_folder_root(
+    tx: &Connection,
+    job_id: i64,
+    album_id: i64,
+    to: &str,
+    reverting: bool,
+) -> Result<String> {
+    let column = if reverting {
+        "db_old_path"
+    } else {
+        "db_new_path"
+    };
+    let sql = format!("SELECT {column} FROM move_operations WHERE job_id = ?1 AND album_id = ?2");
+    let mut stmt = tx.prepare(&sql)?;
+    let rows = stmt.query_map(params![job_id, album_id], |row| {
+        row.get::<_, Option<String>>(0)
+    })?;
+    let mut acc: Option<String> = None;
+    for path in rows {
+        // A destination at the tree root (no parent) would collapse the fold;
+        // skip it rather than let it erase the shared prefix.
+        if let Some(parent) = path?.as_deref().map(parent_string).filter(|p| !p.is_empty()) {
+            acc = Some(match acc {
+                None => parent,
+                Some(cur) => common_directory(&cur, &parent),
+            });
+        }
+    }
+    let own = parent_string(to);
+    Ok(match acc {
+        None => own,
+        Some(cur) if !own.is_empty() => common_directory(&cur, &own),
+        Some(cur) => cur,
+    })
+}
+
+/// The deepest directory two root-relative paths share, compared by component.
+/// Empty when they share none.
+fn common_directory(a: &str, b: &str) -> String {
+    let mut acc = PathBuf::new();
+    for (x, y) in Path::new(a).components().zip(Path::new(b).components()) {
+        if x == y {
+            acc.push(x);
+        } else {
+            break;
+        }
+    }
+    acc.to_string_lossy().into_owned()
 }
 
 /// The parent directory of a root-relative path, as a string (the folder the

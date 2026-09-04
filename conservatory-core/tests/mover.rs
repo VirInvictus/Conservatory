@@ -471,3 +471,76 @@ async fn list_jobs_reports_progress_newest_first() {
 
     fx.worker.shutdown_ack().await.unwrap();
 }
+
+#[tokio::test]
+async fn multi_disc_album_lands_folder_at_album_root_not_a_disc() {
+    let fx = fixture().await;
+    // An album whose template renders a disc level: two tracks land in
+    // sibling disc subfolders, so the ops' parents disagree. Regression for
+    // the 2026-08-23 sweep: folder_path used to become whichever disc's
+    // parent completed last, and covers then synced into a disc subfolder.
+    let album = fx
+        .worker
+        .insert_album(Album {
+            id: 0,
+            title: "Album".into(),
+            album_artist_id: None,
+            shelf_genre: Some("Rock".into()),
+            year: Some(2001),
+            release_date: None,
+            musicbrainz_release_id: None,
+            cover_path: None,
+            accent_rgb: None,
+            folder_path: "old".into(),
+            added_at: None,
+        })
+        .await
+        .unwrap();
+
+    let mut tracks = Vec::new();
+    for (disc, i) in [(1, 0), (1, 1), (2, 0)] {
+        let old = format!("old/CD{disc}/{i}.flac");
+        let new = format!("new/CD{disc}/{i}.flac");
+        let mut row = track_row(album, &format!("t{disc}-{i}"), &old);
+        row.disc_no = Some(disc);
+        let id = fx.worker.insert_track(row).await.unwrap();
+        stage(&fx.root, &old, b"audio");
+        tracks.push((id, old, new));
+    }
+
+    let ops: Vec<MoveOp> = tracks
+        .iter()
+        .map(|(id, old, new)| op(&fx.root, *id, album, old, new))
+        .collect();
+    let job = mover::apply(
+        &fx.worker,
+        &fx.pool,
+        MoveKind::Organize,
+        MoveMode::Move,
+        &fx.root,
+        0,
+        ops,
+    )
+    .await
+    .unwrap();
+
+    let conn = fx.pool.open().unwrap();
+    let album_row = conservatory_core::db::get_album(&conn, album)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        album_row.folder_path, "new",
+        "the album root above the disc subfolders, regardless of op order"
+    );
+
+    // Undo folds the from sides the same way: the folder returns to the old
+    // album root above the old disc subfolders.
+    mover::undo(&fx.worker, &fx.pool, job).await.unwrap();
+    let conn = fx.pool.open().unwrap();
+    let album_row = conservatory_core::db::get_album(&conn, album)
+        .unwrap()
+        .unwrap();
+    assert_eq!(album_row.folder_path, "old");
+
+    fx.worker.shutdown_ack().await.unwrap();
+}

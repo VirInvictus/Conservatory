@@ -13,7 +13,7 @@ use crate::db::models::{
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::Result;
-use crate::import::resolve::derive_sort_name;
+use crate::names::derive_sort_name;
 
 pub(crate) fn insert_artist(conn: &Connection, artist: &Artist) -> Result<i64> {
     conn.execute(

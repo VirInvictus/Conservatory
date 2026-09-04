@@ -39,6 +39,10 @@ pub use chapters::ChapterDraft;
 pub use edit::{BookEdit, SeriesEdit};
 pub use error::{ReadError, Result};
 pub use import::{BookImportOptions, BookImportReport, import_book};
+// The unified home for the person sort rule is core's `names` module (the
+// 2026-08-23 sweep's consolidation); re-exported so the plugin's callers and
+// its own modules keep one import path.
+pub use conservatory_core::names::person_sort_name;
 pub use reorg::{BookReorgPlan, apply_book_edit, apply_book_reorg, plan_book_reorg};
 
 /// A person (author or narrator) with a Calibre-style sort name.
@@ -201,39 +205,9 @@ fn first_nonempty(sources: Vec<Vec<String>>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Derive a Calibre-style person sort name ("Patrick Rothfuss" -> "Rothfuss,
-/// Patrick"). This is *not* `conservatory-core`'s `derive_sort_name`, which moves
-/// a leading article for band/album names; book people sort last-name-first
-/// (spec §4.5, the `book_people.sort_name` "Sanderson, Brandon" example). A name
-/// already in "Last, First" form, or a single token, is left as-is.
-pub fn person_sort_name(name: &str) -> String {
-    let name = name.trim();
-    if name.contains(',') {
-        return name.to_string();
-    }
-    match name.rsplit_once(char::is_whitespace) {
-        Some((rest, last)) if !rest.trim().is_empty() && !last.is_empty() => {
-            format!("{last}, {}", rest.trim())
-        }
-        _ => name.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn person_sort_name_last_first() {
-        assert_eq!(person_sort_name("Patrick Rothfuss"), "Rothfuss, Patrick");
-        assert_eq!(person_sort_name("Neil Gaiman"), "Gaiman, Neil");
-        assert_eq!(person_sort_name("Nick Podehl"), "Podehl, Nick");
-        // Already sorted, or a single token, is untouched.
-        assert_eq!(person_sort_name("Sanderson, Brandon"), "Sanderson, Brandon");
-        assert_eq!(person_sort_name("Madonna"), "Madonna");
-        // A three-part name puts the last token first.
-        assert_eq!(person_sort_name("Ursula K Le Guin"), "Guin, Ursula K Le");
-    }
 
     #[test]
     fn first_nonempty_picks_precedence() {

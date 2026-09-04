@@ -1,6 +1,7 @@
 //! Turn a pile of [`TrackDraft`]s into album groups with resolved artists, the
 //! pure half of import (spec §5.4). DB writes and path rendering live in `mod`.
 
+use crate::names::derive_sort_name;
 use crate::tags::TrackDraft;
 
 /// A resolved artist: the display `name` plus the `sort` name (the unique key and
@@ -9,31 +10,6 @@ use crate::tags::TrackDraft;
 pub struct ArtistName {
     pub name: String,
     pub sort: String,
-}
-
-/// Derive a sort name from a display name: move a leading article to the end
-/// (`"The Tuss"` -> `"Tuss, The"`). Person-name inversion is deliberately *not*
-/// attempted (bands are not people); `sort_name` is editable later. The reader
-/// prefers an embedded `ARTISTSORT` tag over this (see `decide_*`).
-pub fn derive_sort_name(name: &str) -> String {
-    let trimmed = name.trim();
-    for article in ["The ", "A ", "An "] {
-        if let Some(rest) = strip_prefix_ci(trimmed, article) {
-            let rest = rest.trim();
-            if !rest.is_empty() {
-                return format!("{rest}, {}", article.trim());
-            }
-        }
-    }
-    trimmed.to_string()
-}
-
-fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
-    if s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        Some(&s[prefix.len()..])
-    } else {
-        None
-    }
 }
 
 /// One album's worth of drafts, grouped from the scanned files.
@@ -158,14 +134,6 @@ mod tests {
             duration: None,
             cover: None,
         }
-    }
-
-    #[test]
-    fn sort_name_moves_leading_article() {
-        assert_eq!(derive_sort_name("The Tuss"), "Tuss, The");
-        assert_eq!(derive_sort_name("an Album"), "Album, An");
-        assert_eq!(derive_sort_name("Aphex Twin"), "Aphex Twin"); // "A" only as a word
-        assert_eq!(derive_sort_name("Boards of Canada"), "Boards of Canada");
     }
 
     #[test]

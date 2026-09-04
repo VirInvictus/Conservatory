@@ -25,6 +25,7 @@ pub mod import;
 pub mod lyrics;
 pub mod mover;
 pub mod mpris;
+pub mod names;
 pub mod path_template;
 pub mod player;
 pub mod playlist;

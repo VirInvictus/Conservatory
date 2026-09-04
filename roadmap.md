@@ -14,7 +14,7 @@ A `0.x.0` / `x.0.0` is a **capability milestone**: a cluster of phases deliverin
 | `0.1.x` | Power-user interaction, UX completeness, player table-stakes | 16, 16.5, 17 | ✅ (through v0.1.26) |
 | **`0.2.0`** | **Grammar & columns** | 18 | ✅ tagged |
 | **`0.3.0`** | **Hyprland-native design (de-adwaita)** | 26 (+ the Phase 25 audits as its verification tail) | ✅ tagged |
-| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (Phase 9 complete: 9a v0.3.1, 9b v0.3.2, 9c v0.3.5, 9d v0.3.6; 19a v0.3.3–0.3.4 shipped) |
+| **`0.4.0`** | **Immersive & history** | 19 + 9 | in progress (Phase 9 complete: 9a v0.3.1, 9b v0.3.2, 9c v0.3.5, 9d v0.3.6; 19a v0.3.3–0.3.4, 19b-i v0.3.12, 19b-ii v0.3.13 shipped; open: 19b-iii scope + the 19b-i display pass) |
 | **`1.0.0`** | **Verified & packaged** (the endgame) | 20 | planned |
 | `1.1.0` | Metadata intelligence | 21 | committed, beyond 1.0 |
 | `1.2.0` | Curation depth | 22 | committed, beyond 1.0 |
@@ -794,7 +794,7 @@ The finishing pass that brings the music surface up to the deadbeef / foobar2000
 
 ### Deferred (recorded, not built)
 
-- [ ] **Spectrum visualizer** (the deadbeef `spectrum` widget): a real-time frequency-bar analyzer. Captured here at the user's request; it needs an audio-tap off the libmpv output (an `af` data sink or a visualizer hook). **Pulled forward into Phase 12d** (the user asked for it as part of the visual overhaul); its home is the v0.0.38 Now Playing drawer (11c).
+- [x] **Spectrum visualizer** (the deadbeef `spectrum` widget): a real-time frequency-bar analyzer. Captured here at the user's request; it needs an audio-tap off the libmpv output (an `af` data sink or a visualizer hook). **Pulled forward into Phase 12d** (the user asked for it as part of the visual overhaul); its home is the v0.0.38 Now Playing drawer (11c). **Shipped as Phase 12d (v0.0.80)**: a PipeWire capture tap (libmpv exposes no PCM tap) feeding pure DSP in core, drawn accent-coloured in the drawer. *(Ticked 2026-09-04 by the AUDIT_THREE reconciliation: it shipped but was never ticked here, so a cold reader overcounts the open work by one.)*
 
 ## Phase 12 — Visual identity & album-art-forward UI (the "life" overhaul)
 
@@ -1296,7 +1296,8 @@ Reframe (Brandon, 2026-07-10, with Phase 26 pulled forward to `0.3.0`): the audi
 
 *Usable artifact:* a compact Now Playing mode exists that a `windowrulev2` rule can float onto a scratchpad, with an explicit toggle and a narrow-geometry auto-engage. The GNOME/default-desktop experience is unchanged pixel-for-pixel.
 
-## Phase 7: Codebase Sweep & Fixes (2026-08-23)
+## Phase 27: Codebase Sweep & Fixes (2026-08-23)
+*(Retitled from "Phase 7" on 2026-09-04: the original number collided with the shipped Phase 7 (Audiobooks), so every citation to "the Phase 7 sweep" was ambiguous.)*
 *Context: Found sorting bugs, broken cover moves, and non-ASCII slug collisions.*
 
 ### Bugs to Fix
@@ -1311,3 +1312,47 @@ Reframe (Brandon, 2026-07-10, with Phase 26 pulled forward to `0.3.0`): the audi
 - [ ] **Unified Name Sorting:** Consolidate `person_sort_name` and `derive_sort_name` into a central `conservatory-core::names` module.
 - [ ] **Recursive Audiobook Importer:** Expand `import_book` to recurse directories, discovering multiple author/book structures at once.
 - [ ] **Docs Sync:** Correct `README.md` workspace version, remove phantom `conservatory-search` references, and document actual CLI verbs (`import`, `organize`, `shelf-genre-set`).
+
+## AUDIT_THREE reconciliation (2026-09-04)
+
+Recorded from the workspace audit (`~/.gitrepos/AUDIT_THREE.md` §3, Conservatory
+findings), per the audit rule that a finding lands in the owning roadmap before
+it is fixed. Each item below was verified in this repo's tree the same day.
+
+Fixed in the same pass (the `0.4.3` docs/version repair):
+
+- **Version drift:** the v0.4.2 release commit (82edf92) bumped Cargo.toml and
+  patchnotes but not VERSION, so meson stamped 0.4.1 into the AppStream release
+  tag. Exactly the failure the `files('VERSION')` comment warns about. VERSION
+  and the workspace manifest now agree at 0.4.3.
+- **README** said v0.3.10 in the badge and status line, and still listed the
+  phantom `conservatory-search` crate (folded into `vir-search` at v0.4.0); the
+  shipped list also predated 19b-i/19b-ii.
+- **spec.md** masthead claimed Phase 9 (scrobbling) was still the remaining
+  pre-1.0 feature; it shipped at v0.3.6. §17's Phase 9 bullet and the
+  Phase 19 + 9 milestone version were stale with it.
+- **ATTRIBUTIONS.md** still listed `libadwaita` as a current system library;
+  Phase 26 dropped it.
+- **Dead file:** `rewrite_theme.py` at the repo root, a one-off that rewrote
+  `theme.rs` before the vir-gtk migration; deleted.
+- The 2026-08-23 sweep section is renumbered Phase 27 (was colliding with the
+  shipped Phase 7, Audiobooks), and the Phase 11 deferred-list spectrum box is
+  ticked (shipped as 12d).
+
+Open, awaiting Brandon (not decided silently; AUDIT_THREE §5 references in
+parens):
+
+- **Tag ledger.** The last tag is v0.3.0 while patchnotes records releases
+  through v0.4.2: roughly twenty shipped releases untagged. Resume tagging at
+  0.4.2+ (backfill vs forward-only is part of the call) or record a waiver that
+  tags are dropped for this repo (§5.13, workspace-wide tag policy §5.12).
+- **19b-iii credits scope.** The item itself says it must not hold the 0.4.0
+  tag while undefined: settle scope or bump it explicitly (§5.7).
+- **0.4.0 gate.** 19b-i's display pass (a real drag-drop at Brandon's desk) plus
+  whatever 19b-iii resolves to; then the tag.
+- **1.0.0 gate sessions.** The 50k real-library memory gate and the
+  full-library move-safety pass need a working copy of the real library and
+  Brandon's hardware; schedule the session (§5.8).
+- **vir-search lock.** The lock pins 1.0.2 while the local checkout is 1.0.3;
+  the dep is branch-tracking. Per the audit's interference rules the consumer
+  re-lock rides Stage 1's release wave, not this repo's lane.

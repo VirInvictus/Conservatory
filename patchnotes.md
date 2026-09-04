@@ -1,5 +1,14 @@
 # Patch Notes
 
+## v0.4.3 (2026-09-04)
+
+- **Build:** Repaired the version carriers. The v0.4.2 release had bumped Cargo.toml and patchnotes but left `VERSION` at 0.4.1, so meson stamped 0.4.1 into the AppStream release tag: the exact drift the `files('VERSION')` rule exists to prevent. `VERSION`, the workspace manifest, and the lock now agree at 0.4.3.
+- **Docs:** README's badge and status line said v0.3.10 and it still listed the phantom `conservatory-search` crate (folded into the shared `vir-search` at v0.4.0); the shipped list now records the 19b-i drag-drop import and 19b-ii full-screen Now Playing releases.
+- **Docs:** spec.md's masthead and §17 no longer claim Phase 9 (scrobbling) is unshipped (it completed at v0.3.6); the Phase 19 + 9 milestone is re-anchored to `0.4.0` and Phase 26 has a ledger entry.
+- **Docs:** ATTRIBUTIONS.md no longer lists `libadwaita` as a current system library; Phase 26 dropped it.
+- **Roadmap:** the 2026-08-23 sweep section is renumbered Phase 27 (its "Phase 7" title collided with the shipped Audiobooks phase), the Phase 11 deferred-list spectrum box is ticked (it shipped as 12d), and the AUDIT_THREE findings plus the open Brandon decisions (tag ledger, 19b-iii scope, the 0.4.0 and 1.0 gates) are recorded in a reconciliation section.
+- **Cleanup:** removed the dead `rewrite_theme.py` one-off from the repo root (pre-vir-gtk migration scratch).
+
 ## v0.4.2 (2026-08-25)
 
 - **Build:** Refreshed dependency locks: `vir-search` 1.0.2 (parser fixes plus the tomorrow/lastweek/nextweek date keywords) and `vir-gtk` 1.0.2.

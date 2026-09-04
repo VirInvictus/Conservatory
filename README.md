@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GTK-4.14%2B-4a86cf" alt="GTK 4.14+">
-  <img src="https://img.shields.io/badge/status-v0.3.10%20%C2%B7%20daily%20driver-brightgreen" alt="Status: v0.3.10, daily driver">
+  <img src="https://img.shields.io/badge/status-v0.4.3%20%C2%B7%20daily%20driver-brightgreen" alt="Status: v0.4.3, daily driver">
 </p>
 
 ---
@@ -140,7 +140,7 @@ A few of the most useful; the [full keymap](docs/keymap.md) has the rest.
 Six crates, on the discipline that every non-GUI surface stays CLI-testable. Music is the native program; podcasts and audiobooks are **compile-time plugins** (feature-gated crates, on by default), with all schema living in core's single migration ledger.
 
 - `conservatory-core`: the headless data layer and the music engine: SQLite worker, all migrations, the import pipeline, the file mover, the playback host and profiles, and the unified queue.
-- `conservatory-search`: the Calibre-shaped search expression language (see [`docs/search-grammar.md`](docs/search-grammar.md)).
+- `vir-search` (shared): the Calibre-shaped search expression language, extracted with Atrium into its own crate (see [`docs/search-grammar.md`](docs/search-grammar.md)).
 - `conservatory-podcasts`: the absorbed Belfry podcast subsystem.
 - `conservatory-audiobooks`: the audiobook subsystem.
 - `conservatory-cli`: the headless binary.
@@ -150,7 +150,7 @@ Six crates, on the discipline that every non-GUI surface stays CLI-testable. Mus
 
 ## Project status
 
-**v0.3.10. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
+**v0.4.3. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
 
 Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [patchnotes](patchnotes.md) the per-release notes):
 
@@ -169,9 +169,9 @@ Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [
 - **18** (the `0.2.0` milestone): accent-insensitive search and configurable browse columns.
 - **26** (the `0.3.0` milestone): the Hyprland-native redesign onto plain GTK4 with an owned flat Kanagawa Dragon stylesheet, no external theming toolkit; see [`docs/hyprland.md`](docs/hyprland.md).
 - **9** (optional, off by default): listening-history scrobbling to ListenBrainz or Last.fm, a local-first one-way outbox, enabled and configured in Preferences → Sync. Full scrobbler behaviour: a now-playing indicator on the service, and the standard submission rule (a 30-second floor, then half the track or four minutes), stamped with the play's start time.
-- **19** (in progress): the waveform seek bar (a loudness-envelope scrubber in the transport bar).
+- **19** (nearly complete): the waveform seek bar (a loudness-envelope scrubber in the transport bar), drag-and-drop import onto the window, and the full-screen Now Playing view with local lyrics.
 
-Not built yet: the rest of **Phase 19** (drag-and-drop import, a full-screen Now Playing surface) and the 1.0 endgame (real-library verification and Flatpak packaging). The roadmap has the full picture.
+Not built yet: the rest of **Phase 19** (richer navigable credits from local tags, a design decision still open) and the 1.0 endgame (real-library verification and Flatpak packaging). The roadmap has the full picture.
 
 ## Documentation
 

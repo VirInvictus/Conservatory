@@ -100,6 +100,10 @@ A music-only build (no podcast or audiobook code compiled in) is `--no-default-f
 # Import a folder into a database-owned library (copies by default; --move consumes the originals)
 cargo run -p conservatory-cli -- import library.db /path/to/album ~/Music/Conservatory
 
+# A shelf genre is the path-affecting curation decision: set it on an album, then re-render the tree
+cargo run -p conservatory-cli -- shelf-genre-set library.db 3 Ambient
+cargo run -p conservatory-cli -- organize library.db ~/Music/Conservatory --apply
+
 # Search it with the full grammar
 cargo run -p conservatory-cli -- search library.db 'genre:ambient AND year:>=1990'
 

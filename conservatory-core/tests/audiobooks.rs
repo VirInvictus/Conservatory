@@ -485,12 +485,21 @@ async fn author_sort_orders_the_shelf_by_sort_name_not_display() {
         .await
         .unwrap();
     let sanderson_book = worker
-        .insert_book(sample_book("Mistborn", "Audiobooks/Sanderson, Brandon/Mistborn/m"))
+        .insert_book(sample_book(
+            "Mistborn",
+            "Audiobooks/Sanderson, Brandon/Mistborn/m",
+        ))
         .await
         .unwrap();
-    worker.link_book_author(sanderson_book, sanderson).await.unwrap();
+    worker
+        .link_book_author(sanderson_book, sanderson)
+        .await
+        .unwrap();
     let gaiman_book = worker
-        .insert_book(sample_book("The Ocean at the End of the Lane", "Audiobooks/Gaiman, Neil/Ocean/o"))
+        .insert_book(sample_book(
+            "The Ocean at the End of the Lane",
+            "Audiobooks/Gaiman, Neil/Ocean/o",
+        ))
         .await
         .unwrap();
     worker.link_book_author(gaiman_book, gaiman).await.unwrap();

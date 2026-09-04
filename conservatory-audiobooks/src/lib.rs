@@ -312,7 +312,9 @@ mod tests {
     fn disc_dir_names_are_conservative() {
         let d = |name: &str| PathBuf::from("x").join(name);
         // The recognized shapes.
-        for name in ["CD1", "cd 2", "Disc-3", "disk 04", "Part 3", "pt2", "04", "2"] {
+        for name in [
+            "CD1", "cd 2", "Disc-3", "disk 04", "Part 3", "pt2", "04", "2",
+        ] {
             assert!(is_disc_dir(&d(name)), "{name} is a disc folder");
         }
         // Book folders a naive pattern would eat.

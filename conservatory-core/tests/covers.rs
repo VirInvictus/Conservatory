@@ -261,7 +261,11 @@ async fn reimport_into_existing_album_backfills_accent() {
     )
     .await
     .unwrap();
-    assert!(report.conflicts.is_empty(), "no conflicts: {:?}", report.conflicts);
+    assert!(
+        report.conflicts.is_empty(),
+        "no conflicts: {:?}",
+        report.conflicts
+    );
     assert_eq!(report.tracks, 1, "the extra track imported");
 
     let conn = pool.open().unwrap();

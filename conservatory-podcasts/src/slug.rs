@@ -133,7 +133,11 @@ mod tests {
         // collapse to "untitled", so every such show collided into one folder.
         assert_ne!(slugify("日本語のラジオ"), "untitled");
         assert_ne!(slugify("中文節目"), "untitled");
-        assert_ne!(slugify("日本語"), slugify("中文節目"), "distinct shows stay distinct");
+        assert_ne!(
+            slugify("日本語"),
+            slugify("中文節目"),
+            "distinct shows stay distinct"
+        );
         assert_eq!(slugify("Привет"), "привет");
         // Precomposed and decomposed spellings of ジ slug identically (the
         // NFKD fold is the normalizer), and the voiced mark is not eaten.
@@ -155,7 +159,10 @@ mod tests {
         let cjk = "日".repeat(60); // 180 bytes
         let capped = slugify(&cjk);
         assert!(capped.len() <= MAX_SLUG_BYTES);
-        assert!(capped.chars().all(|c| c == '日'), "no split char: {capped:?}");
+        assert!(
+            capped.chars().all(|c| c == '日'),
+            "no split char: {capped:?}"
+        );
     }
 
     #[test]

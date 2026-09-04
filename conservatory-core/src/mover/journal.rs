@@ -218,6 +218,7 @@ pub(crate) fn revert_operation(
 /// of them in one statement while a per-chapter file rewrites exactly its one
 /// row. A `None` `to` leaves the rows untouched (the track/album branch ignores
 /// `from`).
+#[allow(clippy::too_many_arguments)]
 fn apply_db_path(
     tx: &Connection,
     job_id: Option<i64>,
@@ -311,7 +312,11 @@ fn album_folder_root(
     for path in rows {
         // A destination at the tree root (no parent) would collapse the fold;
         // skip it rather than let it erase the shared prefix.
-        if let Some(parent) = path?.as_deref().map(parent_string).filter(|p| !p.is_empty()) {
+        if let Some(parent) = path?
+            .as_deref()
+            .map(parent_string)
+            .filter(|p| !p.is_empty())
+        {
             acc = Some(match acc {
                 None => parent,
                 Some(cur) => common_directory(&cur, &parent),

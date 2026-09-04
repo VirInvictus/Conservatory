@@ -172,14 +172,14 @@ async fn tree_import_discovers_books_and_merges_discs() {
     std::fs::copy(fixture("single/book.m4b"), single.join("book.m4b")).unwrap();
     // The disc book's files are retagged copies: their embedded album tag
     // would otherwise render the same managed folder as the direct book's.
-    for (rel, title) in [
-        ("01.mp3", "Part One"),
-        ("02.mp3", "Part Two"),
-    ] {
+    for (rel, title) in [("01.mp3", "Part One"), ("02.mp3", "Part Two")] {
         let src = fixture("multi/Test Author/Test Book").join(rel);
-        let dst = disc.join(if rel == "01.mp3" { "CD1/01.mp3" } else { "CD2/02.mp3" });
+        let dst = disc.join(if rel == "01.mp3" {
+            "CD1/01.mp3"
+        } else {
+            "CD2/02.mp3"
+        });
         std::fs::copy(&src, &dst).unwrap();
-        let draft = conservatory_core::read_track(&dst).unwrap();
         conservatory_core::write_track_tags(
             &dst,
             &conservatory_core::TagWrite {

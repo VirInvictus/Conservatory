@@ -214,10 +214,7 @@ fn build_ops(
                 .file_name()
                 .map(|n| n.to_os_string())
                 .unwrap_or_default();
-            let new_rel = folder_rel
-                .join(&name)
-                .to_string_lossy()
-                .into_owned();
+            let new_rel = folder_rel.join(&name).to_string_lossy().into_owned();
             ops.push(MoveOp {
                 track_id: None,
                 album_id: None,

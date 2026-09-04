@@ -1,5 +1,17 @@
 # Patch Notes
 
+## Unreleased
+
+The 2026-08-23 codebase sweep (roadmap Phase 27), landed as fix + regression commits ahead of the next tag.
+
+- **Fixed:** audiobook author shelves sort by the stored last-name-first `sort_name`, not the display string ("Brandon Sanderson" now files under S).
+- **Fixed:** a multi-disc album's `folder_path` lands at the album root after a move, so covers no longer sync into a `CD1/` subfolder; the result is order-independent and survives crash recovery and undo.
+- **Fixed:** a book's cover now moves inside the journaled reorganize job (file, `cover_path` pointer, and undo together) instead of as a post-move best-effort that a crash could strand.
+- **Fixed:** importing additional tracks into an existing album writes the freshly computed cover accent; a NULL or stale accent no longer survives every re-import.
+- **Fixed:** podcast slugs fold diacritics (NFKD) and keep non-Latin letters, so foreign titles no longer all collapse into the literal `untitled` folder and collide. ASCII titles slug byte-for-byte as before.
+- **Added:** recursive audiobook import: `audiobook import` on a directory tree discovers and imports every book folder; disc subfolders (`CD1`, `Disc 2`) merge into their book. The CLI prints one report per book.
+- **Internal:** the name-sort rules (`person_sort_name`, `derive_sort_name`) consolidated into `conservatory-core::names`.
+
 ## v0.4.3 (2026-09-04)
 
 - **Build:** Repaired the version carriers. The v0.4.2 release had bumped Cargo.toml and patchnotes but left `VERSION` at 0.4.1, so meson stamped 0.4.1 into the AppStream release tag: the exact drift the `files('VERSION')` rule exists to prevent. `VERSION`, the workspace manifest, and the lock now agree at 0.4.3.

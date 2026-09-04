@@ -34,6 +34,9 @@ tracing = { workspace = true }
 # Phase 6a-iii-b: HTTP Basic auth credentials in libsecret (the secret service),
 # behind the CredentialStore enum (an in-memory backend covers the tests).
 oo7 = { workspace = true }
+# Slug folding (the 2026-08-23 sweep): NFKD so accented titles slug to ASCII.
+# Already a workspace dependency via core (dedup keys); no new crate.
+unicode-normalization = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }

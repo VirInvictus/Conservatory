@@ -6,6 +6,7 @@
 //! dedicated slugifier serves it rather than the template engine.
 
 use chrono::{DateTime, Utc};
+use unicode_normalization::UnicodeNormalization;
 
 /// Cap a slug component at a generous byte budget. Feed titles are occasionally
 /// pathological (a whole sentence as a title); 80 bytes keeps the path well
@@ -15,30 +16,47 @@ const MAX_SLUG_BYTES: usize = 80;
 /// The top-level managed podcast folder (relative to the library root).
 pub const PODCASTS_DIR: &str = "Podcasts";
 
-/// Turn an arbitrary string into a lowercase, ASCII, dash-separated slug.
+/// Turn an arbitrary string into a lowercase, filesystem-safe,
+/// dash-separated slug.
 ///
-/// ASCII alphanumerics are kept (lowercased); every other run of characters
-/// collapses to a single `-`. Leading/trailing dashes are trimmed and the
-/// result is capped at [`MAX_SLUG_BYTES`] (always safe, since the slug is
-/// ASCII-only: lowercase alphanumerics and `-`). An input that
-/// reduces to nothing (punctuation-only, or non-ASCII-only) yields
-/// `"untitled"`, so a folder name always exists.
+/// Diacritics fold to their base letter (NFKD, then the combining mark drops),
+/// so Latin-script titles slug to plain ASCII ("Café" -> "cafe"). Non-Latin
+/// scripts keep their letters ("日本語のラジオ" stays readable) instead of
+/// collapsing into an `"untitled"` collision, the path-template sanitizer's
+/// convention: the constraint is filesystem safety, not ASCII. Separators,
+/// control characters, punctuation, and whitespace runs each collapse to a
+/// single `-`; leading/trailing dashes are trimmed; the result is capped at
+/// [`MAX_SLUG_BYTES`] on a char boundary. An input that reduces to nothing
+/// yields `"untitled"`, so a folder name always exists.
 pub fn slugify(input: &str) -> String {
+    let folded = input.nfkd().filter(|c| !is_latin_diacritic(*c));
     let mut out = String::new();
     let mut prev_dash = false;
-    for ch in input.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
+    for ch in folded {
+        let separator = ch.is_whitespace()
+            || ch == '/'
+            || ch == '\\'
+            || ch == '\0'
+            || ch.is_control()
+            || (!ch.is_alphanumeric() && !is_voicing_mark(ch));
+        if separator {
+            if !prev_dash && !out.is_empty() {
+                out.push('-');
+                prev_dash = true;
+            }
+        } else {
+            out.extend(ch.to_lowercase());
             prev_dash = false;
-        } else if !prev_dash && !out.is_empty() {
-            out.push('-');
-            prev_dash = true;
         }
     }
-    // Enforce the byte cap. `out` is ASCII (1 byte per char), so popping bytes
-    // never splits a char; the trailing separator is trimmed just below.
-    while out.len() > MAX_SLUG_BYTES {
-        out.pop();
+    // Enforce the byte cap on a char boundary (the slug is no longer
+    // guaranteed ASCII, so this can no longer pop bytes).
+    if out.len() > MAX_SLUG_BYTES {
+        let mut end = MAX_SLUG_BYTES;
+        while !out.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.truncate(end);
     }
     let trimmed = out.trim_matches('-');
     if trimmed.is_empty() {
@@ -46,6 +64,22 @@ pub fn slugify(input: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+/// The combining-diacritical block: after NFKD a precomposed accented Latin,
+/// Greek, or Cyrillic letter has split into its base plus one of these, and
+/// the mark is what we drop. Deliberately *not* the katakana/Hiragana voicing
+/// marks (U+3099/U+309A): they carry meaning (シ + mark is ジ), so they are
+/// kept (see [`is_voicing_mark`]) and render correctly in the folder name.
+fn is_latin_diacritic(c: char) -> bool {
+    ('\u{0300}'..='\u{036F}').contains(&c)
+}
+
+/// The two combining voiced-sound marks: not `char::is_alphanumeric`, so the
+/// separator branch would eat them, but they are the difference between シ
+/// and ジ. Kept in the slug.
+fn is_voicing_mark(c: char) -> bool {
+    ('\u{3099}'..='\u{309A}').contains(&c)
 }
 
 /// The relative folder for one episode: `Podcasts/<show-slug>/<date>--<slug>`.
@@ -87,16 +121,41 @@ mod tests {
     }
 
     #[test]
-    fn empty_and_nonascii_fall_back() {
+    fn diacritics_fold_to_ascii() {
+        assert_eq!(slugify("Café"), "cafe");
+        assert_eq!(slugify("Hörspiel"), "horspiel");
+        assert_eq!(slugify("Émission du soir"), "emission-du-soir");
+    }
+
+    #[test]
+    fn non_latin_scripts_keep_their_letters() {
+        // Regression for the 2026-08-23 sweep: non-ASCII titles used to
+        // collapse to "untitled", so every such show collided into one folder.
+        assert_ne!(slugify("日本語のラジオ"), "untitled");
+        assert_ne!(slugify("中文節目"), "untitled");
+        assert_ne!(slugify("日本語"), slugify("中文節目"), "distinct shows stay distinct");
+        assert_eq!(slugify("Привет"), "привет");
+        // Precomposed and decomposed spellings of ジ slug identically (the
+        // NFKD fold is the normalizer), and the voiced mark is not eaten.
+        assert_eq!(slugify("\u{30B8}"), slugify("\u{30B7}\u{3099}"));
+        assert!(slugify("\u{30B8}").contains('\u{3099}'));
+    }
+
+    #[test]
+    fn empty_and_punctuation_only_fall_back() {
         assert_eq!(slugify(""), "untitled");
         assert_eq!(slugify("!!!"), "untitled");
-        assert_eq!(slugify("日本語"), "untitled");
     }
 
     #[test]
     fn byte_cap_enforced() {
         let long = "a".repeat(200);
         assert!(slugify(&long).len() <= MAX_SLUG_BYTES);
+        // The cap cuts on a char boundary now that a slug can be non-ASCII.
+        let cjk = "日".repeat(60); // 180 bytes
+        let capped = slugify(&cjk);
+        assert!(capped.len() <= MAX_SLUG_BYTES);
+        assert!(capped.chars().all(|c| c == '日'), "no split char: {capped:?}");
     }
 
     #[test]

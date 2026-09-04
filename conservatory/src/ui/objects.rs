@@ -672,6 +672,7 @@ mod book_tests {
             title: "The Name of the Wind".to_string(),
             subtitle: None,
             author_display: Some("Patrick Rothfuss".to_string()),
+            author_sort: Some("Rothfuss, Patrick".to_string()),
             narrator_display: Some("Nick Podehl".to_string()),
             series_name: Some("The Kingkiller Chronicle".to_string()),
             series_sequence: Some(1.0),

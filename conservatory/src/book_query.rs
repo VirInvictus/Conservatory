@@ -96,6 +96,7 @@ mod tests {
             title: title.into(),
             subtitle: None,
             author_display: Some(author.into()),
+            author_sort: None,
             narrator_display: Some("Kate Reading, Michael Kramer".into()),
             series_name: series.map(str::to_string),
             series_sequence: series.map(|_| 1.0),

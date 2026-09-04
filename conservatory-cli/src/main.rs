@@ -6122,6 +6122,7 @@ mod audiobook_filter_tests {
             title: "The Way of Kings".into(),
             subtitle: None,
             author_display: Some("Brandon Sanderson".into()),
+            author_sort: Some("Sanderson, Brandon".into()),
             narrator_display: Some("Kate Reading, Michael Kramer".into()),
             series_name: Some("The Stormlight Archive".into()),
             series_sequence: Some(1.0),

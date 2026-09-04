@@ -259,6 +259,7 @@ mod tests {
             title: title.to_string(),
             subtitle: None,
             author_display: author.map(str::to_string),
+            author_sort: author.map(|a| person_sort_name(a)),
             narrator_display: Some("Kate Reading, Michael Kramer".into()),
             series_name: Some("The Stormlight Archive".into()),
             series_sequence: Some(1.5),

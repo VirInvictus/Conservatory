@@ -1989,6 +1989,9 @@ pub struct BookListRow {
     pub title: String,
     pub subtitle: Option<String>,
     pub author_display: Option<String>,
+    /// The authors' stored `sort_name`s ("Sanderson, Brandon"), joined in the
+    /// same order as `author_display`; the sort key for author-ordered shelves.
+    pub author_sort: Option<String>,
     pub narrator_display: Option<String>,
     pub series_name: Option<String>,
     pub series_sequence: Option<f64>,
@@ -2030,6 +2033,10 @@ pub fn list_book_rows(conn: &Connection) -> Result<Vec<BookListRow>> {
                     (SELECT p.name FROM book_authors ba JOIN book_people p ON p.id = ba.person_id
                      WHERE ba.book_id = b.id ORDER BY p.sort_name)
                 ) AS author_display,
+                (SELECT group_concat(sort_name, ', ') FROM
+                    (SELECT p.sort_name FROM book_authors ba JOIN book_people p ON p.id = ba.person_id
+                     WHERE ba.book_id = b.id ORDER BY p.sort_name)
+                ) AS author_sort,
                 (SELECT group_concat(name, ', ') FROM
                     (SELECT p.name FROM book_narrators bn JOIN book_people p ON p.id = bn.person_id
                      WHERE bn.book_id = b.id ORDER BY p.sort_name)
@@ -2046,6 +2053,7 @@ pub fn list_book_rows(conn: &Connection) -> Result<Vec<BookListRow>> {
             title: row.get("title")?,
             subtitle: row.get("subtitle")?,
             author_display: row.get("author_display")?,
+            author_sort: row.get("author_sort")?,
             narrator_display: row.get("narrator_display")?,
             series_name: row.get("series_name")?,
             series_sequence: row.get("series_sequence")?,
@@ -2104,9 +2112,12 @@ pub fn sort_shelf_by(rows: &mut [BookListRow], key: ShelfSort) {
             rows.sort_by_key(|r| r.title.to_lowercase());
         }
         ShelfSort::Author => rows.sort_by(|a, b| {
+            // The stored last-name-first key, not the display string: sorting
+            // "Brandon Sanderson" by display would file him under B, not S.
             let name = |r: &BookListRow| {
-                r.author_display
+                r.author_sort
                     .as_deref()
+                    .or(r.author_display.as_deref())
                     .unwrap_or_default()
                     .to_lowercase()
             };

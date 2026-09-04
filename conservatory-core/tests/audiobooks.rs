@@ -413,6 +413,7 @@ async fn shelf_rows_denormalize_and_sort_by_state() {
     // and resume state in one read.
     let a = rows.iter().find(|r| r.id == a_id).unwrap();
     assert_eq!(a.author_display.as_deref(), Some("Patrick Rothfuss"));
+    assert_eq!(a.author_sort.as_deref(), Some("Rothfuss, Patrick"));
     assert_eq!(a.narrator_display.as_deref(), Some("Nick Podehl"));
     assert_eq!(a.series_name.as_deref(), Some("The Kingkiller Chronicle"));
     assert_eq!(a.series_sequence, Some(1.0));
@@ -465,6 +466,47 @@ fn book_state_derives_from_position_and_finished() {
     assert_eq!(BookState::derive(0.0, true), BookState::Finished);
     // Finished wins even with a position (a re-listen resets it elsewhere).
     assert_eq!(BookState::derive(99.0, true), BookState::Finished);
+}
+
+#[tokio::test]
+async fn author_sort_orders_the_shelf_by_sort_name_not_display() {
+    let (_dir, worker, pool) = fresh().await;
+
+    // Two authors whose display order and sort order disagree: "Brandon
+    // Sanderson" sorts before "Neil Gaiman" as display strings (b < n), but
+    // the stored last-name-first keys put Gaiman first (g < s). Regression for
+    // the 2026-08-23 sweep: the Author key used to sort on `author_display`.
+    let sanderson = worker
+        .get_or_create_book_person("Brandon Sanderson", "Sanderson, Brandon")
+        .await
+        .unwrap();
+    let gaiman = worker
+        .get_or_create_book_person("Neil Gaiman", "Gaiman, Neil")
+        .await
+        .unwrap();
+    let sanderson_book = worker
+        .insert_book(sample_book("Mistborn", "Audiobooks/Sanderson, Brandon/Mistborn/m"))
+        .await
+        .unwrap();
+    worker.link_book_author(sanderson_book, sanderson).await.unwrap();
+    let gaiman_book = worker
+        .insert_book(sample_book("The Ocean at the End of the Lane", "Audiobooks/Gaiman, Neil/Ocean/o"))
+        .await
+        .unwrap();
+    worker.link_book_author(gaiman_book, gaiman).await.unwrap();
+
+    let conn = pool.open().unwrap();
+    let mut rows = list_book_rows(&conn).unwrap();
+    assert_eq!(rows.len(), 2);
+
+    use conservatory_core::db::{ShelfSort, sort_shelf_by};
+    sort_shelf_by(&mut rows, ShelfSort::Author);
+    assert_eq!(
+        rows[0].id, gaiman_book,
+        "Gaiman, Neil sorts before Sanderson, Brandon"
+    );
+
+    worker.shutdown_ack().await.unwrap();
 }
 
 #[tokio::test]

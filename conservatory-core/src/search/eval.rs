@@ -122,6 +122,24 @@ fn field_match(item: &SearchItem, field: Field, kind: &MatchKind) -> bool {
         MatchKind::Regex(v) => with_regex(v, |re| {
             candidates(item, field).iter().any(|c| re.is_match(c))
         }),
+        MatchKind::Prefix(v) => {
+            let v = fold(v);
+            candidates(item, field)
+                .iter()
+                .any(|c| fold(c).starts_with(&v))
+        }
+        MatchKind::Suffix(v) => {
+            let v = fold(v);
+            candidates(item, field)
+                .iter()
+                .any(|c| fold(c).ends_with(&v))
+        }
+        MatchKind::In(items) => {
+            let wanted: Vec<String> = items.iter().map(|s| fold(s)).collect();
+            candidates(item, field)
+                .iter()
+                .any(|c| wanted.contains(&fold(c)))
+        }
         MatchKind::Fuzzy(v) => {
             let threshold = fuzzy_threshold(v);
             candidates(item, field)
@@ -461,6 +479,38 @@ mod tests {
                 .expr,
             &it,
             today()
+        ));
+    }
+}
+
+#[cfg(test)]
+mod match_kind_tests {
+    use super::*;
+
+    fn item() -> SearchItem {
+        SearchItem {
+            title: "Roygbiv".into(),
+            artist: Some("Boards of Canada".into()),
+            shelf_genre: Some("Electronic".into()),
+            genres: vec!["Electronic".into(), "Ambient".into()],
+            ..SearchItem::default()
+        }
+    }
+
+    #[test]
+    fn prefix_suffix_and_in_matchers_evaluate() {
+        let it = item();
+        // vir-search 1.3.0 match kinds, adopted with the 1.4.0 lock refresh.
+        let prefix = MatchKind::Prefix("boards".into());
+        let suffix = MatchKind::Suffix("canada".into());
+        let list = MatchKind::In(vec!["Electronic".into(), "Jazz".into()]);
+        assert!(field_match(&it, Field::Artist, &prefix));
+        assert!(field_match(&it, Field::Artist, &suffix));
+        assert!(field_match(&it, Field::Genre, &list));
+        assert!(!field_match(
+            &it,
+            Field::Artist,
+            &MatchKind::Prefix("zzz".into())
         ));
     }
 }

@@ -1212,7 +1212,7 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3579,8 +3579,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vir-gtk"
-version = "1.0.2"
-source = "git+https://github.com/VirInvictus/vir-gtk.git#1ac027a46c2e4f0a37399041132eb0f597e3fc1a"
+version = "1.0.3"
+source = "git+https://github.com/VirInvictus/vir-gtk.git#58e6aca5fa0183a690bd65def71709bbe073da0b"
 dependencies = [
  "gtk4",
  "tracing",
@@ -3588,8 +3588,8 @@ dependencies = [
 
 [[package]]
 name = "vir-search"
-version = "1.0.2"
-source = "git+https://github.com/VirInvictus/vir-search.git#0b377bdb4ce552360bcd1d1e06cd16d284bc5a5e"
+version = "1.4.0"
+source = "git+https://github.com/VirInvictus/vir-search.git#73aec812f939edf0c82b6d19b946b7ba10635053"
 dependencies = [
  "chrono",
  "regex",

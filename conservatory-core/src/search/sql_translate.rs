@@ -76,7 +76,13 @@ fn field_sql(field: Field, kind: &MatchKind, p: &mut Vec<SqlValue>) -> Option<St
     }
     match kind {
         // Regex / fuzzy can't be pushed down: bail so the whole query falls back.
-        MatchKind::Regex(_) | MatchKind::Fuzzy(_) => None,
+        // Prefix/suffix/in are new (vir-search 1.3.0) and are also eval-side for
+        // now; pushing them down is a follow-up once their SQL shape settles.
+        MatchKind::Regex(_)
+        | MatchKind::Fuzzy(_)
+        | MatchKind::Prefix(_)
+        | MatchKind::Suffix(_)
+        | MatchKind::In(_) => None,
         MatchKind::Substring(v) => Some(text_cond(field, &like(v, false), p)),
         MatchKind::Exact(v) => Some(text_cond(field, &like(v, true), p)),
         MatchKind::HasAny => Some(presence_sql(field, true)),

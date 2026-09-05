@@ -13,6 +13,7 @@ The 2026-08-23 codebase sweep (roadmap Phase 27), landed as fix + regression com
 - **Packaging:** the Flatpak path is now offline-shaped and the meson wrapper really builds the app: `data/cargo-sources.json` vendored from Cargo.lock (the Atrium generator, MIT, vendored at `scripts/`), and `meson compile` runs `cargo build --release` and stages both binaries with the data files (verified with a DESTDIR install). Remaining before a full sandboxed build: a libmpv module and the four shelled-out tools (tracked in the manifest and Phase 20).
 - **Added:** the parametric equalizer (the 5.5b follow-on): user-defined peaking bands at an arbitrary frequency / Q / gain, alongside the 10-band graphic EQ in the same `@eq` chain stage. New migration `0021`, the `conservatory-cli peq show / set / remove / clear` verbs, live per-band gain edits (the shipped command path), and playback application at next load. Deliberately built on the named-biquad machinery instead of `anequalizer`, whose live `change` command hangs the mpv command pipeline on the current FFmpeg (measured; see the roadmap 5.5b re-scope).
 - **Internal:** the name-sort rules (`person_sort_name`, `derive_sort_name`) consolidated into `conservatory-core::names`.
+- **Changed:** vir-gtk adopted at 1.0.3 and vir-search at 1.4.0 (the consumer wave). Search grammar gains land with it: prefix (`foo*`), suffix (`*bar`), and in-list (`(a,b)`) match kinds now evaluate in-memory; SQL push-down for the new kinds is deferred and tracked.
 
 ## v0.4.3 (2026-09-04)
 

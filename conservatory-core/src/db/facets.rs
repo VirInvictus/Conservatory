@@ -23,11 +23,13 @@ pub enum FacetField {
     Album,
     Year,
     Format,
+    Rating,
+    Added,
 }
 
 impl FacetField {
     /// Every facet, in menu order (also the editor's option order, Phase 10c).
-    pub const ALL: [FacetField; 7] = [
+    pub const ALL: [FacetField; 9] = [
         FacetField::Genre,
         FacetField::ShelfGenre,
         FacetField::AlbumArtist,
@@ -35,6 +37,8 @@ impl FacetField {
         FacetField::Album,
         FacetField::Year,
         FacetField::Format,
+        FacetField::Rating,
+        FacetField::Added,
     ];
 
     /// The config token (aligned with the search grammar field names).
@@ -47,6 +51,8 @@ impl FacetField {
             FacetField::Album => "album",
             FacetField::Year => "year",
             FacetField::Format => "format",
+            FacetField::Rating => "rating",
+            FacetField::Added => "added",
         }
     }
 
@@ -60,6 +66,8 @@ impl FacetField {
             FacetField::Album => "Album",
             FacetField::Year => "Year",
             FacetField::Format => "Format",
+            FacetField::Rating => "Rating",
+            FacetField::Added => "Added",
         }
     }
 
@@ -73,6 +81,8 @@ impl FacetField {
             FacetField::Album => "albums",
             FacetField::Year => "years",
             FacetField::Format => "formats",
+            FacetField::Rating => "ratings",
+            FacetField::Added => "added months",
         }
     }
 
@@ -86,6 +96,8 @@ impl FacetField {
             "album" => Some(FacetField::Album),
             "year" => Some(FacetField::Year),
             "format" => Some(FacetField::Format),
+            "rating" => Some(FacetField::Rating),
+            "added" => Some(FacetField::Added),
             _ => None,
         }
     }
@@ -268,6 +280,19 @@ fn filter_sql(filters: &[FacetFilter], params: &mut Vec<String>) -> String {
             FacetField::Format => {
                 format!("COALESCE(t.format, '{UNKNOWN}') IN ({placeholders})")
             }
+            // 0 is the stored "unrated" (the schema default), surfaced as a
+            // word so the pane does not show a bare 0 among the star counts.
+            FacetField::Rating => format!(
+                "(CASE WHEN t.rating = 0 THEN 'Unrated' ELSE CAST(t.rating AS TEXT) END) \
+                 IN ({placeholders})"
+            ),
+            // Raw timestamps bucket to their added month (the grammar's
+            // `added:YYYY-MM` precision), so the pane is browsable and the
+            // ISO order is chronological.
+            FacetField::Added => format!(
+                "COALESCE(strftime('%Y-%m', t.added_at, 'unixepoch'), '{UNKNOWN}') \
+                 IN ({placeholders})"
+            ),
         });
     }
     if parts.is_empty() {
@@ -302,6 +327,14 @@ fn target_sql(target: FacetField) -> (&'static str, &'static str) {
             "JOIN albums al ON t.album_id = al.id",
         ),
         FacetField::Format => ("COALESCE(t.format, 'Unknown')", ""),
+        FacetField::Rating => (
+            "(CASE WHEN t.rating = 0 THEN 'Unrated' ELSE CAST(t.rating AS TEXT) END)",
+            "",
+        ),
+        FacetField::Added => (
+            "COALESCE(strftime('%Y-%m', t.added_at, 'unixepoch'), 'Unknown')",
+            "",
+        ),
     }
 }
 

@@ -76,6 +76,8 @@ async fn new_single_valued_field_facets_and_cascade() {
         FacetField::Artist,
         FacetField::Year,
         FacetField::Format,
+        FacetField::Rating,
+        FacetField::Added,
     ] {
         let buckets = rows(&pool, field, &[]);
         assert!(!buckets.is_empty(), "{field:?} produced no rows");
@@ -91,6 +93,168 @@ async fn new_single_valued_field_facets_and_cascade() {
     let format_elec = rows(&pool, FacetField::Format, std::slice::from_ref(&electronic));
     let sum_elec: i64 = format_elec.iter().map(|(_, c)| c).sum();
     assert!(sum_elec > 0 && sum_elec < 80, "the cascade narrows Format");
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+#[tokio::test]
+async fn rating_and_added_facets_bucket_and_narrow() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("library.db");
+    let worker = spawn_worker(path.clone()).unwrap();
+    fixtures::generate(&worker, FixtureScale::Small)
+        .await
+        .unwrap();
+    let pool = ReadPool::new(path, 3).unwrap();
+
+    // Every fixture track starts unrated (the 0 default), so the Rating pane
+    // is one worded bucket covering all 80; rating three of them splits it.
+    let unrated = rows(&pool, FacetField::Rating, &[]);
+    assert_eq!(unrated, vec![("Unrated".to_string(), 80)]);
+
+    let conn = pool.open().unwrap();
+    let ids: Vec<i64> = facet_tracks(&conn, &[])
+        .unwrap()
+        .iter()
+        .take(3)
+        .map(|t| t.id)
+        .collect();
+    drop(conn);
+    for id in &ids {
+        worker
+            .update_track(
+                *id,
+                conservatory_core::edit::TrackEdit {
+                    rating: Some(3),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let mut rated = rows(&pool, FacetField::Rating, &[]);
+    rated.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        rated,
+        vec![("3".to_string(), 3), ("Unrated".to_string(), 77)]
+    );
+
+    // The pane's value feeds back as a filter: the "3" bucket narrows the leaf
+    // set to exactly the three rated tracks.
+    let rating3 = FacetFilter {
+        field: FacetField::Rating,
+        values: vec!["3".into()],
+    };
+    let conn = pool.open().unwrap();
+    let leaf3 = facet_tracks(&conn, std::slice::from_ref(&rating3)).unwrap();
+    drop(conn);
+    assert_eq!(leaf3.len(), 3);
+    assert_eq!(
+        leaf3
+            .iter()
+            .map(|t| t.id)
+            .collect::<std::collections::HashSet<_>>(),
+        ids.iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>()
+    );
+
+    // The Added pane buckets timestamps to their added month. The fixture all
+    // landed "now", so two tracks backdated 45 days (always a prior month)
+    // split it into two YYYY-MM buckets, and the backdated bucket's value
+    // narrows the leaf set to exactly those two tracks.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let back = chrono::DateTime::from_timestamp(now - 45 * 86400, 0).unwrap();
+    let artist = worker
+        .insert_artist(Artist {
+            id: 0,
+            name: "Backdated".into(),
+            sort_name: "Backdated".into(),
+            musicbrainz_id: None,
+        })
+        .await
+        .unwrap();
+    let album = worker
+        .insert_album(Album {
+            id: 0,
+            title: "Old Stock".into(),
+            album_artist_id: Some(artist),
+            shelf_genre: None,
+            year: None,
+            release_date: None,
+            musicbrainz_release_id: None,
+            cover_path: None,
+            accent_rgb: None,
+            folder_path: "Backdated/Old Stock".into(),
+            added_at: Some(back),
+        })
+        .await
+        .unwrap();
+    let mut back_ids = Vec::new();
+    for t in 0..2 {
+        let track_id = worker
+            .insert_track(Track {
+                id: 0,
+                album_id: Some(album),
+                artist_id: Some(artist),
+                title: format!("Old {t}"),
+                track_no: Some(t + 1),
+                disc_no: Some(1),
+                duration: Some(100.0),
+                file_path: format!("Backdated/Old Stock/{t}.flac"),
+                format: Some("flac".into()),
+                bitrate: Some(1024),
+                sample_rate: Some(44100),
+                replaygain_track: None,
+                replaygain_album: None,
+                rating: 0,
+                play_count: 0,
+                last_played: None,
+                starred: false,
+                musicbrainz_recording_id: None,
+                added_at: Some(back),
+            })
+            .await
+            .unwrap();
+        back_ids.push(track_id);
+    }
+
+    let added = rows(&pool, FacetField::Added, &[]);
+    assert_eq!(
+        added.len(),
+        2,
+        "two added months: the fixture's and the backdated pair's"
+    );
+    let total: i64 = added.iter().map(|(_, c)| c).sum();
+    assert_eq!(total, 82, "the month buckets partition all 82 tracks");
+    let back_bucket = added
+        .iter()
+        .find(|(_, c)| *c == 2)
+        .map(|(v, _)| v.clone())
+        .expect("the backdated month holds exactly the 2 new tracks");
+    let now_bucket = added
+        .iter()
+        .find(|(_, c)| *c == 80)
+        .map(|(v, _)| v.as_str())
+        .unwrap();
+    assert!(back_bucket != now_bucket);
+    // ISO months sort chronologically, and each bucket value is YYYY-MM shaped.
+    for (v, _) in &added {
+        assert_eq!(v.len(), 7, "{v:?} is a YYYY-MM bucket");
+        assert_eq!(v.as_bytes()[4], b'-');
+    }
+
+    let back_filter = FacetFilter {
+        field: FacetField::Added,
+        values: vec![back_bucket],
+    };
+    let conn = pool.open().unwrap();
+    let back_leaf = facet_tracks(&conn, std::slice::from_ref(&back_filter)).unwrap();
+    drop(conn);
+    assert_eq!(back_leaf.iter().map(|t| t.id).collect::<Vec<_>>(), back_ids);
 
     worker.shutdown_ack().await.unwrap();
 }

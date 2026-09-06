@@ -185,13 +185,21 @@ fn read_popm_rating(path: &Path, file_type: FileType) -> Option<u8> {
 
 /// Map a POPM rating byte (0–255) to 0–5 stars.
 ///
-/// These are Windows Media Player's documented read buckets (1–31, 32–95,
+/// The base is Windows Media Player's documented read buckets (1–31, 32–95,
 /// 96–159, 160–223, 224–255), which contain the foobar2000/WMP canonical
 /// write bytes (1, 64, 128, 196, 255) this library is reconciled to (Lattice
-/// `rerate`); MusicBee's 186/242 land correctly too. 0 is unrated.
+/// `rerate`); MusicBee's 186/242 land correctly too. DeaDBeeF writes a
+/// different scale, ~stars*63.75 (2*→127, 3*→190, 4*→254), whose odd bytes no
+/// canonical writer produces, so they are exact-matched to the intended stars
+/// ahead of the buckets; otherwise they read one star high. 64 is the one
+/// fixpoint collision (DeaDBeeF 1* vs the canonical 2*) and keeps the
+/// canonical reading. 0 is unrated.
 fn stars_from_popm_byte(byte: u8) -> Option<u8> {
     Some(match byte {
         0 => return None,
+        127 => 2,
+        190 => 3,
+        254 => 4,
         1..=31 => 1,
         32..=95 => 2,
         96..=159 => 3,
@@ -394,6 +402,19 @@ mod tests {
         assert_eq!(stars_from_popm_byte(242), Some(5));
         // 0 is unrated, never 0 stars.
         assert_eq!(stars_from_popm_byte(0), None);
+    }
+
+    #[test]
+    fn popm_deadbef_bytes_normalize_to_the_intended_stars() {
+        // DeaDBeeF writes ~stars*63.75; through the WMP buckets its odd bytes
+        // read one star high (127 -> 3, 190 -> 4, 254 -> 5). They are
+        // exact-matched first.
+        assert_eq!(stars_from_popm_byte(127), Some(2));
+        assert_eq!(stars_from_popm_byte(190), Some(3));
+        assert_eq!(stars_from_popm_byte(254), Some(4));
+        // 64 is the DeaDBeeF-1*/canonical-2* fixpoint; the canonical reading
+        // wins because WMP/foobar2000 (and MusicBee) produce that byte.
+        assert_eq!(stars_from_popm_byte(64), Some(2));
     }
 
     #[test]

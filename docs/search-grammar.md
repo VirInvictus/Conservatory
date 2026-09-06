@@ -1,12 +1,12 @@
-# Search Grammar (`conservatory-search`)
+# Search Grammar (`vir-search`)
 
-> **Status: implemented (music) at Phase 3a.** `conservatory-search` ships the lex → parse → AST → eval + all-or-nothing SQL-translate pipeline with bm25 + recency ranking; the CLI `search` verb is its first consumer. This document expands spec §3.4 and is the thing to read before touching the search crate.
+> **Status: implemented (music) at Phase 3a.** The search crate ships the lex → parse → AST → eval + all-or-nothing SQL-translate pipeline with bm25 + recency ranking; the CLI `search` verb is its first consumer. It began as this repo's `conservatory-search` and was extracted into the shared `vir-search` crate at v0.4.0 (Atrium shares it); this document expands spec §3.4 and is the thing to read before touching the search crate.
 >
 > **As-built notes (3a):** the parser is fully **infallible** (even unbalanced parens degrade to substring text, not just unknown fields). `vl:` perspectives are **expanded at parse time** via a `PerspectiveResolver` with a cycle guard (a cycle degrades to empty + a warning, not CalibreQuarry's raise), so `eval`/`sql_translate` never see `vl:`. The in-memory fallback is **per-item** (`evaluate`), Atrium-style, not candidate-set. Bare text uses FTS `MATCH` on the SQL path and substring on the eval fallback (the one intentional matching difference; the all-or-nothing rule means only one path runs per query). `is:queued` is live as of Phase 4b-i (the unified `queue` table): the SQL path emits a `queue` subquery, the eval path reads `SearchItem.queued`. Persistent Perspective **storage** (a table + the save/load UI) is deferred to Phase 3c; podcast/audiobook fields to Phases 6/7 (they degrade to substring until then). The **audiobook fields landed at Phase 7b-ii** (`author:`/`narrator:`/`series:`/`is:finished`, eval-only; see Open items); podcast fields remain substring.
 
 ## The one-line design decision
 
-`conservatory-search` takes its **structure from `atrium-search`**, its **domain semantics from CalibreQuarry**, and its **full-text plumbing from Viaduct**. It is an independent implementation of all three (the Belfry precedent: port the shape, write the code fresh, so the projects evolve without coupling).
+The crate takes its **structure from `atrium-search`**, its **domain semantics from CalibreQuarry**, and its **full-text plumbing from Viaduct**. It is an independent implementation of all three (the Belfry precedent: port the shape, write the code fresh, so the projects evolve without coupling).
 
 That split is not arbitrary. Brandon has built the same idea three times in three shapes, and each got one part right for Conservatory:
 
@@ -74,6 +74,7 @@ One grammar, all three surfaces (music, podcasts, audiobooks). The filter bar ab
 ### Modifiers and operators
 
 - **Match modifiers:** substring (default), `"quoted substring"`, `=exact`, `~regex`, `?fuzzy` (Damerau-Levenshtein), and `true`/`false` existence on optional fields.
+- **Wildcard and list kinds (vir-search 1.3.0):** on unquoted single-word values, a trailing `foo*` is a prefix match, a leading `*bar` a suffix match, and `(a,b)` an any-of list (`genre:(rock,jazz)`). One star per term, so `*both*` stays a literal substring; quoted values stay literal; list entries take no spaces. These evaluate on the in-memory path only so far: the all-or-nothing rule sends any query touching one to the eval fallback, because the SQL translation for the new kinds is not shipped (the tracked push-down box in roadmap.md).
 - **Accent-folding (Phase 18a):** substring, quoted, and fuzzy matches are **diacritic-insensitive** (the Quod Libet default), so `bjork` matches `Björk`. `=exact` and `~regex` stay literal. Folding only broadens matches, never narrows, so it can never turn a query into an error (§3.4). On the SQL fast path, bare text folds via the FTS `unicode61 remove_diacritics 2` tokenizer (migration 0019), mirroring the eval-side `fold`. **Fast-path limitation:** accented *field-text* (`artist:bjork`) matches via `LIKE`, which does not fold, so it folds only when the query lands on the eval path; bare text (the common case) folds on both paths. Folded shadow columns for field-text are a possible follow-on.
 - **Boolean:** `AND` / `OR` / `NOT` (case-insensitive), implicit `AND` between bare tokens, `!` prefix as `NOT`. Precedence `NOT > AND > OR`; parentheses group.
 - **Comparison / range:** `=` `!=` `>` `<` `>=` `<=` on numeric and date fields; `lo..hi` inclusive ranges.

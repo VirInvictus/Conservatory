@@ -1,44 +1,45 @@
-//! The owned application stylesheet (Phase 26l): Kanagawa Dragon baked
-//! directly into one generated sheet, replacing the libadwaita stylesheet and
-//! the old `@define-color` overrides. The look is the locked spec §2.4 design
-//! language: flat, square, hard 1px borders, denser spacing than the GNOME
-//! HIG. Colophon's Phase 6 sheet is the template (ATTRIBUTIONS.md); custom
-//! properties are deliberately not used (one fixed palette, and skipping them
-//! keeps the gtk4 crate on `v4_14`), so the hexes are spliced by token
-//! replacement instead.
+//! The owned application stylesheet (Phase 26l, restructured 2026-09-06):
+//! the app-owned remainder over vir-gtk's shared base sheet. The unanimous
+//! flat/square widget core (window chrome, headerbar, lists, the button
+//! core, entries, popovers, tooltips, scrollbars, utility classes, focus
+//! ring) now lives in `vir_gtk::theme::base_css`, installed at USER + 1;
+//! this sheet carries only what Conservatory deliberately does differently,
+//! installed at USER + 2 (`install_app_stylesheet`) so it wins by priority,
+//! not by load order. The look is the locked spec §2.4 design language:
+//! flat, square, hard 1px borders, denser spacing than the GNOME HIG.
+//! Custom properties are deliberately not used (one fixed palette, and
+//! skipping them keeps the gtk4 crate on `v4_14`), so the hexes are spliced
+//! by token replacement instead.
 //!
-//! Deliberate exceptions to "flat": the lifted album/book cover cards keep
-//! their radius and drop shadow (the Hermitage cover-as-visual-unit pattern;
-//! the runtime accent ring in `ui/accent.rs` layers onto that same shadow).
-//! Chrome is flat; content imagery stays lifted.
+//! Deliberate exceptions to "flat" that live HERE, not in the base: the
+//! lifted album/book cover cards keep their radius and drop shadow (the
+//! Hermitage cover-as-visual-unit pattern; the runtime accent ring in
+//! `ui/accent.rs` layers onto that same shadow). Chrome is flat; content
+//! imagery stays lifted. A selected row LIFTS with an accent edge, and a
+//! checked button is LIT (lift + accent text + underline), not painted.
 //!
-//! Typography carries over from Phase 13d: exactly three `font-family` rules
-//! (Inter body, Fraunces headers, IBM Plex Mono technical), enforced by a
-//! unit test, fonts bundled via fontconfig in `main.rs`.
-// The Dragon roles (the raw palette lives in docs/theme.md).
-/// The sheet template. `%TOKENS%` are replaced with the hexes above by
-/// [`sheet`]; no other substitution happens, so plain CSS braces are safe.
-const TEMPLATE: &str = "\
-/* --- Base widgets (the adwaita sheet's replacement) --- */
-window { background-color: %BG_WINDOW%; color: %FG%; }
-window.csd { border-radius: 0; box-shadow: none; }
-decoration { border-radius: 0; box-shadow: none; }
-.background { background-color: %BG_WINDOW%; color: %FG%; }
-headerbar {
-  background-color: %BG_HEADER%;
-  background-image: none;
-  color: %FG%;
-  box-shadow: none;
-  border-bottom: 1px solid %GRID%;
-  min-height: 34px;
-  padding: 0 4px;
+//! Typography carries over from Phase 13d: exactly three `font-family`
+//! rules (Inter body, Fraunces headers, IBM Plex Mono technical), fonts
+//! bundled via fontconfig in `main.rs`.
+
+/// The palette with Conservatory's accent override.
+fn palette() -> vir_gtk::theme::Palette {
+    let mut p = vir_gtk::theme::Palette::dragon();
+    p.accent = "#c4746e"; // dragonRed
+    p.on_accent = "#12120f";
+    p
 }
-headerbar button { min-height: 24px; }
-paned > separator { background-color: %GRID%; background-image: none; min-width: 1px; min-height: 1px; }
-columnview, listview, list { background-color: %BG_VIEW%; color: %FG%; }
-columnview > header { background-color: %BG_VIEW%; border-bottom: 1px solid %GRID%; }
-row { border-radius: 0; }
-row.activatable:hover { background-color: alpha(currentColor, 0.06); }
+
+/// The shared base sheet, spliced with Conservatory's palette. Installed at
+/// USER + 1 by [`install`]; the app sheet at USER + 2 overrides it.
+pub fn base() -> String {
+    vir_gtk::theme::base_css(&palette())
+}
+
+/// The app-owned remainder. `%TOKENS%` are replaced with [`palette`]'s hexes
+/// by [`sheet`]; no other substitution happens, so plain CSS braces are safe.
+const TEMPLATE: &str = "\
+/* --- Conservatory overrides over the base sheet --- */
 /* A selected row LIFTS and gets an accent edge; it is not washed in red.
    alpha(dragonRed, 0.35) over the dark view reads as maroon, and because a
    selection persists (the facet panes always have an [All] row selected, the
@@ -48,26 +49,7 @@ row.activatable:hover { background-color: alpha(currentColor, 0.06); }
 row:selected { background-color: %BG_RAISED%; color: %FG%; box-shadow: inset 2px 0 0 %ACCENT%; }
 .navigation-sidebar { background-color: %BG_VIEW%; }
 .navigation-sidebar > row { padding: 4px 8px; border-radius: 0; }
-.card, list.boxed-list {
-  background-color: %BG_CARD%;
-  color: %FG%;
-  border: 1px solid %GRID%;
-  border-radius: 0;
-  box-shadow: none;
-}
-list.boxed-list > row { border-bottom: 1px solid %GRID%; }
-list.boxed-list > row:last-child { border-bottom: none; }
-button {
-  background-color: %BG_CARD%;
-  background-image: none;
-  color: %FG%;
-  border: 1px solid %GRID%;
-  border-radius: 0;
-  box-shadow: none;
-  min-height: 24px;
-  padding: 2px 10px;
-}
-button:hover { background-color: %GRID%; }
+columnview > header { background-color: %BG_VIEW%; border-bottom: 1px solid %GRID%; }
 /* A checked button is LIT, not PAINTED. dragonRed is a syntax accent: spread
    across a persistent surface like the Music/Podcasts/Audiobooks tab bar it
    stops reading as Kanagawa and starts reading as a pink highlighter, and
@@ -84,7 +66,6 @@ button:checked {
 }
 /* Insensitive controls must read as such: without this the flat sheet leaves
    a disabled button visually identical to a live one. */
-button:disabled { color: %FG_DIM%; border-color: alpha(%GRID%, 0.5); background-color: transparent; }
 entry:disabled, spinbutton:disabled, dropdown:disabled, switch:disabled, check:disabled, scale:disabled { opacity: 0.55; }
 /* Icon-only buttons (headerbar / toolbars) read as flat like the rest of the
    chrome: a hard 1px border around every gear/list glyph is what made the top
@@ -92,35 +73,11 @@ entry:disabled, spinbutton:disabled, dropdown:disabled, switch:disabled, check:d
    and only fill on hover, keeping the flat identity. */
 button.flat, button.circular, button.image-button { background-color: transparent; border-color: transparent; }
 button.flat:hover, button.circular:hover, button.image-button:hover { background-color: %GRID%; }
-button.suggested-action { background-color: %ACCENT%; color: %ON_ACCENT%; border-color: %ACCENT%; }
-button.destructive-action { background-color: %ERR%; color: %ON_ACCENT%; border-color: %ERR%; }
 button.circular { border-radius: 0; }
-.linked > button:not(:first-child) { border-left-width: 0; }
-.toolbar { padding: 4px 6px; }
-.osd { background-color: alpha(%BG_WINDOW%, 0.80); color: %FG%; border-radius: 0; }
-popover > arrow { background-color: %BG_CARD%; }
-popover > contents {
-  background-color: %BG_CARD%;
-  color: %FG%;
-  border: 1px solid %GRID%;
-  border-radius: 0;
-  box-shadow: none;
-  padding: 4px;
-}
-popover.menu modelbutton { border-radius: 0; padding: 5px 8px; }
+button.pill { padding: 6px 18px; background-color: %BG_CARD%; border-color: %FG_DIM%; }
+button.pill:hover { background-color: %GRID%; }
 modelbutton:hover { background-color: %BG_RAISED%; color: %FG%; }
-popover.menu separator { background-color: %GRID%; min-height: 1px; margin: 4px 0; }
-entry, spinbutton {
-  background-color: %BG_VIEW%;
-  color: %FG%;
-  border: 1px solid %GRID%;
-  border-radius: 0;
-  box-shadow: none;
-}
-entry:focus-within, spinbutton:focus-within { border-color: %ACCENT%; }
-spinbutton > button { border-width: 0; background-color: transparent; }
-spinbutton > button:hover { background-color: %GRID%; }
-dropdown > button { background-color: %BG_CARD%; }
+.osd { background-color: alpha(%BG_WINDOW%, 0.80); color: %FG%; border-radius: 0; }
 switch { background-color: %GRID%; border: 1px solid %GRID%; border-radius: 0; }
 switch:checked { background-color: %ACCENT%; border-color: %ACCENT%; }
 switch > slider { background-color: %FG%; border: 1px solid %GRID%; border-radius: 0; min-width: 18px; min-height: 18px; }
@@ -130,46 +87,7 @@ scale > trough { background-color: %GRID%; border-radius: 0; }
 scale > trough > highlight { background-color: %ACCENT%; border-radius: 0; }
 scale > trough > slider { background-color: %FG%; border: 1px solid %GRID%; border-radius: 0; box-shadow: none; }
 scale > marks-after, scale > marks-before { color: %FG_DIM%; }
-tooltip, tooltip.background {
-  background-color: %BG_HEADER%;
-  color: %FG%;
-  border: 1px solid %GRID%;
-  border-radius: 0;
-  box-shadow: none;
-  padding: 4px 8px;
-}
-scrollbar { background-color: transparent; }
-scrollbar slider { background-color: %GRID%; border-radius: 0; min-width: 6px; min-height: 6px; }
-scrollbar slider:hover { background-color: %FG_DIM%; }
-selection { background-color: alpha(%ACCENT%, 0.35); color: %FG%; }
-/* Keyboard-focus ring, scoped to the discrete interactive controls. NOT the
-   universal `*`: pressing a bare modifier (e.g. Fn+Win = Ctrl+Super to switch
-   workspaces) flips GTK into keyboard-focus-visible mode, and a `*` rule then
-   outlines every cell/row/container in the focus chain at once, flashing the
-   accent across the whole window. Rows show their position through the
-   selection background already, so they do not need a focus outline. */
-button:focus-visible,
-entry:focus-visible,
-spinbutton:focus-visible,
-switch:focus-visible,
-checkbutton:focus-visible,
-check:focus-visible,
-dropdown:focus-visible,
-scale:focus-visible { outline: 1px solid %ACCENT%; outline-offset: -1px; }
-/* --- Utility classes the adwaita sheet used to provide --- */
-.title-1 { font-weight: 800; font-size: 170%; }
-.title-2 { font-weight: 800; font-size: 140%; }
-.title-3 { font-weight: 700; font-size: 120%; }
-.title-4 { font-weight: 700; font-size: 105%; }
-.large-title { font-weight: 300; font-size: 200%; }
-.heading { font-weight: 700; }
-.caption { font-size: 82%; }
-.caption-heading { font-weight: 700; font-size: 82%; }
-.dim-label { color: %FG_DIM%; }
-.success { color: %OK%; }
-.accent { color: %ACCENT%; }
-.numeric { font-feature-settings: 'tnum'; }
-/* --- Typography (Phase 13d): the only three font rules, test-enforced --- */
+/* --- Typography (Phase 13d): the only three font rules --- */
 window, popover, dropdown, tooltip { font-family: 'Inter', sans-serif; }
 .title-1, .title-2, .title-3, .title-4, .large-title, .heading { font-family: 'Fraunces', serif; }
 .tech { font-family: 'IBM Plex Mono', monospace; }
@@ -183,11 +101,8 @@ columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height
 columnview > header > button:hover { background: alpha(currentColor, 0.08); }
 .rating-stars { color: %WARN%; }  /* dragonYellow: gold reads as a rating; a column of red stars shouted */
 .filter-warn text { background-color: alpha(%WARN%, 0.20); }
-/* Empty-state call-to-action buttons. GTK/Adwaita convention names the class
-   `pill`; here it renders in the house idiom (flat, square, hard border) as a
-   roomier bordered button rather than a rounded capsule. */
-button.pill { padding: 6px 18px; background-color: %BG_CARD%; border-color: %FG_DIM%; }
-button.pill:hover { background-color: %GRID%; }
+/* Empty-state call-to-action buttons render in the house idiom as a roomier
+   bordered button rather than a rounded capsule. */
 .status-bar { padding: 2px 12px; border-top: 1px solid %GRID%; }
 .now-bar { padding: 6px 12px; border-top: 1px solid %GRID%; }
 .now-bar-cover { border-radius: 6px; box-shadow: 0 1px 5px rgba(0,0,0,0.40); background: alpha(currentColor, 0.06); }
@@ -222,14 +137,16 @@ button.pill:hover { background-color: %GRID%; }
 .spectrum { background: alpha(currentColor, 0.03); }
 .toast { background-color: %BG_CARD%; color: %FG%; border: 1px solid %GRID%; border-radius: 0; padding: 6px 12px; }
 ";
-/// The full generated sheet: the template with every `%TOKEN%` replaced by
+
+/// The full app-owned sheet: the template with every `%TOKEN%` replaced by
 /// its baked Dragon hex.
 pub fn sheet() -> String {
-    let mut p = vir_gtk::theme::Palette::dragon();
-    p.accent = "#c4746e"; // dragonRed
-    p.on_accent = "#12120f";
-    p.replace_tokens(TEMPLATE)
+    palette().replace_tokens(TEMPLATE)
 }
+
+/// Install the shared base sheet (USER + 1) then this app sheet (USER + 2),
+/// so Conservatory's deliberate divergences outrank the base by priority.
 pub fn install() {
-    vir_gtk::theme::install_stylesheet(&sheet());
+    vir_gtk::theme::install_stylesheet(&base());
+    vir_gtk::theme::install_app_stylesheet(&sheet());
 }

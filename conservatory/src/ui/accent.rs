@@ -53,12 +53,13 @@ impl AccentProvider {
         }
         let provider = gtk::CssProvider::new();
         provider.load_from_string(css);
-        // USER + 2: one step above the owned base sheet (USER + 1, theme.rs),
-        // preserving the pre-26l layering where the runtime ring outranked it.
+        // USER + 3: one step above the app sheet (USER + 2, theme.rs via
+        // install_app_stylesheet), preserving the pre-26l layering where the
+        // runtime ring outranked the owned styling.
         gtk::style_context_add_provider_for_display(
             &display,
             &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_USER + 2,
+            gtk::STYLE_PROVIDER_PRIORITY_USER + 3,
         );
         *self.provider.borrow_mut() = Some(provider);
     }

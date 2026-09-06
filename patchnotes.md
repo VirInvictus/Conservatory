@@ -15,6 +15,7 @@ The 2026-08-23 codebase sweep (roadmap Phase 27), landed as fix + regression com
 - **Internal:** the name-sort rules (`person_sort_name`, `derive_sort_name`) consolidated into `conservatory-core::names`.
 - **Changed:** vir-gtk adopted at 1.0.3 and vir-search at 1.4.0 (the consumer wave). Search grammar gains land with it: prefix (`foo*`), suffix (`*bar`), and in-list (`(a,b)`) match kinds now evaluate in-memory; SQL push-down for the new kinds is deferred and tracked.
 - **Changed:** vir-gtk adopted at 1.0.4 (the consumer wave): the shared portal's listener broadcast no longer panics when a listener re-enters mid-broadcast. No Conservatory code changes required.
+- **Changed:** vir-gtk adopted at 1.1.0 and its shared base stylesheet (`base_css`) now carries the unanimous flat/square widget core, installed at USER + 1; theme.rs keeps only the deliberate Conservatory divergences (lifted selection, lit checked buttons, square switches/checks/scales, image-button de-boxing, typography, app-owned rules) on `install_app_stylesheet` at USER + 2, and the runtime accent ring moves to USER + 3 so it still outranks the app sheet. Sheet content is unchanged rule-for-rule; the duplication moved into the shared library.
 
 ## v0.4.3 (2026-09-04)
 

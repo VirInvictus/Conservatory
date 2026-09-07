@@ -436,6 +436,9 @@ pub struct WritebackRow {
     pub track_no: Option<u32>,
     pub disc_no: Option<u32>,
     pub genres: Vec<String>,
+    /// Known-role credits (19b-iii), in role-then-sort order. Roles the running
+    /// version cannot name are left in the database (and the file) untouched.
+    pub credits: Vec<crate::tags::Credit>,
 }
 
 impl From<&WritebackRow> for crate::tags::TagWrite {
@@ -451,6 +454,7 @@ impl From<&WritebackRow> for crate::tags::TagWrite {
             track_no: r.track_no,
             disc_no: r.disc_no,
             genres: r.genres.clone(),
+            credits: r.credits.clone(),
         }
     }
 }
@@ -498,13 +502,60 @@ pub fn writeback_rows(conn: &Connection, ids: &[i64]) -> Result<Vec<WritebackRow
                 genres: genres
                     .map(|g| g.split(GENRE_SEP).map(str::to_string).collect())
                     .unwrap_or_default(),
+                credits: Vec::new(),
             })
         })?;
         for row in rows {
             out.push(row?);
         }
+        attach_credits(conn, &mut out)?;
     }
     Ok(out)
+}
+
+/// Fill each row's `credits` from `track_credits` (19b-iii), one query per
+/// chunk. Rows keep their order; credits sort role-then-sort like the
+/// [`track_credits`] read.
+fn attach_credits(conn: &Connection, rows: &mut [WritebackRow]) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let placeholders = vec!["?"; rows.len()].join(",");
+    let sql = format!(
+        "SELECT tc.track_id, tc.role, ar.name
+         FROM track_credits tc JOIN artists ar ON ar.id = tc.artist_id
+         WHERE tc.track_id IN ({placeholders})
+         ORDER BY tc.track_id,
+                  CASE tc.role WHEN 'Composer' THEN 0 WHEN 'Performer' THEN 1
+                               WHEN 'Producer' THEN 2 ELSE 3 END,
+                  ar.sort_name COLLATE NOCASE"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let ids: Vec<i64> = rows.iter().map(|r| r.track_id).collect();
+    let found = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |r| {
+        Ok((
+            r.get::<_, i64>("track_id")?,
+            r.get::<_, String>("role")?,
+            r.get::<_, String>("name")?,
+        ))
+    })?;
+    let mut credits: std::collections::HashMap<i64, Vec<crate::tags::Credit>> =
+        std::collections::HashMap::new();
+    for triple in found {
+        let (track_id, role, name) = triple?;
+        if let Some(parsed) = crate::tags::CreditRole::parse(&role) {
+            credits
+                .entry(track_id)
+                .or_default()
+                .push(crate::tags::Credit { role: parsed, name });
+        }
+    }
+    for row in rows.iter_mut() {
+        if let Some(c) = credits.remove(&row.track_id) {
+            row.credits = c;
+        }
+    }
+    Ok(())
 }
 
 /// The singleton playback cursor (spec §6.4, Phase 4a): what was playing and
@@ -832,6 +883,8 @@ pub struct SearchRow {
     pub album: Option<String>,
     pub shelf_genre: Option<String>,
     pub genres: Vec<String>,
+    /// Composer credit names (19b-iii), for the `composer:` field.
+    pub composers: Vec<String>,
     pub year: Option<i32>,
     pub added: Option<i64>,
     pub rating: u8,
@@ -844,6 +897,38 @@ pub struct SearchRow {
 }
 
 const GENRE_SEP: char = '\u{1f}'; // unit separator: safe group_concat delimiter
+
+/// One credit of a track, joined to the artist's display + sort names (19b-iii).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackCreditRow {
+    pub role: String,
+    pub name: String,
+    pub sort_name: String,
+}
+
+/// A track's credits (19b-iii). Known roles sort Composer, Performer, Producer;
+/// anything a future version wrote trails them, each group by sort name.
+pub fn track_credits(conn: &Connection, track_id: i64) -> Result<Vec<TrackCreditRow>> {
+    let sql = "SELECT tc.role, ar.name, ar.sort_name
+               FROM track_credits tc JOIN artists ar ON ar.id = tc.artist_id
+               WHERE tc.track_id = ?1
+               ORDER BY CASE tc.role
+                            WHEN 'Composer' THEN 0
+                            WHEN 'Performer' THEN 1
+                            WHEN 'Producer' THEN 2
+                            ELSE 3
+                        END,
+                        ar.sort_name COLLATE NOCASE";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map([track_id], |r| {
+        Ok(TrackCreditRow {
+            role: r.get("role")?,
+            name: r.get("name")?,
+            sort_name: r.get("sort_name")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
 
 /// Every track with the full search projection (Phase 3a). Genres are aggregated
 /// via `group_concat`; `played`/`queued` are derived. Ordered by track id.
@@ -860,7 +945,11 @@ pub fn search_rows(conn: &Connection) -> Result<Vec<SearchRow>> {
                          WHERE q.kind = 'track' AND q.track_id = t.id) AS queued,
                 (SELECT group_concat(g.name, '{GENRE_SEP}')
                    FROM track_genres tg JOIN genres g ON g.id = tg.genre_id
-                  WHERE tg.track_id = t.id) AS genres
+                  WHERE tg.track_id = t.id) AS genres,
+                (SELECT group_concat(name, '{GENRE_SEP}') FROM
+                   (SELECT ar.name FROM track_credits tc JOIN artists ar ON ar.id = tc.artist_id
+                    WHERE tc.track_id = t.id AND tc.role = 'Composer'
+                    ORDER BY ar.sort_name COLLATE NOCASE)) AS composers
          FROM tracks t
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.album_artist_id = aa.id
@@ -879,6 +968,10 @@ pub fn search_rows(conn: &Connection) -> Result<Vec<SearchRow>> {
             album: row.get("album")?,
             shelf_genre: row.get("shelf_genre")?,
             genres: genres
+                .map(|g| g.split(GENRE_SEP).map(str::to_string).collect())
+                .unwrap_or_default(),
+            composers: row
+                .get::<_, Option<String>>("composers")?
                 .map(|g| g.split(GENRE_SEP).map(str::to_string).collect())
                 .unwrap_or_default(),
             year: row.get("year")?,

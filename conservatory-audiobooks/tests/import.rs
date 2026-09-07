@@ -193,6 +193,7 @@ async fn tree_import_discovers_books_and_merges_discs() {
                 track_no: None,
                 disc_no: None,
                 genres: vec![],
+                credits: Vec::new(),
             },
         )
         .unwrap();

@@ -217,6 +217,22 @@ impl WorkerHandle {
         .await
     }
 
+    /// Credit a track with an artist in a role (idempotent; 19b-iii).
+    pub async fn link_track_credit(
+        &self,
+        track_id: i64,
+        artist_id: i64,
+        role: crate::tags::CreditRole,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::LinkTrackCredit {
+            track_id,
+            artist_id,
+            role,
+            reply,
+        })
+        .await
+    }
+
     /// Journal a move job and its operations atomically, returning the job id.
     /// Called before any file is touched (spec §5.4).
     pub async fn create_move_job(
@@ -1146,6 +1162,14 @@ fn handle(conn: &mut Connection, command: Command) {
             reply,
         } => {
             let _ = reply.send(writes::link_track_genre(conn, track_id, genre_id));
+        }
+        Command::LinkTrackCredit {
+            track_id,
+            artist_id,
+            role,
+            reply,
+        } => {
+            let _ = reply.send(writes::link_track_credit(conn, track_id, artist_id, role));
         }
         Command::CreateMoveJob {
             kind,

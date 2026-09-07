@@ -14,6 +14,9 @@ pub enum Field {
     Bitrate,
     Duration,
     Format,
+    // Composer credit names (19b-iii), from the track_credits table. Matched
+    // like the other music fields: SQL-translated on the fast path.
+    Composer,
     // Audiobook text fields (spec §3.8); matched in-memory only, never pushed to
     // the music `tracks` SQL (the `books` shelf is evaluated in memory).
     Author,
@@ -36,6 +39,7 @@ impl Field {
             "bitrate" => Self::Bitrate,
             "duration" => Self::Duration,
             "format" => Self::Format,
+            "composer" => Self::Composer,
             "author" => Self::Author,
             "narrator" => Self::Narrator,
             "series" => Self::Series,
@@ -58,6 +62,7 @@ impl Field {
             Self::Bitrate => "bitrate",
             Self::Duration => "duration",
             Self::Format => "format",
+            Self::Composer => "composer",
             Self::Author => "author",
             Self::Narrator => "narrator",
             Self::Series => "series",

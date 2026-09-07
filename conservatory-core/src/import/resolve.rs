@@ -125,6 +125,7 @@ mod tests {
             disc_total: None,
             year: None,
             genres: vec![],
+            credits: vec![],
             replaygain_track: None,
             replaygain_album: None,
             rating: None,

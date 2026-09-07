@@ -56,6 +56,7 @@ fn target_from(r: &WritebackRow) -> TagWrite {
         track_no: r.track_no,
         disc_no: r.disc_no,
         genres: r.genres.clone(),
+        credits: r.credits.clone(),
     }
 }
 

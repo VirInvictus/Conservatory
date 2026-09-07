@@ -17,7 +17,7 @@ use conservatory_core::db::{
     library_counts, list_perspectives, list_playlists, load_queue, ordered_track_ids,
     playlist_rows, probe_read, read_playback_state, read_verify_results, search_rows,
     search_track_ids, spawn_worker, static_playlist_track_ids, stats_genre_rows, stats_track_rows,
-    track_id_by_path, track_metadata, track_render_rows, writeback_rows,
+    track_credits, track_id_by_path, track_metadata, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, journal, organize_ops};
 use conservatory_core::search::{
@@ -486,6 +486,17 @@ enum Command {
     DebugFacets {
         /// Path to the SQLite database.
         db: PathBuf,
+    },
+
+    /// Track credits (19b-iii): list the people credits of the tracks matching a
+    /// selector, one line per credit under its track. The selector is the search
+    /// grammar (so `composer:` filters) and accepts `vl:NAME` for a Perspective;
+    /// empty means every track. Read-only.
+    Credits {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// The selector: a search expression, or `vl:NAME` for a Perspective.
+        query: Option<String>,
     },
 
     /// Audiobook tools (spec §3.8, Phase 7). Only present with the `audiobooks`
@@ -1386,6 +1397,7 @@ fn main() -> Result<()> {
         Some(Command::Dsp { action }) => dsp(action),
         Some(Command::Output { action }) => output(action),
         Some(Command::DebugFacets { db }) => debug_facets(db),
+        Some(Command::Credits { db, query }) => credits(db, query.as_deref()),
         #[cfg(feature = "audiobooks")]
         Some(Command::Audiobook {
             action: AudiobookAction::DebugRead { path },
@@ -5433,6 +5445,35 @@ fn debug_facets(db: PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// The `credits` verb (19b-iii): people credits per selected track, one line
+/// per credit under `id<TAB>title`. Tracks without credits are silent.
+fn credits(db: PathBuf, query: Option<&str>) -> Result<()> {
+    let pool = ReadPool::new(db, 3).context("opening read pool")?;
+    let conn = pool.open().context("opening pool connection")?;
+    let ids: Vec<i64> = match query.map(str::trim).filter(|q| !q.is_empty()) {
+        Some(q) => {
+            let mut ids: Vec<i64> = resolve_selector(&pool, q)?.into_iter().collect();
+            ids.sort_unstable();
+            ids
+        }
+        None => search_track_ids(&conn, "1=1", &[]).context("listing tracks")?,
+    };
+    for id in ids {
+        let Some(track) = get_track(&conn, id).context("reading track")? else {
+            continue;
+        };
+        let found = track_credits(&conn, id).context("reading credits")?;
+        if found.is_empty() {
+            continue;
+        }
+        println!("{}\t{}", id, track.title);
+        for c in &found {
+            println!("  {}\t{}", c.role, c.name);
+        }
+    }
+    Ok(())
+}
+
 fn search(db: PathBuf, query: String, format: Format) -> Result<()> {
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
     let conn = pool.open().context("opening pool connection")?;
@@ -5574,6 +5615,7 @@ fn to_item(r: &SearchRow) -> SearchItem {
         album: r.album.clone(),
         shelf_genre: r.shelf_genre.clone(),
         genres: r.genres.clone(),
+        composers: r.composers.clone(),
         year: r.year,
         added: r.added,
         rating: r.rating,

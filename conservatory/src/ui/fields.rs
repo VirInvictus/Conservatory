@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use conservatory_core::db::{Album, Track};
+use conservatory_core::db::{Album, Track, TrackCreditRow};
 use conservatory_core::{Assignment, format_size, parse_assignment};
 
 use crate::playqueue::fmt_secs;
@@ -131,6 +131,25 @@ pub fn inspector_fields(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "none".to_string());
     push(&mut out, "Cover", cover);
+    out
+}
+
+/// The credits section of the inspector (19b-iii): one row per role, names
+/// joined in the read's role-then-sort order. Empty when the track has none,
+/// consistent with the other absent-field skips. Unknown role tokens (a future
+/// version wrote them) show raw rather than being dropped.
+pub fn credit_fields(credits: &[TrackCreditRow]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for c in credits {
+        match out.last_mut() {
+            // Same role as the previous row: append to its name list.
+            Some((label, names)) if label.as_str() == c.role.as_str() => {
+                names.push_str(", ");
+                names.push_str(&c.name);
+            }
+            _ => out.push((c.role.as_str().to_string(), c.name.clone())),
+        }
+    }
     out
 }
 
@@ -268,5 +287,35 @@ mod tests {
         ] {
             assert!(!map.contains_key(absent), "{absent} should be skipped");
         }
+    }
+
+    fn credit_row(role: &str, name: &str) -> TrackCreditRow {
+        TrackCreditRow {
+            role: role.into(),
+            name: name.into(),
+            sort_name: String::new(),
+        }
+    }
+
+    #[test]
+    fn credit_fields_group_by_role_in_read_order() {
+        // The read delivers role-then-sort order; consecutive same-role rows
+        // collapse into one comma-joined value.
+        let rows = credit_fields(&[
+            credit_row("Composer", "Gavin Bryars"),
+            credit_row("Composer", "Biosphere"),
+            credit_row("Producer", "Aphex Twin"),
+        ]);
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "Composer".to_string(),
+                    "Gavin Bryars, Biosphere".to_string()
+                ),
+                ("Producer".to_string(), "Aphex Twin".to_string()),
+            ]
+        );
+        assert!(credit_fields(&[]).is_empty());
     }
 }

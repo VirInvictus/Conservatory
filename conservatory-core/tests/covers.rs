@@ -246,6 +246,7 @@ async fn reimport_into_existing_album_backfills_accent() {
             track_no: Some(9),
             disc_no: draft.disc_no,
             genres: draft.genres.clone(),
+            credits: Vec::new(),
         },
     )
     .unwrap();

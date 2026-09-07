@@ -84,7 +84,9 @@ pub use stats::{
     ArtistStat, BitrateStat, FormatStat, GenreStat, LibraryStats, RatingTally, compute_stats,
     format_size,
 };
-pub use tags::{EmbeddedCover, TagWrite, TrackDraft, read_track, write_track_tags};
+pub use tags::{
+    Credit, CreditRole, EmbeddedCover, TagWrite, TrackDraft, read_track, write_track_tags,
+};
 pub use verify::{VerifyVerdict, ffmpeg_available, flac_available, verify_file, verify_files};
 pub use waveform::{DEFAULT_BUCKETS, WaveformEnvelope, bucketize, compute_envelope, envelope_for};
 

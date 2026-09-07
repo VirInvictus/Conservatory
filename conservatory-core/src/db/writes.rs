@@ -15,6 +15,7 @@ use crate::db::models::{
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::{Error, Result};
 use crate::names::derive_sort_name;
+use crate::tags::CreditRole;
 
 pub(crate) fn insert_artist(conn: &Connection, artist: &Artist) -> Result<i64> {
     conn.execute(
@@ -321,6 +322,22 @@ pub(crate) fn link_track_genre(conn: &Connection, track_id: i64, genre_id: i64) 
         "INSERT INTO track_genres (track_id, genre_id) VALUES (?1, ?2)
          ON CONFLICT(track_id, genre_id) DO NOTHING",
         params![track_id, genre_id],
+    )?;
+    Ok(())
+}
+
+/// Credit a track with an artist in a role (19b-iii). Idempotent: the
+/// (track, artist, role) triple is the primary key, so a re-import or a
+/// duplicated tag value inserts nothing.
+pub(crate) fn link_track_credit(
+    conn: &Connection,
+    track_id: i64,
+    artist_id: i64,
+    role: CreditRole,
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO track_credits (track_id, artist_id, role) VALUES (?1, ?2, ?3)",
+        params![track_id, artist_id, role.as_str()],
     )?;
     Ok(())
 }

@@ -25,6 +25,8 @@ pub struct SearchItem {
     pub album: Option<String>,
     pub shelf_genre: Option<String>,
     pub genres: Vec<String>,
+    /// Composer credit names (19b-iii); empty for tracks without credits.
+    pub composers: Vec<String>,
     pub year: Option<i32>,
     pub added: Option<i64>, // epoch seconds
     pub rating: u8,
@@ -88,6 +90,7 @@ fn candidates(item: &SearchItem, field: Field) -> Vec<&str> {
         Field::ShelfGenre => item.shelf_genre.as_deref().into_iter().collect(),
         Field::Format => item.format.as_deref().into_iter().collect(),
         Field::Genre => item.genres.iter().map(String::as_str).collect(),
+        Field::Composer => item.composers.iter().map(String::as_str).collect(),
         Field::Author => item.authors.iter().map(String::as_str).collect(),
         Field::Narrator => item.narrators.iter().map(String::as_str).collect(),
         Field::Series => item.series.as_deref().into_iter().collect(),
@@ -309,6 +312,7 @@ mod tests {
             album: Some("Music Has the Right to Children".into()),
             shelf_genre: Some("Electronic".into()),
             genres: vec!["Electronic".into(), "Ambient".into()],
+            composers: vec!["Gavin Bryars".into()],
             year: Some(1998),
             added: Some(1_000_000_000),
             rating: 5,
@@ -493,6 +497,7 @@ mod match_kind_tests {
             artist: Some("Boards of Canada".into()),
             shelf_genre: Some("Electronic".into()),
             genres: vec!["Electronic".into(), "Ambient".into()],
+            composers: vec!["Gavin Bryars".into()],
             ..SearchItem::default()
         }
     }
@@ -511,6 +516,32 @@ mod match_kind_tests {
             &it,
             Field::Artist,
             &MatchKind::Prefix("zzz".into())
+        ));
+    }
+
+    #[test]
+    fn composer_field_matches_credit_names() {
+        let it = item();
+        assert!(field_match(
+            &it,
+            Field::Composer,
+            &MatchKind::Substring("bryars".into())
+        ));
+        assert!(field_match(
+            &it,
+            Field::Composer,
+            &MatchKind::Prefix("gavin".into())
+        ));
+        assert!(!field_match(
+            &it,
+            Field::Composer,
+            &MatchKind::Substring("mott".into())
+        ));
+        // Credits are their own field, not a leak into the artist's.
+        assert!(!field_match(
+            &it,
+            Field::Artist,
+            &MatchKind::Exact("Gavin Bryars".into())
         ));
     }
 }

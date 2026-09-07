@@ -1,12 +1,12 @@
 # Conservatory — Application Specification
 
-**Version:** 0.4.3 (Phases 0–17 shipped, including Phase 9 (scrobbling, v0.3.1–v0.3.6) and Phase 26 (de-adwaita, `0.3.0`); the Phase 19 + 9 milestone (the next tagged release, `0.4.4+`) is in flight with 19a, 19b-i, and 19b-ii shipped. See §17 and roadmap.md.)
+**Version:** 0.4.3 (Phases 0–17 shipped, including Phase 9 (scrobbling, v0.3.1–v0.3.6) and Phase 26 (de-adwaita, `0.3.0`); the Phase 19 + 9 milestone (the next tagged release, `0.4.4+`) is fully built, pending the 19b-i display pass. See §17 and roadmap.md.)
 **Target:** Wayland-native Linux desktops (Hyprland and GNOME both first-class), GTK4 ≥ 4.14, no libadwaita (§2.4, Phase 26)
 **Language:** Rust (2024 Edition)
 **Build System:** Cargo workspace (`conservatory-core` + `vir-search` (shared) + `conservatory-podcasts` + `conservatory-audiobooks` + `conservatory-cli` + `conservatory`) / Meson wrapper for Flatpak packaging
 **License:** GNU GPL v3.0 or later (forced by the GPL libraries libmpv links, the same license chain as Belfry; see §15)
 
-> **Status note.** This is the design contract. The decisions below are settled enough to build against. As of v0.4.3 the app is a daily-driver music player, a full podcast client, and an audiobook player: Phases 0–17 (§17) have shipped, Phase 26 replaced libadwaita with the owned stylesheet (`0.3.0`), and the Phase 19 + 9 milestone (the next tagged release, `0.4.4+`) is in flight: scrobbling, the waveform seek bar, drag-drop import, and the full-screen Now Playing view have shipped, with richer credits (19b-iii) awaiting its scope decision. The build is no longer deferred (the original deferral and its rationale are preserved in §16.1 and §17 for the record, since they are the thing to re-read if the concurrency with Atrium proves a mistake). Detail that was provisional at first draft (exact schema columns, CLI verbs, config keys) is now implemented; the `docs/` references carry the firmed-up specifics. Genuinely open decisions are collected in §16, not scattered as silent guesses.
+> **Status note.** This is the design contract. The decisions below are settled enough to build against. As of v0.4.3 the app is a daily-driver music player, a full podcast client, and an audiobook player: Phases 0–17 (§17) have shipped, Phase 26 replaced libadwaita with the owned stylesheet (`0.3.0`), and the Phase 19 + 9 milestone (the next tagged release, `0.4.4+`) is fully built: scrobbling, the waveform seek bar, drag-drop import, the full-screen Now Playing view, and the local credits (19b-iii, Option A) have shipped, leaving the 19b-i display pass as the milestone's open gate. The build is no longer deferred (the original deferral and its rationale are preserved in §16.1 and §17 for the record, since they are the thing to re-read if the concurrency with Atrium proves a mistake). Detail that was provisional at first draft (exact schema columns, CLI verbs, config keys) is now implemented; the `docs/` references carry the firmed-up specifics. Genuinely open decisions are collected in §16, not scattered as silent guesses.
 
 ---
 
@@ -282,6 +282,16 @@ CREATE TABLE track_genres (
     PRIMARY KEY (track_id, genre_id)
 );
 
+-- Role-tagged people credits (19b-iii), the book_people precedent generalized.
+-- People are the shared `artists` rows; roles are TEXT ('Composer', 'Performer',
+-- 'Producer' at v1) so further roles never need a migration.
+CREATE TABLE track_credits (
+    track_id  INTEGER REFERENCES tracks(id)  ON DELETE CASCADE,
+    artist_id INTEGER REFERENCES artists(id) ON DELETE CASCADE,
+    role      TEXT NOT NULL,
+    PRIMARY KEY (track_id, artist_id, role)
+);
+
 -- Genre normalization (§5.2). Source of the seed map is OPEN (§16).
 CREATE TABLE genre_aliases   (raw TEXT PRIMARY KEY, canonical TEXT NOT NULL);
 -- User priority list, tie-breaks shelf-genre derivation when track genres disagree.
@@ -451,7 +461,7 @@ Every operation that relocates files is a **job** with: a **dry-run preview** of
 
 ### 5.5 Embedded-Tag Write-Back and Portability
 
-Although the database owns organization, Conservatory **writes curated metadata back into the files' embedded tags** (a Calibre "embed metadata" analogue), so the files remain portable and self-describing outside the app. Write-back is a job, batched, and respects format capabilities (Vorbis comments, ID3, MP4 atoms). This is what keeps the file-ownership model from being a roach motel: you can always walk away with tagged files.
+Although the database owns organization, Conservatory **writes curated metadata back into the files' embedded tags** (a Calibre "embed metadata" analogue), so the files remain portable and self-describing outside the app. Write-back is a job, batched, and respects format capabilities (Vorbis comments, ID3, MP4 atoms). This is what keeps the file-ownership model from being a roach motel: you can always walk away with tagged files. People credits ride the same contract (19b-iii): Composer/Performer/Producer write to their per-format keys where the format has one (Vorbis comments and MP4 freeform carry all three multi-valued; ID3v2 reliably holds only TCOM Composer), and the database stays canonical where the format cannot.
 
 ### 5.6 Re-Import Contract
 
@@ -739,7 +749,7 @@ The phases below are the contract-level shape. `roadmap.md` breaks each into ind
 **Version milestones.** A `0.x.0` / `x.0.0` marks a capability tier (a cluster of phases delivering a nameable new thing); patch releases are the sub-phases within it. `1.0.0` is this spec's intended scope, verified on a real library and installable via Flatpak; per semver that is "the major features intended, reliable enough for general release," not "every idea." The `1.x` / `2.0` phases pick up the §16 doors deliberately left open plus the researched gaps against MusicBee / Calibre; `roadmap.md` carries the milestone table and the per-phase detail. The §14 "out of scope, forever" lines are unchanged by any of this.
 
 - **Phase 18 (`0.2.0`).** Grammar + column power: accent-folding and saved-query-by-name in the search grammar, and computed / customizable browse columns (the columns-only browse stays).
-- **Phase 19 + Phase 9 (the next tagged release, `0.4.4+`; the `0.4.0` label was consumed by untagged point releases).** Immersive polish (a waveform seek bar, full-screen Now Playing, drag-drop import, richer local credits) shipping with the optional, off-by-default ListenBrainz / Last.fm scrobble (§14 carve-out), the last pre-1.0 feature. Originally slated for `0.3.0`; re-sequenced when Phase 26 pulled de-adwaita forward to `0.3.0` (the roadmap re-sequencing note). 19a, 19b-i, 19b-ii, and all of Phase 9 have shipped; 19b-iii (richer credits) awaits its scope decision.
+- **Phase 19 + Phase 9 (the next tagged release, `0.4.4+`; the `0.4.0` label was consumed by untagged point releases).** Immersive polish (a waveform seek bar, full-screen Now Playing, drag-drop import, richer local credits) shipping with the optional, off-by-default ListenBrainz / Last.fm scrobble (§14 carve-out), the last pre-1.0 feature. Originally slated for `0.3.0`; re-sequenced when Phase 26 pulled de-adwaita forward to `0.3.0` (the roadmap re-sequencing note). 19a, 19b-i, 19b-ii, 19b-iii (Option A: `track_credits`, the `composer:` field, per-format write-back), and all of Phase 9 have shipped; the 19b-i display pass is the gate that remains.
 - **Phase 26 (`0.3.0`), pulled forward.** Hyprland-native design: libadwaita dropped for plain GTK4 under the owned Kanagawa Dragon stylesheet, with the Phase 25 tiling audits as its verification tail; the compact mini-player (the rest of Phase 25) stays deferred at `2.1.0`.
 - **Phase 20 (`1.0.0`).** The endgame, no new features: the 50k real-library memory gate (§13), the full-library move-safety pass (§5.4), the library-root decision (§16.14, settled early: `~/Conservatory`), Flatpak + AppStream / GNOME Circle packaging (§12), and the final icon (§15). The gate that earns the tag.
 - **Phase 21 (`1.1.0`).** Metadata intelligence: online metadata + cover-art fetching that consumes a canonical source (MusicBrainz + Cover Art Archive for music, Audnexus / Google Books for audiobooks), review-then-apply through the existing write-back pipeline, never a silent auto-tag. Resolves §16.5, §16.10; does not out-Picard Picard (§14).

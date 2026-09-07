@@ -142,6 +142,7 @@ fn to_item(r: &SearchRow) -> SearchItem {
         album: r.album.clone(),
         shelf_genre: r.shelf_genre.clone(),
         genres: r.genres.clone(),
+        composers: r.composers.clone(),
         year: r.year,
         added: r.added,
         rating: r.rating,

@@ -1239,13 +1239,26 @@ have held the other two hostage.)
       ship it), bundling the four shelled-out tools (rsgain / flac / ffmpeg /
       ffprobe, which have no host `$PATH` inside a sandbox; the §5.8
       decision), the real icon, and the 16:9 screenshots that wait on it.
-- [ ] **19b-iii — Richer navigable-credits metadata from local sources.**
-      **Scope undefined; needs a design decision before it is buildable** (which
-      credits, from which tags, navigable how, and whether the schema grows).
-      Settle scope first or explicitly bump this item out of the milestone; it must
-      not hold the tag while undefined.
-      **Design brief written 2026-09-04 (the settle-first path); approve or
-      amend and this becomes buildable.**
+- [x] **19b-iii — Richer navigable-credits metadata from local sources.**
+      **Shipped 2026-09-06 as Option A** (Brandon delegated the verdict to a
+      researched call; the brief below records how the options compared).
+      Migration `0022` adds `track_credits (track_id, artist_id, role)`
+      reusing the shared `artists` rows (roles are TEXT: Composer, Performer,
+      Producer at v1, more later without a migration). Import reads the three
+      roles from the embedded tags via lofty's per-format mappings, write-back
+      rides `TagWrite` (Vorbis/MP4 carry all three multi-valued; ID3v2
+      reliably holds only TCOM Composer, a documented caveat, the DB stays
+      canonical per §5.6), a typed second ID3v2 read picks up TXXX-spelled
+      credits and now also carries the POPM rating read. `composer:` is a new
+      search field (consumer-side via the `ParseField` trait; no vir-search
+      release was needed, which the brief had assumed it would be) with full
+      SQL push-down through a `track_credits` EXISTS, so navigation is on the
+      fast path. Surfaces: the `credits <db> [query]` CLI verb and an
+      inspector credits section. Tests: tag round-trip per format, import →
+      credits → `composer:` end-to-end, idempotent re-link + delete cascade,
+      eval and SQL-translate units.
+      **Scope was undefined; a design decision was needed before it was
+      buildable. Settled 2026-09-04 (the settle-first path).**
       - *Which credits:* lofty (already the tag engine) reads and writes the
         whole People & Organizations ItemKey family mapped per format
         (Composer, Conductor, Lyricist, Performer, Producer, Engineer, Mixer,
@@ -1266,7 +1279,7 @@ have held the other two hostage.)
         text only (searchable, not navigable); cheapest. **Option C:** a full
         Composer facet pane like Genre; only worth it for a classical-heavy
         library; a full phase.
-      - *Pick:* A, B, or C (or bump the item out of the milestone); A keeps the
+      - *Pick:* A, B, or C (or bump the item out of the milestone); **A, chosen 2026-09-06.** A keeps the
         Calibre-shaped promise at sub-phase cost.
 
 *Usable artifact:* a waveform scrubber and drag-drop import. Ships alongside Phase 9 under `0.4.4+`.
@@ -1401,9 +1414,8 @@ Decisions settled by Brandon 2026-09-04 (were open under AUDIT_THREE §5):
 
 Still open, awaiting Brandon:
 
-- **19b-iii approval** (the brief) or an explicit bump out of the milestone.
-- **Milestone gate (the next tag, `0.4.4+`).** 19b-i's display pass (a real drag-drop at Brandon's desk) plus
-  whatever 19b-iii resolves to; then the tag.
+- ~~**19b-iii approval** (the brief) or an explicit bump out of the milestone.~~ *(Resolved 2026-09-06: Brandon delegated the verdict to a researched call; Option A shipped. See the 19b-iii box.)*
+- **Milestone gate (the next tag, `0.4.4+`).** 19b-i's display pass (a real drag-drop at Brandon's desk) is the gate that remains; 19b-iii shipped 2026-09-06. Then the tag.
 - **1.0.0 gate sessions.** The 50k real-library memory gate and the
   full-library move-safety pass need a working copy of the real library and
   Brandon's hardware; schedule the session (§5.8). The Phase 20 Flatpak prep

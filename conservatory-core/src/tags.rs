@@ -25,6 +25,45 @@ pub struct EmbeddedCover {
     pub mime: Option<String>,
 }
 
+/// A curated credit role (19b-iii). Stored as TEXT in `track_credits.role` via
+/// [`CreditRole::as_str`], so roles outside this enum survive a round-trip
+/// untouched; new roles are an enum arm, never a migration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CreditRole {
+    Composer,
+    Performer,
+    Producer,
+}
+
+impl CreditRole {
+    /// The stored/searchable token (`track_credits.role`, `composer:` field).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CreditRole::Composer => "Composer",
+            CreditRole::Performer => "Performer",
+            CreditRole::Producer => "Producer",
+        }
+    }
+
+    /// Parse a stored role token; `None` for roles a future version wrote.
+    pub fn parse(role: &str) -> Option<CreditRole> {
+        Some(match role {
+            "Composer" => CreditRole::Composer,
+            "Performer" => CreditRole::Performer,
+            "Producer" => CreditRole::Producer,
+            _ => return None,
+        })
+    }
+}
+
+/// One person credit on a track: a role and the credited display name, resolved
+/// into the shared `artists` rows at import.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Credit {
+    pub role: CreditRole,
+    pub name: String,
+}
+
 /// Everything read from a single audio file before it is resolved into the DB.
 ///
 /// Mirrors the eventual `Track`/`Album` split loosely: track-level fields plus
@@ -47,6 +86,8 @@ pub struct TrackDraft {
     pub year: Option<i32>,
     /// Raw multi-value genres, exactly as stored (the §5.2 decoupling).
     pub genres: Vec<String>,
+    /// People credits read from the embedded tags (19b-iii), role-tagged.
+    pub credits: Vec<Credit>,
     pub replaygain_track: Option<f64>,
     pub replaygain_album: Option<f64>,
     /// Star rating 0–5 read from the file's embedded rating tag, `None` when
@@ -88,6 +129,7 @@ pub fn read_track(path: &Path) -> Result<TrackDraft> {
         disc_total: None,
         year: None,
         genres: Vec::new(),
+        credits: Vec::new(),
         replaygain_track: None,
         replaygain_album: None,
         rating: None,
@@ -103,11 +145,20 @@ pub fn read_track(path: &Path) -> Result<TrackDraft> {
         fill_from_tag(&mut draft, tag);
     }
 
-    // lofty's generic tag view drops ID3v2 POPM frames (they stay in the
-    // format-specific remainder), so an MP3/AAC rating needs a second, typed
-    // read. Properties are skipped, so this is a cheap header-only parse.
-    if draft.rating.is_none() {
-        draft.rating = read_popm_rating(path, tagged.file_type());
+    // lofty's generic tag view drops ID3v2 POPM frames and does not surface the
+    // TXXX-spelled credit roles under known ItemKeys, so an MP3/AAC needs a
+    // second, typed read for rating + credits. Properties are skipped, so this
+    // is a cheap header-only parse.
+    if matches!(tagged.file_type(), FileType::Mpeg | FileType::Aac) {
+        let (rating, credits) = read_id3v2_extras(path, tagged.file_type());
+        if draft.rating.is_none() {
+            draft.rating = rating;
+        }
+        for c in credits {
+            if !draft.credits.contains(&c) {
+                draft.credits.push(c);
+            }
+        }
     }
 
     Ok(draft)
@@ -133,6 +184,24 @@ fn fill_from_tag(draft: &mut TrackDraft, tag: &Tag) {
         .get_strings(&ItemKey::Genre)
         .map(str::to_string)
         .collect();
+    // People credits (19b-iii): the three v1 roles, multi-valued like genres.
+    // lofty maps these per format (TCOM / ©wrt / COMPOSER for Composer; the
+    // iTunes freeform, APE, Vorbis, and TXXX spellings for Performer/Producer).
+    for (key, role) in [
+        (ItemKey::Composer, CreditRole::Composer),
+        (ItemKey::Performer, CreditRole::Performer),
+        (ItemKey::Producer, CreditRole::Producer),
+    ] {
+        for name in tag.get_strings(&key) {
+            if name.trim().is_empty() {
+                continue;
+            }
+            draft.credits.push(Credit {
+                role,
+                name: name.trim().to_string(),
+            });
+        }
+    }
     draft.replaygain_track = tag
         .get_string(&ItemKey::ReplayGainTrackGain)
         .and_then(parse_replaygain);
@@ -151,35 +220,68 @@ fn fill_from_tag(draft: &mut TrackDraft, tag: &Tag) {
     draft.cover = tag.pictures().first().map(picture_to_cover);
 }
 
-/// Read the first ID3v2 `POPM` frame's rating byte from an MP3/AAC file.
-///
-/// The generic [`Tag`] never surfaces POPM (lofty retains it as an unsupported
-/// frame), so this re-opens the file through the typed reader with properties
-/// disabled. Any failure reads as "unrated".
-fn read_popm_rating(path: &Path, file_type: FileType) -> Option<u8> {
+/// The second, typed ID3v2 read for what the generic [`Tag`] view misses: the
+/// first POPM rating byte, and the TXXX-spelled credit roles (`TXXX:Composer`
+/// / `:Performer` / `:Producer`; TCOM covers Composer on the generic path but
+/// TXXX-spelled files exist in the wild). Case-insensitive on descriptions.
+/// One credit per role survives ID3v2's unique-frame rule; any parse failure
+/// reads as nothing found.
+fn read_id3v2_extras(path: &Path, file_type: FileType) -> (Option<u8>, Vec<Credit>) {
     use lofty::config::ParseOptions;
     use lofty::id3::v2::{Frame, FrameId, Id3v2Tag};
     use std::borrow::Cow;
 
-    fn popm_stars(tag: &Id3v2Tag) -> Option<u8> {
-        match tag.get(&FrameId::Valid(Cow::Borrowed("POPM")))? {
-            Frame::Popularimeter(popm) => stars_from_popm_byte(popm.rating),
+    let parsed = |tag: &Id3v2Tag| -> (Option<u8>, Vec<Credit>) {
+        let rating = match tag.get(&FrameId::Valid(Cow::Borrowed("POPM"))) {
+            Some(Frame::Popularimeter(popm)) => stars_from_popm_byte(popm.rating),
             _ => None,
+        };
+        // TXXX descriptions carry the role; the lookup is exact-match, so the
+        // common spellings are tried. ID3v2's unique-frame rule means one
+        // credit per role survives here.
+        let mut credits = Vec::new();
+        for (role, description) in [
+            (CreditRole::Composer, "Composer"),
+            (CreditRole::Performer, "Performer"),
+            (CreditRole::Producer, "Producer"),
+        ] {
+            for spelling in [
+                description.to_string(),
+                description.to_ascii_lowercase(),
+                description.to_ascii_uppercase(),
+            ] {
+                if let Some(name) = tag.get_user_text(&spelling) {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        credits.push(Credit {
+                            role,
+                            name: name.to_string(),
+                        });
+                    }
+                    break;
+                }
+            }
         }
-    }
+        (rating, credits)
+    };
 
-    let mut file = std::fs::File::open(path).ok()?;
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return (None, Vec::new()),
+    };
     let opts = ParseOptions::new().read_properties(false);
-    match file_type {
-        FileType::Mpeg => {
-            let f = lofty::mpeg::MpegFile::read_from(&mut file, opts).ok()?;
-            f.id3v2().and_then(popm_stars)
-        }
-        FileType::Aac => {
-            let f = lofty::aac::AacFile::read_from(&mut file, opts).ok()?;
-            f.id3v2().and_then(popm_stars)
-        }
+    let tag = match file_type {
+        FileType::Mpeg => lofty::mpeg::MpegFile::read_from(&mut file, opts)
+            .ok()
+            .and_then(|f| f.id3v2().cloned()),
+        FileType::Aac => lofty::aac::AacFile::read_from(&mut file, opts)
+            .ok()
+            .and_then(|f| f.id3v2().cloned()),
         _ => None,
+    };
+    match tag {
+        Some(tag) => parsed(&tag),
+        None => (None, Vec::new()),
     }
 }
 
@@ -270,6 +372,12 @@ pub struct TagWrite {
     pub track_no: Option<u32>,
     pub disc_no: Option<u32>,
     pub genres: Vec<String>,
+    /// People credits (19b-iii), multi-valued like genres (§5.5 portability).
+    /// Caveats: ID3v2 text frames are single-valued (lofty 0.21), so on mp3 a
+    /// role's same-key items collapse to one; a bare Performer has no ID3v2
+    /// frame at all and stays database-only there. The database is canonical
+    /// and keeps every credit (§5.6).
+    pub credits: Vec<Credit>,
 }
 
 /// Write the curated DB metadata into a file's embedded tags (spec §5.5).
@@ -330,6 +438,36 @@ pub fn write_track_tags(path: &Path, w: &TagWrite) -> Result<()> {
     let _ = tag.take(&ItemKey::Genre);
     for g in &w.genres {
         tag.push(TagItem::new(ItemKey::Genre, ItemValue::Text(g.clone())));
+    }
+
+    // Credits are multi-value the same way, one key per role (19b-iii). On
+    // ID3v2 only Composer has a reliable home (TCOM): the involved-people list
+    // that carries Producer is v2.4-only in practice and a bare Performer has
+    // no standard frame at all, so mp3/aac files carry Composer only and the
+    // database keeps every credit (§5.6, the DB is canonical). The typed read
+    // still picks up TXXX-spelled credits other tools write.
+    let credits_all_roles = tag.tag_type() != TagType::Id3v2;
+    for role in [
+        CreditRole::Composer,
+        CreditRole::Performer,
+        CreditRole::Producer,
+    ] {
+        if !credits_all_roles && role != CreditRole::Composer {
+            continue;
+        }
+        let native = match role {
+            CreditRole::Composer => ItemKey::Composer,
+            CreditRole::Performer => ItemKey::Performer,
+            CreditRole::Producer => ItemKey::Producer,
+        };
+        let _ = tag.take(&native);
+        let _ = tag.take(&ItemKey::Unknown(role.as_str().to_string()));
+        for name in w.credits.iter().filter(|c| c.role == role) {
+            tag.push(TagItem::new(
+                native.clone(),
+                ItemValue::Text(name.name.clone()),
+            ));
+        }
     }
 
     tagged.save_to_path(path, WriteOptions::default())?;

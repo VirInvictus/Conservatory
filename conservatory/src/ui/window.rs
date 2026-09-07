@@ -31,7 +31,8 @@ use conservatory_core::db::{
     PlaylistOrder, ReadPool, ResamplerQuality, WorkerHandle, facet_rows, get_album, get_artist,
     get_audio_state, get_eq_preset, get_eq_state, get_track, get_tracks, list_eq_presets,
     list_peq_bands, list_perspectives, list_playlists, load_queue_display, read_playback_state,
-    show_settings_map, spawn_worker, static_playlist_track_ids, track_render_rows, writeback_rows,
+    show_settings_map, spawn_worker, static_playlist_track_ids, track_credits, track_render_rows,
+    writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
@@ -47,7 +48,7 @@ use crate::query::{materialize_smart, query_leaf};
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::dialogs::{Alert, Appearance};
 use crate::ui::facet_pane::{FacetPane, build_pane};
-use crate::ui::fields::{collect_assignments, inspector_fields};
+use crate::ui::fields::{collect_assignments, credit_fields, inspector_fields};
 use crate::ui::inspector::{Inspector, build_inspector};
 use crate::ui::now_bar::{NowBar, build_now_bar};
 use crate::ui::now_playing_full::{NowPlayingFull, build_now_playing_full};
@@ -1593,6 +1594,11 @@ impl ConservatoryWindow {
             artist.as_ref().map(|a| a.name.as_str()),
             file_size,
         );
+        // The credits section (19b-iii): role-then-sort rows after the metadata.
+        let mut fields = fields;
+        if let Ok(credits) = track_credits(&conn, track.id) {
+            fields.extend(credit_fields(&credits));
+        }
         let cover_abs = root
             .zip(album.as_ref().and_then(|a| a.cover_path.as_deref()))
             .map(|(r, cover)| r.join(cover));

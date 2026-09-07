@@ -133,6 +133,14 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Credit a track with an artist in a role (idempotent; 19b-iii).
+    LinkTrackCredit {
+        track_id: i64,
+        artist_id: i64,
+        role: crate::tags::CreditRole,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Journal a move job and all its operations (`pending`) atomically, before
     /// any file is touched (spec §5.4). Returns the new job id.
     CreateMoveJob {
@@ -697,6 +705,7 @@ impl Command {
             Self::InsertTrack { .. } => "insert_track",
             Self::GetOrCreateGenre { .. } => "get_or_create_genre",
             Self::LinkTrackGenre { .. } => "link_track_genre",
+            Self::LinkTrackCredit { .. } => "link_track_credit",
             Self::CreateMoveJob { .. } => "create_move_job",
             Self::CompleteOperation { .. } => "complete_operation",
             Self::RevertOperation { .. } => "revert_operation",

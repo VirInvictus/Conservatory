@@ -111,6 +111,12 @@ fn text_cond(field: Field, pattern: &str, p: &mut Vec<SqlValue>) -> String {
              WHERE tg.track_id = tracks.id AND g.name LIKE ? ESCAPE '\\')"
                 .into()
         }
+        Field::Composer => {
+            "EXISTS (SELECT 1 FROM track_credits tc JOIN artists ca ON ca.id = tc.artist_id \
+             WHERE tc.track_id = tracks.id AND tc.role = 'Composer' \
+             AND ca.name LIKE ? ESCAPE '\\')"
+                .into()
+        }
         // Numeric/date fields never reach text_cond.
         _ => "0=1".into(),
     }
@@ -138,6 +144,9 @@ fn presence_sql(field: Field, want: bool) -> String {
         Field::Genre => {
             "EXISTS (SELECT 1 FROM track_genres tg WHERE tg.track_id = tracks.id)".to_string()
         }
+        Field::Composer => "EXISTS (SELECT 1 FROM track_credits tc WHERE tc.track_id = tracks.id \
+             AND tc.role = 'Composer')"
+            .to_string(),
         // Audiobook fields never reach here (filtered out in `field_sql`).
         Field::Author | Field::Narrator | Field::Series => "0=1".to_string(),
     };

@@ -250,6 +250,20 @@ pub async fn import_folder(
             let genre_id = worker.get_or_create_genre(genre.clone()).await?;
             worker.link_track_genre(track_id, genre_id).await?;
         }
+        // People credits (19b-iii): resolve into the shared artists rows, so a
+        // credited name shares one namespace and sort discipline with artists.
+        for credit in &draft.credits {
+            let artist_id = worker
+                .get_or_create_artist(
+                    credit.name.clone(),
+                    crate::names::derive_sort_name(&credit.name),
+                    None,
+                )
+                .await?;
+            worker
+                .link_track_credit(track_id, artist_id, credit.role)
+                .await?;
+        }
         ops.push(MoveOp {
             track_id: Some(track_id),
             album_id: Some(album_id),

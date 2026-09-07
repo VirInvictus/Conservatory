@@ -99,10 +99,13 @@ modules:
 # 1. Build dependencies inside the sandbox: libmpv (the playback host; meson
 #    dependency('mpv') gates configure) is not in org.gnome.Sdk, and the four
 #    shelled-out tools (rsgain, flac, ffmpeg, ffprobe) are host $PATH today.
-#    Each needs a manifest module here, or (for the tools) the feature must
-#    degrade honestly rather than failing at the point of use. Roadmap Phase 20
-#    carries this; the libmpv module is the one hard blocker for a full
-#    sandboxed build.
+#    Approach decided 2026-09-06 (roadmap Phase 20): own manifest modules, not
+#    a shared extension. One minimal ffmpeg module yields ffmpeg + ffprobe;
+#    flac and rsgain (with libebur128, taglib, libinih) are small modules.
+#    The ffmpeg-full extension was struck: libs-only contract, optional by
+#    default, and discontinued at the freedesktop 25.08 base this GNOME 50
+#    runtime sits on. The libmpv module remains the one hard blocker for a
+#    full sandboxed build.
 #
 # 2. The icon is still the placeholder glasshouse from logo.svg, and the
 #    metainfo screenshots stay commented out until the real mark lands.

@@ -1,8 +1,8 @@
 # Patch Notes
 
-## Unreleased
+## v0.4.4 (2026-09-06)
 
-The 2026-08-23 codebase sweep (roadmap Phase 27), landed as fix + regression commits ahead of the next tag.
+The Phase 19 + 9 milestone, tagged. The immersive tier (the waveform seek bar, the full-screen Now Playing view, drag-drop import) and the opt-in ListenBrainz / Last.fm scrobbler shipped across the v0.3.x point releases; this cycle closed the milestone's tail: richer local credits (19b-iii), the Rating and Added facets, the DeaDBeeF rating normalization, the consumer wave to vir-gtk 1.1.0 and vir-search 1.4.0, and the packaging decisions (offline cargo sources, the meson wrapper invoking cargo, the §5.8 module approach), plus the Phase 27 codebase sweep with its fixes and regressions.
 
 - **Fixed:** audiobook author shelves sort by the stored last-name-first `sort_name`, not the display string ("Brandon Sanderson" now files under S).
 - **Fixed:** a multi-disc album's `folder_path` lands at the album root after a move, so covers no longer sync into a `CD1/` subfolder; the result is order-independent and survives crash recovery and undo.

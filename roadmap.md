@@ -14,7 +14,7 @@ A `0.x.0` / `x.0.0` is a **capability milestone**: a cluster of phases deliverin
 | `0.1.x` | Power-user interaction, UX completeness, player table-stakes | 16, 16.5, 17 | ✅ (through v0.1.26) |
 | **`0.2.0`** | **Grammar & columns** | 18 | ✅ tagged |
 | **`0.3.0`** | **Hyprland-native design (de-adwaita)** | 26 (+ the Phase 25 audits as its verification tail) | ✅ tagged |
-| **`0.4.4+`** | **Immersive & history** | 19 + 9 | in progress (Phase 9 complete: 9a v0.3.1, 9b v0.3.2, 9c v0.3.5, 9d v0.3.6; 19a v0.3.3–0.3.4, 19b-i v0.3.12, 19b-ii v0.3.13 shipped; open: 19b-iii scope + the 19b-i display pass). Re-labelled 2026-09-05: the `0.4.0` number was consumed by the untagged 0.4.0-0.4.3 point releases, so the milestone tag is the next number cut |
+| **`0.4.4`** | **Immersive & history** | 19 + 9 | ✅ tagged v0.4.4 (2026-09-06): Phase 9 (9a v0.3.1-9d v0.3.6), 19a, 19b-i, 19b-ii, and 19b-iii all shipped. Re-labelled 2026-09-05 (the `0.4.0` number was consumed by the untagged 0.4.0-0.4.3 point releases); tagged on Brandon's go. The 19b-i display pass and the audible EQ re-check remain owed as hands-on follow-ups |
 | **`1.0.0`** | **Verified & packaged** (the endgame) | 20 | planned |
 | `1.1.0` | Metadata intelligence | 21 | committed, beyond 1.0 |
 | `1.2.0` | Curation depth | 22 | committed, beyond 1.0 |
@@ -1416,7 +1416,7 @@ Decisions settled by Brandon 2026-09-04 (were open under AUDIT_THREE §5):
 Still open, awaiting Brandon:
 
 - ~~**19b-iii approval** (the brief) or an explicit bump out of the milestone.~~ *(Resolved 2026-09-06: Brandon delegated the verdict to a researched call; Option A shipped. See the 19b-iii box.)*
-- **Milestone gate (the next tag, `0.4.4+`).** 19b-i's display pass (a real drag-drop at Brandon's desk) is the gate that remains; 19b-iii shipped 2026-09-06. Then the tag.
+- ~~**Milestone gate (the next tag, `0.4.4+`).**~~ *(Closed 2026-09-06: `v0.4.4` tagged on Brandon's go with 19b-iii shipped. The 19b-i display pass and the audible EQ re-check are still owed as hands-on follow-ups; anything they surface lands as a `0.4.x` fix.)*
 - **1.0.0 gate sessions.** The 50k real-library memory gate and the
   full-library move-safety pass need a working copy of the real library and
   Brandon's hardware; schedule the session (§5.8). The Phase 20 Flatpak prep

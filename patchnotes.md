@@ -1,5 +1,9 @@
 # Patch Notes
 
+## Unreleased
+
+- **Changed:** vir-gtk adopted at 1.2.0 (the consumer wave): the StyleManager lifecycle API and the StyleScope/ThemeChoice per-window overrides arrive as opt-in additions; Conservatory's runtime accent provider (USER + 3) is now formally manageable through the new API instead of hand-rolled state. Lock-only wave, no code changes required; both suites green on the moved lock.
+
 ## v0.4.4 (2026-09-06)
 
 The Phase 19 + 9 milestone, tagged. The immersive tier (the waveform seek bar, the full-screen Now Playing view, drag-drop import) and the opt-in ListenBrainz / Last.fm scrobbler shipped across the v0.3.x point releases; this cycle closed the milestone's tail: richer local credits (19b-iii), the Rating and Added facets, the DeaDBeeF rating normalization, the consumer wave to vir-gtk 1.1.0 and vir-search 1.4.0, and the packaging decisions (offline cargo sources, the meson wrapper invoking cargo, the §5.8 module approach), plus the Phase 27 codebase sweep with its fixes and regressions.

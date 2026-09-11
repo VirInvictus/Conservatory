@@ -26,6 +26,10 @@ runtime-version: '50'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
+  # bindgen (the pipewire Rust stack behind the Phase 12d spectrum tap) needs
+  # libclang at build time; the Sdk does not ship it. Installed from the
+  # freedesktop 25.08 branch (the GNOME 50 base).
+  - org.freedesktop.Sdk.Extension.llvm21
 command: conservatory
 
 # Skip flatpak-builder's appstreamcli-compose pass: librsvg's pixbuf loader is
@@ -36,10 +40,11 @@ command: conservatory
 appstream-compose: false
 
 build-options:
-  append-path: /usr/lib/sdk/rust-stable/bin
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm21/bin
   env:
     CARGO_HOME: /run/build/conservatory/cargo
     CARGO_NET_OFFLINE: 'true'
+    LIBCLANG_PATH: /usr/lib/sdk/llvm21/lib
 
 # Sandbox permissions.
 #
@@ -77,8 +82,169 @@ cleanup:
 
 modules:
 
+  # The playback host and the four shelled-out tools, as own manifest modules
+  # (the §5.8 decision, 2026-09-06: own modules, not a shared extension; the
+  # ffmpeg-full extension was struck on research). One minimal ffmpeg module
+  # yields both ffmpeg and ffprobe plus the libs libmpv and rsgain link.
+  # Module order is the dependency order; everything installs into /app.
+
+  - name: ffmpeg
+    buildsystem: simple
+    build-commands:
+      # Minimal-but-sufficient ffmpeg: no external libraries beyond gnutls
+      # (https for undownloaded-episode streaming through libmpv), docs and
+      # autodetect off. The builtin decoders, demuxers, and af filters the
+      # app needs (volume, equalizer, acompressor, alimiter, dynaudnorm,
+      # silenceremove, loudnorm) are all compiled in by default; autodetect
+      # off only keeps external-library components out. ffplay is skipped
+      # (no SDL with autodetect off); ffmpeg and ffprobe install.
+      - ./configure --prefix=/app
+          --disable-doc --disable-debug --disable-autodetect
+          --disable-static --enable-shared
+          --enable-gpl --enable-network --enable-gnutls
+          --disable-ffplay
+      - make -j${FLATPAK_BUILDER_N_JOBS:-$(nproc)}
+      - make install
+    sources:
+      - type: archive
+        url: https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n7.1.1.tar.gz
+        sha256: f117507dc501f2a6c11f9241d8d0c3213846cfad91764361af37befd6b6c523d
+    cleanup:
+      # The ffmpeg + ffprobe CLI tools STAY (the §5.8 bundling is exactly
+      # about the sandboxed $PATH); only the docs go.
+      - /share/ffmpeg
+
+  # mpv 0.40 hard-requires libplacebo (>= 6.338.2) and libass (>= 0.12.2),
+  # and neither ships in org.gnome.Sdk; they precede libmpv. The Sdk carries
+  # shaderc (SPIR-V) and the vulkan / EGL stacks, so glslang is off and the
+  # rest auto-detects. The app is audio-only, but vo_gpu is mpv's only
+  # modern video path, so the library build needs the full renderer.
+  - name: libplacebo
+    buildsystem: meson
+    config-opts:
+      - -Ddemos=false
+      - -Dtests=false
+      - -Dglslang=disabled
+      # The opengl module needs its glad loader (a git submodule the release
+      # tarball does not carry); vulkan is the support mpv hard-requires and
+      # the Sdk's vulkan headers + shaderc cover it.
+      - -Dopengl=disabled
+    sources:
+      - type: archive
+        url: https://github.com/haasn/libplacebo/archive/refs/tags/v7.360.1.tar.gz
+        sha256: d05fdf90bea2f629eaa2d115e909fd356388ac639e54f77b87a018a6d76224bd
+
+  - name: libass
+    buildsystem: meson
+    sources:
+      - type: archive
+        url: https://github.com/libass/libass/archive/refs/tags/0.17.4.tar.gz
+        sha256: c287d180d93dc9c9021872574b618ac49027e84cc90e1289318b1ee68bb42251
+
+  - name: libmpv
+    buildsystem: meson
+    config-opts:
+      # Library build only: no CLI player, no scripting, no docs. Audio
+      # output auto-detects what the Sdk carries (pulse / pipewire); video
+      # outputs fall back to whatever is present (the app is audio-only).
+      - -Dlibmpv=true
+      - -Dcplayer=false
+      - -Dlua=disabled
+      - -Djavascript=disabled
+      - -Dmanpage-build=disabled
+      - -Dhtml-build=disabled
+      - -Dbuild-date=false
+    sources:
+      - type: archive
+        url: https://github.com/mpv-player/mpv/archive/refs/tags/v0.40.0.tar.gz
+        sha256: 10a0f4654f62140a6dd4d380dcf0bbdbdcf6e697556863dc499c296182f081a3
+
+  - name: flac
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_PROGRAMS=ON
+      - -DBUILD_EXAMPLES=OFF
+      - -DBUILD_DOCS=OFF
+      - -DBUILD_TESTING=OFF
+      - -DWITH_OGG=OFF
+      - -DINSTALL_MANPAGES=OFF
+      - -DCMAKE_INSTALL_LIBDIR=lib
+    sources:
+      - type: archive
+        url: https://github.com/xiph/flac/archive/refs/tags/1.5.0.tar.gz
+        sha256: aea54ed186ad07a34750399cb27fc216a2b62d0ffcd6dc2e3064a3518c3146f8
+
+  - name: rsgain-deps
+    buildsystem: simple
+    build-commands: []
+    modules:
+
+      - name: libebur128
+        buildsystem: cmake-ninja
+        builddir: true
+        config-opts:
+          - -DCMAKE_BUILD_TYPE=Release
+          - -DCMAKE_INSTALL_LIBDIR=lib
+          # The 1.2.6 release predates the Sdk's CMake floor; its
+          # cmake_minimum_required predates 3.5.
+          - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+        sources:
+          - type: archive
+            url: https://github.com/jiixyj/libebur128/archive/refs/tags/v1.2.6.tar.gz
+            sha256: baa7fc293a3d4651e244d8022ad03ab797ca3c2ad8442c43199afe8059faa613
+
+      - name: utfcpp
+        # Header-only; taglib 2.x requires it (upstream vendors it as a git
+        # submodule, which a release tarball does not carry).
+        buildsystem: cmake-ninja
+        builddir: true
+        config-opts:
+          - -DCMAKE_BUILD_TYPE=Release
+          - -DBUILD_TESTS=OFF
+        sources:
+          - type: archive
+            url: https://github.com/nemtrif/utfcpp/archive/refs/tags/v4.2.0.tar.gz
+            sha256: 54a8e96ea835a7359e8e53d03e30e9833d51350cc4615ff53f8449ef19ee46ab
+
+      - name: taglib
+        buildsystem: cmake-ninja
+        builddir: true
+        config-opts:
+          - -DCMAKE_BUILD_TYPE=Release
+          - -DBUILD_SHARED_LIBS=ON
+          - -DBUILD_TESTING=OFF
+          - -DCMAKE_INSTALL_LIBDIR=lib
+        sources:
+          - type: archive
+            url: https://github.com/taglib/taglib/archive/refs/tags/v2.0.2.tar.gz
+            sha256: 0de288d7fe34ba133199fd8512f19cc1100196826eafcb67a33b224ec3a59737
+
+      - name: inih
+        buildsystem: meson
+        sources:
+          - type: archive
+            url: https://github.com/benhoyt/inih/archive/refs/tags/r58.tar.gz
+            sha256: e79216260d5dffe809bda840be48ab0eec7737b2bb9f02d2275c1b46344ea7b7
+
+  - name: rsgain
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: archive
+        url: https://github.com/complexlogic/rsgain/archive/refs/tags/v3.6.tar.gz
+        sha256: 26f7acd1ba0851929dc756c93b3b1a6d66d7f2f36b31f744c8181f14d7b5c8a7
+
   - name: conservatory
     buildsystem: meson
+    build-options:
+      env:
+        # libmpv2-sys emits a bare `-lmpv` (no pkg-config), so the build-time
+        # linker needs the module-scoped lib dir on its search path.
+        LIBRARY_PATH: /app/lib
     sources:
       # Local builds use the working tree. For a Flathub submission PR,
       # replace the dir source with the tagged release (the Atrium form:
@@ -94,18 +260,16 @@ modules:
           - build-dir
       - cargo-sources.json
 
-# NOT YET DONE, tracked rather than hidden:
+# Build dependencies are now own manifest modules above (the §5.8 decision,
+# 2026-09-06): the minimal ffmpeg module (ffmpeg + ffprobe + the libs libmpv
+# and rsgain link), libmpv itself (the playback host meson gates configure
+# on), flac, and rsgain (with libebur128, taglib, inih). The ffmpeg-full
+# extension was struck: libs-only contract, optional by default, and
+# discontinued at the freedesktop 25.08 base this GNOME 50 runtime sits on.
 #
-# 1. Build dependencies inside the sandbox: libmpv (the playback host; meson
-#    dependency('mpv') gates configure) is not in org.gnome.Sdk, and the four
-#    shelled-out tools (rsgain, flac, ffmpeg, ffprobe) are host $PATH today.
-#    Approach decided 2026-09-06 (roadmap Phase 20): own manifest modules, not
-#    a shared extension. One minimal ffmpeg module yields ffmpeg + ffprobe;
-#    flac and rsgain (with libebur128, taglib, libinih) are small modules.
-#    The ffmpeg-full extension was struck: libs-only contract, optional by
-#    default, and discontinued at the freedesktop 25.08 base this GNOME 50
-#    runtime sits on. The libmpv module remains the one hard blocker for a
-#    full sandboxed build.
+# Still owed, tracked rather than hidden:
 #
+# 1. The end-to-end sandboxed build + install + run pass is the Phase 20
+#    gate and stays with Brandon (roadmap.md Phase 20, the Flatpak box).
 # 2. The icon is still the placeholder glasshouse from logo.svg, and the
 #    metainfo screenshots stay commented out until the real mark lands.

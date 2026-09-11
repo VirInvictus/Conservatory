@@ -1,8 +1,14 @@
 # Patch Notes
 
-## Unreleased
+## v0.4.5 (2026-09-11)
 
+The packaging milestone: the Flatpak manifest now carries every missing build dependency as its own module (the recorded 5.8 decision) and a local flatpak-builder run builds, stages, and exports the app on the GNOME 50 runtime. Two defects the functional pass caught ride along, as does the vir-gtk 1.2.0 consumer wave.
+
+- **Packaging:** the manifest modules land: a minimal ffmpeg module yielding the ffmpeg and ffprobe tools plus the libs libmpv and rsgain link, libmpv itself (with its hard-required libplacebo and libass built beneath it), flac, and rsgain (with libebur128, taglib, inih, utfcpp). The llvm21 SDK extension supplies libclang for bindgen (the pipewire Rust stack behind the spectrum tap), and the app module links through LIBRARY_PATH because libmpv2-sys emits a bare -lmpv. libass absorbs statically into libmpv; the freedesktop 25.08-branch extension resolves under the GNOME 50 base. The end-to-end sandboxed install-and-run pass stays the Phase 20 gate.
+- **Packaging:** data/cargo-sources.json is regenerated from the current Cargo.lock. The vendored git-dep pins had not moved with the consumer waves (still vir-search 1.0.2), so the offline sandboxed build failed version resolution; it now carries vir-gtk 1.2.0 and vir-search 1.4.0.
 - **Changed:** vir-gtk adopted at 1.2.0 (the consumer wave): the StyleManager lifecycle API and the StyleScope/ThemeChoice per-window overrides arrive as opt-in additions; Conservatory's runtime accent provider (USER + 3) is now formally manageable through the new API instead of hand-rolled state. Lock-only wave, no code changes required; both suites green on the moved lock.
+- **Fixed:** re-importing a standalone audiobook from the managed tree resolved its author as the literal "Standalone" folder level instead of the real author (the reader did not know spec 5.7's Author/Standalone/Title shape was the tree's own render). The folder reader now matches the level against the shared template constant.
+- **Fixed:** organize --apply after a crash recovery refused the whole job with conflicts on an already-consistent library: the plan was built from a pre-recovery snapshot, so after recovery rolled the interrupted move forward the stale ops described moves whose targets already existed. The plan rebuilds after recovery, and the success message reports the tracks that actually moved rather than the library size.
 
 ## v0.4.4 (2026-09-06)
 

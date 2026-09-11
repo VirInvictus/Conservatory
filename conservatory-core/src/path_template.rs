@@ -35,7 +35,10 @@ const VARIOUS_ARTISTS: &str = "Various Artists";
 const UNKNOWN_ALBUM: &str = "Unknown Album";
 const UNTITLED: &str = "Untitled";
 const UNKNOWN_AUTHOR: &str = "Unknown Author";
-const STANDALONE: &str = "Standalone";
+/// The literal series level the audiobook template renders for a series-less
+/// book; the folder reader (conservatory-audiobooks) matches against it when
+/// re-reading a managed tree so the level is never mistaken for the author.
+pub const STANDALONE: &str = "Standalone";
 
 /// Per-component byte cap (common filesystem `NAME_MAX`), applied per component,
 /// not to the whole path (docs/path-template.md "Sanitization").

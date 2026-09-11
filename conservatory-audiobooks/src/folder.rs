@@ -42,11 +42,26 @@ pub fn infer(book_dir: &Path) -> FolderInfo {
             sequence,
         }
     } else {
-        FolderInfo {
-            author: parent,
-            series: None,
-            title: Some(leaf),
-            sequence: None,
+        // The managed tree renders a series-less book as
+        // `Author/Standalone/Title/` (spec §5.7), so a literal `Standalone`
+        // parent is the series level, not the author; the real author sits
+        // one level up. (Found by the 2026-09-11 functional pass: a
+        // re-import of a standalone book from Conservatory's own tree
+        // resolved the author as "Standalone".)
+        if parent.as_deref() == Some(conservatory_core::STANDALONE) {
+            FolderInfo {
+                author: grandparent,
+                series: None,
+                title: Some(leaf),
+                sequence: None,
+            }
+        } else {
+            FolderInfo {
+                author: parent,
+                series: None,
+                title: Some(leaf),
+                sequence: None,
+            }
         }
     }
 }
@@ -125,6 +140,31 @@ mod tests {
         assert_eq!(info.series, None);
         assert_eq!(info.title.as_deref(), Some("1984"));
         assert_eq!(info.sequence, None);
+    }
+
+    #[test]
+    fn standalone_literal_level_is_not_the_author() {
+        // The managed tree renders a series-less book as
+        // `Author/Standalone/Title/` (spec §5.7); reading that tree back must
+        // resolve the real author, not the literal level.
+        let p = PathBuf::from("/lib/Test Author/Standalone/The Fixture Method");
+        let info = infer(&p);
+        assert_eq!(info.author.as_deref(), Some("Test Author"));
+        assert_eq!(info.series, None);
+        assert_eq!(info.title.as_deref(), Some("The Fixture Method"));
+        assert_eq!(info.sequence, None);
+    }
+
+    #[test]
+    fn standalone_literal_at_the_root_has_no_author() {
+        // `Standalone/Title/` with nothing above the level: no author to find
+        // (the import falls through to Unknown Author), and the level itself
+        // must not become one.
+        let p = PathBuf::from("/Standalone/Some Book");
+        let info = infer(&p);
+        assert_eq!(info.author, None);
+        assert_eq!(info.series, None);
+        assert_eq!(info.title.as_deref(), Some("Some Book"));
     }
 
     #[test]

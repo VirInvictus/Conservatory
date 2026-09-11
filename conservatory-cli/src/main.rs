@@ -3035,7 +3035,7 @@ async fn run_organize(
 
     // Build the operations: src = current managed path, dst = re-rendered target
     // (the shared core builder, so the render mapping lives in one place).
-    let ops = {
+    let mut ops = {
         let conn = pool.open().context("opening pool connection")?;
         organize_ops(
             &track_render_rows(&conn).context("reading track render rows")?,
@@ -3048,9 +3048,28 @@ async fn run_organize(
         let recovered = mover::recover(&worker, &pool).await.context("recovery (a stuck job? `organize --jobs` lists it, `organize --cancel-job <ID>` clears it)")?;
         if recovered > 0 {
             println!("recovered {recovered} interrupted job(s)");
+            // Recovery rolled files and DB pointers forward, so the plan built
+            // above is stale: its ops now describe moves whose targets already
+            // exist, which apply would refuse as conflicts. Rebuild it from
+            // the post-recovery state. (Found by the 2026-09-11 functional
+            // pass: a crash drill left `organize --apply` exiting nonzero on
+            // an already-consistent library.)
+            ops = {
+                let conn = pool.open().context("opening pool connection")?;
+                organize_ops(
+                    &track_render_rows(&conn).context("reading track render rows")?,
+                    &root,
+                    None,
+                )
+            };
         }
         let mode = if copy { MoveMode::Copy } else { MoveMode::Move };
-        let count = ops.len();
+        // Report what actually moves, not the size of the library: plan()
+        // splits the ops into real moves and already-in-place tracks, and
+        // apply journals only the real ones (found by the 2026-09-11
+        // functional pass: a no-op organize reported "N track(s) organized"
+        // for every track in the library).
+        let count = mover::plan(ops.clone()).ops.len();
         let job_id = mover::apply(
             &worker,
             &pool,

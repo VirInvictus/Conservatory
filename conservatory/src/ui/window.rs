@@ -41,12 +41,12 @@ use conservatory_core::{
     genres_assignment, parse_assignment, shuffle_order, write_track_tags,
 };
 
-use crate::playqueue::{
-    MixedQueueRow, build_mixed_queue, build_play_queue, fmt_position, shuffle_play_order,
-};
 #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
 use crate::playqueue::PlaylistIdsCell;
 use crate::playqueue::PlaylistIdsFn;
+use crate::playqueue::{
+    MixedQueueRow, build_mixed_queue, build_play_queue, fmt_position, shuffle_play_order,
+};
 use crate::query::{materialize_smart, query_leaf};
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::dialogs::{Alert, Appearance};

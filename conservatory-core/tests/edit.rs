@@ -10,8 +10,8 @@ use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{ReadPool, get_album, get_track, spawn_worker, track_render_rows};
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
-    AlbumEdit, ImportOptions, PathTemplate, TrackEdit, TrackFields, build_album_edit,
-    build_track_edit, import_folder, parse_assignment,
+    AlbumEdit, ImportOptions, PathTemplate, TrackEdit, TrackFields, build_track_edit,
+    import_folder, parse_assignment,
 };
 use tempfile::tempdir;
 

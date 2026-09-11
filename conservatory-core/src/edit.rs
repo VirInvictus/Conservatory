@@ -75,13 +75,23 @@ pub struct Assignment {
 }
 
 /// Parse a `field=value` token, validating numeric fields up front so a bad
-/// assignment fails before any write (spec §3.5).
+/// assignment fails before any write (spec §3.5). An empty value clears the
+/// field for the fields that support it (the 16c clear path: year, shelf
+/// genre, genres, rating); identity fields reject clearing.
 pub fn parse_assignment(s: &str) -> Result<Assignment> {
     let (key, value) = s
         .split_once('=')
         .ok_or_else(|| Error::Edit(format!("expected field=value, got {s:?}")))?;
     let field = Field::parse(key).ok_or_else(|| Error::Edit(format!("unknown field {key:?}")))?;
     let value = value.to_string();
+    if value.trim().is_empty() {
+        if empty_clears(field) {
+            return Ok(Assignment { field, value });
+        }
+        return Err(Error::Edit(format!(
+            "{key} cannot be cleared; give it a value"
+        )));
+    }
     match field {
         Field::Year => {
             value
@@ -103,6 +113,17 @@ pub fn parse_assignment(s: &str) -> Result<Assignment> {
     Ok(Assignment { field, value })
 }
 
+/// The fields a ticked-but-empty bulk-edit field clears (the 16c follow-on).
+/// Year / shelf genre go to NULL; genres go to an empty set; rating goes to 0
+/// (0 *is* "no rating"). Title / artist / album / album artist are identity
+/// and reject clearing.
+fn empty_clears(field: Field) -> bool {
+    matches!(
+        field,
+        Field::Year | Field::ShelfGenre | Field::Genre | Field::Rating
+    )
+}
+
 /// Track-level field changes (each `Some` is set; `None` leaves it unchanged).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TrackEdit {
@@ -117,13 +138,16 @@ impl TrackEdit {
     }
 }
 
-/// Album-level field changes (each `Some` is set; `None` leaves it unchanged).
+/// Album-level field changes (spec §3.5). Each field: `None` leaves it
+/// unchanged; `Some(v)` sets it; for `year` and `shelf_genre` `Some(None)` is
+/// the 16c clear path (the column goes to NULL). `title` / `album_artist`
+/// have no clear arm (identity fields reject clearing).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AlbumEdit {
     pub title: Option<String>,
     pub album_artist: Option<String>,
-    pub year: Option<i32>,
-    pub shelf_genre: Option<String>,
+    pub year: Option<Option<i32>>,
+    pub shelf_genre: Option<Option<String>>,
 }
 
 impl AlbumEdit {
@@ -136,28 +160,49 @@ impl AlbumEdit {
 }
 
 /// Collect the track-level assignments into a `TrackEdit` (later wins on dupes).
+/// An empty rating value clears to 0 (0 *is* "no rating"); the parse up front
+/// guarantees a non-empty rating value is a valid 0..=5 number.
 pub fn build_track_edit(assignments: &[Assignment]) -> TrackEdit {
     let mut edit = TrackEdit::default();
     for a in assignments {
         match a.field {
             Field::Title => edit.title = Some(a.value.clone()),
             Field::Artist => edit.artist = Some(a.value.clone()),
-            Field::Rating => edit.rating = a.value.trim().parse().ok(),
+            Field::Rating => {
+                edit.rating = if a.value.trim().is_empty() {
+                    Some(0)
+                } else {
+                    a.value.trim().parse().ok().or(edit.rating)
+                };
+            }
             _ => {}
         }
     }
     edit
 }
 
-/// Collect the album-level assignments into an `AlbumEdit` (later wins on dupes).
+/// Collect the album-level assignments into an `AlbumEdit` (later wins on
+/// dupes). An empty year / shelf genre value is the clear arm (`Some(None)`).
 pub fn build_album_edit(assignments: &[Assignment]) -> AlbumEdit {
     let mut edit = AlbumEdit::default();
     for a in assignments {
         match a.field {
             Field::Album => edit.title = Some(a.value.clone()),
             Field::AlbumArtist => edit.album_artist = Some(a.value.clone()),
-            Field::Year => edit.year = a.value.trim().parse().ok(),
-            Field::ShelfGenre => edit.shelf_genre = Some(a.value.clone()),
+            Field::Year => {
+                edit.year = if a.value.trim().is_empty() {
+                    Some(None)
+                } else {
+                    a.value.trim().parse().ok().map(Some).or(edit.year)
+                };
+            }
+            Field::ShelfGenre => {
+                edit.shelf_genre = if a.value.trim().is_empty() {
+                    Some(None)
+                } else {
+                    Some(Some(a.value.clone()))
+                };
+            }
             _ => {}
         }
     }
@@ -276,8 +321,43 @@ mod tests {
         assert!(parse_assignment("rating=6").is_err());
         assert!(parse_assignment("noequals").is_err());
         assert!(parse_assignment("bogus=x").is_err());
-        // an empty value is allowed for text fields (clearing-by-blank is a set).
-        assert_eq!(parse_assignment("title=").unwrap().value, "");
+    }
+
+    #[test]
+    fn empty_value_clears_where_clearing_is_allowed() {
+        // The 16c clear path: year / shelf genre / genre / rating take an
+        // empty value as "clear"; identity fields reject it.
+        assert_eq!(parse_assignment("year=").unwrap().value, "");
+        assert_eq!(
+            parse_assignment("shelfgenre=").unwrap().field,
+            Field::ShelfGenre
+        );
+        assert_eq!(parse_assignment("genre=").unwrap().field, Field::Genre);
+        assert_eq!(parse_assignment("rating=").unwrap().field, Field::Rating);
+        let err = parse_assignment("title=").unwrap_err().to_string();
+        assert!(err.contains("cannot be cleared"));
+        assert!(parse_assignment("artist=").is_err());
+        assert!(parse_assignment("album=").is_err());
+        assert!(parse_assignment("albumartist=").is_err());
+    }
+
+    #[test]
+    fn builders_carry_the_clear_arms() {
+        // Rating empty → 0 (0 *is* "no rating"); the parse guarantees a
+        // non-empty value is valid, so no silent drop.
+        let edit = build_track_edit(&[parse_assignment("rating=").unwrap()]);
+        assert_eq!(edit.rating, Some(0));
+        // Year / shelf genre empty → the tri-state clear arm.
+        let edit = build_album_edit(&[
+            parse_assignment("year=").unwrap(),
+            parse_assignment("shelfgenre=").unwrap(),
+        ]);
+        assert_eq!(edit.year, Some(None));
+        assert_eq!(edit.shelf_genre, Some(None));
+        assert!(!edit.is_empty(), "a clear-only edit is not empty");
+        // A plain set still parses through the same builders.
+        let edit = build_album_edit(&[parse_assignment("year=1992").unwrap()]);
+        assert_eq!(edit.year, Some(Some(1992)));
     }
 
     #[test]
@@ -294,7 +374,7 @@ mod tests {
         assert!(t.artist.is_none());
         let a = build_album_edit(&asg);
         assert_eq!(a.title.as_deref(), Some("New Album"));
-        assert_eq!(a.year, Some(2001));
+        assert_eq!(a.year, Some(Some(2001)));
         assert!(a.album_artist.is_none() && a.shelf_genre.is_none());
         assert!(any_path_affecting(&asg));
     }

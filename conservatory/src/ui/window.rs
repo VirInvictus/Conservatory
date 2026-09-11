@@ -30,9 +30,9 @@ use conservatory_core::db::{
     EQ_CENTRES, EqState, FacetField, FacetFilter, MediaKind, Perspective, Playlist, PlaylistKind,
     PlaylistOrder, ReadPool, ResamplerQuality, WorkerHandle, facet_rows, get_album, get_artist,
     get_audio_state, get_eq_preset, get_eq_state, get_track, get_tracks, list_eq_presets,
-    list_peq_bands, list_perspectives, list_playlists, load_queue_display, read_playback_state,
-    show_settings_map, spawn_worker, static_playlist_track_ids, track_credits, track_render_rows,
-    writeback_rows,
+    list_peq_bands, list_perspectives, list_playlists, load_playlist_display, load_queue_display,
+    read_playback_state, show_settings_map, spawn_worker, static_playlist_track_ids, track_credits,
+    track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
@@ -44,6 +44,9 @@ use conservatory_core::{
 use crate::playqueue::{
     MixedQueueRow, build_mixed_queue, build_play_queue, fmt_position, shuffle_play_order,
 };
+#[cfg(any(feature = "podcasts", feature = "audiobooks"))]
+use crate::playqueue::PlaylistIdsCell;
+use crate::playqueue::PlaylistIdsFn;
 use crate::query::{materialize_smart, query_leaf};
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::dialogs::{Alert, Appearance};
@@ -197,6 +200,13 @@ mod imp {
         pub playlist_list: OnceCell<gtk::ListBox>,
         pub playlists: RefCell<Vec<conservatory_core::db::Playlist>>,
         pub add_to_playlist_menu: OnceCell<gio::Menu>,
+        // The mixed-entry (1003) add-to-playlist surfaces for the other two
+        // tabs: shared submenus rebuilt with the playlist set, plus the
+        // selection readers the tab modules register at build time.
+        pub episode_add_to_playlist_menu: OnceCell<gio::Menu>,
+        pub book_add_to_playlist_menu: OnceCell<gio::Menu>,
+        pub episode_playlist_ids: RefCell<Option<PlaylistIdsFn>>,
+        pub book_playlist_ids: RefCell<Option<PlaylistIdsFn>>,
         // Music-only header controls (Phase 16f): stored so they can be hidden on
         // the Podcasts / Audiobooks tabs, where selection-editing and the track
         // properties inspector do not apply.
@@ -417,9 +427,11 @@ impl ConservatoryWindow {
                 .collect();
         let weak = self.downgrade();
         let ctx_weak = weak.clone();
+        let edit_weak = weak.clone();
         let leaf = build_leaf(
             imp.library_root.get().cloned(),
             &config.browse.columns,
+            config.browse.row_style,
             Rc::new(move |pos, x, y, cell| {
                 if let Some(win) = ctx_weak.upgrade() {
                     win.show_track_context_menu(pos, x, y, cell);
@@ -428,6 +440,11 @@ impl ConservatoryWindow {
             Rc::new(move |pos, rating| {
                 if let Some(win) = weak.upgrade() {
                     win.set_row_rating(pos, rating);
+                }
+            }),
+            Rc::new(move |pos, key, value| {
+                if let Some(win) = edit_weak.upgrade() {
+                    win.edit_row_cell(pos, key, value);
                 }
             }),
         );
@@ -1565,6 +1582,11 @@ impl ConservatoryWindow {
             inspector.clear();
             return;
         }
+        // Multi-select aggregate (the :778 easy half; channels stays deferred).
+        if selected.size() > 1 {
+            self.refresh_inspector_aggregate(inspector, leaf, pool, &selected);
+            return;
+        }
         let Some(obj) = leaf.selection.item(selected.nth(0)) else {
             inspector.clear();
             return;
@@ -1604,6 +1626,177 @@ impl ConservatoryWindow {
             .map(|(r, cover)| r.join(cover));
         let accent = album.as_ref().and_then(|a| a.accent_rgb);
         inspector.show(&track.title, &fields, cover_abs.as_deref(), accent);
+    }
+
+    /// The multi-select inspector: one aggregate panel over the selection.
+    /// Commons rule as the bulk edit (shared value or "multiple values"),
+    /// sums for duration / size / plays; the cover panel only appears when
+    /// every selected track shares one album. File-size stats are capped
+    /// (a Ctrl+A on a 50k library must not stat 50k files on the GTK
+    /// thread); past the cap the row is skipped.
+    fn refresh_inspector_aggregate(
+        &self,
+        inspector: &crate::ui::inspector::Inspector,
+        leaf: &crate::ui::track_list::Leaf,
+        pool: &ReadPool,
+        selection: &gtk::Bitset,
+    ) {
+        use conservatory_core::db::{Album, Track, get_tracks};
+        use std::collections::HashMap;
+
+        const STAT_CAP: usize = 200;
+        let n = selection.size();
+        let mut ids = Vec::with_capacity(n as usize);
+        for i in 0..n {
+            let Some(obj) = leaf.selection.item(i as u32) else {
+                continue;
+            };
+            let Ok(row) = obj.downcast::<TrackRow>() else {
+                continue;
+            };
+            ids.push(row.brief().id);
+        }
+        let Ok(conn) = pool.open() else { return };
+        let Ok(tracks) = get_tracks(&conn, &ids) else {
+            inspector.clear();
+            return;
+        };
+        // Resolve each distinct artist / album once; the aggregate only needs
+        // display names.
+        let mut artist_names: HashMap<i64, String> = HashMap::new();
+        let mut albums: HashMap<i64, Album> = HashMap::new();
+        for t in &tracks {
+            if let Some(aid) = t.artist_id {
+                artist_names.entry(aid).or_insert_with(|| {
+                    get_artist(&conn, aid)
+                        .ok()
+                        .flatten()
+                        .map(|a| a.name)
+                        .unwrap_or_default()
+                });
+            }
+            if let Some(alid) = t.album_id
+                && !albums.contains_key(&alid)
+                && let Ok(Some(al)) = get_album(&conn, alid)
+            {
+                albums.insert(alid, al);
+            }
+        }
+        let album_keys: Vec<Option<i64>> = tracks.iter().map(|t| t.album_id).collect();
+        let one_album = album_keys
+            .iter()
+            .all(|a| *a == album_keys.first().copied().flatten());
+        let rows: Vec<(&Track, Option<&Album>, Option<&str>)> = tracks
+            .iter()
+            .map(|t| {
+                (
+                    t,
+                    t.album_id.and_then(|id| albums.get(&id)),
+                    t.artist_id
+                        .and_then(|id| artist_names.get(&id))
+                        .map(|s| s.as_str()),
+                )
+            })
+            .collect();
+        let total_size: Option<u64> = (tracks.len() <= STAT_CAP).then(|| {
+            self.imp()
+                .library_root
+                .get()
+                .map(|root| {
+                    tracks
+                        .iter()
+                        .filter_map(|t| std::fs::metadata(root.join(&t.file_path)).ok())
+                        .map(|m| m.len())
+                        .sum()
+                })
+                .unwrap_or(0)
+        });
+        let fields = crate::ui::fields::inspector_aggregate(&rows, total_size);
+        // The cover panel only when the whole selection shares one album.
+        let (cover_abs, accent) = if one_album && album_keys.len() == tracks.len() {
+            album_keys
+                .first()
+                .copied()
+                .flatten()
+                .and_then(|id| albums.get(&id))
+                .map(|al| {
+                    let cover = self
+                        .imp()
+                        .library_root
+                        .get()
+                        .zip(al.cover_path.as_deref())
+                        .map(|(r, c)| r.join(c));
+                    (cover, al.accent_rgb)
+                })
+                .unwrap_or((None, None))
+        } else {
+            (None, None)
+        };
+        let title = if one_album && album_keys.len() == tracks.len() {
+            albums
+                .get(&album_keys.first().copied().flatten().unwrap_or(0))
+                .map(|a| a.title.clone())
+                .unwrap_or_else(|| format!("{n} tracks selected"))
+        } else {
+            format!("{n} tracks selected")
+        };
+        inspector.show(&title, &fields, cover_abs.as_deref(), accent);
+    }
+
+    /// The inline cell editor's commit path (the 16c follow-on). `key` is the
+    /// `Field::parse` spelling; an empty value clears through the same parse
+    /// the bulk edit uses. Album-level keys retitle the whole album (the bulk
+    /// semantics, surfaced in the cell's edit), and a path-affecting edit
+    /// runs the same confirm-and-move pipeline as the bulk dialog.
+    fn edit_row_cell(&self, pos: u32, key: &'static str, value: String) {
+        let imp = self.imp();
+        let (Some(rt), Some(worker), Some(pool)) =
+            (imp.runtime.get(), imp.worker.get(), imp.pool.get())
+        else {
+            return;
+        };
+        let Some(leaf) = imp.leaf.get() else { return };
+        let Some(row) = leaf.selection.item(pos).and_downcast::<TrackRow>() else {
+            return;
+        };
+        let track_id = row.brief().id;
+        let Ok(assignment) = parse_assignment(&format!("{key}={value}")) else {
+            self.toast("Invalid value; not applied");
+            return;
+        };
+        if assignment.field.is_album_level() {
+            let albums: Vec<i64> = {
+                let Ok(conn) = pool.open() else { return };
+                track_render_rows(&conn)
+                    .unwrap_or_default()
+                    .iter()
+                    .find(|r| r.track_id == track_id)
+                    .and_then(|r| r.album_id)
+                    .into_iter()
+                    .collect()
+            };
+            let album_edit = build_album_edit(&[assignment]);
+            if !album_edit.is_empty() {
+                for aid in &albums {
+                    let _ = rt.block_on(worker.update_album(*aid, album_edit.clone()));
+                }
+            }
+            if let (Some(root), [aid]) = (imp.library_root.get(), albums.as_slice()) {
+                self.confirm_and_move(std::slice::from_ref(aid), root.clone());
+                return; // the confirm dialog refreshes when it closes
+            }
+            self.populate_initial();
+            return;
+        }
+        let track_edit = build_track_edit(std::slice::from_ref(&assignment));
+        if !track_edit.is_empty() {
+            let _ = rt.block_on(worker.update_track(track_id, track_edit));
+        }
+        if let Some(g) = genres_assignment(&[assignment]) {
+            let _ = rt.block_on(worker.set_tracks_genres(vec![track_id], g));
+        }
+        self.refresh_inspector();
+        self.populate_initial();
     }
 
     /// The General preferences page (Phase 10b): the `[library]` and `[genre]`
@@ -2199,6 +2392,26 @@ impl ConservatoryWindow {
                 config.borrow_mut().browse.columns = cols;
             });
         }
+        // Row scannability (the post-0.3.0 follow-on): none (the clean default)
+        // / a faint row line / subtle zebra striping on the track list. Joins
+        // the Browse columns group; it is a leaf-look option like them.
+        let (row_style_row, row_style) = rows::combo_row(
+            "Row lines",
+            Some("Faint separators or zebra shading in the track list"),
+            &["None", "Line", "Zebra"],
+        );
+        row_style.set_selected(config.borrow().browse.row_style as u32);
+        {
+            let config = config.clone();
+            row_style.connect_selected_notify(move |r| {
+                config.borrow_mut().browse.row_style = match r.selected() {
+                    1 => conservatory_core::config::RowStyle::Line,
+                    2 => conservatory_core::config::RowStyle::Zebra,
+                    _ => conservatory_core::config::RowStyle::None,
+                };
+            });
+        }
+        columns_group.add(&row_style_row);
         content.append(columns_group.widget());
 
         let pod_group = rows::group(Some("Podcasts"), Some("Takes effect on the next launch."));
@@ -3317,6 +3530,40 @@ impl ConservatoryWindow {
             }
         });
         self.add_action(&add_to_playlist);
+
+        // The mixed-entry (1003) twins: the Podcasts / Audiobooks tabs register
+        // their selection readers, these actions route the menu target to them.
+        for (name, kind) in [
+            ("episode-add-to-playlist", MediaKind::Episode),
+            ("book-add-to-playlist", MediaKind::Audiobook),
+        ] {
+            let action = gio::SimpleAction::new(name, Some(glib::VariantTy::INT64));
+            let weak = self.downgrade();
+            action.connect_activate(move |_action, param| {
+                let Some(win) = weak.upgrade() else { return };
+                let Some(id) = param.and_then(|p| p.get::<i64>()) else {
+                    return;
+                };
+                let imp = win.imp();
+                let reader = match kind {
+                    MediaKind::Episode => imp.episode_playlist_ids.borrow().clone(),
+                    _ => imp.book_playlist_ids.borrow().clone(),
+                };
+                let Some(reader) = reader else { return };
+                let ids = reader();
+                if ids.is_empty() {
+                    return;
+                }
+                let n = ids.len();
+                let entries: Vec<(MediaKind, i64)> = ids.into_iter().map(|i| (kind, i)).collect();
+                let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
+                    return;
+                };
+                let _ = rt.block_on(worker.append_playlist_entries(id, entries));
+                win.toast(&format!("Added {n} item(s) to the playlist"));
+            });
+            self.add_action(&action);
+        }
 
         // The model, grouped so the transient queue reads distinctly from saved
         // playlists (17d): a "Play queue" section (Play / Play Next / Add to Queue,
@@ -4588,12 +4835,21 @@ impl ConservatoryWindow {
                 if let (Some(pool), Some(worker), Some(rt)) =
                     (imp.pool.get().cloned(), imp.worker.get(), imp.runtime.get())
                 {
+                    let episode_menu = gio::Menu::new();
+                    let _ = imp.episode_add_to_playlist_menu.set(episode_menu.clone());
+                    let cell: PlaylistIdsCell = Rc::new(std::cell::RefCell::new(None));
+                    imp.episode_playlist_ids.borrow_mut().replace({
+                        let cell = cell.clone();
+                        Rc::new(move || cell.borrow().as_ref().map(|f| f()).unwrap_or_default())
+                    });
                     let view = crate::ui::podcasts::build_podcasts_view(
                         pool,
                         worker.clone(),
                         rt.handle().clone(),
                         imp.player.get().cloned(),
                         imp.library_root.get().cloned(),
+                        Some(episode_menu),
+                        cell,
                     );
                     view.set_hexpand(true);
                     view.set_vexpand(true);
@@ -4622,12 +4878,21 @@ impl ConservatoryWindow {
                 if let (Some(pool), Some(worker), Some(rt)) =
                     (imp.pool.get().cloned(), imp.worker.get(), imp.runtime.get())
                 {
+                    let book_menu = gio::Menu::new();
+                    let _ = imp.book_add_to_playlist_menu.set(book_menu.clone());
+                    let cell: PlaylistIdsCell = Rc::new(std::cell::RefCell::new(None));
+                    imp.book_playlist_ids.borrow_mut().replace({
+                        let cell = cell.clone();
+                        Rc::new(move || cell.borrow().as_ref().map(|f| f()).unwrap_or_default())
+                    });
                     let view = crate::ui::audiobooks::build_audiobooks_view(
                         pool,
                         worker.clone(),
                         rt.handle().clone(),
                         imp.player.get().cloned(),
                         imp.library_root.get().cloned(),
+                        Some(book_menu),
+                        cell,
                     );
                     view.set_hexpand(true);
                     view.set_vexpand(true);
@@ -5808,8 +6073,25 @@ impl ConservatoryWindow {
                 win.delete_selected_playlist();
             }
         });
-        let pl_header =
-            sidebar_section_header(&pl_heading, &[pl_create.upcast_ref(), pl_del.upcast_ref()]);
+        // The static-playlist reorder dialog (the 1003 drag-reorder), beside
+        // the delete verb: select a playlist row, then open its editor.
+        let pl_reorder = gtk::Button::from_icon_name("view-list-ordered-symbolic");
+        pl_reorder.set_tooltip_text(Some("Reorder the selected playlist"));
+        pl_reorder.add_css_class("flat");
+        let weak = self.downgrade();
+        pl_reorder.connect_clicked(move |_| {
+            if let Some(win) = weak.upgrade() {
+                win.open_playlist_reorder();
+            }
+        });
+        let pl_header = sidebar_section_header(
+            &pl_heading,
+            &[
+                pl_create.upcast_ref(),
+                pl_reorder.upcast_ref(),
+                pl_del.upcast_ref(),
+            ],
+        );
 
         sidebar.append(&pl_header);
         sidebar.append(&pl_scroller);
@@ -6061,6 +6343,63 @@ impl ConservatoryWindow {
         else {
             return;
         };
+        // Static playlists materialise through the mixed path (the 1003
+        // mixed entries): episode and book entries ride the same launch-resume
+        // rebuild, so one playlist interleaves all three kinds. Smart
+        // playlists stay track-only (their materialisation is query-based).
+        if pl.kind == PlaylistKind::Static {
+            let Ok(conn) = pool.open() else {
+                return;
+            };
+            let rows = load_playlist_display(&conn, pl.id).unwrap_or_default();
+            if rows.is_empty() {
+                return;
+            }
+            let track_ids: Vec<i64> = rows.iter().filter_map(|r| r.track_id).collect();
+            let tracks = get_tracks(&conn, &track_ids).unwrap_or_default();
+            let show_ids: Vec<i64> = rows.iter().filter_map(|r| r.show_id).collect();
+            let settings = show_settings_map(&conn, &show_ids).unwrap_or_default();
+            drop(conn);
+            let mixed: Vec<MixedQueueRow> = rows
+                .iter()
+                .map(|r| MixedQueueRow {
+                    kind: r.kind,
+                    track_id: r.track_id,
+                    episode_id: r.episode_id,
+                    book_id: r.book_id,
+                    show_id: r.show_id,
+                    audio_path: r.audio_path.clone(),
+                    audio_url: r.audio_url.clone(),
+                })
+                .collect();
+            let (mut items, start) = build_mixed_queue(
+                &mixed,
+                &tracks,
+                MediaKind::Track,
+                None,
+                root,
+                &self.playback_config(),
+                &settings,
+            );
+            crate::playqueue::attach_episode_chapters(&mut items, pool);
+            crate::playqueue::attach_book_chapters(&mut items, pool, root);
+            if items.is_empty() {
+                return;
+            }
+            let queue_items: Vec<(MediaKind, i64)> =
+                items.iter().map(|i| (i.kind, i.track_id)).collect();
+            if let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) {
+                let _ = rt.block_on(worker.replace_queue_mixed(queue_items));
+            }
+            imp.last_shown.set(None);
+            imp.last_index.set(None);
+            if let Some(cur) = imp.queue_current.get() {
+                cur.set(Some(start as i64));
+            }
+            player.play_queue(items, start);
+            self.reload_queue_panel();
+            return;
+        }
         let ids = self.materialize_playlist_ids(pl);
         if ids.is_empty() {
             return;
@@ -6248,6 +6587,168 @@ impl ConservatoryWindow {
 
     /// Confirm, then delete the selected playlist (16.5a: a curated static
     /// playlist is not reconstructible, so it gets the destructive confirm).
+    /// The static-playlist reorder dialog (the 1003 drag-reorder): an owned
+    /// modal listing the entries in position order, each row draggable
+    /// (the queue-drawer DnD idiom) with a remove button. Every change
+    /// commits through the worker immediately, so closing the dialog can
+    /// never lose an edit.
+    fn open_playlist_reorder(&self) {
+        let imp = self.imp();
+        let Some(list) = imp.playlist_list.get() else {
+            return;
+        };
+        let Some(row) = list.selected_row() else {
+            self.toast("Select a playlist to reorder");
+            return;
+        };
+        let index = row.index();
+        let Some(pl) = imp.playlists.borrow().get(index as usize).cloned() else {
+            return;
+        };
+        if pl.kind != PlaylistKind::Static {
+            self.toast("Smart playlists are live queries; nothing to reorder");
+            return;
+        }
+        // Owned handles: the dialog's callbacks outlive this method.
+        let (Some(pool), Some(runtime), Some(worker)) =
+            (imp.pool.get(), imp.runtime.get(), imp.worker.get())
+        else {
+            return;
+        };
+        let pool = pool.clone();
+        let rt = runtime.handle().clone();
+        let worker = worker.clone();
+
+        let window = gtk::Window::builder()
+            .title(format!("Reorder: {}", pl.name))
+            .modal(true)
+            .default_width(430)
+            .default_height(480)
+            .transient_for(self)
+            .build();
+
+        // Rebuilt after every change: positions shift under any move, and a
+        // plain re-read keeps the dialog honest without diffing. The Rc cell
+        // breaks the cycle (the rebuild closure's per-row callbacks invoke it).
+        let list_box = gtk::ListBox::new();
+        list_box.add_css_class("navigation-sidebar");
+        type RebuildFn = Rc<dyn Fn()>;
+        let rebuild_cell: Rc<std::cell::RefCell<Option<RebuildFn>>> =
+            Rc::new(std::cell::RefCell::new(None));
+        let rebuild = {
+            let list_box = list_box.clone();
+            let pool = pool.clone();
+            let rt = rt.clone();
+            let worker = worker.clone();
+            let cell = rebuild_cell.clone();
+            move || {
+                let rebuild = match cell.borrow().as_ref() {
+                    Some(f) => f.clone(),
+                    None => return,
+                };
+                while let Some(child) = list_box.first_child() {
+                    list_box.remove(&child);
+                }
+                let Ok(conn) = pool.open() else { return };
+                let rows = load_playlist_display(&conn, pl.id).unwrap_or_default();
+                drop(conn);
+                for r in &rows {
+                    let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                    let glyph = gtk::Image::from_icon_name(match r.kind {
+                        MediaKind::Track => "audio-x-generic-symbolic",
+                        MediaKind::Episode => "podcast-symbolic",
+                        MediaKind::Audiobook => "book-symbolic",
+                    });
+                    row_box.append(&glyph);
+                    let label = gtk::Label::builder()
+                        .label(&r.title)
+                        .hexpand(true)
+                        .xalign(0.0)
+                        .ellipsize(gtk::pango::EllipsizeMode::End)
+                        .build();
+                    row_box.append(&label);
+
+                    let del = gtk::Button::from_icon_name("user-trash-symbolic");
+                    del.add_css_class("flat");
+                    {
+                        let rt = rt.clone();
+                        let worker = worker.clone();
+                        let rebuild = rebuild.clone();
+                        let pid = pl.id;
+                        let position = r.position;
+                        del.connect_clicked(move |_| {
+                            let _ = rt.block_on(worker.remove_playlist_entry(pid, position));
+                            rebuild();
+                        });
+                    }
+                    row_box.append(&del);
+
+                    let row_widget = gtk::ListBoxRow::new();
+                    row_widget.set_child(Some(&row_box));
+                    row_widget.set_selectable(false);
+
+                    // The queue-drawer DnD pair: the source carries this row's
+                    // position; the target computes Above/Below from the cursor.
+                    let from = r.position;
+                    let drag = gtk::DragSource::builder()
+                        .actions(gtk::gdk::DragAction::MOVE)
+                        .build();
+                    drag.connect_prepare(move |_, _, _| {
+                        Some(gtk::gdk::ContentProvider::for_value(&from.to_value()))
+                    });
+                    row_widget.add_controller(drag);
+
+                    let drop = gtk::DropTarget::new(i64::static_type(), gtk::gdk::DragAction::MOVE);
+                    {
+                        let rt = rt.clone();
+                        let worker = worker.clone();
+                        let rebuild = rebuild.clone();
+                        let pid = pl.id;
+                        let count = rows.len();
+                        drop.connect_drop(move |target, value, _x, y| {
+                            if let Ok(src) = value.get::<i64>() {
+                                if src != from {
+                                    let height =
+                                        target.widget().map(|w| w.height()).unwrap_or(0).max(1);
+                                    let bias = if y < f64::from(height) / 2.0 {
+                                        crate::playqueue::DropBias::Above
+                                    } else {
+                                        crate::playqueue::DropBias::Below
+                                    };
+                                    let to = crate::playqueue::drop_target_position(
+                                        src as usize,
+                                        from as usize,
+                                        bias,
+                                        count,
+                                    ) as i64;
+                                    let _ =
+                                        rt.block_on(worker.reorder_playlist_entry(pid, src, to));
+                                    rebuild();
+                                }
+                                return true;
+                            }
+                            false
+                        });
+                    }
+                    row_widget.add_controller(drop);
+
+                    list_box.append(&row_widget);
+                }
+            }
+        };
+        *rebuild_cell.borrow_mut() = Some(Rc::new(rebuild));
+        if let Some(f) = rebuild_cell.borrow().as_ref() {
+            f();
+        }
+
+        let scroller = gtk::ScrolledWindow::builder()
+            .vexpand(true)
+            .child(&list_box)
+            .build();
+        window.set_child(Some(&scroller));
+        window.present();
+    }
+
     fn delete_selected_playlist(&self) {
         let imp = self.imp();
         let Some(list) = imp.playlist_list.get() else {
@@ -6299,14 +6800,35 @@ impl ConservatoryWindow {
             return;
         };
         menu.remove_all();
+        // The mixed-entry (1003) twins rebuild from the same set: same
+        // playlists, one action name per media surface.
+        let episode_menu = imp.episode_add_to_playlist_menu.get();
+        let book_menu = imp.book_add_to_playlist_menu.get();
         for p in imp.playlists.borrow().iter() {
-            if p.kind == PlaylistKind::Static {
+            if p.kind != PlaylistKind::Static {
+                continue;
+            }
+            let item = gio::MenuItem::new(Some(&p.name), None);
+            item.set_action_and_target_value(
+                Some("win.track-add-to-playlist"),
+                Some(&p.id.to_variant()),
+            );
+            menu.append_item(&item);
+            if let Some(m) = episode_menu {
                 let item = gio::MenuItem::new(Some(&p.name), None);
                 item.set_action_and_target_value(
-                    Some("win.track-add-to-playlist"),
+                    Some("win.episode-add-to-playlist"),
                     Some(&p.id.to_variant()),
                 );
-                menu.append_item(&item);
+                m.append_item(&item);
+            }
+            if let Some(m) = book_menu {
+                let item = gio::MenuItem::new(Some(&p.name), None);
+                item.set_action_and_target_value(
+                    Some("win.book-add-to-playlist"),
+                    Some(&p.id.to_variant()),
+                );
+                m.append_item(&item);
             }
         }
     }

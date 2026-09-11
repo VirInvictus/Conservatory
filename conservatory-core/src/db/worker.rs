@@ -439,6 +439,13 @@ impl WorkerHandle {
             .await
     }
 
+    /// Replace the whole queue with mixed-kind items in order (the 1003
+    /// mixed playlist materialisation).
+    pub async fn replace_queue_mixed(&self, items: Vec<(MediaKind, i64)>) -> Result<()> {
+        self.dispatch(|reply| Command::ReplaceQueueMixed { items, reply })
+            .await
+    }
+
     /// Append episodes to the unified queue tail (Phase 6b-ii-c).
     pub async fn enqueue_episodes(&self, episode_ids: Vec<i64>) -> Result<()> {
         self.dispatch(|reply| Command::EnqueueEpisodes { episode_ids, reply })
@@ -528,6 +535,21 @@ impl WorkerHandle {
         self.dispatch(|reply| Command::AppendPlaylistTracks {
             playlist_id,
             track_ids,
+            reply,
+        })
+        .await
+    }
+
+    /// Append mixed-kind entries to a static playlist (the 1003 mixed
+    /// entries): `(kind, id)` pairs land in the columns their kind names.
+    pub async fn append_playlist_entries(
+        &self,
+        playlist_id: i64,
+        entries: Vec<(MediaKind, i64)>,
+    ) -> Result<()> {
+        self.dispatch(|reply| Command::AppendPlaylistEntries {
+            playlist_id,
+            entries,
             reply,
         })
         .await
@@ -1308,6 +1330,9 @@ fn handle(conn: &mut Connection, command: Command) {
         Command::ReplaceQueueWithTracks { track_ids, reply } => {
             let _ = reply.send(writes::replace_queue_with_tracks(conn, &track_ids));
         }
+        Command::ReplaceQueueMixed { items, reply } => {
+            let _ = reply.send(writes::replace_queue_mixed(conn, &items));
+        }
         Command::EnqueueEpisodes { episode_ids, reply } => {
             let _ = reply.send(writes::enqueue_episodes(conn, &episode_ids));
         }
@@ -1367,6 +1392,13 @@ fn handle(conn: &mut Connection, command: Command) {
                 playlist_id,
                 &track_ids,
             ));
+        }
+        Command::AppendPlaylistEntries {
+            playlist_id,
+            entries,
+            reply,
+        } => {
+            let _ = reply.send(writes::append_playlist_entries(conn, playlist_id, &entries));
         }
         Command::RemovePlaylistEntry {
             playlist_id,

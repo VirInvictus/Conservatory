@@ -75,7 +75,7 @@ async fn cover_follows_a_path_affecting_edit() {
         .update_album(
             1,
             AlbumEdit {
-                year: Some(1990),
+                year: Some(Some(1990)),
                 ..Default::default()
             },
         )
@@ -111,7 +111,7 @@ async fn cover_resyncs_back_on_undo() {
         .update_album(
             1,
             AlbumEdit {
-                year: Some(1990),
+                year: Some(Some(1990)),
                 ..Default::default()
             },
         )

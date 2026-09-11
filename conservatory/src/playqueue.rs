@@ -328,6 +328,14 @@ pub fn attach_book_chapters(
     }
 }
 
+/// The selection reader a media tab registers for the mixed-entry (1003)
+/// add-to-playlist actions: the current selection ids, empty when none.
+pub type PlaylistIdsFn = std::rc::Rc<dyn Fn() -> Vec<i64>>;
+
+/// The shared cell the tab module fills with its [`PlaylistIdsFn`].
+#[cfg(any(feature = "podcasts", feature = "audiobooks"))]
+pub type PlaylistIdsCell = std::rc::Rc<std::cell::RefCell<Option<PlaylistIdsFn>>>;
+
 /// Which side of the drop-target row the dragged row lands on (from the cursor
 /// Y vs the row's mid-height, the GNOME/macOS reorder idiom).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

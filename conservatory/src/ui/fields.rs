@@ -31,7 +31,8 @@ pub(crate) fn push(out: &mut Vec<(String, String)>, label: &str, value: impl Int
 
 /// Collect the bulk-edit dialog's per-field state (key, ticked, entered text)
 /// into parsed assignments (Phase 16.5a). Unticked fields are skipped;
-/// ticked-but-empty fields are left for the "clear a field" follow-on; every
+/// ticked-but-empty fields clear (the 16c clear path: year / shelf genre go
+/// NULL, genres empty, rating 0; identity fields report an error); every
 /// parse failure is reported so the caller can reject the whole set rather
 /// than apply a partly-valid edit. Pure, so unit-tested directly.
 pub(crate) fn collect_assignments(
@@ -40,7 +41,7 @@ pub(crate) fn collect_assignments(
     let mut assignments = Vec::new();
     let mut errors = Vec::new();
     for (key, ticked, value) in fields {
-        if !*ticked || value.trim().is_empty() {
+        if !*ticked {
             continue;
         }
         match parse_assignment(&format!("{key}={value}")) {
@@ -134,6 +135,123 @@ pub fn inspector_fields(
     out
 }
 
+/// The shared value across a selection, or `"multiple values"` when they
+/// differ (the bulk-edit collapse, the same wording). All-`None` agrees on
+/// `None` (the caller skips the row); mixed `None`/`Some` is a difference.
+fn commons(values: impl Iterator<Item = Option<String>>) -> Option<String> {
+    let mut first: Option<Option<String>> = None;
+    for v in values {
+        match &first {
+            None => first = Some(v),
+            Some(f) if *f != v => return Some("multiple values".to_string()),
+            _ => {}
+        }
+    }
+    first.flatten()
+}
+
+/// The aggregate property rows over a multi-selection (the :778 follow-on;
+/// the channels half needs a schema decision and stays out of scope). The
+/// rule is the bulk-edit commons (shared value, else "multiple values"),
+/// with sums only where a sum is meaningful: duration, file size, plays.
+/// The per-row `artist` name is resolved by the caller; the title, track /
+/// disc numbers, and location are per-track identity and do not aggregate,
+/// so they are left out. Pure, so it is unit-tested directly.
+pub fn inspector_aggregate(
+    rows: &[(&Track, Option<&Album>, Option<&str>)],
+    total_size: Option<u64>,
+) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let artist = commons(rows.iter().map(|(_, _, a)| a.map(|s| s.to_string())));
+    push(&mut out, "Artist", artist.unwrap_or_default());
+    let album = commons(rows.iter().map(|(_, al, _)| al.map(|a| a.title.clone())));
+    push(&mut out, "Album", album.unwrap_or_default());
+    let year = commons(
+        rows.iter()
+            .map(|(_, al, _)| al.and_then(|a| a.year).map(|y| y.to_string())),
+    );
+    if let Some(y) = year {
+        push(&mut out, "Year", y);
+    }
+    let genre = commons(
+        rows.iter()
+            .map(|(_, al, _)| al.and_then(|a| a.shelf_genre.clone())),
+    );
+    push(&mut out, "Genre", genre.unwrap_or_default());
+    let total: f64 = rows.iter().filter_map(|(t, _, _)| t.duration).sum();
+    if total > 0.0 {
+        push(&mut out, "Duration", fmt_secs(total));
+    }
+    let format = commons(rows.iter().map(|(t, _, _)| t.format.clone()));
+    push(&mut out, "Format", format.unwrap_or_default());
+    let bitrate = commons(rows.iter().map(|(t, _, _)| {
+        t.bitrate
+            .filter(|b| *b > 0)
+            .map(|b| format!("{} kbps", b / 1000))
+    }));
+    if let Some(br) = bitrate {
+        push(&mut out, "Bitrate", br);
+    }
+    let sample_rate = commons(rows.iter().map(|(t, _, _)| {
+        t.sample_rate
+            .filter(|s| *s > 0)
+            .map(|s| format!("{:.1} kHz", s as f64 / 1000.0))
+    }));
+    if let Some(sr) = sample_rate {
+        push(&mut out, "Sample rate", sr);
+    }
+    if let Some(size) = total_size {
+        push(&mut out, "File size", format_size(size));
+    }
+    let rg = commons(
+        rows.iter()
+            .map(|(t, _, _)| match (t.replaygain_track, t.replaygain_album) {
+                (Some(t), Some(a)) => Some(format!("{t:+.2} dB track / {a:+.2} dB album")),
+                (Some(t), None) => Some(format!("{t:+.2} dB track")),
+                (None, Some(a)) => Some(format!("{a:+.2} dB album")),
+                (None, None) => None,
+            }),
+    );
+    if let Some(rg) = rg {
+        push(&mut out, "ReplayGain", rg);
+    }
+    let rating = commons(
+        rows.iter()
+            .map(|(t, _, _)| (t.rating > 0).then(|| "★".repeat(t.rating as usize))),
+    );
+    if let Some(r) = rating {
+        push(&mut out, "Rating", r);
+    }
+    let plays: u32 = rows.iter().map(|(t, _, _)| t.play_count).sum();
+    if plays > 0 {
+        push(&mut out, "Plays", plays.to_string());
+    }
+    let last_played = commons(
+        rows.iter()
+            .map(|(t, _, _)| t.last_played.map(|lp| lp.date_naive().to_string())),
+    );
+    if let Some(lp) = last_played {
+        push(&mut out, "Last played", lp);
+    }
+    let added = commons(
+        rows.iter()
+            .map(|(t, _, _)| t.added_at.map(|a| a.date_naive().to_string())),
+    );
+    if let Some(added) = added {
+        push(&mut out, "Added", added);
+    }
+    let cover = commons(rows.iter().map(|(_, al, _)| {
+        al.and_then(|a| a.cover_path.as_deref())
+            .map(Path::new)
+            .and_then(Path::file_name)
+            .map(|n| n.to_string_lossy().into_owned())
+    }));
+    if let Some(cover) = cover {
+        push(&mut out, "Cover", cover);
+    }
+    out
+}
+
 /// The credits section of the inspector (19b-iii): one row per role, names
 /// joined in the read's role-then-sort order. Empty when the track has none,
 /// consistent with the other absent-field skips. Unknown role tokens (a future
@@ -156,18 +274,34 @@ pub fn credit_fields(credits: &[TrackCreditRow]) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use conservatory_core::Field;
 
     #[test]
-    fn collect_assignments_skips_unticked_and_empty_fields() {
+    fn collect_assignments_skips_unticked_fields_and_clears_empty_ones() {
         let fields = vec![
             ("title".to_string(), true, "Xtal".to_string()),
             ("album".to_string(), false, "ignored".to_string()),
+            // Ticked-but-empty is the 16c clear path: year clears (empty
+            // assignment), rating clears to 0.
             ("year".to_string(), true, "   ".to_string()),
+            ("rating".to_string(), true, String::new()),
         ];
         let (assignments, errors) = collect_assignments(&fields);
         assert!(errors.is_empty());
-        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments.len(), 3);
         assert_eq!(assignments[0].value, "Xtal");
+        assert_eq!(assignments[1].field, Field::Year);
+        assert!(assignments[1].value.trim().is_empty());
+        assert_eq!(assignments[2].field, Field::Rating);
+    }
+
+    #[test]
+    fn collect_assignments_rejects_clearing_identity_fields() {
+        let fields = vec![("title".to_string(), true, "  ".to_string())];
+        let (assignments, errors) = collect_assignments(&fields);
+        assert!(assignments.is_empty());
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("cannot be cleared"));
     }
 
     #[test]
@@ -317,5 +451,73 @@ mod tests {
             ]
         );
         assert!(credit_fields(&[]).is_empty());
+    }
+
+    #[test]
+    fn aggregate_shows_commons_and_sums() {
+        let mut t2 = track();
+        t2.id = 2;
+        t2.title = "Hedges".into();
+        t2.duration = Some(100.0);
+        t2.play_count = 4;
+        let rows = inspector_aggregate(
+            &[
+                (&track(), Some(&album()), Some("Aphex Twin")),
+                (&t2, Some(&album()), Some("Aphex Twin")),
+            ],
+            Some(6_000_000),
+        );
+        let map: std::collections::HashMap<_, _> = rows.iter().cloned().collect();
+        // Shared values render once; sums total; per-track identity is absent.
+        assert_eq!(map["Artist"], "Aphex Twin");
+        assert_eq!(map["Album"], "Selected Ambient Works 85-92");
+        assert_eq!(map["Year"], "1992");
+        assert_eq!(map["Duration"], fmt_secs(394.0));
+        assert_eq!(map["File size"], format_size(6_000_000));
+        assert_eq!(map["Rating"], "★★★★");
+        assert_eq!(map["Plays"], "7");
+        assert_eq!(map["Format"], "flac");
+        assert!(!map.contains_key("Title"), "titles do not aggregate");
+        assert!(!map.contains_key("Location"), "locations do not aggregate");
+    }
+
+    #[test]
+    fn aggregate_marks_differing_values() {
+        let mut t2 = track();
+        t2.id = 2;
+        t2.rating = 2;
+        let mut al2 = album();
+        al2.year = Some(1994);
+        al2.cover_path = Some("Music/Electronic/Aphex Twin/SAW II/folder.jpg".into());
+        let rows = inspector_aggregate(
+            &[
+                (&track(), Some(&album()), Some("Aphex Twin")),
+                (&t2, Some(&al2), Some("Aphex Twin")),
+            ],
+            None,
+        );
+        let map: std::collections::HashMap<_, _> = rows.iter().cloned().collect();
+        assert_eq!(map["Year"], "multiple values");
+        assert_eq!(map["Rating"], "multiple values");
+        // Differing albums: the cover row reads as differing, no accent either.
+        assert_eq!(map["Cover"], "multiple values");
+    }
+
+    #[test]
+    fn aggregate_all_unrated_skips_the_rating_row() {
+        let mut t1 = track();
+        t1.rating = 0;
+        t1.play_count = 0;
+        let mut t2 = track();
+        t2.id = 2;
+        t2.rating = 0;
+        t2.play_count = 0;
+        let rows = inspector_aggregate(
+            &[(&t1, Some(&album()), None), (&t2, Some(&album()), None)],
+            None,
+        );
+        let map: std::collections::HashMap<_, _> = rows.iter().cloned().collect();
+        assert!(!map.contains_key("Rating"));
+        assert!(!map.contains_key("Plays"));
     }
 }

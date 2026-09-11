@@ -10,7 +10,8 @@ use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{ReadPool, get_album, get_track, spawn_worker, track_render_rows};
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
-    AlbumEdit, ImportOptions, PathTemplate, TrackEdit, TrackFields, import_folder,
+    AlbumEdit, ImportOptions, PathTemplate, TrackEdit, TrackFields, build_album_edit,
+    build_track_edit, import_folder, parse_assignment,
 };
 use tempfile::tempdir;
 
@@ -102,6 +103,68 @@ async fn edit_track_artist_reassigns_and_fts_follows() {
 }
 
 #[tokio::test]
+async fn clear_album_year_and_shelf_genre_write_nulls() {
+    // The 16c clear path at the worker level: `Some(None)` arms write NULL,
+    // and a later set restores normal editing (the COALESCE arm is intact).
+    let (_dir, pool, worker) = synthetic_lib().await;
+
+    worker
+        .update_album(
+            1,
+            AlbumEdit {
+                year: Some(None),
+                shelf_genre: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let conn = pool.open().unwrap();
+    let (year, shelf): (Option<i64>, Option<String>) = conn
+        .query_row(
+            "SELECT year, shelf_genre FROM albums WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(year, None);
+    assert_eq!(shelf, None);
+
+    worker
+        .update_album(
+            1,
+            AlbumEdit {
+                year: Some(Some(1987)),
+                shelf_genre: Some(Some("Ambient".into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let alb = get_album(&conn, 1).unwrap().unwrap();
+    assert_eq!(alb.year, Some(1987));
+    assert_eq!(alb.shelf_genre.as_deref(), Some("Ambient"));
+}
+
+#[tokio::test]
+async fn clear_rating_writes_zero_not_silently_nothing() {
+    // The trap the old rating parse carried: an empty value used to parse to
+    // None (dropped, no write). It must clear to 0.
+    let (_dir, pool, worker) = synthetic_lib().await;
+
+    let edit = build_track_edit(&[parse_assignment("rating=").unwrap()]);
+    assert_eq!(edit.rating, Some(0));
+    worker.update_track(1, edit).await.unwrap();
+
+    let conn = pool.open().unwrap();
+    let rating: i64 = conn
+        .query_row("SELECT rating FROM tracks WHERE id = 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rating, 0);
+}
+
+#[tokio::test]
 async fn update_album_fields_and_fts_follow() {
     let (_dir, pool, worker) = synthetic_lib().await;
 
@@ -110,7 +173,7 @@ async fn update_album_fields_and_fts_follow() {
             1,
             AlbumEdit {
                 title: Some("New Album Name".into()),
-                year: Some(1999),
+                year: Some(Some(1999)),
                 album_artist: Some("AA Person".into()),
                 ..Default::default()
             },
@@ -210,7 +273,7 @@ async fn path_affecting_edit_re_renders_moves_and_undoes() {
         .update_album(
             1,
             AlbumEdit {
-                year: Some(1999),
+                year: Some(Some(1999)),
                 ..Default::default()
             },
         )

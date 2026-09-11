@@ -297,6 +297,13 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Replace the queue with mixed-kind items in order (the 1003 playlist
+    /// materialisation): `(kind, id)` pairs.
+    ReplaceQueueMixed {
+        items: Vec<(MediaKind, i64)>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Append episodes to the queue tail (Phase 6b-ii-c).
     EnqueueEpisodes {
         episode_ids: Vec<i64>,
@@ -366,6 +373,12 @@ pub(crate) enum Command {
     AppendPlaylistTracks {
         playlist_id: i64,
         track_ids: Vec<i64>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    /// Append mixed-kind entries to a playlist (the 1003 mixed entries).
+    AppendPlaylistEntries {
+        playlist_id: i64,
+        entries: Vec<(MediaKind, i64)>,
         reply: oneshot::Sender<Result<()>>,
     },
     RemovePlaylistEntry {
@@ -727,6 +740,7 @@ impl Command {
             Self::DeleteBook { .. } => "delete_book",
             Self::DeleteBooks { .. } => "delete_books",
             Self::ReplaceQueueWithTracks { .. } => "replace_queue_with_tracks",
+            Self::ReplaceQueueMixed { .. } => "replace_queue_mixed",
             Self::EnqueueEpisodes { .. } => "enqueue_episodes",
             Self::ReplaceQueueWithEpisodes { .. } => "replace_queue_with_episodes",
             Self::EnqueueBooks { .. } => "enqueue_books",
@@ -739,6 +753,7 @@ impl Command {
             Self::DeletePlaylist { .. } => "delete_playlist",
             Self::RenamePlaylist { .. } => "rename_playlist",
             Self::AppendPlaylistTracks { .. } => "append_playlist_tracks",
+            Self::AppendPlaylistEntries { .. } => "append_playlist_entries",
             Self::RemovePlaylistEntry { .. } => "remove_playlist_entry",
             Self::ReorderPlaylistEntry { .. } => "reorder_playlist_entry",
             Self::GetOrCreateShow { .. } => "get_or_create_show",

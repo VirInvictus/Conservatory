@@ -71,7 +71,7 @@ async fn embed_round_trips_descriptive_fields() {
             1,
             AlbumEdit {
                 title: Some("RT Album".into()),
-                year: Some(1995),
+                year: Some(Some(1995)),
                 ..Default::default()
             },
         )

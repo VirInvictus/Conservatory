@@ -3436,7 +3436,7 @@ async fn run_tag_replace(
                             .update_album(
                                 aid,
                                 AlbumEdit {
-                                    shelf_genre: Some(nv),
+                                    shelf_genre: Some(Some(nv)),
                                     ..Default::default()
                                 },
                             )

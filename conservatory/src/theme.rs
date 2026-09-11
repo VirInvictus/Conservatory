@@ -94,7 +94,18 @@ window, popover, dropdown, tooltip { font-family: 'Inter', sans-serif; }
 /* --- App-owned rules (migrated from the old main.rs sheet) --- */
 columnview.data-table > listview > row > cell { padding-top: 1px; padding-bottom: 1px; }
 columnview.data-table > listview > row { transition: background-color 150ms ease; }
+/* Scannability option (the post-0.3.0 follow-on, config `[browse].row_style`):
+   a faint line between track rows or a subtle even-row tint, both quieter than
+   the pre-0.3.9 grid the density pass removed, and both off by default. The
+   zebra rule precedes the hover rule below so hover keeps winning on a hovered
+   stripe. */
+columnview.row-lines > listview > row { border-bottom: 1px solid alpha(%GRID%, 0.55); }
+columnview.zebra-rows > listview > row:nth-child(even) { background-color: alpha(%FG%, 0.032); }
 columnview.data-table > listview > row:hover { background: alpha(currentColor, 0.04); }
+/* Facet-pane rows match the track list's tightened density (the post-0.3.0
+   follow-on): the leaf row box is the 24px cover + 1px cell padding, so the
+   pane rows pin to the same height instead of the label's natural one. */
+columnview.facet-pane > listview > row { min-height: 26px; }
 /* Column headers read as quiet labels, not buttons (the deadbeef/foobar look):
    dimmed, slightly smaller, a touch of tracking. */
 columnview > header > button { padding-top: 2px; padding-bottom: 2px; min-height: 0; border-width: 0; background-color: transparent; color: %FG_DIM%; font-size: 0.92em; letter-spacing: 0.02em; transition: background-color 150ms ease; }
@@ -149,4 +160,33 @@ pub fn sheet() -> String {
 pub fn install() {
     vir_gtk::theme::install_stylesheet(&base());
     vir_gtk::theme::install_app_stylesheet(&sheet());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typography_stays_the_only_font_rules() {
+        // Phase 13d contract: exactly three `font-family` rules (Inter body,
+        // Fraunces headings, IBM Plex Mono technical), all app-owned.
+        assert_eq!(sheet().matches("font-family").count(), 3);
+    }
+
+    #[test]
+    fn no_tokens_survive_replacement() {
+        // A leftover %TOKEN% would ship literally into GTK's CSS parser.
+        assert!(!sheet().contains('%'));
+    }
+
+    #[test]
+    fn row_style_selectors_are_pinned() {
+        // The 0.5.0 scannability option (config `[browse].row_style`): both
+        // leaf classes must have rules, so a rename breaks this test instead
+        // of silently unbinding the config key.
+        assert!(sheet().contains("columnview.row-lines > listview > row"));
+        assert!(sheet().contains("columnview.zebra-rows > listview > row"));
+        // The facet-pane density pin rides the same contract.
+        assert!(sheet().contains("columnview.facet-pane > listview > row"));
+    }
 }

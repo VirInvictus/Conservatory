@@ -118,18 +118,49 @@ pub struct AudiobooksConfig {
 #[serde(default)]
 pub struct BrowseConfig {
     pub panes: Vec<String>,
-    /// The leaf columns, left-to-right, by catalog id (Phase 18b). Default is the
-    /// pre-18b fixed set, so an unconfigured launch is visually unchanged. Unknown
-    /// / duplicate ids are skipped when the leaf is built (the forgiving idiom).
+    /// The leaf columns, left-to-right, by catalog id (Phase 18b). Default is
+    /// the true deadbeef look (no per-row cover column; the covers live in the
+    /// inspector panel and the Now-bar), flipped from the pre-18b fixed set by
+    /// the 0.5.0 polish pass. Unknown / duplicate ids are skipped when the leaf
+    /// is built (the forgiving idiom).
     pub columns: Vec<String>,
+    /// Scannability aid for the leaf (the post-`0.3.0` follow-on): a faint row
+    /// line or subtle zebra shading between track rows. The browse ships fully
+    /// clean, so the default is [`RowStyle::None`]; leaf only (the facet panes
+    /// are short navigation lists).
+    pub row_style: RowStyle,
 }
 
-/// The pre-18b fixed leaf column order (the [`BrowseConfig::columns`] default and
-/// the catalog's canonical order). Shared so the config default and the GUI editor
+/// The leaf's scannability posture, the serde-facing `"none"` / `"line"` /
+/// `"zebra"`. They are alternative answers to the same preference, so one enum,
+/// never both at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RowStyle {
+    #[default]
+    None,
+    Line,
+    Zebra,
+}
+
+impl RowStyle {
+    /// The CSS class stamped on the leaf when this style is active (`None`
+    /// carries no class, so the default browse renders exactly as before).
+    pub fn css_class(self) -> Option<&'static str> {
+        match self {
+            RowStyle::None => None,
+            RowStyle::Line => Some("row-lines"),
+            RowStyle::Zebra => Some("zebra-rows"),
+        }
+    }
+}
+
+/// The default leaf column order (the [`BrowseConfig::columns`] default and the
+/// catalog's canonical baseline). Shared so the config default and the GUI editor
 /// agree on the baseline.
 pub fn default_columns() -> Vec<String> {
     [
-        "cover", "glyph", "artist", "album", "genre", "title", "duration", "rating",
+        "glyph", "artist", "album", "genre", "title", "duration", "rating",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -246,6 +277,7 @@ impl Default for BrowseConfig {
                 "album".to_string(),
             ],
             columns: default_columns(),
+            row_style: RowStyle::None,
         }
     }
 }
@@ -399,6 +431,41 @@ mod tests {
     fn missing_file_loads_defaults() {
         let path = Path::new("/nonexistent/conservatory/config.toml");
         assert_eq!(load(path).unwrap(), Config::default());
+    }
+
+    #[test]
+    fn default_columns_omit_the_per_row_cover() {
+        // The 0.5.0 default flip (roadmap post-0.3.0 follow-on): the true
+        // deadbeef look is one cover panel, no per-row art. An explicit
+        // `columns = ["cover", ...]` in a config file is untouched; this pins
+        // only the unconfigured default.
+        assert!(!default_columns().contains(&"cover".to_string()));
+        // A config without [browse] deserializes to the new default.
+        let config: Config = toml::from_str("[library]\nroot = \"/m\"\n").unwrap();
+        assert_eq!(config.browse.columns, default_columns());
+        // An explicit cover entry round-trips unchanged.
+        let explicit: Config =
+            toml::from_str("[browse]\ncolumns = [\"cover\", \"glyph\", \"title\"]\n").unwrap();
+        assert_eq!(explicit.browse.columns, vec!["cover", "glyph", "title"]);
+    }
+
+    #[test]
+    fn row_style_defaults_off_and_round_trips() {
+        // Absent key: the clean default, no CSS class (the default browse
+        // must render exactly as before).
+        let config: Config = toml::from_str("[browse]\ncolumns = []\n").unwrap();
+        assert_eq!(config.browse.row_style, RowStyle::None);
+        assert_eq!(config.browse.row_style.css_class(), None);
+        // Both non-default styles parse and map to their leaf classes.
+        let zebra: Config = toml::from_str("[browse]\nrow_style = \"zebra\"\n").unwrap();
+        assert_eq!(zebra.browse.row_style, RowStyle::Zebra);
+        assert_eq!(zebra.browse.row_style.css_class(), Some("zebra-rows"));
+        let line: Config = toml::from_str("[browse]\nrow_style = \"line\"\n").unwrap();
+        assert_eq!(line.browse.row_style.css_class(), Some("row-lines"));
+        // Round-trip through the serializer.
+        let toml_text = toml::to_string(&zebra).unwrap();
+        let back: Config = toml::from_str(&toml_text).unwrap();
+        assert_eq!(back, zebra);
     }
 
     #[test]

@@ -1233,6 +1233,8 @@ pub fn build_podcasts_view(
     rt: tokio::runtime::Handle,
     player: Option<PlayerHandle>,
     root: Option<PathBuf>,
+    add_to_playlist_menu: Option<gtk::gio::Menu>,
+    playlist_ids_cell: crate::playqueue::PlaylistIdsCell,
 ) -> gtk::Widget {
     let store = gtk::gio::ListStore::new::<EpisodeRow>();
 
@@ -1282,6 +1284,13 @@ pub fn build_podcasts_view(
         top.append(Some("Play"), Some("episode.play"));
         top.append(Some("Add to Queue"), Some("episode.queue"));
         menu.append_section(None, &top);
+        // The shared Playlists submenu (the 1003 mixed entries): items target
+        // the window action, so they resolve through the widget tree.
+        if let Some(shared) = &add_to_playlist_menu {
+            let playlists = gio::Menu::new();
+            playlists.append_submenu(Some("Add to Playlist"), shared);
+            menu.append_section(Some("Playlists"), &playlists);
+        }
         // Media verbs (16.5e): the opt-in download and its undo.
         let media = gio::Menu::new();
         media.append(Some("Download"), Some("episode.download"));
@@ -1432,6 +1441,13 @@ pub fn build_podcasts_view(
         downloads: Arc::new(Mutex::new(HashMap::new())),
         download_ticker: Cell::new(false),
     });
+    // The mixed-entry (1003) add-to-playlist registration: the window's
+    // action reads the episode-list selection through this cell.
+    *playlist_ids_cell.borrow_mut() = Some(std::rc::Rc::new({
+        let inner = inner.clone();
+        move || inner.selected_rows().iter().map(|e| e.id()).collect()
+    }));
+
     inner.show_detail(None);
     let _ = ctx.set(inner.clone());
 

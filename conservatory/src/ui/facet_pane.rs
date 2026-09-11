@@ -54,6 +54,9 @@ pub fn build_pane(field: FacetField, on_context: RowContextFn) -> FacetPane {
     view.set_show_row_separators(false);
     view.set_show_column_separators(false);
     view.add_css_class("data-table");
+    // Density match (the post-0.3.0 follow-on): the pane row box pins to the
+    // track list's tightened height instead of the label's natural one.
+    view.add_css_class("facet-pane");
 
     // Value column (expands, ellipsizes).
     let value_factory = gtk::SignalListItemFactory::new();

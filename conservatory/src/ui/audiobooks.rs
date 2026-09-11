@@ -53,6 +53,8 @@ pub fn build_audiobooks_view(
     rt: tokio::runtime::Handle,
     player: Option<PlayerHandle>,
     root: Option<PathBuf>,
+    add_to_playlist_menu: Option<gtk::gio::Menu>,
+    playlist_ids_cell: crate::playqueue::PlaylistIdsCell,
 ) -> gtk::Widget {
     let store = gtk::gio::ListStore::new::<BookRow>();
     // Multi-select for bulk edit (7b-iii); a plain click still selects one book,
@@ -96,6 +98,13 @@ pub fn build_audiobooks_view(
         sort: Cell::new(ShelfSort::InProgress),
     });
 
+    // The mixed-entry (1003) add-to-playlist registration: the window's
+    // action reads the shelf selection through this cell.
+    *playlist_ids_cell.borrow_mut() = Some(std::rc::Rc::new({
+        let inner = inner.clone();
+        move || inner.selected_books().iter().map(|b| b.id()).collect()
+    }));
+
     // The shelf grid: a cover tile per book.
     let grid = gtk::GridView::new(Some(selection.clone()), Some(tile_factory(inner.clone())));
     grid.set_max_columns(8);
@@ -122,6 +131,13 @@ pub fn build_audiobooks_view(
         menu.append_section(None, &edit);
         // Music-parity verbs (16.5h): the same bottom sections the track
         // menu carries.
+        // The shared Playlists submenu (the 1003 mixed entries): items target
+        // the window action, so they resolve through the widget tree.
+        if let Some(shared) = &add_to_playlist_menu {
+            let playlists = gtk::gio::Menu::new();
+            playlists.append_submenu(Some("Add to Playlist"), shared);
+            menu.append_section(Some("Playlists"), &playlists);
+        }
         let files = gtk::gio::Menu::new();
         files.append(Some("Reveal in Files"), Some("book.reveal"));
         menu.append_section(None, &files);

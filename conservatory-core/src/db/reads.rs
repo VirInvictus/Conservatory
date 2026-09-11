@@ -871,6 +871,51 @@ pub fn load_queue_display(conn: &Connection) -> Result<Vec<QueueDisplayRow>> {
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// One static playlist in order, with the same display joins
+/// [`load_queue_display`] carries (the 1003 mixed entries: the schema always
+/// held episode / book ids, and the engine rebuild needs the same episode
+/// source / show fields the saved queue does). Mixed kinds coalesce their
+/// label exactly like the queue view does.
+pub fn load_playlist_display(conn: &Connection, playlist_id: i64) -> Result<Vec<QueueDisplayRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT q.position, q.kind, q.track_id, q.episode_id, q.book_id,
+                e.show_id AS show_id,
+                COALESCE(t.title, e.title, bk.title) AS title,
+                COALESCE(ar.name, s.title,
+                  (SELECT p.name FROM book_authors ba JOIN book_people p ON p.id = ba.person_id
+                    WHERE ba.book_id = bk.id ORDER BY p.sort_name LIMIT 1)) AS artist,
+                e.audio_path AS audio_path,
+                e.audio_url  AS audio_url
+         FROM playlist_entries q
+         LEFT JOIN tracks t ON t.id = q.track_id
+         LEFT JOIN artists ar ON ar.id = t.artist_id
+         LEFT JOIN episodes e ON e.id = q.episode_id
+         LEFT JOIN shows s ON s.id = e.show_id
+         LEFT JOIN books bk ON bk.id = q.book_id
+         WHERE q.playlist_id = ?1
+         ORDER BY q.position",
+    )?;
+    let rows = stmt.query_map([playlist_id], |row| {
+        let kind: String = row.get("kind")?;
+        let kind = kind.parse::<MediaKind>().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+        Ok(QueueDisplayRow {
+            position: row.get("position")?,
+            kind,
+            track_id: row.get("track_id")?,
+            episode_id: row.get("episode_id")?,
+            book_id: row.get("book_id")?,
+            show_id: row.get("show_id")?,
+            title: row.get::<_, Option<String>>("title")?.unwrap_or_default(),
+            artist: row.get("artist")?,
+            audio_path: row.get("audio_path")?,
+            audio_url: row.get("audio_url")?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
 /// A track projected for search (Phase 3a). The CLI/GUI maps this to
 /// `crate::search::SearchItem` for the in-memory fallback path; `track_id`
 /// pairs a match back to its row.

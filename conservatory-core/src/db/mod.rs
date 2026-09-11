@@ -44,12 +44,12 @@ pub use reads::{
     get_playlist, get_show, get_show_settings, get_track, get_tracks, library_counts, list_albums,
     list_all_tags, list_book_rows, list_books, list_chapters, list_episodes_for_show,
     list_eq_presets, list_peq_bands, list_perspectives, list_playlists, list_shows,
-    list_tags_for_show, listening_totals, load_queue, load_queue_display, ordered_track_ids,
-    pending_scrobbles, perspective_expression, playlist_rows, podcast_sidebar_counts,
-    read_playback_state, read_verify_results, scrobble_source, search_rows, search_track_ids,
-    series_for_book, show_settings_map, sort_shelf, sort_shelf_by, static_playlist_track_ids,
-    stats_genre_rows, stats_track_rows, track_credits, track_id_by_path, track_metadata,
-    track_render_rows, writeback_rows,
+    list_tags_for_show, listening_totals, load_playlist_display, load_queue, load_queue_display,
+    ordered_track_ids, pending_scrobbles, perspective_expression, playlist_rows,
+    podcast_sidebar_counts, read_playback_state, read_verify_results, scrobble_source, search_rows,
+    search_track_ids, series_for_book, show_settings_map, sort_shelf, sort_shelf_by,
+    static_playlist_track_ids, stats_genre_rows, stats_track_rows, track_credits, track_id_by_path,
+    track_metadata, track_render_rows, writeback_rows,
 };
 pub use worker::{WorkerHandle, spawn_worker};
 

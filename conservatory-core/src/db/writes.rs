@@ -8,9 +8,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::models::{
     Album, ApeStripRow, Artist, AudioState, Book, BookChapter, BookPlayback, Chapter,
-    EQ_BAND_COUNT, Episode, EqState, NewScrobble, PEQ_FREQ_RANGE, PEQ_GAIN_RANGE, PEQ_MAX_BANDS,
-    PEQ_Q_RANGE, PeqBand, Playback, PlaybackCursor, PlayedState, PlaylistKind, PlaylistOrder, Show,
-    ShowSettings, Track, VerifyResultRow,
+    EQ_BAND_COUNT, Episode, EqState, MediaKind, NewScrobble, PEQ_FREQ_RANGE, PEQ_GAIN_RANGE,
+    PEQ_MAX_BANDS, PEQ_Q_RANGE, PeqBand, Playback, PlaybackCursor, PlayedState, PlaylistKind,
+    PlaylistOrder, Show, ShowSettings, Track, VerifyResultRow,
 };
 use crate::edit::{AlbumEdit, TrackEdit};
 use crate::errors::{Error, Result};
@@ -130,6 +130,8 @@ pub(crate) fn update_tracks(
 /// Apply an album-level field edit (Phase 5a). Album-level edits change the whole
 /// album (every track under it). `shelf_genre`, `album`, `album_artist`, and
 /// `year` are path-affecting: the caller re-renders and moves (spec §5.4).
+/// `year` / `shelf_genre` are tri-state (the 16c clear path): the leading flag
+/// picks between "clear to NULL" and the COALESCE set-or-leave arm.
 pub(crate) fn update_album(conn: &Connection, album_id: i64, edit: &AlbumEdit) -> Result<()> {
     let album_artist_id = match &edit.album_artist {
         Some(name) => Some(get_or_create_artist(
@@ -143,15 +145,17 @@ pub(crate) fn update_album(conn: &Connection, album_id: i64, edit: &AlbumEdit) -
     conn.execute(
         "UPDATE albums SET
             title = COALESCE(?2, title),
-            year = COALESCE(?3, year),
-            shelf_genre = COALESCE(?4, shelf_genre),
-            album_artist_id = COALESCE(?5, album_artist_id)
+            year = CASE WHEN ?3 = 1 THEN NULL ELSE COALESCE(?4, year) END,
+            shelf_genre = CASE WHEN ?5 = 1 THEN NULL ELSE COALESCE(?6, shelf_genre) END,
+            album_artist_id = COALESCE(?7, album_artist_id)
          WHERE id = ?1",
         params![
             album_id,
             edit.title,
-            edit.year,
-            edit.shelf_genre,
+            i64::from(matches!(edit.year, Some(None))),
+            edit.year.unwrap_or_default(),
+            i64::from(matches!(edit.shelf_genre, Some(None))),
+            edit.shelf_genre.clone().unwrap_or_default(),
             album_artist_id
         ],
     )?;
@@ -878,11 +882,26 @@ pub(crate) fn rename_playlist(conn: &Connection, id: i64, name: &str) -> Result<
 }
 
 /// Append tracks to a static playlist's tail, keeping `position` contiguous
-/// (the `enqueue_tracks` shape, scoped to one playlist).
+/// (the `enqueue_tracks` shape, scoped to one playlist). The track-only twin
+/// of [`append_playlist_entries`].
 pub(crate) fn append_playlist_tracks(
     conn: &mut Connection,
     playlist_id: i64,
     track_ids: &[i64],
+) -> Result<()> {
+    let entries: Vec<(MediaKind, i64)> =
+        track_ids.iter().map(|&id| (MediaKind::Track, id)).collect();
+    append_playlist_entries(conn, playlist_id, &entries)
+}
+
+/// Append mixed-kind entries (track / episode / audiobook) to a static
+/// playlist's tail (the 1003 mixed-entries work; the schema always carried
+/// the kind column and CHECK, v1 just wired tracks). Each id lands in the
+/// column its kind names, positions contiguous from the tail.
+pub(crate) fn append_playlist_entries(
+    conn: &mut Connection,
+    playlist_id: i64,
+    entries: &[(MediaKind, i64)],
 ) -> Result<()> {
     let tx = conn.transaction()?;
     let base: i64 = tx.query_row(
@@ -890,12 +909,46 @@ pub(crate) fn append_playlist_tracks(
         params![playlist_id],
         |r| r.get(0),
     )?;
-    for (offset, &track_id) in track_ids.iter().enumerate() {
-        tx.execute(
-            "INSERT INTO playlist_entries (playlist_id, position, kind, track_id) \
-             VALUES (?1, ?2, 'track', ?3)",
-            params![playlist_id, base + offset as i64, track_id],
-        )?;
+    for (offset, (kind, id)) in entries.iter().enumerate() {
+        let sql = match kind {
+            MediaKind::Track => {
+                "INSERT INTO playlist_entries (playlist_id, position, kind, track_id) \
+                 VALUES (?1, ?2, 'track', ?3)"
+            }
+            MediaKind::Episode => {
+                "INSERT INTO playlist_entries (playlist_id, position, kind, episode_id) \
+                 VALUES (?1, ?2, 'episode', ?3)"
+            }
+            MediaKind::Audiobook => {
+                "INSERT INTO playlist_entries (playlist_id, position, kind, book_id) \
+                 VALUES (?1, ?2, 'audiobook', ?3)"
+            }
+        };
+        tx.execute(sql, params![playlist_id, base + offset as i64, id])?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Replace the whole unified queue with these mixed-kind items in order
+/// ("play this playlist now", the 1003 mixed materialisation; the per-kind
+/// `replace_queue_with_*` twins stay for the single-kind surfaces).
+pub(crate) fn replace_queue_mixed(conn: &mut Connection, items: &[(MediaKind, i64)]) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM queue", [])?;
+    for (pos, (kind, id)) in items.iter().enumerate() {
+        let sql = match kind {
+            MediaKind::Track => {
+                "INSERT INTO queue (position, kind, track_id) VALUES (?1, 'track', ?2)"
+            }
+            MediaKind::Episode => {
+                "INSERT INTO queue (position, kind, episode_id) VALUES (?1, 'episode', ?2)"
+            }
+            MediaKind::Audiobook => {
+                "INSERT INTO queue (position, kind, book_id) VALUES (?1, 'audiobook', ?2)"
+            }
+        };
+        tx.execute(sql, params![pos as i64, id])?;
     }
     tx.commit()?;
     Ok(())

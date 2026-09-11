@@ -1647,8 +1647,11 @@ impl ConservatoryWindow {
         const STAT_CAP: usize = 200;
         let n = selection.size();
         let mut ids = Vec::with_capacity(n as usize);
-        for i in 0..n {
-            let Some(obj) = leaf.selection.item(i as u32) else {
+        // The bitset holds the SELECTED positions; `nth(k)` walks them. (The
+        // GUI pass caught the first version indexing the model 0..n instead,
+        // which aggregated the view's first rows.)
+        for k in 0..n {
+            let Some(obj) = leaf.selection.item(selection.nth(k as u32)) else {
                 continue;
             };
             let Ok(row) = obj.downcast::<TrackRow>() else {
@@ -4851,6 +4854,9 @@ impl ConservatoryWindow {
                         Some(episode_menu),
                         cell,
                     );
+                    // The shared submenus were last rebuilt at startup, before
+                    // this lazily-built tab existed; fill the fresh menu now.
+                    win.rebuild_add_to_playlist_menu();
                     view.set_hexpand(true);
                     view.set_vexpand(true);
                     host.append(&view);
@@ -4894,6 +4900,7 @@ impl ConservatoryWindow {
                         Some(book_menu),
                         cell,
                     );
+                    win.rebuild_add_to_playlist_menu();
                     view.set_hexpand(true);
                     view.set_vexpand(true);
                     host.append(&view);

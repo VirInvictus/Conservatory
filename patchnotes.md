@@ -1,5 +1,17 @@
 # Patch Notes
 
+## v0.5.0 (2026-09-11)
+
+The interaction tier: the seven recorded C-section and B-leftover items land together, each with regression tests, exercised by the same-day functional pass against a fixture library (browse, search grammar, queue, podcasts, audiobooks, import, move, undo, crash replay, write-back, verify, audit). The sweep, the inline editor, the aggregate, the cover-column default, and the zebra shading were driven live in the running app; the drag-reorder editor and the book-menu section ride their unit-tested machinery and the proven queue-drawer idiom. Acceptance of the look-and-feel items sits with the display sitting; the markers say so.
+
+- **Added:** rating drag-sweep (16b): press a star row and sweep; the stars fill live as the pointer crosses them and a single write lands on release. A plain click keeps the click-to-set and clear-on-current semantics.
+- **Added:** inline cell editing (16c): a second click on a selected row's title / artist / album / genre cell edits in place. Enter or focus loss commits, Escape cancels. Album edits retitle the whole album and a path-affecting edit runs the usual move preview.
+- **Added:** clearing a field to empty (16c): a ticked-but-empty bulk-edit field clears instead of erroring: year and shelf genre go NULL, genres empty, rating to 0. Title, artist, and album identity fields refuse with a readable message. `AlbumEdit` year / shelf genre are tri-state.
+- **Added:** static playlists hold episodes and audiobooks (16d): Add to Playlist appears on the episode and book context menus, a static playlist plays its mixed order through the unified queue (a book stays one queue entry), and the Playlists sidebar gains a Reorder dialog: entries drag to reorder with a per-row remove, committing through the worker immediately.
+- **Changed:** facet-pane rows match the track list's tightened density; the per-row cover column defaults off (the deadbeef look; re-enable it in Preferences), and a new `[browse].row_style` setting (none / line / zebra, default none) adds optional scannability shading to the track list.
+- **Added:** the track properties inspector aggregates a multi-selection: shared values show once, differing values read "multiple values", duration / size / plays total, and the cover panel appears only when every selected track shares one album.
+- **Fixed:** re-importing a standalone audiobook from the managed tree resolved its author as the literal "Standalone" folder level; the reader now knows that level is the tree's own render. (Landed in v0.4.5 with the packaging milestone.)
+
 ## v0.4.5 (2026-09-11)
 
 The packaging milestone: the Flatpak manifest now carries every missing build dependency as its own module (the recorded 5.8 decision) and a local flatpak-builder run builds, stages, and exports the app on the GNOME 50 runtime. Two defects the functional pass caught ride along, as does the vir-gtk 1.2.0 consumer wave.

@@ -1,6 +1,6 @@
 # Conservatory — Application Specification
 
-**Version:** 0.4.4 (Phases 0–17 shipped, including Phase 9 (scrobbling, v0.3.1–v0.3.6) and Phase 26 (de-adwaita, `0.3.0`); the Phase 19 + 9 milestone is tagged `v0.4.4` (2026-09-06). See §17 and roadmap.md.)
+**Version:** 0.5.0 (Phases 0–19 shipped, including Phase 9 (scrobbling, v0.3.1–v0.3.6), Phase 26 (de-adwaita, `0.3.0`), and the Phase 19 + 9 milestone (`v0.4.4`); v0.4.5 landed the Flatpak build-dependency modules, v0.5.0 the interaction tier. See §17 and roadmap.md.)
 **Target:** Wayland-native Linux desktops (Hyprland and GNOME both first-class), GTK4 ≥ 4.14, no libadwaita (§2.4, Phase 26)
 **Language:** Rust (2024 Edition)
 **Build System:** Cargo workspace (`conservatory-core` + `vir-search` (shared) + `conservatory-podcasts` + `conservatory-audiobooks` + `conservatory-cli` + `conservatory`) / Meson wrapper for Flatpak packaging
@@ -659,7 +659,7 @@ External tools (shelled out, not linked, ATTRIBUTIONS.md): `rsgain` (ReplayGain 
 
 ## 12. Flatpak Distribution
 
-Flatpak-first. App ID `io.github.virinvictus.conservatory`, settled 2026-07-26 (see §15). Permissions kept tight: `network` (feeds, downloads, streaming), file access to the library root (via portal where possible), `pulseaudio`/PipeWire socket (playback), `org.freedesktop.secrets` (Basic-auth credentials), `org.freedesktop.portal.FileChooser` (import, OPML). Portal-mediated background execution for periodic feed refresh is post-1.0 polish.
+Flatpak-first. App ID `io.github.virinvictus.conservatory`, settled 2026-07-26 (see §15). **Build dependencies are own manifest modules** (the §5.8 decision, landed v0.4.5 and verified with a local flatpak-builder build): one minimal ffmpeg module yields the ffmpeg / ffprobe tools plus the libs libmpv and rsgain link; libmpv builds over its hard-required libplacebo and libass; flac and rsgain ride small dependency modules; the llvm21 SDK extension supplies libclang for bindgen. Permissions kept tight: `network` (feeds, downloads, streaming), file access to the library root (via portal where possible), `pulseaudio`/PipeWire socket (playback), `org.freedesktop.secrets` (Basic-auth credentials), `org.freedesktop.portal.FileChooser` (import, OPML). Portal-mediated background execution for periodic feed refresh is post-1.0 polish.
 
 ---
 

@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GTK-4.14%2B-4a86cf" alt="GTK 4.14+">
-  <img src="https://img.shields.io/badge/status-v0.4.4%20%C2%B7%20daily%20driver-brightgreen" alt="Status: v0.4.4, daily driver">
+  <img src="https://img.shields.io/badge/status-v0.5.0%20%C2%B7%20daily%20driver-brightgreen" alt="Status: v0.5.0, daily driver">
 </p>
 
 ---
@@ -158,7 +158,7 @@ Six crates, on the discipline that every non-GUI surface stays CLI-testable. Mus
 
 ## Project status
 
-**v0.4.4. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
+**v0.5.0. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
 
 Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [patchnotes](patchnotes.md) the per-release notes):
 
@@ -177,9 +177,10 @@ Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [
 - **18** (the `0.2.0` milestone): accent-insensitive search and configurable browse columns.
 - **26** (the `0.3.0` milestone): the Hyprland-native redesign onto plain GTK4 with an owned flat Kanagawa Dragon stylesheet, no external theming toolkit; see [`docs/hyprland.md`](docs/hyprland.md).
 - **9** (optional, off by default): listening-history scrobbling to ListenBrainz or Last.fm, a local-first one-way outbox, enabled and configured in Preferences → Sync. Full scrobbler behaviour: a now-playing indicator on the service, and the standard submission rule (a 30-second floor, then half the track or four minutes), stamped with the play's start time.
-- **19** (nearly complete): the waveform seek bar (a loudness-envelope scrubber in the transport bar), drag-and-drop import onto the window, and the full-screen Now Playing view with local lyrics.
+- **19** (the `0.4.4` milestone): the waveform seek bar (a loudness-envelope scrubber in the transport bar), drag-and-drop import onto the window, the full-screen Now Playing view with local lyrics, and richer navigable credits from local tags (`composer:` in the grammar, a credits inspector section).
+- **The 0.5.0 interaction tier:** rating drag-sweep, inline cell editing with clear-to-empty, mixed-kind static playlists (episodes and audiobooks in one playlist, with a drag-reorder editor), the inspector's multi-select aggregate, a tighter facet-pane density, and the per-row cover column off by default with an optional row-line / zebra setting.
 
-Not built yet: the rest of **Phase 19** (richer navigable credits from local tags, a design decision still open) and the 1.0 endgame (real-library verification and Flatpak packaging). The roadmap has the full picture.
+Not built yet: the 1.0 endgame. The Flatpak manifest now carries every build dependency as its own module (libmpv, ffmpeg, flac, rsgain) and a local flatpak-builder build succeeds; what remains is the real-library verification session (the 50k memory gate and the move-safety pass) and the sandboxed install-and-run pass plus the icon and screenshots. The roadmap has the full picture.
 
 ## Documentation
 

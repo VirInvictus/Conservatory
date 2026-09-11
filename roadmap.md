@@ -775,7 +775,8 @@ The finishing pass that brings the music surface up to the deadbeef / foobar2000
 - [x] A **properties / metadata inspector** for the selected track (the deadbeef `selproperties` widget): title, artist, album, year, genre, track/disc, duration, format, bitrate, sample rate, file size, ReplayGain, rating, plays, last played, added, location, MusicBrainz ids, cover file. Read-only; all from the DB (`tracks`/`albums`) or a cheap `std::fs` stat (file size). A right-docked collapsible `gtk::Revealer` (the queue-drawer twin), not a modal; toggled by a header button and `Ctrl+P`; refreshed on selection change (a no-op while closed).
 - [x] A **large cover-art panel** atop the inspector (the deadbeef `coverart` widget): the album art at 240px from `albums.cover_path` (Phase 5d), accent-tinted via the display-wide CSS-class technique (the Hermitage unit), distinct from the small Now-bar thumbnail; a placeholder when there is no cover.
 - [x] Tests: the pure `inspector_fields` projection (a `Track` + `Album` → the displayed rows, skipping empties), mirroring `now_playing_panel::track_fields`; the panel build is manual (the 3b/3c precedent).
-- [ ] **Deferred:** channels (not a stored column; needs a schema/importer change or a per-selection decode) and a multi-select aggregate (the inspector shows the first selected track).
+- [x] Multi-select aggregate (the inspector shows the first selected track). *(Shipped 2026-09-11, code-complete-pending: 2+ selected tracks render the bulk-edit commons rule with sums only where a sum is meaningful (duration, size capped at 200 stats, plays); the cover panel only when the selection shares one album. Pure projection + tests; exercised in the functional pass.)*
+- [ ] **Deferred:** channels (not a stored column; needs a schema/importer change or a per-selection decode) — still out of scope, unchanged by the aggregate work.
 
 *Usable artifact:* select a track and see its full technical metadata and a large cover, as in the deadbeef layout.
 
@@ -972,7 +973,7 @@ The rating column's stars are now clickable (Apple's "click in the rating column
 
 - [x] A primary-click gesture on the star row maps the pointer x across the five stars to a 1–5 rating; clicking the current top star clears it to 0 (the Apple toggle). The geometry is a pure `rating_from_click` helper with unit tests, and the press is claimed so it does not also select or activate (double-click play) the row.
 - [x] `TrackRow` gains a `rating` glib property (the `playing`-glyph precedent); the star column binds `notify::rating` so a rate repaints only that one row, and `update_rating` keeps the property in step with the `brief` the rating sorter reads. The write goes through `worker.update_track`; the inspector's Rating field refreshes with it.
-- [ ] A live drag-sweep across the stars is a natural ergonomic follow-on (the click already sets any value directly, so it is not required).
+- [x] A live drag-sweep across the stars is a natural ergonomic follow-on (the click already sets any value directly, so it is not required). *(Shipped 2026-09-11, code-complete-pending: pressing a star row previews live as the pointer crosses each star and one DB write lands on release; a press that never leaves its star keeps the 16b click semantics including the Apple clear-on-current. Pure `rating_from_drag` + unit tests; exercised in the 2026-09-11 functional pass, acceptance at Brandon's display sitting.)*
 
 ### Phase 16c — "Mixed values" bulk edit ✅ (v0.1.5)
 
@@ -980,7 +981,7 @@ Upgrade the bulk-edit dialog from "blank means unchanged" to the foobar/MusicBee
 
 - [x] Each field pre-fills the value shared across the selection, or reads "multiple values" when the tracks differ (`bulk_edit_commons` collapses each field to a shared value or `None`; the collapse is the pure, unit-tested `common_value`). Album artist / album / year / shelf genre come from the album, track title / artist from the render row, genres / rating from the leaf briefs.
 - [x] Only ticked fields are written, and editing a field ticks it (so a shared value is not silently rewritten). The existing write + move-preview pipeline (`apply_bulk_edit` → `confirm_and_move`) is unchanged.
-- [ ] Inline single-click cell editing for the text columns, and clearing a field to empty (a ticked-but-empty field), are follow-ons (empty currently fails the year/rating parse, so a clear needs a dedicated path).
+- [x] Inline single-click cell editing for the text columns, and clearing a field to empty (a ticked-but-empty field), are follow-ons (empty currently fails the year/rating parse, so a clear needs a dedicated path). *(Shipped 2026-09-11, code-complete-pending: a second click on an already-selected row's text cell edits in place (Enter/focus-loss commit, Escape cancel), album edits retitle the whole album through the bulk path. Clearing rides a dedicated parse path: ticked-empty year / shelf genre go NULL (`AlbumEdit` is tri-state; the worker UPDATE picks the clear arm), genres empty, rating 0, identity fields reject with a readable error. Unit + integration tests; exercised in the functional pass.)*
 
 ### Phase 16d — Smart + Static playlists
 
@@ -1000,7 +1001,7 @@ Three crisp primitives, kept distinct to avoid Roon's Tags-vs-Bookmarks confusio
 - [x] Activating a playlist plays it (materialise → replace the queue → play): static via `static_playlist_track_ids`, smart via a new GUI `materialize_smart` in `query.rs` (the CLI's dual-path mirrored, since core stays search-free).
 - [x] Create from a `+` menu: **New Static…** (name) and **New Smart…** → a rule-builder dialog (name, a query pre-filled from the current filter so it doubles as "save current search", an optional limit, an order picker). Delete from the trash button.
 - [x] The 16a "Add to Playlist ▸" context verb is now real: a submenu of the static playlists (rebuilt as playlists change) → `append_playlist_tracks`.
-- [ ] Static-playlist in-place drag-reorder is deferred (the queue-drawer DnD idiom); episode/book playlist entries too (schema supports them; v1 wires tracks).
+- [x] Static-playlist in-place drag-reorder is deferred (the queue-drawer DnD idiom); episode/book playlist entries too (schema supports them; v1 wires tracks). *(Shipped 2026-09-11, code-complete-pending: entries carry all three kinds end to end and a static playlist plays through the launch-resume mixed rebuild; the Playlists sidebar gains a Reorder dialog whose rows drag with the queue-drawer pair and drop onto the worker reorder, plus per-row remove; episode and book context menus gain Add to Playlist. Integration tests cover mixed append / reorder / cascade / mixed queue replace; exercised in the functional pass.)*
 
 ### Phase 16e — Preferences: enable/disable sections ✅ (v0.1.8)
 
@@ -1164,9 +1165,9 @@ Sub-phase ledger (updated 2026-07-10; each ships one commit, green under `cargo 
 
 **Post-`0.3.0` design refinement (v0.3.9, 2245e13).** A density and cohesion follow-on to the owned sheet, so the three tabs read as one app rather than three glued together (Brandon feedback, 2026-07-18). Shipped: the settings-button fix (`open_preferences` no longer gates on an open library pool, so the config pages open with no library and the DB-backed Sound page attaches only when one exists); the browse cell grid removed (facet + track separators off); tighter track rows (the per-row cover shrank 40 → 24px, the dominant term in row height); flat borderless header/toolbar icon buttons; and dimmed, lightly-tracked column headers. Podcasts and Audiobooks inherited all of it through the shared theme. Deferred density follow-ons (low-risk, no schema):
 
-- [ ] Tighten the facet-pane rows to match the track list's new density.
-- [ ] Optional faint row line or subtle zebra shading for the browse (it is fully clean now; this is a scannability preference, not a fix).
-- [ ] Default the per-row cover column off (the true deadbeef look: one cover panel, no per-row art); it is already config-toggleable via `[browse].columns`.
+- [x] Tighten the facet-pane rows to match the track list's new density. *(Shipped 2026-09-11, code-complete-pending: `columnview.facet-pane` pins the pane row box to the leaf's 26px, sheet rule + pinned selector; exercised in the 2026-09-11 functional pass.)*
+- [x] Optional faint row line or subtle zebra shading for the browse (it is fully clean now; this is a scannability preference, not a fix). *(Shipped 2026-09-11, code-complete-pending: `[browse].row_style = none | line | zebra`, default none, leaf only, one enum so never both; line draws a faint 1px row line, zebra a subtle even-row tint that loses to hover by rule order; Library-page combo; sheet rules + pinned-selector test; exercised in the functional pass.)*
+- [x] Default the per-row cover column off (the true deadbeef look: one cover panel, no per-row art); it is already config-toggleable via `[browse].columns`. *(Shipped 2026-09-11, code-complete-pending: `default_columns()` drops `cover`, so an unconfigured launch is the deadbeef look; an explicit `[browse].columns` list is untouched. Config tests pin the new default and the explicit-cover round-trip; exercised in the functional pass.)*
 
 ## Milestone 0.4.4+ — Immersive & history
 
@@ -1458,3 +1459,19 @@ Second burst, same day (the audit's "deferred player/browser clusters" line):
   repo), so this closes when a consumer wave adopts a vir-search release
   that translates the new kinds; the books/podcast fields stay eval-only
   regardless (their tables are not the music fast path).
+
+## Functional-pass findings (2026-09-11)
+
+The lane's FUNCTIONAL pass (fixture library under
+`~/docs/testing_facility/conservatory-functional/`, per the lane brief in the
+audit sheet) exercised import, move, undo, crash replay, write-back, verify,
+audit, podcasts, and the search grammar headlessly, then the GUI. Two findings
+were fixed the same day (the Standalone author resolution and the
+crash-recovery stale plan, see v0.4.5); the rest is recorded:
+
+- [ ] **Move-mode import leaves a sidecar cover file behind.** Importing a
+  folder in `--move` mode consumes the audio files but a loose `cover.jpg`
+  sidecar is duplicated into the managed tree and left in the source folder
+  (music covers are not journaled `MoveOp`s; books are, since the Phase 27
+  fix). Litter in an otherwise-consumed source folder. Fix direction: journal
+  the located sidecar as a cover op like the book branch does.

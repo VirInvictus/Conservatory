@@ -1475,3 +1475,47 @@ crash-recovery stale plan, see v0.4.5); the rest is recorded:
   (music covers are not journaled `MoveOp`s; books are, since the Phase 27
   fix). Litter in an otherwise-consumed source folder. Fix direction: journal
   the located sidecar as a cover op like the book branch does.
+
+## New findings 2026-09-12 (six-lens full audit; detail: audit/FULL-AUDIT-2026-09-12.md, Wave 2)
+
+- [ ] **HIGH (bugs): mover revert is not idempotent across the undo crash
+      window.** fsops.rs:54-65 + mod.rs:269-283: a crash between the file
+      move-back and the DB reset wedges the job permanently (revert's Move
+      branch returns NotFound on retry; recover only drives in_progress
+      jobs). Fix: treat dst-missing+src-present as an already-reverted
+      no-op, plus a revert-after-crash test.
+- [ ] **HIGH (docs): data/cargo-sources.json vendors vir-search 1.4.0
+      while Cargo.lock pins 1.4.1.** Regenerate from the lock before the
+      next release; add the same cargo-sources CI freshness guard Atrium's
+      audit proposed (one job, both repos win).
+- [ ] **GUI never runs startup roll-forward recovery** (mover/mod.rs:224
+      documents it; only the CLI does), and three unbounded block_on flows
+      freeze the GTK main thread (run_scoped_move, cover resync, book
+      reorg). Import starves the 1-worker runtime: wrap drive_job's file IO
+      in spawn_blocking.
+- [ ] **The backup|restore verb and nightly-DB-backup protection layer in
+      spec 9/593 + schema.md do not exist** (never shipped, described as
+      current). Either land `backup <db> <out>` via VACUUM INTO + restore,
+      or reword the docs to planned and add the roadmap box.
+- [ ] **Docs sweep:** milestone table needs 0.4.5/0.5.0 rows (the string
+      0.5.0 appears nowhere); roadmap claims 0.2.0 tagged, no such tag;
+      schema.md stops at 0021; phantom conservatory-search at schema.md:337;
+      libmpv-profiles/theme/search-grammar stale (anequalizer PEQ,
+      pre-base_css tiers, five missing date keywords); CLAUDE.md stale on
+      plugins/Meson/GPL rationale; ATTRIBUTIONS missing vir-search/vir-gtk;
+      scrobble.md pre-9d; import.md stale out-of-scope list; no
+      CONTRIBUTING/SECURITY/templates.
+- [ ] **Blitz candidates:** port Viaduct's mem_check harness (open since
+      Phase 0; converts the 50k memory gate into one command; synthetic
+      extrapolates 215-230MB vs the <200MB target, so optimization is
+      likely); GUI Library-health page over the Phase 8 suite; listening-
+      history surfaces (play_count/last_played sit unread); PEQ band editor
+      in the Sound dialog; podcast download-manager pane; stage the Phase 21
+      dependency dossiers. README's "daily driver" badge is ahead of reality
+      (fixture-only data) - soften until the real-library gate passes.
+- [ ] **GitHub presentation (workspace batch):** description rewrite
+      (drop the Lattice/Belfry inversion + literal backticks, lead with the
+      README tagline, add Rust/GTK4); topics add gtk/linux/podcasts/
+      audiobooks/audio-player, drop deadbeef/foss/linux-desktop; create
+      Releases for v0.4.4/v0.4.5/v0.5.0 from their patchnotes; discussions
+      on, wiki off. Awaiting Brandon's go.

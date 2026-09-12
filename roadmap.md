@@ -776,7 +776,7 @@ The finishing pass that brings the music surface up to the deadbeef / foobar2000
 - [x] A **large cover-art panel** atop the inspector (the deadbeef `coverart` widget): the album art at 240px from `albums.cover_path` (Phase 5d), accent-tinted via the display-wide CSS-class technique (the Hermitage unit), distinct from the small Now-bar thumbnail; a placeholder when there is no cover.
 - [x] Tests: the pure `inspector_fields` projection (a `Track` + `Album` → the displayed rows, skipping empties), mirroring `now_playing_panel::track_fields`; the panel build is manual (the 3b/3c precedent).
 - [x] Multi-select aggregate (the inspector shows the first selected track). *(Shipped 2026-09-11, code-complete-pending: 2+ selected tracks render the bulk-edit commons rule with sums only where a sum is meaningful (duration, size capped at 200 stats, plays); the cover panel only when the selection shares one album. Pure projection + tests; exercised in the functional pass.)*
-- [ ] **Deferred:** channels (not a stored column; needs a schema/importer change or a per-selection decode) — still out of scope, unchanged by the aggregate work.
+- [ ] **Deferred:** channels (not a stored column; needs a schema/importer change or a per-selection decode); still out of scope, unchanged by the aggregate work.
 
 *Usable artifact:* select a track and see its full technical metadata and a large cover, as in the deadbeef layout.
 

@@ -11,13 +11,19 @@ chrome (the Amberol "chameleon" model was considered and declined, to keep one
 consistent identity across every screen).
 
 The sheet lives in `conservatory/src/theme.rs`: palette consts spliced into a
-structural template by `sheet()`, installed display-wide by `install()` at
-`STYLE_PROVIDER_PRIORITY_USER + 1`. That priority is load-bearing (the
-Colophon discovery): a themed `~/.config/gtk-4.0/gtk.css` loads at USER (800)
-and outranks APPLICATION (600), so an app sheet below USER gets silently
+structural template by `sheet()`. Since the vir-gtk 1.1.0 adoption (v0.4.4) it
+is only the **divergence half** of the story: the unanimous flat/square widget
+core moved into the shared `vir_gtk::theme::base_css`, and `install()` mounts
+the two-layer stack at `STYLE_PROVIDER_PRIORITY_USER` scale — the shared base
+sheet at USER + 1, the app sheet at USER + 2 (`install_app_stylesheet`) so it
+wins by priority, never by load order. That USER-scale floor stays load-bearing
+(the Colophon discovery): a themed `~/.config/gtk-4.0/gtk.css` loads at USER
+(800) and outranks APPLICATION (600), so an app sheet below USER gets silently
 half-overridden on themed systems. The runtime per-album accent ring lives in
-`conservatory/src/ui/accent.rs` and registers at USER + 2, so it keeps
-outranking the base sheet.
+`conservatory/src/ui/accent.rs` and registers at USER + 3, one step above the
+app sheet. (Pre-vir-gtk, theme.rs carried the whole sheet at USER + 1 and the
+ring at USER + 2; the tier story here predates the shared-library split until
+corrected 2026-09-13.)
 
 ## Palette (Dragon variant)
 

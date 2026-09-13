@@ -79,7 +79,7 @@ One grammar, all three surfaces (music, podcasts, audiobooks). The filter bar ab
 - **Accent-folding (Phase 18a):** substring, quoted, and fuzzy matches are **diacritic-insensitive** (the Quod Libet default), so `bjork` matches `Björk`. `=exact` and `~regex` stay literal. Folding only broadens matches, never narrows, so it can never turn a query into an error (§3.4). On the SQL fast path, bare text folds via the FTS `unicode61 remove_diacritics 2` tokenizer (migration 0019), mirroring the eval-side `fold`. **Fast-path limitation:** accented *field-text* (`artist:bjork`) matches via `LIKE`, which does not fold, so it folds only when the query lands on the eval path; bare text (the common case) folds on both paths. Folded shadow columns for field-text are a possible follow-on.
 - **Boolean:** `AND` / `OR` / `NOT` (case-insensitive), implicit `AND` between bare tokens, `!` prefix as `NOT`. Precedence `NOT > AND > OR`; parentheses group.
 - **Comparison / range:** `=` `!=` `>` `<` `>=` `<=` on numeric and date fields; `lo..hi` inclusive ranges.
-- **Date keywords:** `today`, `yesterday`, `thisweek`, `thismonth`, `thisyear`, `Ndaysago`, plus `YYYY`, `YYYY-MM`, `YYYY-MM-DD` with field-count precision.
+- **Date keywords:** `today`, `yesterday`, `tomorrow`, `thisweek`, `lastweek`, `nextweek`, `thismonth`, `lastmonth`, `nextmonth`, `thisyear`, `Ndaysago`, plus `YYYY`, `YYYY-MM`, `YYYY-MM-DD` with field-count precision (the full vir-search keyword table; `tomorrow` and the last/next week/month variants were shipped in vir-search 1.3.0's parser but missing from this list until 2026-09-13).
 - **Sort:** `sort:KEY` / `sort:-KEY`, metadata on the result set, not a predicate.
 
 ### Perspectives

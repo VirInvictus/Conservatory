@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2), `0008` (the equalizer: `eq_presets` + `eq_state`, Phase 5.5b), `0009` (the audio config: `audio_state`, Phase 5.5c), `0010` (the 16 built-in EQ presets, Phase 5.5b follow-on), `0011` (the audiobook tables + `book_fts` + the queue `book_id` foreign key, Phase 7a-i), `0012` (the move journal `book_id` column, so audiobooks move through the journaled mover, Phase 7a-iii), `0013` (the audiobook playback cursor: `playback_state.book_id` plus a media-agnostic `listening_sessions`, Phase 7c-ii), `0014` (the integrity-verify results table, Phase 8a), `0015` (the stray-APE strip undo journal, Phase 8c-iii), `0016` (the global Smart Speed level column on `audio_state`, the Phase 6c follow-on), `0017` (playlists: `playlists` + `playlist_entries`, Phase 16d), `0018` (shuffle / repeat state on `audio_state`, Phase 17), `0019` (the accent-folding FTS rebuild, Phase 18a), `0020` (the `scrobble_outbox` listen queue, Phase 9a; see `docs/scrobble.md`), and `0021` (the parametric equalizer: `peq_bands`, the 5.5b follow-on). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
+> **Status: living reference.** Migrations landed so far: `0001` (music schema + FTS5, Phase 1b), `0002` (move journal, Phase 2c), `0003` (perspectives, Phase 3c), `0004` (playback state, Phase 4a), `0005` (unified queue, Phase 4b-i), `0006` (podcast tables + the queue `episode_id` foreign key, Phase 6a-i), `0007` (the per-kind playback cursor: `playback_state.kind` + `episode_id`, Phase 6b-ii-c-2), `0008` (the equalizer: `eq_presets` + `eq_state`, Phase 5.5b), `0009` (the audio config: `audio_state`, Phase 5.5c), `0010` (the 16 built-in EQ presets, Phase 5.5b follow-on), `0011` (the audiobook tables + `book_fts` + the queue `book_id` foreign key, Phase 7a-i), `0012` (the move journal `book_id` column, so audiobooks move through the journaled mover, Phase 7a-iii), `0013` (the audiobook playback cursor: `playback_state.book_id` plus a media-agnostic `listening_sessions`, Phase 7c-ii), `0014` (the integrity-verify results table, Phase 8a), `0015` (the stray-APE strip undo journal, Phase 8c-iii), `0016` (the global Smart Speed level column on `audio_state`, the Phase 6c follow-on), `0017` (playlists: `playlists` + `playlist_entries`, Phase 16d), `0018` (shuffle / repeat state on `audio_state`, Phase 17), `0019` (the accent-folding FTS rebuild, Phase 18a), `0020` (the `scrobble_outbox` listen queue, Phase 9a; see `docs/scrobble.md`), `0021` (the parametric equalizer: `peq_bands`, the 5.5b follow-on), and `0022` (track credits: `track_credits`, the role-tagged people link table reusing the `artists` rows, 19b-iii; the ledger here gained this entry 2026-09-13, stale since the credits migration shipped in v0.4.4). This is the living companion to spec §4: the spec defines the contract, this file is where column-level detail and migration history accumulate as they firm up. Where they differ, spec §4 wins until this file is reconciled.
 
 ## Connection discipline
 
@@ -196,6 +196,31 @@ CREATE TABLE peq_bands (
 );
 ```
 
+### `track_credits` (0022, 19b-iii)
+
+Role-tagged people links for music tracks: the `book_authors` / `book_narrators`
+precedent (0011) generalized to one link table with a role column. People are
+the existing `artists` rows, so credit names share one namespace (and the
+`sort_name` discipline) with track/album artists. Roles are TEXT so the rest of
+the People & Organizations family (Conductor, Lyricist, Arranger, ...) lands
+later without another migration; v1 writes `Composer`, `Performer`, `Producer`
+read from the embedded tags at import (ID3v2 reliably carries Composer only on
+write-back, a documented caveat: the database stays canonical, spec §5.5/§5.6).
+The composite PK makes a link idempotent, and the artist index serves the
+"everything this person is credited on" lookup. Consumed by the `composer:`
+search field (full SQL push-down), the `credits` CLI verb, and the track
+properties inspector's credits section.
+
+```sql
+CREATE TABLE track_credits (
+    track_id  INTEGER REFERENCES tracks(id)  ON DELETE CASCADE,
+    artist_id INTEGER REFERENCES artists(id) ON DELETE CASCADE,
+    role      TEXT NOT NULL,
+    PRIMARY KEY (track_id, artist_id, role)
+);
+CREATE INDEX idx_track_credits_artist ON track_credits(artist_id);
+```
+
 ## Audio configuration (Phase 5.5c, migration `0009`, spec §6.2, §6.5)
 
 The singleton active audio config: the playback defaults (ReplayGain mode / preamp / clip, gapless), the DSP modules, the output backend / resampler, and the global Smart Speed level (`smart_speed_level`, migration 0016: the aggressiveness of the `@ss` silence gate wherever Smart Speed is on for a show / book). The `eq_state` precedent (one row, `id = 0`); `get_audio_state` reads it, `set_audio_state` overwrites it. Each DSP module is an `enabled` flag plus its parameters, written unconditionally so the parameters survive an off toggle (only `enabled` gates whether the module contributes an `af`-chain stage). The compressor threshold and limiter ceiling are stored in dBFS and converted to the filters' linear forms at stage-build time. The DSP + output halves are consumed at 5.5c-i / 5.5c-ii; the playback defaults are consumed at 5.5c-ii (the queue builders read them instead of the hardcoded `PlaybackConfig::default()`). They all land in this one migration so 5.5c-ii needs no second one.
@@ -334,7 +359,7 @@ CREATE TABLE book_playback (            -- one row per book; first-class resume 
 - `episode_fts` (title, description), `show_fts` (title, author, description) — Phase 6a-i, migration `0006`
 - `book_fts` (title, author, narrator, series) — Phase 7a-i, migration `0011`; author/narrator/series denormalized from the link tables (see the audiobook section)
 
-Triggers keep them in sync on insert/update/delete. Consumed by `conservatory-search` for the bare-text path and bm25 ranking (see [`search-grammar.md`](search-grammar.md)). Not transcripts (spec §14).
+Triggers keep them in sync on insert/update/delete. Consumed by `vir-search` (the shared search crate; Conservatory's own search module was folded into it) for the bare-text path and bm25 ranking (see [`search-grammar.md`](search-grammar.md)). Not transcripts (spec §14).
 
 ## Maintenance tables (Phase 8)
 

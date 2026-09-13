@@ -1548,6 +1548,21 @@ crash-recovery stale plan, see v0.4.5); the rest is recorded:
       plugins/Meson/GPL rationale; ATTRIBUTIONS missing vir-search/vir-gtk;
       scrobble.md pre-9d; import.md stale out-of-scope list; no
       CONTRIBUTING/SECURITY/templates.
+      *(The 2026-09-13 lane closed its named slice: schema.md gained the
+      0022 ledger entry + a `track_credits` section and lost the phantom
+      conservatory-search; libmpv-profiles' status header now says the chain
+      shipped and the anequalizer promise is replaced by the named-biquad
+      re-scope; theme.md tells the vir-gtk base_css tier story (USER +1/+2/
+      +3); search-grammar's date-keyword list gained tomorrow, lastweek,
+      nextweek, lastmonth, nextmonth; CLAUDE.md's plugin stubs / Meson
+      "wired at a later phase" / librubberband GPL lines are current;
+      ATTRIBUTIONS carries vir-search and vir-gtk; spec 9's verb line
+      matches the shipped backup/restore. Also verified: the audit's two
+      strike candidates (the "interactive confirmation prompts" and
+      PRO-endpoint non-goals) appear nowhere in the spec; nothing to
+      strike. Still open in this box: the milestone-table rows, the 0.2.0
+      "tagged" claim, scrobble.md, import.md, CONTRIBUTING/SECURITY/
+      templates.)*
 - [ ] **Blitz candidates:** port Viaduct's mem_check harness (open since
       Phase 0; converts the 50k memory gate into one command; synthetic
       extrapolates 215-230MB vs the <200MB target, so optimization is

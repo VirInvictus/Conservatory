@@ -1519,3 +1519,8 @@ crash-recovery stale plan, see v0.4.5); the rest is recorded:
       audiobooks/audio-player, drop deadbeef/foss/linux-desktop; create
       Releases for v0.4.4/v0.4.5/v0.5.0 from their patchnotes; discussions
       on, wiki off. Awaiting Brandon's go.
+
+- [ ] **DECIDED 2026-09-13: implement backup|restore** (decision 65) -
+      `conservatory-cli backup <db> <out>` via VACUUM INTO through the
+      worker + the restore path, making spec 9's data-safety contract
+      true.

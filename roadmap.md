@@ -1516,11 +1516,24 @@ crash-recovery stale plan, see v0.4.5); the rest is recorded:
       while Cargo.lock pins 1.4.1.** Regenerate from the lock before the
       next release; add the same cargo-sources CI freshness guard Atrium's
       audit proposed (one job, both repos win).
-- [ ] **GUI never runs startup roll-forward recovery** (mover/mod.rs:224
+- [x] **GUI never runs startup roll-forward recovery** (mover/mod.rs:224
       documents it; only the CLI does), and three unbounded block_on flows
       freeze the GTK main thread (run_scoped_move, cover resync, book
       reorg). Import starves the 1-worker runtime: wrap drive_job's file IO
       in spawn_blocking.
+      *(Startup recovery shipped 2026-09-13: the window runs
+      `mover::recover` on the runtime right after the pool is stood up,
+      before the first read, and surfaces a failure with the CLI's
+      escape-hatch message (browse still comes up; the in-session move path
+      re-runs recovery, so nothing journals on top of a wedged job). The
+      two threading findings (the unbounded block_on flows and the
+      drive_job spawn_blocking wrap) stay open in their own box below.)*
+- [ ] **Threading findings from the six-lens audit (their own lane).**
+      Three unbounded block_on flows freeze the GTK main thread while they
+      run (run_scoped_move, cover resync, book reorg), and import starves
+      the 1-worker runtime (MPRIS/scrobble stall): wrap drive_job's file IO
+      in spawn_blocking. Design the worker/off-thread split for all four
+      together; do not hot-fix one flow.
 - [x] **The backup|restore verb and nightly-DB-backup protection layer in
       spec 9/593 + schema.md do not exist** (never shipped, described as
       current). Either land `backup <db> <out>` via VACUUM INTO + restore,

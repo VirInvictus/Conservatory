@@ -384,6 +384,25 @@ impl ConservatoryWindow {
                 let _ = imp.pool.set(pool);
             }
 
+            // Startup roll-forward recovery (docs/mover.md's contract; the
+            // CLI gates every mutating verb behind it): drive any job a
+            // crash left in_progress to a consistent state before the first
+            // read, so browse shows the recovered library. A failed recovery
+            // is surfaced with the CLI's escape-hatch message and browse
+            // still comes up (the in-session path re-runs recovery before
+            // any move, so nothing new is journaled on top of a wedged job).
+            if let (Some(rt), Some(worker), Some(pool)) =
+                (imp.runtime.get(), imp.worker.get(), imp.pool.get())
+            {
+                if let Err(e) = rt.block_on(mover::recover(worker, pool)) {
+                    eprintln!(
+                        "startup move recovery failed: {e} (a stuck job? \
+                         `conservatory-cli organize --jobs` lists it, \
+                         `conservatory-cli organize --cancel-job <ID>` clears it)"
+                    );
+                }
+            }
+
             // Serve MPRIS2 + the suspend inhibitor on the runtime (Phase 4c-i):
             // media keys, the GNOME overlay/lock screen, and don't-suspend-while-
             // playing. Torn down with the runtime at app exit.

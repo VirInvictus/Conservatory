@@ -1512,10 +1512,15 @@ crash-recovery stale plan, see v0.4.5); the rest is recorded:
       retry` (the integration shape, mirroring the roll-forward test) and
       two fsops unit tests (the pure no-op and the both-copies retry), with
       the crash-window contract now spelled out on `revert`.)*
-- [ ] **HIGH (docs): data/cargo-sources.json vendors vir-search 1.4.0
+- [x] **HIGH (docs): data/cargo-sources.json vendors vir-search 1.4.0
       while Cargo.lock pins 1.4.1.** Regenerate from the lock before the
       next release; add the same cargo-sources CI freshness guard Atrium's
       audit proposed (one job, both repos win).
+      *(Shipped 2026-09-13, pre-release: regenerated from the lock (now
+      pinning vir-gtk 1.4.0 / vir-search 1.4.2's commits; the stale pins
+      would have broken the offline sandboxed build exactly as at v0.4.5),
+      and the Atrium freshness guard is ported into ci.yml (fmt job:
+      regenerate + `git diff --exit-code`).)*
 - [x] **GUI never runs startup roll-forward recovery** (mover/mod.rs:224
       documents it; only the CLI does), and three unbounded block_on flows
       freeze the GTK main thread (run_scoped_move, cover resync, book

@@ -34,6 +34,20 @@ jobs:
       - name: Install ffmpeg (best-effort)
         run: sudo apt-get install -y ffmpeg || true
 
+      # The Flatpak offline build vendors crates from the generated manifest;
+      # a lock change without the regen leaves it pinning stale commits (bit
+      # at v0.4.5 and again at v0.6.0 with the consumer waves). Fail CI
+      # whenever the checked-in file disagrees with Cargo.lock (the Atrium
+      # guard; container jobs run as root against a host-owned checkout, so
+      # mark the workspace safe before touching git).
+      - name: cargo-sources.json freshness guard
+        if: matrix.action == 'fmt'
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          python3 -m pip install --quiet aiohttp toml
+          python3 scripts/flatpak-cargo-generator.py Cargo.lock -o data/cargo-sources.json
+          git diff --exit-code data/cargo-sources.json
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:

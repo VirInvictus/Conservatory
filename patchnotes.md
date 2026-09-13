@@ -1,6 +1,8 @@
 # Patch Notes
 
-## Unreleased
+## v0.6.0: the consumer-wave stamp (2026-09-13)
+
+Three dependency-wave adoptions that had been riding Unreleased, plus the gtk4 platform move the vir-gtk 1.3.0 waiver deferred: gtk4 0.9 to 0.11 (`v4_14` unchanged), vir-search 1.4.1 and 1.4.2 (parser hardening, hashing, cache), and vir-gtk 1.4.0, whose widget-kit first slice deletes Conservatory's own dialogs.rs and the shared half of rows.rs. No behavior changes of Conservatory's own; the one visible delta is Escape now dismissing dialogs even while a child entry holds focus (the kit's capture-phase close-on-escape).
 
 - **Changed:** vir-search adopted at 1.4.1 (the consumer wave): `added:lastmonth`/`added:nextmonth` now parse as date keywords (1.3.0 shipped the variants but not the parser arms), and the AST gained `Eq`/`Hash` with `Value::Real` deliberately excluded from hashing plus `Expr::contains_real()` and a `QueryCache` for search-as-you-type memoization. No Conservatory code changes required.
 - **Changed:** vir-search adopted at 1.4.2 (the consumer wave): the parser is recursion-bounded, so pathologically deep input degrades with spanned warnings instead of aborting on a stack overflow; a stray `)` warns and keeps the rest of the query instead of silently discarding it; out-of-range date offsets saturate at resolve instead of aborting; and the crate gains rustdoc with a `missing_docs` gate plus a normative grammar table in its README. No Conservatory code changes required. (For Conservatory's own lane, noted not fixed here: the audit found `docs/search-grammar.md` stale by several keyword families and teaching a nonexistent `is:finished false` form.)

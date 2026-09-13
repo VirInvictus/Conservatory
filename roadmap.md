@@ -1493,10 +1493,12 @@ crash-recovery stale plan, see v0.4.5); the rest is recorded:
       freeze the GTK main thread (run_scoped_move, cover resync, book
       reorg). Import starves the 1-worker runtime: wrap drive_job's file IO
       in spawn_blocking.
-- [ ] **The backup|restore verb and nightly-DB-backup protection layer in
+- [x] **The backup|restore verb and nightly-DB-backup protection layer in
       spec 9/593 + schema.md do not exist** (never shipped, described as
       current). Either land `backup <db> <out>` via VACUUM INTO + restore,
       or reword the docs to planned and add the roadmap box.
+      *(Shipped 2026-09-13: landed, see the decision-65 box below; the docs
+      stay as current-truth.)*
 - [ ] **Docs sweep:** milestone table needs 0.4.5/0.5.0 rows (the string
       0.5.0 appears nowhere); roadmap claims 0.2.0 tagged, no such tag;
       schema.md stops at 0021; phantom conservatory-search at schema.md:337;
@@ -1520,7 +1522,17 @@ crash-recovery stale plan, see v0.4.5); the rest is recorded:
       Releases for v0.4.4/v0.4.5/v0.5.0 from their patchnotes; discussions
       on, wiki off. Awaiting Brandon's go.
 
-- [ ] **DECIDED 2026-09-13: implement backup|restore** (decision 65) -
+- [x] **DECIDED 2026-09-13: implement backup|restore** (decision 65) -
       `conservatory-cli backup <db> <out>` via VACUUM INTO through the
       worker + the restore path, making spec 9's data-safety contract
       true.
+      *(Shipped 2026-09-13: `conservatory-core/src/backup.rs`. Backup runs
+      `VACUUM INTO` as a worker command (the single-writer discipline), so
+      the snapshot is consistent with the WAL and never overwrites a target;
+      restore is the replace path (stale `-wal`/`-shm` cleared, copy through
+      a same-dir temp + fsync + atomic rename, live file untouched on any
+      failure), then the CLI reopens the database so migrations run and the
+      restored file is proven to open. Tests: snapshot is a restorable
+      library, restore round-trips (post-backup writes gone, reopen accepts
+      writes), and read-only attaches refuse writes on the live db, the
+      snapshot, and the restored db.)*

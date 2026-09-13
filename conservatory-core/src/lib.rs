@@ -14,6 +14,7 @@
 pub mod accent;
 pub mod ape;
 pub mod audit;
+pub mod backup;
 pub mod config;
 pub mod covers;
 pub mod db;

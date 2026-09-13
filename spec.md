@@ -590,7 +590,8 @@ conservatory-cli import-opml|export-opml
 conservatory-cli audiobook import <path> [--copy|--move]      # import a book (folder or m4b)
 conservatory-cli audiobook set <book-selector> field=value... # author/narrator/series/sequence/...
 conservatory-cli embed-tags <selector> [--dry-run]   # write DB metadata into files
-conservatory-cli backup|restore                # DB snapshot
+conservatory-cli backup <db> <out>              # consistent DB snapshot (VACUUM INTO)
+conservatory-cli restore <db> <backup>          # replace the DB from a snapshot, then migrate
 ```
 
 Read commands open the DB read-only at the process level. Write commands spin up the worker on a current-thread runtime and shut down cleanly (the Atrium/Belfry pattern). Output: `--tsv` (default), `--json`, `--human`.

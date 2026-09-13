@@ -65,6 +65,13 @@ impl WorkerHandle {
             .await
     }
 
+    /// Snapshot the database with `VACUUM INTO` (spec §9). The statement runs
+    /// on the writer connection inside the blocking task, so the copy is
+    /// consistent with the WAL and no other write interleaves with it.
+    pub async fn vacuum_into(&self, out: String) -> Result<()> {
+        self.dispatch(|reply| Command::VacuumInto { out, reply }).await
+    }
+
     /// Insert an artist, returning its new id.
     pub async fn insert_artist(&self, artist: Artist) -> Result<i64> {
         self.dispatch(|reply| Command::InsertArtist { artist, reply })
@@ -1084,6 +1091,9 @@ fn handle(conn: &mut Connection, command: Command) {
     match command {
         Command::ProbeWrite { key, value, reply } => {
             let _ = reply.send(probe::write(conn, &key, &value));
+        }
+        Command::VacuumInto { out, reply } => {
+            let _ = reply.send(crate::backup::vacuum_into(conn, &out));
         }
         Command::InsertArtist { artist, reply } => {
             let _ = reply.send(writes::insert_artist(conn, &artist));

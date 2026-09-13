@@ -20,6 +20,7 @@ use conservatory_core::db::{
     track_credits, track_id_by_path, track_metadata, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, journal, organize_ops};
+use conservatory_core::backup;
 use conservatory_core::search::{
     Field as SearchField, SearchItem, SortKey, SqlValue, State as SearchState, try_translate,
 };
@@ -27,11 +28,11 @@ use conservatory_core::{
     AlbumEdit, Assignment, AuditOptions, AuditReport, DEFAULT_TARGET_LUFS, DedupOptions,
     DuplicateReport, Field, GenreVocab, ImportOptions, ImportReport, LibraryStats, M3uTrack,
     PathTemplate, PlayableItem, PlaybackConfig, SleepMode, StripPlan, TagWrite, TrackDraft,
-    TrackEdit, TrackFields, VerifyVerdict, any_path_affecting, build_af_chain, build_album_edit,
-    build_m3u, build_track_edit, commit_strip, compute_accent, compute_stats, envelope_for,
-    ffmpeg_available, find_collisions, find_cover_bytes, find_duplicates, flac_available,
-    format_size, genres_assignment, import_folder, locate_ape, parse_assignment, parse_m3u,
-    plan_strip, read_track, replace_in, replaygain_from_file, resolve_album,
+    TrackEdit, TrackFields, VerifyVerdict, any_path_affecting, backup, build_af_chain,
+    build_album_edit, build_m3u, build_track_edit, commit_strip, compute_accent, compute_stats,
+    envelope_for, ffmpeg_available, find_collisions, find_cover_bytes, find_duplicates,
+    flac_available, format_size, genres_assignment, import_folder, locate_ape, parse_assignment,
+    parse_m3u, plan_strip, read_track, replace_in, replaygain_from_file, resolve_album,
     resolve_episode_profile, resolve_music_profile, restore_bytes, resync_album_covers,
     rsgain_available, run_audit, scan_album_files, sync_album_cover, verify_files,
     write_atomic_plain, write_track_tags,
@@ -369,6 +370,25 @@ enum Command {
         /// Output format.
         #[arg(long, value_enum, default_value_t = Format::Human)]
         format: Format,
+    },
+
+    /// Snapshot the database to a consistent copy via `VACUUM INTO`, executed
+    /// through the single-writer worker (spec §9). The target must not exist.
+    Backup {
+        /// Path to the SQLite database.
+        db: PathBuf,
+        /// Output file for the snapshot (must not exist).
+        out: PathBuf,
+    },
+
+    /// Replace the database with a `backup` snapshot (the documented replace
+    /// path: sidecars cleared, atomic rename), then reopen it so migrations
+    /// run. Run while nothing else has the database open.
+    Restore {
+        /// Path to the SQLite database to replace.
+        db: PathBuf,
+        /// Snapshot file produced by `backup`.
+        backup: PathBuf,
     },
 
     /// Export or import `.m3u` playlists (Phase 8d). `export` writes a selector
@@ -1372,6 +1392,8 @@ fn main() -> Result<()> {
             top,
             format,
         }) => run_stats_verb(db, root, top, format),
+        Some(Command::Backup { db, out }) => block_on(run_backup(db, out)),
+        Some(Command::Restore { db, backup }) => block_on(run_restore(db, backup)),
         Some(Command::Apestrip {
             db,
             root,
@@ -4245,6 +4267,38 @@ fn run_stats_verb(db: PathBuf, root: Option<PathBuf>, top: usize, format: Format
 }
 
 const RATING_LABELS: [&str; 5] = ["★☆☆☆☆", "★★☆☆☆", "★★★☆☆", "★★★★☆", "★★★★★"];
+
+/// Snapshot the database (spec §9): `VACUUM INTO` through the worker.
+async fn run_backup(db: PathBuf, out: PathBuf) -> Result<()> {
+    let worker = spawn_worker(db.clone()).context("spawning worker")?;
+    backup::backup(&worker, &out)
+        .await
+        .context("backup (does the target already exist?)")?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!("backed up {} to {}", db.display(), out.display());
+    Ok(())
+}
+
+/// Replace the database from a snapshot, then reopen it so migrations run and
+/// the restored file is proven to open (spec §9's replace path).
+async fn run_restore(db: PathBuf, backup_path: PathBuf) -> Result<()> {
+    backup::restore(&db, &backup_path).context("restore")?;
+    let worker = spawn_worker(db.clone()).context("reopening restored database")?;
+    let pool = ReadPool::new(db.clone(), 3).context("opening read pool")?;
+    let version: i32 = {
+        let conn = pool.open().context("opening pool connection")?;
+        conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+            .context("reading schema version")
+    }?;
+    worker.shutdown_ack().await.context("shutdown ack")?;
+    println!(
+        "restored {} from {} (schema v{version})",
+        db.display(),
+        backup_path.display()
+    );
+    Ok(())
+}
+
 
 fn print_stats_human(s: &LibraryStats, top: usize, has_root: bool) {
     let size = s

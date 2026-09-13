@@ -32,6 +32,9 @@ pub enum Error {
     #[error("move: {0}")]
     Move(String),
 
+    #[error("backup: {0}")]
+    Backup(String),
+
     #[error("player: {0}")]
     Player(String),
 

@@ -28,6 +28,13 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<()>>,
     },
 
+    /// Snapshot the database with `VACUUM INTO` (spec §9). Runs on the writer
+    /// connection, so the copy is consistent with the WAL.
+    VacuumInto {
+        out: String,
+        reply: oneshot::Sender<Result<()>>,
+    },
+
     /// Insert an artist, returning its new id.
     InsertArtist {
         artist: Artist,
@@ -703,6 +710,7 @@ impl Command {
     pub(crate) fn kind(&self) -> &'static str {
         match self {
             Self::ProbeWrite { .. } => "probe_write",
+            Self::VacuumInto { .. } => "vacuum_into",
             Self::InsertArtist { .. } => "insert_artist",
             Self::GetOrCreateArtist { .. } => "get_or_create_artist",
             Self::GetOrCreateAlbum { .. } => "get_or_create_album",

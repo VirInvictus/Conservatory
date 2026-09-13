@@ -69,7 +69,8 @@ impl WorkerHandle {
     /// on the writer connection inside the blocking task, so the copy is
     /// consistent with the WAL and no other write interleaves with it.
     pub async fn vacuum_into(&self, out: String) -> Result<()> {
-        self.dispatch(|reply| Command::VacuumInto { out, reply }).await
+        self.dispatch(|reply| Command::VacuumInto { out, reply })
+            .await
     }
 
     /// Insert an artist, returning its new id.

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
+use conservatory_core::backup;
 use conservatory_core::db::fixtures::{self, FixtureScale};
 use conservatory_core::db::{
     ApeStripRow, Connection, MediaKind, PlaylistKind, PlaylistOrder, ReadPool, ResamplerQuality,
@@ -20,7 +21,6 @@ use conservatory_core::db::{
     track_credits, track_id_by_path, track_metadata, track_render_rows, writeback_rows,
 };
 use conservatory_core::mover::{self, MoveKind, MoveMode, journal, organize_ops};
-use conservatory_core::backup;
 use conservatory_core::search::{
     Field as SearchField, SearchItem, SortKey, SqlValue, State as SearchState, try_translate,
 };
@@ -28,11 +28,11 @@ use conservatory_core::{
     AlbumEdit, Assignment, AuditOptions, AuditReport, DEFAULT_TARGET_LUFS, DedupOptions,
     DuplicateReport, Field, GenreVocab, ImportOptions, ImportReport, LibraryStats, M3uTrack,
     PathTemplate, PlayableItem, PlaybackConfig, SleepMode, StripPlan, TagWrite, TrackDraft,
-    TrackEdit, TrackFields, VerifyVerdict, any_path_affecting, backup, build_af_chain,
-    build_album_edit, build_m3u, build_track_edit, commit_strip, compute_accent, compute_stats,
-    envelope_for, ffmpeg_available, find_collisions, find_cover_bytes, find_duplicates,
-    flac_available, format_size, genres_assignment, import_folder, locate_ape, parse_assignment,
-    parse_m3u, plan_strip, read_track, replace_in, replaygain_from_file, resolve_album,
+    TrackEdit, TrackFields, VerifyVerdict, any_path_affecting, build_af_chain, build_album_edit,
+    build_m3u, build_track_edit, commit_strip, compute_accent, compute_stats, envelope_for,
+    ffmpeg_available, find_collisions, find_cover_bytes, find_duplicates, flac_available,
+    format_size, genres_assignment, import_folder, locate_ape, parse_assignment, parse_m3u,
+    plan_strip, read_track, replace_in, replaygain_from_file, resolve_album,
     resolve_episode_profile, resolve_music_profile, restore_bytes, resync_album_covers,
     rsgain_available, run_audit, scan_album_files, sync_album_cover, verify_files,
     write_atomic_plain, write_track_tags,
@@ -4298,7 +4298,6 @@ async fn run_restore(db: PathBuf, backup_path: PathBuf) -> Result<()> {
     );
     Ok(())
 }
-
 
 fn print_stats_human(s: &LibraryStats, top: usize, has_root: bool) {
     let size = s

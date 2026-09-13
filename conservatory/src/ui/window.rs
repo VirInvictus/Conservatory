@@ -393,14 +393,13 @@ impl ConservatoryWindow {
             // any move, so nothing new is journaled on top of a wedged job).
             if let (Some(rt), Some(worker), Some(pool)) =
                 (imp.runtime.get(), imp.worker.get(), imp.pool.get())
+                && let Err(e) = rt.block_on(mover::recover(worker, pool))
             {
-                if let Err(e) = rt.block_on(mover::recover(worker, pool)) {
-                    eprintln!(
-                        "startup move recovery failed: {e} (a stuck job? \
-                         `conservatory-cli organize --jobs` lists it, \
-                         `conservatory-cli organize --cancel-job <ID>` clears it)"
-                    );
-                }
+                eprintln!(
+                    "startup move recovery failed: {e} (a stuck job? \
+                     `conservatory-cli organize --jobs` lists it, \
+                     `conservatory-cli organize --cancel-job <ID>` clears it)"
+                );
             }
 
             // Serve MPRIS2 + the suspend inhibitor on the runtime (Phase 4c-i):

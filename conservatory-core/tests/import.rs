@@ -262,7 +262,9 @@ async fn move_mode_journals_the_sidecar_cover_and_undo_restores_both() {
         library_root: lib.root.clone(),
         mode: MoveMode::Move,
     };
-    let report = import_folder(&worker, &pool, src.path(), &opts).await.unwrap();
+    let report = import_folder(&worker, &pool, src.path(), &opts)
+        .await
+        .unwrap();
     assert!(report.conflicts.is_empty(), "{:?}", report.conflicts);
 
     // The regression (roadmap 2026-09-11): the sidecar used to be duplicated

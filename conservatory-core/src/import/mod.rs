@@ -136,11 +136,9 @@ pub async fn import_folder(
             Some(CoverSource::Sidecar { path, bytes }) => {
                 // Only a move-mode import consumes the sidecar; copy mode
                 // leaves the source in place and writes the canonical copy.
-                let claimable = opts.mode == MoveMode::Move && claimed_sidecars.insert(path.clone());
-                (
-                    Some(bytes),
-                    if claimable { Some(path) } else { None },
-                )
+                let claimable =
+                    opts.mode == MoveMode::Move && claimed_sidecars.insert(path.clone());
+                (Some(bytes), if claimable { Some(path) } else { None })
             }
         };
         let title = group.title.clone();

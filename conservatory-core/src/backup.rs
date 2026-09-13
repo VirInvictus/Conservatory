@@ -48,15 +48,10 @@ pub fn restore(db: &Path, backup_file: &Path) -> Result<()> {
         ));
     }
     let mut header = [0u8; 16];
-    let mut f = File::open(backup_file).map_err(|e| {
-        Error::Backup(format!("cannot open backup {}: {e}", backup_file.display()))
-    })?;
-    f.read_exact(&mut header).map_err(|e| {
-        Error::Backup(format!(
-            "cannot read backup {}: {e}",
-            backup_file.display()
-        ))
-    })?;
+    let mut f = File::open(backup_file)
+        .map_err(|e| Error::Backup(format!("cannot open backup {}: {e}", backup_file.display())))?;
+    f.read_exact(&mut header)
+        .map_err(|e| Error::Backup(format!("cannot read backup {}: {e}", backup_file.display())))?;
     if header != *SQLITE_HEADER {
         return Err(Error::Backup(format!(
             "{} is not a SQLite database",

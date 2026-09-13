@@ -46,9 +46,9 @@ use conservatory_core::db::{
 use conservatory_podcasts::{Fetcher, RefreshOutcome, RefreshStatus};
 
 use crate::playqueue::{EpisodeSource, attach_episode_chapters, build_episode_queue};
-use crate::ui::dialogs::{Alert, Appearance};
 use crate::ui::objects::EpisodeRow;
 use crate::ui::rows;
+use vir_gtk::widgets::{Alert, Appearance};
 
 /// A context-menu verb: a method on `Inner` taking `&self` (Phase 16a).
 type EpisodeVerb = fn(&Inner);

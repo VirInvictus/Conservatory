@@ -7,7 +7,6 @@ pub mod accent;
 pub mod audiobooks;
 pub mod coalescing;
 pub mod covers;
-pub mod dialogs;
 pub mod facet_pane;
 pub mod fields;
 pub mod inspector;
@@ -27,25 +26,8 @@ pub mod track_list;
 pub mod waveform;
 pub mod window;
 
-use gtk::gdk;
-use gtk::glib;
-use gtk::prelude::*;
-use gtk4 as gtk;
-
 /// Close `window` on Escape (Phase 26). Plain `gtk::Window` has no built-in
 /// Escape handling; the adw dialogs this replaces did it for free.
-pub fn close_on_escape(window: &gtk::Window) {
-    let key = gtk::EventControllerKey::new();
-    let weak = window.downgrade();
-    key.connect_key_pressed(move |_, keyval, _, _| {
-        if keyval == gdk::Key::Escape {
-            if let Some(win) = weak.upgrade() {
-                win.close();
-            }
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
-        }
-    });
-    window.add_controller(key);
-}
+/// Close `window` on Escape; re-exported from vir-gtk's widget kit (1.4.0),
+/// whose capture-phase shape supersedes the local default-phase copy.
+pub use vir_gtk::widgets::close_on_escape;

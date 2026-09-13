@@ -103,7 +103,7 @@ wiremock = "0.6"
 # feature sets the *minimum* GTK we build against: pinned to 4.14 (Ubuntu
 # 24.04 / the CI runner). Raise only when a newer binding is actually used
 # (and CI's GTK is bumped too).
-gtk4 = { version = "0.9", features = ["v4_14"] }
+gtk4 = { version = "0.11", features = ["v4_14"] }
 
 [profile.release]
 lto = "thin"

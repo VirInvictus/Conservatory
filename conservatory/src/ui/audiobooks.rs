@@ -33,9 +33,9 @@ use conservatory_core::mover::MoveMode;
 
 use crate::book_query::filter_books;
 use crate::query::PoolResolver;
-use crate::ui::dialogs::{Alert, Appearance};
 use crate::ui::objects::BookRow;
 use crate::ui::rows;
+use vir_gtk::widgets::{Alert, Appearance};
 
 /// A rejected bulk-edit attempt's state, for the re-present-prefilled loop
 /// (16.5g): the per-field `(key, ticked, entered text)` triples plus the

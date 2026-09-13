@@ -49,7 +49,6 @@ use crate::playqueue::{
 };
 use crate::query::{materialize_smart, query_leaf};
 use crate::ui::coalescing::CoalescingQueue;
-use crate::ui::dialogs::{Alert, Appearance};
 use crate::ui::facet_pane::{FacetPane, build_pane};
 use crate::ui::fields::{collect_assignments, credit_fields, inspector_fields};
 use crate::ui::inspector::{Inspector, build_inspector};
@@ -61,6 +60,7 @@ use crate::ui::queue_panel::{QueuePanel, build_queue_panel};
 use crate::ui::rows;
 use crate::ui::sound;
 use crate::ui::track_list::{Leaf, build_leaf};
+use vir_gtk::widgets::{Alert, Appearance};
 
 type Coalescer = CoalescingQueue<usize, Box<dyn FnMut(Vec<usize>)>>;
 type FilterCoalescer = CoalescingQueue<(), Box<dyn FnMut(Vec<()>)>>;
@@ -1849,8 +1849,10 @@ impl ConservatoryWindow {
         lib_group.add(&root_row);
 
         let (tmpl_row, tmpl) = rows::entry_row(
-            "Music path template",
-            &config.borrow().library.path_template,
+            Some("Music path template"),
+            None,
+            Some(&config.borrow().library.path_template),
+            None,
         );
         {
             let config = config.clone();
@@ -1890,8 +1892,10 @@ impl ConservatoryWindow {
 
         let genre_group = rows::group(Some("Genre"), Some("Takes effect on the next launch."));
         let (unknown_row, unknown) = rows::entry_row(
-            "Default unknown genre",
-            &config.borrow().genre.default_unknown,
+            Some("Default unknown genre"),
+            None,
+            Some(&config.borrow().genre.default_unknown),
+            None,
         );
         {
             let config = config.clone();
@@ -2003,7 +2007,7 @@ impl ConservatoryWindow {
                  Leave the field blank and Validate to check the token already stored.",
             ),
         );
-        let (token_row, token) = rows::entry_row("User token", "");
+        let (token_row, token) = rows::entry_row(Some("User token"), None, Some(""), None);
         lb_group.add(&token_row);
 
         let status = gtk::Label::new(None);
@@ -2420,8 +2424,10 @@ impl ConservatoryWindow {
         let pod_group = rows::group(Some("Podcasts"), Some("Takes effect on the next launch."));
 
         let (pod_subdir_row, pod_subdir) = rows::entry_row(
-            "Library subfolder",
-            &config.borrow().podcasts.library_subdir,
+            Some("Library subfolder"),
+            None,
+            Some(&config.borrow().podcasts.library_subdir),
+            None,
         );
         {
             let config = config.clone();
@@ -2446,8 +2452,10 @@ impl ConservatoryWindow {
         let book_group = rows::group(Some("Audiobooks"), Some("Takes effect on the next launch."));
 
         let (book_subdir_row, book_subdir) = rows::entry_row(
-            "Library subfolder",
-            &config.borrow().audiobooks.library_subdir,
+            Some("Library subfolder"),
+            None,
+            Some(&config.borrow().audiobooks.library_subdir),
+            None,
         );
         {
             let config = config.clone();
@@ -2457,8 +2465,12 @@ impl ConservatoryWindow {
         }
         book_group.add(&book_subdir_row);
 
-        let (book_tmpl_row, book_tmpl) =
-            rows::entry_row("Path template", &config.borrow().audiobooks.path_template);
+        let (book_tmpl_row, book_tmpl) = rows::entry_row(
+            Some("Path template"),
+            None,
+            Some(&config.borrow().audiobooks.path_template),
+            None,
+        );
         {
             let config = config.clone();
             book_tmpl.connect_changed(move |e| {

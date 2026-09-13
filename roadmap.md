@@ -1469,12 +1469,30 @@ audit, podcasts, and the search grammar headlessly, then the GUI. Two findings
 were fixed the same day (the Standalone author resolution and the
 crash-recovery stale plan, see v0.4.5); the rest is recorded:
 
-- [ ] **Move-mode import leaves a sidecar cover file behind.** Importing a
-  folder in `--move` mode consumes the audio files but a loose `cover.jpg`
-  sidecar is duplicated into the managed tree and left in the source folder
-  (music covers are not journaled `MoveOp`s; books are, since the Phase 27
-  fix). Litter in an otherwise-consumed source folder. Fix direction: journal
-  the located sidecar as a cover op like the book branch does.
+- [x] **Move-mode import leaves a sidecar cover file behind.** Importing a
+      folder in `--move` mode consumes the audio files but a loose `cover.jpg`
+      sidecar is duplicated into the managed tree and left in the source folder
+      (music covers are not journaled `MoveOp`s; books are, since the Phase 27
+      fix). Litter in an otherwise-consumed source folder. Fix direction: journal
+      the located sidecar as a cover op like the book branch does.
+      *(Shipped 2026-09-13: the import resolves where the cover bytes came
+      from (`find_cover_source`); in move mode the sibling file is journaled
+      as a cover-shaped op (`album_id`, no `track_id`, `db_old` `None`), the
+      journal's album branch rewrites/clears `albums.cover_path` under its
+      (album_id, from) guard on undo, and the post-move write records the
+      moved file instead of writing a second canonical copy. Copy mode is
+      unchanged. Embedded covers still write canonically. Tests: move-mode
+      import leaves the source empty with the sidecar in the tree and undo
+      restores both (pointer cleared, not dangling); copy mode keeps the
+      source and writes the canonical copy.)*
+- [ ] **Book import (move mode) has the same sidecar-cover litter.** Found
+      2026-09-13 while fixing the music box: `conservatory-audiobooks/src/
+      import.rs` writes the cover post-move via `sync_album_cover` and never
+      journals it, so a book folder's `cover.jpg` sidecar is duplicated into
+      the managed tree and left behind in a move-mode import (the reorg path
+      journals book covers; the import path does not). Fix direction: the
+      same cover-op shape the music import now uses, extended to the book
+      branch (its guarded update also needs the `db_old = None` clear).
 
 ## New findings 2026-09-12 (six-lens full audit; detail: audit/FULL-AUDIT-2026-09-12.md, Wave 2)
 

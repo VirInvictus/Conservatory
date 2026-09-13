@@ -229,6 +229,35 @@ fn apply_db_path(
     to: Option<&str>,
     reverting: bool,
 ) -> Result<()> {
+    // The album cover op (a move-mode import's journaled sidecar: `album_id`
+    // set, `track_id` and `book_id` `None`) rewrites `albums.cover_path` under
+    // its (album_id, from) guard, the book branch's shape. The forward set is
+    // left to the import's post-move write (it stamps the accent too); the undo
+    // is the journal's business: a reorg-style op (both paths set) rewrites the
+    // pointer, while an import op (`db_old` is `None`, no managed cover existed
+    // before) clears it, so undo never leaves the album pointing at a file that
+    // moved back to the source. Runs before the `to`-less early return, which
+    // the import undo hits.
+    if let Some(album_id) = album_id
+        && track_id.is_none()
+        && book_id.is_none()
+        && let Some(from) = from
+    {
+        match to {
+            Some(to) => {
+                tx.execute(
+                    "UPDATE albums SET cover_path = ?3 WHERE id = ?1 AND cover_path = ?2",
+                    params![album_id, from, to],
+                )?;
+            }
+            None => {
+                tx.execute(
+                    "UPDATE albums SET cover_path = NULL WHERE id = ?1 AND cover_path = ?2",
+                    params![album_id, from],
+                )?;
+            }
+        }
+    }
     let Some(to) = to else { return Ok(()) };
     if let Some(track_id) = track_id {
         tx.execute(

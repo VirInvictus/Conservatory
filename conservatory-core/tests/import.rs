@@ -224,3 +224,102 @@ fn count_files(dir: &Path) -> usize {
         })
         .sum()
 }
+
+/// The fixture source, but with the embedded covers stripped from the copies
+/// (so the sibling sidecar is what the import finds) plus a `cover.jpg`
+/// sidecar beside the audio. The committed fixtures always carry embedded art;
+/// lofty removes it the same way write-back writes.
+fn fixture_source_with_sidecar() -> TempDir {
+    use lofty::file::AudioFile as _;
+    use lofty::prelude::TaggedFileExt as _;
+
+    let dir = fixture_source();
+    for name in ["sample.flac", "sample.mp3"] {
+        let path = dir.path().join(name);
+        let mut tagged = lofty::read_from_path(&path).unwrap();
+        if let Some(tag) = tagged.primary_tag_mut() {
+            tag.remove_picture_type(lofty::picture::PictureType::CoverFront);
+        }
+        tagged
+            .save_to_path(&path, lofty::config::WriteOptions::default())
+            .unwrap();
+    }
+    fs::write(dir.path().join("cover.jpg"), b"stand-in sidecar bytes").unwrap();
+    // The other two fixtures would still carry embedded art and win over the
+    // sidecar; the sidecar test imports a two-file album.
+    fs::remove_file(dir.path().join("sample.opus")).unwrap();
+    fs::remove_file(dir.path().join("sample.m4a")).unwrap();
+    dir
+}
+
+#[tokio::test]
+async fn move_mode_journals_the_sidecar_cover_and_undo_restores_both() {
+    let src = fixture_source_with_sidecar();
+    let lib = lib();
+    let worker = spawn_worker(lib.db.clone()).unwrap();
+    let pool = ReadPool::new(lib.db.clone(), 3).unwrap();
+    let opts = ImportOptions {
+        library_root: lib.root.clone(),
+        mode: MoveMode::Move,
+    };
+    let report = import_folder(&worker, &pool, src.path(), &opts).await.unwrap();
+    assert!(report.conflicts.is_empty(), "{:?}", report.conflicts);
+
+    // The regression (roadmap 2026-09-11): the sidecar used to be duplicated
+    // into the managed tree and left behind in the consumed source folder.
+    assert_eq!(
+        fs::read_dir(src.path()).unwrap().count(),
+        0,
+        "move consumes the sidecar with the audio"
+    );
+
+    // The managed album folder carries the sidecar, and the album points at it.
+    let conn = pool.open().unwrap();
+    let albums = list_albums(&conn).unwrap();
+    assert_eq!(albums.len(), 1);
+    let cover_rel = albums[0].cover_path.clone().expect("cover recorded");
+    drop(conn);
+    let managed = lib.root.join(&cover_rel);
+    assert_eq!(
+        cover_rel,
+        "Music/Ambient/Test Album Artist/Test Album (2021)/cover.jpg"
+    );
+    assert!(managed.exists(), "the sidecar file moved into the tree");
+
+    // Undo restores both: the audio and the sidecar return to the source, the
+    // managed copy is gone, and the album no longer points at a moved file.
+    conservatory_core::mover::undo(&worker, &pool, report.job_id.unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        count_files(src.path()),
+        3,
+        "two audio files + the sidecar restored"
+    );
+    assert!(!managed.exists(), "managed sidecar removed by undo");
+    let conn = pool.open().unwrap();
+    let albums = list_albums(&conn).unwrap();
+    assert!(
+        albums[0].cover_path.is_none(),
+        "cover pointer cleared by undo, not left dangling"
+    );
+    worker.shutdown_ack().await.unwrap();
+}
+
+#[tokio::test]
+async fn copy_mode_keeps_the_sidecar_and_writes_the_canonical_cover() {
+    let src = fixture_source_with_sidecar();
+    let lib = lib();
+    let report = import_into(&lib, src.path(), MoveMode::Copy).await;
+    assert_eq!(report.tracks, 2);
+
+    // Copy mode consumes nothing: audio and sidecar stay in the source.
+    assert_eq!(count_files(src.path()), 3, "sources kept in copy mode");
+
+    // The managed folder carries the canonical written copy (the old path).
+    let pool = ReadPool::new(lib.db.clone(), 3).unwrap();
+    let conn = pool.open().unwrap();
+    let albums = list_albums(&conn).unwrap();
+    let cover_rel = albums[0].cover_path.clone().expect("cover recorded");
+    assert!(lib.root.join(&cover_rel).exists());
+}

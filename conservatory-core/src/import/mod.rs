@@ -11,15 +11,16 @@
 pub mod resolve;
 pub mod scan;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 
-use crate::accent::{compute_accent, find_cover_bytes};
+use crate::accent::{CoverSource, compute_accent, find_cover_source};
 use crate::db::models::{Album, Track};
 use crate::db::{ReadPool, WorkerHandle};
 use crate::errors::Result;
-use crate::import::resolve::{AlbumGroup, ArtistName};
+use crate::import::resolve::ArtistName;
 use crate::mover::{self, Conflict, MoveKind, MoveMode, MoveOp};
 use crate::path_template::{PathTemplate, TrackFields, find_collisions};
 use crate::shelf_genre::{AlbumGenreInput, GenreVocab, resolve_shelf_genre};
@@ -56,6 +57,14 @@ struct PlannedAlbum {
     /// The cover bytes (embedded or sibling), written to disk after the move
     /// (Phase 5d). The accent is derived from the same bytes.
     cover: Option<Vec<u8>>,
+    /// The sibling cover file the bytes came from, when they are not embedded.
+    /// A move-mode import journals it into the managed tree like any other
+    /// file (the 2026-09-11 functional-pass finding: an unjournaled sidecar
+    /// was left behind in an otherwise-consumed source folder); copy mode
+    /// keeps the source and writes the canonical copy as before. `None` for
+    /// embedded covers, and for a sidecar another album group already claimed
+    /// (two groups can share one source directory; the first group wins).
+    sidecar: Option<PathBuf>,
     folder_rel: Option<PathBuf>,
 }
 
@@ -97,6 +106,9 @@ pub async fn import_folder(
     // (album index, draft, track artist, rendered relative path)
     let mut planned_tracks: Vec<(usize, crate::tags::TrackDraft, Option<ArtistName>, PathBuf)> =
         Vec::new();
+    // Sidecar covers claimed for journaling, across album groups (two groups
+    // can share one source directory; one physical file, one claim).
+    let mut claimed_sidecars: HashSet<PathBuf> = HashSet::new();
 
     for group in resolve::group_albums(drafts) {
         let album_idx = planned_albums.len();
@@ -111,8 +123,26 @@ pub async fn import_folder(
             &vocab,
         );
         let year = group.drafts.iter().find_map(|d| d.year);
-        let cover = album_cover_bytes(&group);
-        let accent = cover.as_deref().and_then(|b| compute_accent(b).ok());
+        let cover_src = group
+            .drafts
+            .iter()
+            .find_map(|d| find_cover_source(&d.source_path, d));
+        let accent = cover_src
+            .as_ref()
+            .and_then(|c| compute_accent(c.bytes()).ok());
+        let (cover, sidecar) = match cover_src {
+            None => (None, None),
+            Some(CoverSource::Embedded(bytes)) => (Some(bytes), None),
+            Some(CoverSource::Sidecar { path, bytes }) => {
+                // Only a move-mode import consumes the sidecar; copy mode
+                // leaves the source in place and writes the canonical copy.
+                let claimable = opts.mode == MoveMode::Move && claimed_sidecars.insert(path.clone());
+                (
+                    Some(bytes),
+                    if claimable { Some(path) } else { None },
+                )
+            }
+        };
         let title = group.title.clone();
 
         planned_albums.push(PlannedAlbum {
@@ -122,6 +152,7 @@ pub async fn import_folder(
             year,
             accent,
             cover,
+            sidecar,
             folder_rel: None,
         });
 
@@ -276,6 +307,33 @@ pub async fn import_folder(
     }
 
     let tracks = ops.len();
+
+    // Sidecar covers ride the same journal in move mode (one op per claimed
+    // sidecar): the file is consumed like the audio, so the source folder is
+    // left clean, a crash rolls forward, and undo moves it back. The op is
+    // cover-shaped (`album_id` set, no `track_id`): the journal rewrites
+    // `albums.cover_path` under its guard on undo.
+    for (idx, pa) in planned_albums.iter().enumerate() {
+        if let (Some(sidecar), Some(folder_rel)) = (&pa.sidecar, &pa.folder_rel) {
+            let name = sidecar
+                .file_name()
+                .map(|n| n.to_os_string())
+                .unwrap_or_default();
+            let rel = folder_rel.join(&name);
+            ops.push(MoveOp {
+                track_id: None,
+                album_id: Some(album_ids[idx]),
+                book_id: None,
+                src: sidecar.clone(),
+                dst: root.join(&rel),
+                // No managed cover existed before the import: the post-move
+                // write below records the pointer, and undo clears it.
+                db_old: None,
+                db_new: Some(rel.to_string_lossy().into_owned()),
+            });
+        }
+    }
+
     let job_id = mover::apply(
         worker,
         pool,
@@ -294,7 +352,27 @@ pub async fn import_folder(
     // insert above never ran, so this is the only place the accent can land
     // (the sweep fix; previously a NULL accent survived every re-import).
     for (idx, pa) in planned_albums.iter().enumerate() {
-        if let (Some(bytes), Some(folder_rel)) = (&pa.cover, &pa.folder_rel) {
+        let Some(folder_rel) = &pa.folder_rel else {
+            continue;
+        };
+        // A journaled sidecar already sits in the album folder (the move moved
+        // it): point the album at the moved file (accent rides along) instead
+        // of writing a second, canonical copy beside it.
+        if let Some(sidecar) = &pa.sidecar {
+            let name = sidecar
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let cover_path = folder_rel.join(&name).to_string_lossy().into_owned();
+            if let Err(e) = worker
+                .set_album_cover_path(album_ids[idx], Some(cover_path), pa.accent)
+                .await
+            {
+                tracing::warn!(album_id = album_ids[idx], error = %e, "cover path not recorded");
+            }
+            continue;
+        }
+        if let Some(bytes) = &pa.cover {
             let folder = folder_rel.to_string_lossy();
             if let Ok(cover_path) = crate::covers::sync_album_cover(root, &folder, bytes, None)
                 && let Err(e) = worker
@@ -317,13 +395,4 @@ pub async fn import_folder(
         job_id: Some(job_id),
         conflicts: Vec::new(),
     })
-}
-
-/// The first cover found among an album's drafts (embedded, else a sibling cover
-/// file). Feeds both the median-cut accent (spec §7.4) and the on-disk cover (5d).
-fn album_cover_bytes(group: &AlbumGroup) -> Option<Vec<u8>> {
-    group
-        .drafts
-        .iter()
-        .find_map(|d| find_cover_bytes(&d.source_path, d))
 }

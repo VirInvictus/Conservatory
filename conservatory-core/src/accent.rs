@@ -9,7 +9,7 @@
 //! (Pillow quantizes via libimagequant internally); fidelity is to the approach,
 //! and the tests use unambiguous covers. See `docs/accent.md`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use image::imageops::FilterType;
 
@@ -42,12 +42,32 @@ pub fn compute_accent(bytes: &[u8]) -> Result<u32> {
     Ok(pack(best))
 }
 
-/// Locate the cover bytes for a draft: the embedded picture if present, else a
-/// sibling cover file in the source directory. Storing a canonical `cover.jpg`
-/// into the managed tree is Phase 2's job; this only finds the bytes to analyze.
-pub fn find_cover_bytes(source: &Path, draft: &TrackDraft) -> Option<Vec<u8>> {
+/// Where an album's cover bytes came from. A sidecar carries its source path
+/// so a move-mode import can journal the file itself into the managed tree
+/// (and undo restores it); embedded art has no source file to consume.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoverSource {
+    /// Art embedded in the audio file's tags.
+    Embedded(Vec<u8>),
+    /// A sibling cover file in the source directory (e.g. `cover.jpg`).
+    Sidecar { path: PathBuf, bytes: Vec<u8> },
+}
+
+impl CoverSource {
+    /// The cover bytes, whichever kind this is.
+    pub fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Embedded(bytes) | Self::Sidecar { bytes, .. } => bytes,
+        }
+    }
+}
+
+/// Locate the cover source for a draft: the embedded picture if present, else a
+/// sibling cover file in the source directory. Feeds the accent, the on-disk
+/// cover write, and (for a sidecar) the move journal.
+pub fn find_cover_source(source: &Path, draft: &TrackDraft) -> Option<CoverSource> {
     if let Some(cover) = &draft.cover {
-        return Some(cover.data.clone());
+        return Some(CoverSource::Embedded(cover.data.clone()));
     }
     let dir = source.parent()?;
     const CANDIDATES: &[&str] = &[
@@ -65,10 +85,20 @@ pub fn find_cover_bytes(source: &Path, draft: &TrackDraft) -> Option<Vec<u8>> {
         if CANDIDATES.contains(&name.as_str())
             && let Ok(bytes) = std::fs::read(entry.path())
         {
-            return Some(bytes);
+            return Some(CoverSource::Sidecar {
+                path: entry.path(),
+                bytes,
+            });
         }
     }
     None
+}
+
+/// Locate the cover bytes for a draft: the embedded picture if present, else a
+/// sibling cover file in the source directory. Storing a canonical `cover.jpg`
+/// into the managed tree is Phase 2's job; this only finds the bytes to analyze.
+pub fn find_cover_bytes(source: &Path, draft: &TrackDraft) -> Option<Vec<u8>> {
+    find_cover_source(source, draft).map(|src| src.bytes().to_vec())
 }
 
 /// Median-cut quantization to at most `n` representative colours.

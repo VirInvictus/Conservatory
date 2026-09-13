@@ -240,6 +240,49 @@ async fn crash_mid_job_rolls_forward_on_recovery() {
 }
 
 #[tokio::test]
+async fn undo_after_an_undo_crash_completes_on_retry() {
+    // The audit's undo crash window: a crash between the file move-back and
+    // the DB reset leaves the op `done` while its file is already back at the
+    // source. Recovery cannot help (it only drives in_progress jobs, and the
+    // job stays completed across an undo), so the retry of `undo` itself must
+    // treat the already-reverted file as a no-op and finish the job.
+    let fx = fixture().await;
+    let (album, tracks) = seed(&fx, 3).await;
+    let ops = tracks
+        .iter()
+        .map(|(id, old, new)| op(&fx.root, *id, album, old, new))
+        .collect();
+    let job = mover::apply(
+        &fx.worker,
+        &fx.pool,
+        MoveKind::Organize,
+        MoveMode::Move,
+        &fx.root,
+        0,
+        ops,
+    )
+    .await
+    .unwrap();
+
+    // Simulate the crash mid-undo: move the last op's file back by hand and
+    // stop before its revert_operation lands (the op stays `done`).
+    let (_, old, new) = tracks.last().unwrap();
+    fsops::relocate(&fx.root.join(new), &fx.root.join(old), MoveMode::Move).unwrap();
+
+    // The retry completes the undo with no NotFound and no lost file.
+    mover::undo(&fx.worker, &fx.pool, job).await.unwrap();
+
+    for (id, old, new) in &tracks {
+        assert!(fx.root.join(old).exists(), "source {old} should be back");
+        assert!(!fx.root.join(new).exists(), "target {new} should be gone");
+        assert_eq!(&db_path(&fx, *id), old, "track {id} file_path reverted");
+    }
+    assert_eq!(job_state(&fx, job), JobState::Undone);
+
+    fx.worker.shutdown_ack().await.unwrap();
+}
+
+#[tokio::test]
 async fn apply_refuses_on_conflicts() {
     // Duplicate target: two tracks rendered to the same destination.
     let fx = fixture().await;

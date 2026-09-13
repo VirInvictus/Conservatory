@@ -49,8 +49,16 @@ pub fn relocate(src: &Path, dst: &Path, mode: MoveMode) -> io::Result<()> {
 }
 
 /// Undo a previously-applied operation. For `Move`, move the file back to its
-/// source; for `Copy`, delete the copied destination and leave the source. Also
-/// idempotent.
+/// source; for `Copy`, delete the copied destination and leave the source.
+///
+/// Idempotent across the undo crash window (a crash between the move-back and
+/// the journal's `revert_operation` write leaves the op `done` while its file
+/// is already home): for `Move`, a missing destination (the managed path) with
+/// the source present is the already-reverted state and comes back as a no-op
+/// success through [`relocate`]'s guard, and a crash mid-copy with *both*
+/// copies present re-runs the move over the restored file. The retry of
+/// `mover::undo` therefore finishes a job a crash interrupted (recovery only
+/// drives in_progress jobs, and a job stays `completed` across an undo).
 pub fn revert(src: &Path, dst: &Path, mode: MoveMode) -> io::Result<()> {
     match mode {
         MoveMode::Move => relocate(dst, src, MoveMode::Move),
@@ -241,6 +249,38 @@ mod tests {
         write(&src, b"v");
 
         relocate(&src, &dst, MoveMode::Move).unwrap();
+        revert(&src, &dst, MoveMode::Move).unwrap();
+        assert_eq!(fs::read(&src).unwrap(), b"v");
+        assert!(!dst.exists());
+    }
+
+    #[test]
+    fn revert_move_after_an_undo_crash_is_a_noop() {
+        // The undo crash window: the file is already back at the source and
+        // the managed copy is gone. The retry must treat that as reverted.
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src.flac");
+        let dst = dir.path().join("dst.flac");
+        write(&src, b"v");
+
+        relocate(&src, &dst, MoveMode::Move).unwrap();
+        revert(&src, &dst, MoveMode::Move).unwrap();
+        revert(&src, &dst, MoveMode::Move).unwrap();
+        assert_eq!(fs::read(&src).unwrap(), b"v");
+        assert!(!dst.exists());
+    }
+
+    #[test]
+    fn revert_move_with_both_copies_present_redoes_the_move_back() {
+        // A cross-filesystem move-back crashed between copy and source
+        // removal: both paths hold the file. The retry completes the move
+        // back and leaves the managed path empty.
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src.flac");
+        let dst = dir.path().join("dst.flac");
+        write(&src, b"v");
+        write(&dst, b"v");
+
         revert(&src, &dst, MoveMode::Move).unwrap();
         assert_eq!(fs::read(&src).unwrap(), b"v");
         assert!(!dst.exists());

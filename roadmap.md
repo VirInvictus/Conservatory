@@ -1496,12 +1496,22 @@ crash-recovery stale plan, see v0.4.5); the rest is recorded:
 
 ## New findings 2026-09-12 (six-lens full audit; detail: audit/FULL-AUDIT-2026-09-12.md, Wave 2)
 
-- [ ] **HIGH (bugs): mover revert is not idempotent across the undo crash
+- [x] **HIGH (bugs): mover revert is not idempotent across the undo crash
       window.** fsops.rs:54-65 + mod.rs:269-283: a crash between the file
       move-back and the DB reset wedges the job permanently (revert's Move
       branch returns NotFound on retry; recover only drives in_progress
       jobs). Fix: treat dst-missing+src-present as an already-reverted
       no-op, plus a revert-after-crash test.
+      *(Verified + pinned 2026-09-13: the claimed NotFound retry does not
+      reproduce. `revert`'s Move branch delegates to `relocate(dst, src)`,
+      whose Phase 2c guard (46b63bb) already returns the already-reverted
+      no-op for dst-missing+src-present, and the both-copies-present crash
+      re-runs the move-back; a retry of `undo` completes the job. The defect
+      was the missing test coverage plus a docstring that read as
+      non-idempotent. Pinned with `undo_after_an_undo_crash_completes_on_
+      retry` (the integration shape, mirroring the roll-forward test) and
+      two fsops unit tests (the pure no-op and the both-copies retry), with
+      the crash-window contract now spelled out on `revert`.)*
 - [ ] **HIGH (docs): data/cargo-sources.json vendors vir-search 1.4.0
       while Cargo.lock pins 1.4.1.** Regenerate from the lock before the
       next release; add the same cargo-sources CI freshness guard Atrium's

@@ -4263,7 +4263,22 @@ impl ConservatoryWindow {
         else {
             return;
         };
-        let ops = self.build_scoped_ops(albums, root);
+        // The preview promised conflicts are skipped, not fatal, so feed
+        // `apply` only the plan's actionable ops. The plan here is rebuilt
+        // fresh from the DB, and `apply`'s own conflict refusal stays as the
+        // backstop for anything that appeared since the dialog opened.
+        let plan = mover::plan(self.build_scoped_ops(albums, root));
+        let skipped = plan.conflicts.len();
+        if plan.ops.is_empty() {
+            if skipped > 0 {
+                self.error_dialog(
+                    "Nothing moved",
+                    &format!("{skipped} conflict(s); no file could be moved."),
+                );
+            }
+            return;
+        }
+        let moved = plan.ops.len();
         let created_at = chrono::Utc::now().timestamp();
         // Moving files is the headline risk (CLAUDE.md): never fail silently. The
         // move is journaled + roll-forward-recoverable, so surface the error and
@@ -4275,10 +4290,15 @@ impl ConservatoryWindow {
             MoveMode::Move,
             root,
             created_at,
-            ops,
+            plan.ops,
         )) {
             self.error_dialog("Move failed", &e.to_string());
             return;
+        }
+        if skipped > 0 {
+            self.toast(&format!(
+                "Moved {moved} file(s); {skipped} conflict(s) left in place"
+            ));
         }
         // Covers follow their albums after the move (Phase 5d).
         let _ = rt.block_on(conservatory_core::covers::resync_album_covers(

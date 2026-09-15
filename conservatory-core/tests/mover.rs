@@ -352,6 +352,48 @@ async fn apply_refuses_on_conflicts() {
 }
 
 #[tokio::test]
+async fn apply_takes_the_actionable_subset_of_a_conflicted_batch() {
+    // The GUI move-preview contract (window.rs): the dialog promises the
+    // conflicted files are skipped while the clean remainder moves, so the
+    // caller plans, drops the conflicts, and hands `apply` the subset. This
+    // pins that the subset applies cleanly end to end.
+    let fx = fixture().await;
+    let (album, tracks) = seed(&fx, 3).await;
+    stage(&fx.root, "new/taken.flac", b"already here");
+    fs::remove_file(fx.root.join(&tracks[1].1)).unwrap();
+    let ops = vec![
+        op(&fx.root, tracks[0].0, album, &tracks[0].1, &tracks[0].2),
+        op(&fx.root, tracks[1].0, album, &tracks[1].1, &tracks[1].2),
+        op(&fx.root, tracks[2].0, album, &tracks[2].1, "new/taken.flac"),
+    ];
+    let plan = mover::plan(ops);
+    assert_eq!(plan.ops.len(), 1, "only the clean op is actionable");
+    assert_eq!(plan.conflicts.len(), 2, "missing source + taken target");
+
+    let job = mover::apply(
+        &fx.worker,
+        &fx.pool,
+        MoveKind::Organize,
+        MoveMode::Move,
+        &fx.root,
+        0,
+        plan.ops,
+    )
+    .await
+    .unwrap();
+
+    // The clean file moved, database updated with it; the conflicted tracks'
+    // rows are untouched.
+    assert!(fx.root.join(&tracks[0].2).exists());
+    assert_eq!(db_path(&fx, tracks[0].0), tracks[0].2);
+    assert_eq!(db_path(&fx, tracks[1].0), tracks[1].1);
+    assert_eq!(db_path(&fx, tracks[2].0), tracks[2].1);
+    assert_eq!(job_state(&fx, job), JobState::Completed);
+
+    fx.worker.shutdown_ack().await.unwrap();
+}
+
+#[tokio::test]
 async fn copy_mode_keeps_sources_and_undo_removes_targets() {
     let fx = fixture().await;
     let (album, tracks) = seed(&fx, 2).await;

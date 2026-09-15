@@ -12,9 +12,13 @@ A `0.x.0` / `x.0.0` is a **capability milestone**: a cluster of phases deliverin
 |---|---|---|---|
 | `0.1.0` | First release: manager + player + podcasts + audiobooks + maintenance | 1–15 | ✅ tagged |
 | `0.1.x` | Power-user interaction, UX completeness, player table-stakes | 16, 16.5, 17 | ✅ (through v0.1.26) |
-| **`0.2.0`** | **Grammar & columns** | 18 | ✅ tagged |
+| **`0.2.0`** | **Grammar & columns** | 18 | ✅ shipped, never tagged (the forward-only tag rule consumed the number) |
 | **`0.3.0`** | **Hyprland-native design (de-adwaita)** | 26 (+ the Phase 25 audits as its verification tail) | ✅ tagged |
 | **`0.4.4`** | **Immersive & history** | 19 + 9 | ✅ tagged v0.4.4 (2026-09-06): Phase 9 (9a v0.3.1-9d v0.3.6), 19a, 19b-i, 19b-ii, and 19b-iii all shipped. Re-labelled 2026-09-05 (the `0.4.0` number was consumed by the untagged 0.4.0-0.4.3 point releases); tagged on Brandon's go. The 19b-i display pass and the audible EQ re-check remain owed as hands-on follow-ups |
+| **`0.4.5`** | **Packaging** | 5.8 | ✅ tagged v0.4.5 (2026-09-11): the Flatpak manifest carries every build dependency as its own module (ffmpeg, libmpv, flac, rsgain); a local flatpak-builder build exports the app |
+| **`0.5.0`** | **The interaction tier** | 16b-d + the B-leftovers | ✅ tagged v0.5.0 (2026-09-11): rating drag-sweep, inline cell editing with clear-to-empty, mixed-kind static playlists with a drag-reorder editor, the multi-select aggregate inspector, the tightened facet density |
+| **`0.6.0`** | **The consumer wave** | the vir-gtk 1.4.0 adoption | ✅ tagged v0.6.0 (2026-09-13): gtk4 0.9→0.11, vir-search 1.4.1/1.4.2, and the widget-kit first slice (the local dialogs.rs deleted into the shared kit) |
+| **`0.7.0`** | **Data safety** | §9 (decision 65) | ✅ tagged v0.7.0 (2026-09-13): the backup and restore verbs, GUI startup roll-forward recovery, move-mode sidecar-cover journaling, the pinned undo crash-window tests |
 | **`1.0.0`** | **Verified & packaged** (the endgame) | 20 | planned |
 | `1.1.0` | Metadata intelligence | 21 | committed, beyond 1.0 |
 | `1.2.0` | Curation depth | 22 | committed, beyond 1.0 |
@@ -1128,7 +1132,7 @@ The power-user *data* tier (from the v0.1.2 UI/UX deep-dive). Deepens the two su
 - Tests: `cmp_tracks` for the new keys; a catalog-vs-defaults consistency test; GUI smoke-launch with a 12-column custom config (every new id builds without panic).
 - *Usable artifact:* add a Year / Play Count / Format column from Preferences, persisted across launch.
 
-**Phase 18 complete → `0.2.0` tagged.** Accent-insensitive search (18a) and configurable browse columns (18b); one migration (0019, FTS re-tokenize); no new external dependency. The first capability milestone on the runway to 1.0. Next: `0.3.0` (Phase 26 de-adwaita, pulled forward; see the re-sequencing note under the version table).
+**Phase 18 complete → `0.2.0` shipped, never tagged** (no `v0.2.0` tag exists; the tag trail starts at `v0.1.0`/`v0.3.0` and runs forward-only from `v0.4.4`). Accent-insensitive search (18a) and configurable browse columns (18b); one migration (0019, FTS re-tokenize); no new external dependency. The first capability milestone on the runway to 1.0. Next: `0.3.0` (Phase 26 de-adwaita, pulled forward; see the re-sequencing note under the version table).
 
 ## Milestone 0.3.0 — Hyprland-native design (de-adwaita)
 

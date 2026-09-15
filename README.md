@@ -145,10 +145,10 @@ A few of the most useful; the [full keymap](docs/keymap.md) has the rest.
 
 ## How it is built
 
-Six crates, on the discipline that every non-GUI surface stays CLI-testable. Music is the native program; podcasts and audiobooks are **compile-time plugins** (feature-gated crates, on by default), with all schema living in core's single migration ledger.
+Five workspace crates, plus the shared `vir-search` and `vir-gtk` libraries consumed as branch-tracking git deps, on the discipline that every non-GUI surface stays CLI-testable. Music is the native program; podcasts and audiobooks are **compile-time plugins** (feature-gated crates, on by default), with all schema living in core's single migration ledger.
 
 - `conservatory-core`: the headless data layer and the music engine: SQLite worker, all migrations, the import pipeline, the file mover, the playback host and profiles, and the unified queue.
-- `vir-search` (shared): the Calibre-shaped search expression language, extracted with Atrium into its own crate (see [`docs/search-grammar.md`](docs/search-grammar.md)).
+- `vir-search` (shared, a git dep rather than a workspace member): the Calibre-shaped search expression language, extracted with Atrium into its own crate (see [`docs/search-grammar.md`](docs/search-grammar.md)); `vir-gtk`, the shared widget kit behind Atrium and Viaduct, rides the same way.
 - `conservatory-podcasts`: the absorbed Belfry podcast subsystem.
 - `conservatory-audiobooks`: the audiobook subsystem.
 - `conservatory-cli`: the headless binary.

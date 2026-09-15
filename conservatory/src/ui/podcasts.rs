@@ -21,8 +21,12 @@
 //!   `upsert_show_settings`. The CLI analogue is `podcast settings`.
 //!
 //! Worker writes are dispatched with `rt.block_on(worker.*)` from the GTK main
-//! thread, the app-wide GUI-write idiom (the worker runs on a dedicated runtime
-//! thread, so this blocks only for a sub-millisecond command round-trip).
+//! thread, the app-wide GUI-write idiom: brief commands, typically a
+//! sub-millisecond round-trip, but the caller does wait the worker out, so a
+//! large write (a bulk update, a VACUUM-grade maintenance command) blocks for
+//! its duration. The long file-moving flows (import, re-shelve) go through
+//! `rt.spawn` plus a glib completion instead, and write failures surface
+//! through `ui::log_worker_err` rather than vanishing.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;

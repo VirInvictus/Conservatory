@@ -19,8 +19,10 @@ use rusqlite::Connection;
 
 use crate::errors::Result;
 
-/// The bucket used when no genre can be derived (config `genre.default_unknown`
-/// arrives with the config layer; the default is `"Unknown"`).
+/// The bucket used when no genre can be derived. Note: the
+/// `genre.default_unknown` config key exists (Preferences edits it) but is
+/// currently write-only - `resolve_shelf_genre` always returns this constant
+/// and does not read the setting (tracked as a roadmap box).
 pub const UNKNOWN: &str = "Unknown";
 
 /// The user-built normalization vocabulary: an alias map (`raw → canonical`) and

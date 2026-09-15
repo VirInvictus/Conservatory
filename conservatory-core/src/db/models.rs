@@ -144,8 +144,9 @@ impl PlaylistKind {
 }
 
 /// A smart playlist's prioritisation order (Phase 16d, the research trio plus
-/// title/artist). `random` is deferred to the Phase 17 shuffle work; these are
-/// the deterministic keys. `LastPlayed` sorts least-recently-played first.
+/// title/artist): the deterministic keys. `random` was never shipped (the
+/// Phase 17 shuffle work landed without it) and stays a recorded idea.
+/// `LastPlayed` sorts least-recently-played first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlaylistOrder {
     Added,

@@ -1,3 +1,9 @@
+//! The search domain: the fields, states, and sort keys the filter bar and
+//! the CLI `search` verb expose, registered against `vir_search`'s typed
+//! registry. Deliberately feature-free (spec §2.2): podcast and audiobook
+//! fields are always compiled in, and a field over an empty table simply
+//! matches nothing.
+
 use vir_search::ast::{FieldType, ParseField, ParseSort, ParseState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,4 +1,5 @@
-//! Embedded-tag reader (spec §7.1, roadmap Phase 1c).
+//! Embedded-tag read + write-back (spec §7.1 and §5.5): read at Phase 1c,
+//! the write-back half at Phase 5b.
 //!
 //! Reads one audio file into a [`TrackDraft`]: the headless, pre-database
 //! representation the Phase 2 import pipeline resolves into artists/albums/tracks.

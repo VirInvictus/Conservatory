@@ -1909,6 +1909,9 @@ impl ConservatoryWindow {
         lib_group.add(&embed_row);
         content.append(lib_group.widget());
 
+        // The "next launch" promise is honest for the layout panes above; the
+        // unknown-genre entry below is the exception: nothing reads the setting
+        // yet (the resolver hardcodes "Unknown"), it is persisted only.
         let genre_group = rows::group(Some("Genre"), Some("Takes effect on the next launch."));
         let (unknown_row, unknown) = rows::entry_row(
             Some("Default unknown genre"),

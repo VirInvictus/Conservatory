@@ -17,6 +17,9 @@
 /build
 /_build
 
+# The CI packaging-validator build dir name (meson setup build-validate).
+/build-validate
+
 # flatpak-builder state from a bare run at the repo root (the manifest is
 # data/, so this only appears when the command is invoked from .).
 /.flatpak-builder/

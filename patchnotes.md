@@ -1,5 +1,22 @@
 # Patch Notes
 
+## Unreleased
+
+- **vir-search adopted at 1.4.3** (consumer wave, lock bump only): the
+  final-audit hop lands upstream, headlined by the Display round-trip
+  fixes (quoted grammar words like `genre:"true"` render quoted instead
+  of flipping to a presence/wildcard match; nested combinators render
+  parenthesized; a negation of a degraded empty operand stays empty), a
+  quoted In-list body now degrading to literal text (decided
+  reject-vs-document 2026-09-15; the unquoted list is untouched), Ymd
+  years outside 0..=9999 degrading at parse, the dead `regex`
+  dependency dropped (Conservatory's lock loses the edge it was
+  carrying for the dep vir-search never used), a generated-input
+  round-trip fuzz, Debug derives, a capped degradation log, and
+  `examples/mini_consumer.rs`. The roadmap push-down attribution
+  correction and the search-grammar date-keyword fixes ride the same
+  wave (see the #117 commits). No Conservatory code changes; workspace
+  suite green.
 ## v0.8.0: the blitz hardening (2026-09-15)
 
 The final-audit execution lane: the executed findings of the 2026-09-13 final audit in one pass, headed by the repair in the module that exists for exactly this. Workspace suite 676 test functions green plus the music-only lane 69; clippy `-D warnings` clean on both gates.

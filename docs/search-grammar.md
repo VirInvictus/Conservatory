@@ -65,7 +65,7 @@ One grammar, all three surfaces (music, podcasts, audiobooks). The filter bar ab
 | `format:` | text-multi | `format:flac` |
 | `composer:` | text-multi (credits) | `composer:"Gavin Bryars"` |
 | `is:played` / `is:starred` / `is:queued` | state | `is:starred AND genre:jazz` |
-| `show:` / `is:in_inbox` / `pub:` (Phase 6) | podcast | as Belfry §3.7 |
+| `show:` / `is:in_inbox` / `pub:` | podcast | as Belfry §3.7 |
 | `author:` / `narrator:` | text-multi | `author:"Brandon Sanderson"` |
 | `series:` | text | `series:"The Stormlight Archive"` |
 | `is:finished` | state | `author:sanderson AND NOT is:finished` |

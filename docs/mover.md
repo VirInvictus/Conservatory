@@ -38,7 +38,7 @@ A crash between (2) and (3) leaves the operation `pending` while the file is alr
 
 ## Paths
 
-The DB stores paths **relative** to the library root (the library stays relocatable); the journal stores **absolute** `src_path`/`dst_path` for direct filesystem ops. `library_root` is a parameter for now (config-driven root arrives with Phase 10).
+The DB stores paths **relative** to the library root (the library stays relocatable); the journal stores **absolute** `src_path`/`dst_path` for direct filesystem ops. The root comes from the config (Phase 10) and is passed into the mover as a parameter.
 
 ## Books (Phase 7a-iii, migration `0012`)
 
@@ -46,4 +46,4 @@ Audiobooks are owned and moved like music, so they ride the same journal. A `mov
 
 ## Out of scope (for now)
 
-Pruning directories left empty after a move/undo (harmless leftovers); the full scan → tag → resolve → render → move import pipeline and the real `import`/`organize` verbs (Phase 2d); embedded-tag write-back (Phase 5b).
+Pruning directories left empty after a move/undo (harmless leftovers). (The import pipeline, the real `import`/`organize` verbs, and embedded-tag write-back all shipped; earlier versions of this list deferred them.)

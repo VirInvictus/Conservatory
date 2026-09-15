@@ -60,7 +60,7 @@ It matters acutely here because Conservatory has several independent producers w
 │           (tokio multi-thread runtime)        │
 ├──────────────────────────────────────────────┤
 │  [Import / Organizer]                         │
-│   ├─ Tag reader/writer (lofty / symphonia)    │
+│   ├─ Tag reader/writer (lofty)                │
 │   ├─ Path-template engine (§5.1)              │
 │   ├─ Shelf-genre resolver (§5.2)              │
 │   └─ File mover (dry-run + undo journal)      │
@@ -95,7 +95,7 @@ Six crates. **Music is the native program; podcasts and audiobooks are compile-t
 
 - **`conservatory-core`** — headless data layer and the music-native engine. SQLite worker plus read pool; **all schema and migrations, including the podcast and audiobook tables** (the boundary rule below); tag read/write; the import pipeline, path-template engine, shelf-genre resolver, and file mover; the libmpv host plus **all playback profiles**, including the spoken-word Smart Speed / Voice Boost profile both plugins resolve against (it is filter-graph configuration the unified queue applies on advance, not plugin code); the unified queue model; cover-art decode plus accent extraction. GUI-free.
 - **`vir-search`** — the shared Calibre-shaped search expression language (lex / parse / AST / evaluator / SQL translator), typed against Conservatory's domain (Track / Album / Artist / Show / Episode / Book). It is extracted to a shared workspace crate to power both Atrium and Conservatory without drift. Deliberately feature-free: every field, podcast and audiobook included, is always compiled in; a field over an absent or empty table matches nothing, which keeps trait-object field registration out of the hot path.
-- **`conservatory-podcasts`** — plugin crate, filled at Phase 6: the absorbed Belfry subsystem (per-show fetch loop with conditional GET, `feed-rs` plus the `podcast:` namespace handler, Inbox → Queue → Played triage, OPML round-trip) and its heavy dependencies (`reqwest`, `feed-rs`, `quick-xml`, `ammonia`, `id3`, `oo7`), plus the podcast CLI verbs and the Podcasts tab.
+- **`conservatory-podcasts`** — plugin crate, filled at Phase 6: the absorbed Belfry subsystem (per-show fetch loop with conditional GET, `feed-rs` plus the `podcast:` namespace handler, Inbox → Queue → Played triage, OPML round-trip) and its heavy dependencies (`reqwest`, `feed-rs`, `quick-xml`, `ammonia`, `oo7`), plus the podcast CLI verbs and the Podcasts tab.
 - **`conservatory-audiobooks`** — plugin crate, filled at Phase 7: the tag + sidecar reader (§7.5), chapter resolver, book-state derivation, the audiobook CLI verbs, and the Audiobooks tab.
 - **`conservatory-cli`** — headless binary: import, organize, search, tag, queue, podcast ops, stats. See §9. Defines the `podcasts` / `audiobooks` features (default on) that pull the plugin crates.
 - **`conservatory`** — the GTK4 binary, with the same two features; the Podcasts and Audiobooks tabs exist only when their feature is on.
@@ -195,8 +195,8 @@ One grammar, all three surfaces, the Atrium/Belfry shape. The filter bar above a
 | `year:`, `added:` | `year:1998..2004`, `added:thisweek` |
 | `rating:`, `bitrate:`, `duration:`, `format:` | `rating:>=4 AND format:flac` |
 | `is:played`, `is:starred`, `is:queued` | `is:starred AND genre:jazz` |
-| podcast fields (`show:`, `is:in_inbox`, `pub:` …) | as Belfry §3.7 |
-| audiobook fields (`author:`, `narrator:`, `series:`, `is:finished`) | `author:"Brandon Sanderson" AND is:finished false` |
+| podcast fields (`show:`, `is:in_inbox`, `pub:` …) | as Belfry §3.7 (a field the domain does not register degrades to a substring text match, `docs/search-grammar.md`) |
+| audiobook fields (`author:`, `narrator:`, `series:`, `is:finished`) | `author:"Brandon Sanderson" AND NOT is:finished` |
 
 Boolean (`AND`/`OR`/`NOT`), match modifiers (substring / `=`exact / `~`regex / `?`fuzzy), comparison and range, date keywords, sort modifiers (`sort:KEY`, `sort:-KEY`). Forgiving parser: malformed input degrades to substring match with a yellow filter-bar tint, never an error. **Perspectives** are named saved expressions (Calibre saved searches, Atrium's term), stored as text and re-parsed on load so they inherit later grammar additions. A Perspective can target tracks, albums, or episodes and can be a queue source (§6.1).
 
@@ -452,7 +452,7 @@ Podcasts adopt the managed model: `<library root>/Podcasts/<show-slug>/<YYYY-MM-
 ### 5.4 Import, Organize, and Move Pipeline
 
 1. **Scan or drop** files or folders.
-2. **Read tags** (lofty / symphonia, §7.1).
+2. **Read tags** (lofty, §7.1).
 3. **Resolve** artists/albums/genres into the database; derive `shelf_genre` (§5.2).
 4. **Render** the target path from the template (§5.1).
 5. **Move or copy** into the managed tree. In-place vs copy-on-import is a per-import user choice (copy leaves the originals untouched; move consumes them).
@@ -465,7 +465,7 @@ Although the database owns organization, Conservatory **writes curated metadata 
 
 ### 5.6 Re-Import Contract
 
-Conservatory is not filesystem-canonical, so the Belfry rescan contract does not apply unchanged. The contract here is weaker and explicit: **the managed tree plus embedded tags can rebuild a library's tracks, albums, and artists**; the database-exclusive data that a re-import cannot recover is the *curated* layer (shelf-genre overrides, ratings beyond what the files' own rating tags re-seed (§7.1), play counts, starred, Perspectives, queue, podcast triage/listening state). That curated layer is what the nightly DB backup and the JSON export protect. The integration suite verifies the rebuildable subset against a fixture library.
+Conservatory is not filesystem-canonical, so the Belfry rescan contract does not apply unchanged. The contract here is weaker and explicit: **the managed tree plus embedded tags can rebuild a library's tracks, albums, and artists**; the database-exclusive data that a re-import cannot recover is the *curated* layer (shelf-genre overrides, ratings beyond what the files' own rating tags re-seed (§7.1), play counts, starred, Perspectives, queue, podcast triage/listening state). That curated layer is what the `backup` / `restore` verbs protect (§9): a consistent `VACUUM INTO` snapshot taken through the single-writer worker and the documented replace path. Scheduled rotation and a curated-JSON export are recorded roadmap features, not shipped mechanisms. The integration suite verifies the rebuildable subset against a fixture library.
 
 ### 5.7 Audiobooks On-Disk: a rendered template (owned, like music)
 
@@ -481,7 +481,7 @@ Audiobooks are curated, not ephemeral, so they adopt the **music model, not the 
                 └── cover.jpg
 ```
 
-Default template string: `Audiobooks/{author}/{series}/{series_index2}. {title} ({year})`. A book always sits under a series level: a series book uses its series name, a standalone book uses the literal **`Standalone`** folder (so every author folder has the same two-level shape, `Author/<series-or-Standalone>/Title`). `{series_index}` collapses cleanly when there is no number (no stray `NN.` separator, the §5.1 sanitization rule). A book resolves to exactly one path: one author component (the first credited author's `sort_name`, multi-author books bucket under the primary), one series-or-Standalone level. New path tokens (`{author}`, `{narrator}`, `{series}`, `{series_index}`) are documented in `docs/path-template.md`. Single-file M4B books keep their one file inside the book folder; multi-file books keep their chapter files there. As with music, `shelf_genre` (single-valued) is available as an optional template token but is not in the default audiobook layout.
+Default template string: `Audiobooks/{author}/{series}/{series_index:02}. {title} ({year})`. A book always sits under a series level: a series book uses its series name, a standalone book uses the literal **`Standalone`** folder (so every author folder has the same two-level shape, `Author/<series-or-Standalone>/Title`). `{series_index}` collapses cleanly when there is no number (no stray `NN.` separator, the §5.1 sanitization rule). A book resolves to exactly one path: one author component (the first credited author's `sort_name`, multi-author books bucket under the primary), one series-or-Standalone level. New path tokens (`{author}`, `{narrator}`, `{series}`, `{series_index}`) are documented in `docs/path-template.md`. Single-file M4B books keep their one file inside the book folder; multi-file books keep their chapter files there. As with music, `shelf_genre` (single-valued) is available as an optional template token but is not in the default audiobook layout.
 
 ---
 
@@ -534,7 +534,7 @@ Output selection covers the **device** (the PipeWire picker, Phase 4c-ii) and th
 
 ### 7.1 Tag Read/Write
 
-`lofty` (broad format coverage, read + write) is the leading candidate; `symphonia` is the fallback/decoder reference. Subject to the dependency sign-off rule (§11). Reads feed import; writes feed embedded-tag write-back (§5.5).
+`lofty` (broad format coverage, read + write) was signed off over `symphonia` at Phase 1c: symphonia has no write path and cannot decode Opus, so it was considered and not adopted (the rsgain rationale in §16.7 records the same decoder limitation). Reads feed import; writes feed embedded-tag write-back (§5.5).
 
 **Ratings are read, never written.** Import seeds `tracks.rating` from the file's embedded rating tag when one exists: ID3v2 `POPM` (0–255 byte, bucketed on the foobar2000/WMP canonical values), Vorbis `RATING` (0–5 integer), MP4 `rate` (0–100). After import the database owns the rating; write-back (§5.5) never embeds it, per the §5.6 curated-layer rule. An existing rating in the files therefore survives a rebuild-from-tree, but a rating changed only in Conservatory does not; that delta is what the DB backup protects.
 
@@ -552,11 +552,11 @@ Cover art is the visual unit (Hermitage). On import, extract or locate cover art
 
 ### 7.5 Audiobook Metadata
 
-Audiobook tags are notoriously sparse and inconsistent, so Conservatory reads from several local sources, in priority order, and never reaches the network in v1:
+Audiobook tags are notoriously sparse and inconsistent, so Conservatory reads from three local sources, merged **per field** by precedence **sidecar > embedded tags > folder structure** (the explicit, user-curated Audiobookshelf sidecars win; `docs/audiobook-reader.md` is the reference), and never reaches the network in v1:
 
-1. **Embedded tags** in the M4B / MP3 files (title, author from artist/album-artist, narrator from composer, series and sequence where present, year, publisher).
-2. **Sidecar files** in the book folder, the Audiobookshelf conventions: `.opf` (parsed for the full metadata set, via the already-present `quick-xml`), `desc.txt` (description), `reader.txt` (narrator), `cover.jpg` (cover).
-3. **Folder structure** as a last resort: `Author/Series/Title (Year)/` parsed for the fields the tags and sidecars did not supply.
+1. **Sidecar files** in the book folder, the Audiobookshelf conventions: `.opf` (parsed for the full metadata set, via the already-present `quick-xml`), `desc.txt` (description), `reader.txt` (narrator), `cover.jpg` (cover).
+2. **Embedded tags** in the M4B / MP3 files (title, author from artist/album-artist, narrator from composer, series and sequence where present, year, publisher).
+3. **Folder structure** as a last resort: `Author/Series/Title (Year)/` parsed for the fields the sidecars and tags did not supply.
 
 Anything still missing is filled by hand in the detail pane; bulk editing (§3.5) applies. **Chapters** come from embedded M4B markers first, then from a one-file-per-chapter folder layout; deriving chapters by silence detection (the m4b-tool technique) is an optional, opt-in step left **open** (§16.11). **Online metadata providers** (Audible / Audnexus / Google Books, the Audiobookshelf model) are out of v1 scope and tracked as an open decision (§16.10), the audiobook analogue of the MusicBrainz question (§7.3): Conservatory assumes reasonably-tagged or reasonably-foldered files unless and until a provider is taken on.
 
@@ -564,7 +564,7 @@ Anything still missing is filled by hand in the detail pane; bulk editing (§3.5
 
 ## 8. Podcasts (absorbed from Belfry)
 
-The podcast subsystem is Belfry, ported: per-show polling with conditional GET and jittered intervals; HTTP Basic auth with credentials in libsecret (`oo7`); `feed-rs` plus a hand-rolled `podcast:` namespace handler; episode identity by `(show_id, guid)`; three-source chapter precedence; OPML round-trip preserving tags and `applePodcastsID`. See Belfry `spec.md` §7 for the exhaustive contract; that detail migrates into this document as the absorption is implemented, at which point Belfry's spec is superseded.
+The podcast subsystem is Belfry, ported: per-show polling with conditional GET and jittered intervals; HTTP Basic auth with credentials in libsecret (`oo7`); `feed-rs` plus a hand-rolled `podcast:` namespace handler; episode identity by `(show_id, guid)`; chapters from the episode's `podcast:chapters` JSON document (the Podcast Index namespace format; Belfry's other chapter sources were not ported); OPML round-trip preserving tags and `applePodcastsID`. See Belfry `spec.md` §7 for the exhaustive contract; that detail migrates into this document as the absorption is implemented, at which point Belfry's spec is superseded.
 
 ---
 
@@ -573,28 +573,27 @@ The podcast subsystem is Belfry, ported: per-show polling with conditional GET a
 `conservatory-cli` ships alongside the GUI (the Hermitage / CalibreQuarry / Belfry pattern: GUI to browse, CLI to batch).
 
 ```text
-conservatory-cli import <path> [--copy|--move] [--dry-run]
-conservatory-cli organize [--dry-run]          # re-render the tree from the DB
-conservatory-cli search '<expression>'         # the §3.4 grammar
-conservatory-cli tag set <selector> field=value...
-conservatory-cli shelf-genre set <album-selector> <genre>
-conservatory-cli queue add|remove|reorder|list <selector>
-conservatory-cli play <selector>               # hand off to standalone mpv
-conservatory-cli stats                         # library + listening stats
-conservatory-cli audit [--tier ...] --root R   # health audits (Phase 8c)
-conservatory-cli apestrip --root R [--apply|--undo]  # strip stray APEv2 (Phase 8c-iii)
-conservatory-cli playlist export <db> '<expr|vl:NAME>' <out.m3u> [--root R] [--absolute]  # Phase 8d
-conservatory-cli playlist import <db> <in.m3u> [--root R] [--replace]  # .m3u -> queue (Phase 8d)
-conservatory-cli podcast add|remove|refresh|download <spec>   # Belfry verbs
-conservatory-cli import-opml|export-opml
-conservatory-cli audiobook import <path> [--copy|--move]      # import a book (folder or m4b)
-conservatory-cli audiobook set <book-selector> field=value... # author/narrator/series/sequence/...
-conservatory-cli embed-tags <selector> [--dry-run]   # write DB metadata into files
+conservatory-cli import <db> <source> <root> [--move]         # copies by default; --format tsv|json|human
+conservatory-cli organize <db> <root> [--apply]               # dry-run preview by default; also --copy, --undo JOB, --jobs, --cancel-job ID
+conservatory-cli search <db> '<expression>'                   # the §3.4 grammar
+conservatory-cli tag set <db> '<expression>' field=value...   # path-affecting edits move (dry-run by default)
+conservatory-cli shelf-genre-set <db> <album-id> <genre>      # the path-affecting curation; run `organize` to move
+conservatory-cli queue add|list|remove|clear                  # inspect and edit the unified queue
+conservatory-cli play <db> <root> [TRACK_ID] [--sleep SPEC]   # the in-process libmpv engine (gapless, resume, sleep timer)
+conservatory-cli stats <db>                                   # library + listening stats
+conservatory-cli audit --tier ... --root R                    # health audits (Phase 8c)
+conservatory-cli apestrip --root R [--apply|--undo]           # strip stray APEv2 (Phase 8c-iii)
+conservatory-cli playlist export|import <db> ...              # .m3u round-trip (Phase 8d)
+conservatory-cli podcast add|remove|refresh|download|...      # the absorbed Belfry verbs
+conservatory-cli import-opml|export-opml <db> <file>
+conservatory-cli audiobook import <db> <source> <root> [--move]   # a book folder, an author tree, or one m4b
+conservatory-cli audiobook set <book-id> field=value...       # author/narrator/series/sequence/...
+conservatory-cli embed-tags <db> '<expression>' --root R [--apply]  # dry-run diff by default
 conservatory-cli backup <db> <out>              # consistent DB snapshot (VACUUM INTO)
 conservatory-cli restore <db> <backup>          # replace the DB from a snapshot, then migrate
 ```
 
-Read commands open the DB read-only at the process level. Write commands spin up the worker on a current-thread runtime and shut down cleanly (the Atrium/Belfry pattern). Output: `--tsv` (default), `--json`, `--human`.
+Read commands open the DB read-only at the process level. Write commands spin up the worker on a current-thread runtime and shut down cleanly (the Atrium/Belfry pattern). Report-producing verbs take `--format tsv|json|human` (tsv the default for most; the audiobook import defaults to human).
 
 ---
 
@@ -648,9 +647,9 @@ voice_boost = false
 
 ## 11. Dependencies
 
-Backend (Rust): `tokio`, `rusqlite` (bundled, FTS5), `libmpv2`, `lofty` (and/or `symphonia`), `reqwest` (conditional GET, Basic auth), `oo7` (libsecret), `feed-rs` + `quick-xml` (podcasts), `ammonia` (show-note sanitize), `id3` (chapter fallback), `image` (cover decode/accent), `serde`/`serde_json`/`toml`, `regex`, `unicode-normalization` (Phase 8b dedup NFKC key folding), `tracing`, `zbus` (MPRIS + inhibitor). A MusicBrainz client crate only if §7.3 is taken on.
+Backend (Rust): `tokio`, `rusqlite` (bundled, FTS5), `libmpv2`, `lofty`, `reqwest` (conditional GET, Basic auth), `oo7` (libsecret), `feed-rs` + `quick-xml` (podcasts), `ammonia` (show-note sanitize), `image` (cover decode/accent), `serde`/`serde_json`/`toml`, `regex`, `unicode-normalization` (Phase 8b dedup NFKC key folding), `tracing`, `zbus` (MPRIS + inhibitor). A MusicBrainz client crate only if §7.3 is taken on.
 
-Frontend: `gtk4` (≥ 4.14; plain GTK4, no libadwaita since Phase 26, §2.4), system `libmpv` (0.36+) with the ffmpeg filter library (`silenceremove`, `rubberband`, `acompressor`, `equalizer`, `loudnorm`), `libsecret` (via `oo7`).
+Frontend: `gtk4` (≥ 4.14; plain GTK4, no libadwaita since Phase 26, §2.4), system `libmpv` (0.36+) with the ffmpeg filter library (`silenceremove`, `acompressor`, `equalizer`, `alimiter`, `dynaudnorm`, `volume`), `libsecret` (via `oo7`).
 
 External tools (shelled out, not linked, ATTRIBUTIONS.md): `rsgain` (ReplayGain scan, §16.7), `ffprobe` (embedded-M4B chapters, §3.8), and `flac` + `ffmpeg` (the Phase 8a integrity audit: `flac -t` test-decodes / MD5-verifies FLAC, `ffmpeg` strict-decodes the rest to a null sink; §8). A missing tool degrades gracefully or fails with a helpful message; none is required for normal playback.
 
@@ -698,7 +697,7 @@ GTK4 pulls a C-side floor of roughly 150 MB (measured with libadwaita in Viaduct
 
 **App ID: `io.github.virinvictus.conservatory`.** Settled 2026-07-26; it names the Flatpak, the `.desktop` basename, the metainfo id, the GSettings path, and any compositor window rule keyed on it, so treat it as fixed. Two earlier candidates were considered and rejected. `org.gnome.Conservatory` rested on a false premise: GNOME Circle does not grant `org.gnome.*` ids, and Circle members keep their own (Fragments ships as `de.haeckerfelix.Fragments`, NewsFlash as `io.gitlab.news_flash.NewsFlash`); that prefix is reserved for apps inside the GNOME namespace proper. `org.virinvictus.Conservatory`, which the code carried until now, fails Flathub's requirement that the prefix be a domain under the author's control: `virinvictus.org` is not owned, and the project's web presence is `VirInvictus.github.io` with no custom domain. The `io.github.<user>` form is verifiable today with no purchase, and the lowercase final segment matches the three siblings already on it (`io.github.virinvictus.atrium`, `.hermitage`, `.framework`).
 
-**License: GPL-3.0-or-later.** Forced by the GPL libraries the player links, not by a call we make: libmpv links a GPL ffmpeg build (the `silenceremove` / `acompressor` / `equalizer` / `dynaudnorm` / `volume` filters the chain rides) and librubberband (GPL-2-or-later) where the build carries it. As of Phase 6c-i Conservatory no longer invokes the `rubberband` filter itself (Smart Speed is `silenceremove`, variable speed is `scaletempo2`), but the obligation flows from linking the stack, the same constraint Belfry documents. No license relaxation without an mpv/ffmpeg build stripped of its GPL components. Record the full chain in `ATTRIBUTIONS.md`.
+**License: GPL-3.0-or-later.** Forced by the GPL libraries the player links, not by a call we make: libmpv links a GPL ffmpeg build (the `silenceremove` / `acompressor` / `equalizer` / `alimiter` / `dynaudnorm` / `volume` filters the chain rides) and librubberband (GPL-2-or-later) where the build carries it. As of Phase 6c-i Conservatory no longer invokes the `rubberband` filter itself (Smart Speed is `silenceremove`, variable speed is `scaletempo2`), but the obligation flows from linking the stack, the same constraint Belfry documents. No license relaxation without an mpv/ffmpeg build stripped of its GPL components. Record the full chain in `ATTRIBUTIONS.md`.
 
 ---
 

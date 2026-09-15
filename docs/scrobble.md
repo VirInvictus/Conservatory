@@ -1,6 +1,6 @@
 # Scrobbling reference (Phase 9)
 
-> **Status: living reference.** Phase 9a (v0.3.1) landed the headless spine documented here: the outbox, the ListenBrainz client, the `[scrobble]` config, and the `scrobble` CLI verb. Phase 9b wires the engine's play-completion hook and the GUI "Sync" prefs; Phase 9c adds Last.fm. The companion to spec §14 (the scrobble carve-out) and spec §10 (`[scrobble]`).
+> **Status: living reference.** Phase 9 shipped in full across v0.3.1-v0.3.6: 9a the headless spine (the outbox, the ListenBrainz client, the `[scrobble]` config, the `scrobble` CLI verb), 9b the engine's play-completion hook and the GUI Sync prefs, 9c Last.fm, and 9d the now-playing indicator plus the standard submission rule (a 30-second floor, then half the track or four minutes, stamped with the play's start time). The companion to spec §14 (the scrobble carve-out) and spec §10 (`[scrobble]`).
 
 ## What it is, and what it is not
 
@@ -61,6 +61,7 @@ conservatory-cli scrobble status <db>            # enabled / service / pending c
 conservatory-cli scrobble token set <token>      # store the token in libsecret (configured service)
 conservatory-cli scrobble token clear            # remove it
 conservatory-cli scrobble flush <db>             # force one drain pass now
+conservatory-cli scrobble connect [--token TOK]  # the Last.fm web-auth flow: run bare for the approval URL, again with the token to store the session key
 conservatory-cli scrobble test                   # validate the stored token against the service
 ```
 

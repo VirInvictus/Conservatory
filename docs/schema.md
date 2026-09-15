@@ -11,7 +11,7 @@
 
 ## Migrations
 
-Versioned via `PRAGMA user_version`, append-only and backwards-compatible post-1.0 (the Atrium discipline). Each migration is a numbered step that bumps `user_version`. This is deliberately **not** Viaduct's `CREATE TABLE IF NOT EXISTS` setup: the library is the user's irreplaceable data, so the schema history is an explicit ledger, not an idempotent best-effort. The mover's re-import contract (spec §5.6) and the nightly backup protect the curated layer that a re-import cannot rebuild.
+Versioned via `PRAGMA user_version`, append-only and backwards-compatible post-1.0 (the Atrium discipline). Each migration is a numbered step that bumps `user_version`. This is deliberately **not** Viaduct's `CREATE TABLE IF NOT EXISTS` setup: the library is the user's irreplaceable data, so the schema history is an explicit ledger, not an idempotent best-effort. The mover's re-import contract (spec §5.6) and the `backup` / `restore` verbs protect the curated layer that a re-import cannot rebuild.
 
 **All schema is core-owned, regardless of plugin features** (spec §2.2): the podcast and audiobook tables land in `conservatory-core`'s single ledger at Phases 6a/7a and apply in every build, so a music-only build (`--no-default-features`) has the same `user_version` and the same (empty) tables as a full build. Plugin crates never own migrations; the plugin boundary is code and dependencies, not the database.
 
@@ -299,7 +299,7 @@ CREATE TABLE listening_sessions (                                  -- append-onl
     started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL,
     real_seconds REAL NOT NULL, audio_seconds REAL NOT NULL, smart_speed_saved REAL NOT NULL DEFAULT 0
 );
-CREATE TABLE chapters (                                            -- podcast:chapters JSON or ID3 CHAP (spec §8)
+CREATE TABLE chapters (                                            -- podcast:chapters JSON (spec §8)
     id INTEGER PRIMARY KEY, episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
     start_time REAL NOT NULL, end_time REAL, title TEXT, url TEXT, image_path TEXT
 );

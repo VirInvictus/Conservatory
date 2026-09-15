@@ -28,8 +28,8 @@ Because import inserts tracks at their *source* path and then runs the mover, an
 - `organize <db> <root> [--apply] [--copy] [--undo <id>] [--format ...]` — re-render the managed tree from the DB and move files to match (dry-run by default).
 - `shelf-genre-set <db> <album-id> <value>` — set an album's shelf genre; run `organize` afterward to move it.
 
-`--json` emits a compact numeric summary (a richer serde-backed JSON is deferred until the dependency is signed off).
+`--json` emits a compact numeric summary. serde and serde_json are already workspace dependencies, so a richer curated-layer JSON export is a recorded roadmap feature, not a dependency question.
 
 ## Out of scope (for now)
 
-`tag set` and bulk editing (Phase 5a); materializing `cover.jpg` into the managed tree and setting `albums.cover_path` (the accent is computed and stored, but the cover file is not yet copied in — a small §7.4 follow-up); pruning directories left empty after a move; config-driven `library_root` (Phase 10).
+Pruning directories left empty after a move. (The section's earlier entries all shipped: `tag set` and bulk editing at Phase 5a, sidecar-cover materialization at Phase 5d, config-driven `library_root` at Phase 10.)

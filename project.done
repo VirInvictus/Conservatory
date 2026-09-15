@@ -1,0 +1,56 @@
+Conservatory is DONE (THE FINAL BLITZ).
+
+Date: 2026-09-15 (v0.8.0 tagged and released the same day).
+
+What shipped in the blitz (commit range 1e66159..2eec79f on main, this
+commit closing it; tag v0.8.0 on the release commit 9d4fc2f):
+
+- The backup/restore crash-window repair: restore now checkpoints the live
+  WAL before the rename commit point and sweeps the emptied sidecars after
+  it, refusing a busy database; three regression tests pin the windows.
+- The move preview's skipped-conflict promise is the behavior, the
+  importers' pre-commit integrity pair (music MissingSource pre-check via
+  the mover's own plan; audiobook recovery before any DB write), the
+  threading lane (the scoped-move and re-shelve flows off the GTK thread,
+  mover file ops on the blocking pool, 46 silent block_on sites surfaced
+  through ui::log_worker_err), and the podcast feed body cap (32 MiB).
+- The docs-truth cluster, the version carriers, the crate recount, the
+  milestone table, the comment truth pass (MED + LOW), the docs-staleness
+  tail, and the mechanical em-dash recast (172 separators).
+- GitHub: Releases for v0.7.0 plus the v0.5.0/v0.4.5/v0.4.4 backfill
+  (Latest = v0.8.0), release.yml minting future Releases from tag
+  messages, the meson packaging validators in CI, the Atrium-shape ci.yml
+  sync (SHA pins, permissions, concurrency, setup-uv v10, VERSION guard),
+  actions-only dependabot, SECURITY.md + private vulnerability reporting
+  + minimal issue templates.
+- Housekeeping per Brandon's gate answers (the .gitkeep trio, the
+  GSettings gitignore block, /.flatpak-builder/, URL casing, local
+  .claude residue).
+- The final-audit roadmap block fully ticked, and the L4 features slotted
+  in the roadmap's "Slotted features (the final audit's L4)" section.
+
+Reopen conditions (the recorded future work; none of it is open agent
+work):
+
+- The 50k-library real-data gate sessions (memory gate + move-safety
+  pass): Brandon's hands-on. The "daily driver" claim restoration rides
+  his verdict; the mem_check harness port (slotted) converts the gate to
+  one command first.
+- Phase 20 packaging hands-on: the sandboxed install-and-run pass, with
+  the IBMPlexMono-Medium.ttf keep/trim call inside it.
+- The PEQ audible re-check (his ears), gating the PEQ band editor.
+- The slotted-features roadmap section: each box needs its own go. The
+  watched-import-folder carries a dependency flag (the notify crate needs
+  spec section 11 sign-off before any build); the dep-free inbox rescan
+  needs none.
+- Verify the Private-vulnerability-reporting toggle in the GitHub
+  Security tab: the enabling PATCH returned 200 but the API does not echo
+  that field back, so it was never read back as enabled.
+- Dependabot's actions/checkout v5.1.0 to v7.0.1 PR is open with a red
+  run (major-version bump; deliberately untouched in the blitz).
+- The em-dash prose tail (roughly 90 across spec/patchnotes/docs) and the
+  two patchnotes nits (the v0.5.0 duplicate bullet, the v0.6.0
+  open-work parenthetical) are recorded, not edited: past entries are cut
+  into tags and Releases and editing them would desync the record.
+- The vir-search SQL push-down consumer wave remains its own tracked
+  roadmap box (the library's lane, not this repo's).

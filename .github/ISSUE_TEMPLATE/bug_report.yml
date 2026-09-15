@@ -1,0 +1,40 @@
+name: Bug report
+description: Something misbehaves (crash, wrong metadata, a move or import gone odd)
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Conservatory is a one-developer desktop app; the
+        more precise the reproduction, the faster the fix. If the misbehaviour
+        involves your files being moved, say so in the first line.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: Which tab, which action, on what kind of files
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug output
+      description: Run the app or CLI with `--debug` and paste the relevant tail (SQL, IO, network, memory channels).
+  - type: input
+    id: version
+    attributes:
+      label: Conservatory version
+      placeholder: v0.7.0 (or the commit, if built from source)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / desktop
+      placeholder: Fedora 44, Hyprland (Wayland)

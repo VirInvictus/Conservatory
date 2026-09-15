@@ -1,0 +1,24 @@
+name: Feature idea
+description: A capability Conservatory does not have yet
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem it solves
+      description: What you are trying to do, and what stands in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The idea
+      description: How you picture it working. Reference apps welcome (the spec tracks Calibre, foobar2000, beets, Overcast/Castro, Cozy, Audiobookshelf).
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      description: The spec (section 14) rules some things out forever: recommendations, social features, DRM, video, Windows/macOS.
+      options:
+        - label: This is not one of the spec's ruled-out categories
+          required: true

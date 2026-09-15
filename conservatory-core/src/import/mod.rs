@@ -4,9 +4,11 @@
 //!
 //! Import runs in two passes. The **resolution pass** is in memory: it groups
 //! drafts into albums, decides album artists, derives shelf genres, and renders
-//! target paths (all pure, no DB writes), then pre-checks for conflicts. Only if
-//! the plan is clear does the **persist pass** create rows and run the move job,
-//! so a conflicting import leaves the database untouched.
+//! target paths (all pure, no DB writes), then pre-checks for conflicts (the
+//! mover's plan: duplicate targets, existing targets, and sources vanished
+//! since the scan). Only if the plan is clear does the **persist pass** create
+//! rows and run the move job, so a conflicting import leaves the database
+//! untouched.
 
 pub mod resolve;
 pub mod scan;
@@ -22,7 +24,7 @@ use crate::db::{ReadPool, WorkerHandle};
 use crate::errors::Result;
 use crate::import::resolve::ArtistName;
 use crate::mover::{self, Conflict, MoveKind, MoveMode, MoveOp};
-use crate::path_template::{PathTemplate, TrackFields, find_collisions};
+use crate::path_template::{PathTemplate, TrackFields};
 use crate::shelf_genre::{AlbumGenreInput, GenreVocab, resolve_shelf_genre};
 use crate::tags::read_track;
 
@@ -70,6 +72,25 @@ struct PlannedAlbum {
 
 /// Import a folder (or a single file) into the library. See the module docs for
 /// the two-pass shape and the conflict guarantee.
+/// The import pre-check over `(source, destination)` pairs: the mover's own
+/// [`mover::plan`], so the early refusal (before any DB write) sees exactly
+/// what `apply` would refuse. Pure: stats only.
+fn precheck_conflicts(provisional: Vec<(PathBuf, PathBuf)>) -> Vec<Conflict> {
+    let ops = provisional
+        .into_iter()
+        .map(|(src, dst)| MoveOp {
+            track_id: None,
+            album_id: None,
+            book_id: None,
+            src,
+            dst,
+            db_old: None,
+            db_new: None,
+        })
+        .collect();
+    mover::plan(ops).conflicts
+}
+
 pub async fn import_folder(
     worker: &WorkerHandle,
     pool: &ReadPool,
@@ -177,23 +198,26 @@ pub async fn import_folder(
     }
 
     // --- Conflict pre-check (before any DB write) ---
+    // The mover's own plan over the provisional move list (audio + claimed
+    // sidecars), so the refusal covers everything `apply` would refuse:
+    // duplicate targets, targets that already exist, and a source that
+    // vanished between the scan and the persist pass. A vanished file used to
+    // slip past this check and fail the job after the rows were written.
     let root = &opts.library_root;
-    let dsts: Vec<PathBuf> = planned_tracks
+    let mut provisional: Vec<(PathBuf, PathBuf)> = planned_tracks
         .iter()
-        .map(|(.., rel)| root.join(rel))
+        .map(|(_, draft, _, rel)| (draft.source_path.clone(), root.join(rel)))
         .collect();
-    let mut conflicts = Vec::new();
-    for (dst, ops) in find_collisions(&dsts) {
-        conflicts.push(Conflict::DuplicateTarget { dst, ops });
-    }
-    for (i, dst) in dsts.iter().enumerate() {
-        if dst.exists() {
-            conflicts.push(Conflict::TargetExists {
-                dst: dst.clone(),
-                op: i,
-            });
+    for pa in &planned_albums {
+        if let (Some(sidecar), Some(folder_rel)) = (&pa.sidecar, &pa.folder_rel) {
+            let name = sidecar
+                .file_name()
+                .map(|n| n.to_os_string())
+                .unwrap_or_default();
+            provisional.push((sidecar.clone(), root.join(folder_rel).join(name)));
         }
     }
+    let conflicts = precheck_conflicts(provisional);
     if !conflicts.is_empty() {
         return Ok(ImportReport {
             files_scanned,
@@ -393,4 +417,55 @@ pub async fn import_folder(
         job_id: Some(job_id),
         conflicts: Vec::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn the_precheck_reports_a_source_that_vanished() {
+        // The vanished-file path: the scan read the tag, the file is gone by
+        // the persist pass, and the pre-check refuses before any DB write
+        // (the music importer used to have no MissingSource check at all).
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("here.flac"), b"audio").unwrap();
+
+        let conflicts = precheck_conflicts(vec![
+            (
+                dir.path().join("gone.flac"),
+                dir.path().join("tree/gone.flac"),
+            ),
+            (
+                dir.path().join("here.flac"),
+                dir.path().join("tree/here.flac"),
+            ),
+        ]);
+
+        assert!(
+            matches!(&conflicts[..], [Conflict::MissingSource { .. }]),
+            "got: {conflicts:?}"
+        );
+    }
+
+    #[test]
+    fn the_precheck_reports_duplicate_and_existing_targets() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.flac"), b"a").unwrap();
+        std::fs::write(dir.path().join("b.flac"), b"b").unwrap();
+        std::fs::create_dir_all(dir.path().join("tree")).unwrap();
+        std::fs::write(dir.path().join("tree/taken.flac"), b"taken").unwrap();
+
+        let conflicts = precheck_conflicts(vec![
+            (
+                dir.path().join("a.flac"),
+                dir.path().join("tree/taken.flac"),
+            ),
+            (dir.path().join("a.flac"), dir.path().join("tree/x.flac")),
+            (dir.path().join("b.flac"), dir.path().join("tree/x.flac")),
+        ]);
+
+        assert_eq!(conflicts.len(), 2, "got: {conflicts:?}");
+    }
 }

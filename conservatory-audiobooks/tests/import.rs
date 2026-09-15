@@ -250,3 +250,62 @@ async fn tree_import_discovers_books_and_merges_discs() {
 
     worker.shutdown_ack().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_doomed_recovery_refuses_before_any_rows_are_written() {
+    // The partial-commit window the final audit flagged: recovery used to run
+    // after the book rows were written, so a recovery failure mid-import left
+    // a persisted book with no files moved. Recovery now heals (or fails)
+    // before the pre-check, i.e. before any DB write.
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("lib.db");
+    let root = dir.path().join("lib");
+    let worker = spawn_worker(db.clone()).unwrap();
+    let pool = ReadPool::new(db, 3).unwrap();
+
+    // A stuck in-progress job whose single op can never roll forward: source
+    // and destination are both gone, so `relocate` fails and recovery errors.
+    let doomed = conservatory_core::mover::MoveOp {
+        track_id: None,
+        album_id: None,
+        book_id: None,
+        src: dir.path().join("gone.flac"),
+        dst: dir.path().join("also-gone.flac"),
+        db_old: None,
+        db_new: None,
+    };
+    worker
+        .create_move_job(
+            conservatory_core::mover::MoveKind::Import,
+            MoveMode::Move,
+            dir.path().to_string_lossy().into_owned(),
+            0,
+            vec![doomed],
+        )
+        .await
+        .unwrap();
+
+    // A perfectly importable book (copy mode; the committed fixture stays
+    // untouched either way, since the import must die in recovery).
+    let result = import_book(
+        &worker,
+        &pool,
+        &multi_fixture(),
+        &BookImportOptions {
+            library_root: root.clone(),
+            mode: MoveMode::Copy,
+        },
+    )
+    .await;
+
+    assert!(result.is_err(), "recovery must fail the import");
+    let conn = pool.open().unwrap();
+    assert_eq!(
+        list_books(&conn).unwrap().len(),
+        0,
+        "no book rows before recovery succeeds"
+    );
+    drop(conn);
+
+    worker.shutdown_ack().await.unwrap();
+}

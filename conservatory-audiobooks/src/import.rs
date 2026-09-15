@@ -120,8 +120,17 @@ pub async fn import_book(
 
     let files = plan_file_moves(&draft, &folder_rel, &book_dir_abs);
 
-    // Pre-check the move before any DB write: a folder-exists or duplicate-target
-    // conflict refuses the whole import (the trust guarantee, spec §5.4).
+    // Heal any interrupted job BEFORE planning: recovery rolls interrupted
+    // moves forward, so the pre-check and the apply must both see the
+    // post-recovery tree. It also runs before any DB write, so a recovery
+    // failure can no longer leave a half-persisted book behind (the
+    // partial-commit window the final audit flagged: recovery used to run
+    // after the rows were written, and apply's re-plan could still refuse).
+    mover::recover(worker, pool).await?;
+
+    // Pre-check the move before any DB write: a folder-exists, duplicate-target,
+    // or vanished-source conflict refuses the whole import (the trust guarantee,
+    // spec §5.4).
     let pre = mover::plan(provisional_ops(&files));
     if pre.is_blocked() {
         return Ok(BookImportReport {
@@ -201,8 +210,6 @@ pub async fn import_book(
         .collect();
     worker.replace_book_chapters(book_id, chapters).await?;
 
-    // Heal any interrupted job, then run this one (the music-import ordering).
-    mover::recover(worker, pool).await?;
     let ops = files
         .iter()
         .map(|f| MoveOp {

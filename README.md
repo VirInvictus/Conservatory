@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GTK-4.14%2B-4a86cf" alt="GTK 4.14+">
-  <img src="https://img.shields.io/badge/status-v0.5.0%20%C2%B7%20daily%20driver-brightgreen" alt="Status: v0.5.0, daily driver">
+  <img src="https://img.shields.io/badge/status-v0.7.0%20%C2%B7%20in%20development-brightgreen" alt="Status: v0.7.0, in development">
 </p>
 
 ---
@@ -52,7 +52,7 @@ The database is the source of truth: Conservatory files your audio into a tidy t
 
 **Audiobooks.** The third tab, modeled on Cozy and Audiobookshelf: a cover-grid shelf, per-book resume, chapter navigation, bulk metadata editing, and the same spoken-word engine the podcasts use (variable speed, Smart Speed, Voice Boost). A whole book is one item in the queue; an M4B or a folder of chapter files both work.
 
-**Library health tools.** A read-only audit suite (run from the CLI): integrity and decode checks (`verify`), four-tier duplicate detection (`duplicates`), tag and ReplayGain and cover-art audits (`audit`), library statistics (`stats`), stray APE-tag detection and stripping (`apestrip`), and `.m3u` playlist export and import.
+**Library health tools.** A read-only audit suite (run from the CLI): integrity and decode checks (`verify`), four-tier duplicate detection (`duplicates`), tag and ReplayGain and cover-art audits (`audit`), library statistics (`stats`), stray APE-tag detection and stripping (`apestrip`), and `.m3u` playlist export and import. The database itself has `backup` (a consistent `VACUUM INTO` snapshot through the single-writer worker) and `restore` (the documented replace path), so the curated layer a re-import cannot rebuild has its escape hatch.
 
 **A look you will not want to close.** A fixed Kanagawa Dragon theme, album art across the browse and an accent colour pulled from each cover, an informative now-playing bar, a Now Playing drawer with a real-time spectrum visualizer, and a Preferences window backed by a plain `config.toml`.
 
@@ -158,7 +158,7 @@ Six crates, on the discipline that every non-GUI surface stays CLI-testable. Mus
 
 ## Project status
 
-**v0.5.0. A daily-driver music player, a full podcast client, and an audiobook player in one app.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
+**v0.7.0. A music library manager, a real player, a full podcast client, and an audiobook player in one app, in development toward the daily-driver bar.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
 
 Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [patchnotes](patchnotes.md) the per-release notes):
 
@@ -179,6 +179,8 @@ Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [
 - **9** (optional, off by default): listening-history scrobbling to ListenBrainz or Last.fm, a local-first one-way outbox, enabled and configured in Preferences → Sync. Full scrobbler behaviour: a now-playing indicator on the service, and the standard submission rule (a 30-second floor, then half the track or four minutes), stamped with the play's start time.
 - **19** (the `0.4.4` milestone): the waveform seek bar (a loudness-envelope scrubber in the transport bar), drag-and-drop import onto the window, the full-screen Now Playing view with local lyrics, and richer navigable credits from local tags (`composer:` in the grammar, a credits inspector section).
 - **The 0.5.0 interaction tier:** rating drag-sweep, inline cell editing with clear-to-empty, mixed-kind static playlists (episodes and audiobooks in one playlist, with a drag-reorder editor), the inspector's multi-select aggregate, a tighter facet-pane density, and the per-row cover column off by default with an optional row-line / zebra setting.
+- **The 0.6.0 consumer wave:** the gtk4 0.11 platform bump and the vir-gtk 1.4.0 widget kit (the hand-rolled dialogs moved into the shared kit), with vir-search 1.4.2's parser hardening riding along.
+- **0.7.0, the data-safety stamp:** the `backup` and `restore` verbs (a consistent `VACUUM INTO` snapshot through the single-writer worker; the documented replace path with a checkpoint, an atomic rename, and post-restore reopen), GUI startup roll-forward recovery, and move-mode sidecar-cover journaling.
 
 Not built yet: the 1.0 endgame. The Flatpak manifest now carries every build dependency as its own module (libmpv, ffmpeg, flac, rsgain) and a local flatpak-builder build succeeds; what remains is the real-library verification session (the 50k memory gate and the move-safety pass) and the sandboxed install-and-run pass plus the icon and screenshots. The roadmap has the full picture.
 

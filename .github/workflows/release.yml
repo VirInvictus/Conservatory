@@ -29,10 +29,6 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          # The annotated tag object must be local for the subject extraction
-          # below.
-          fetch-tags: true
 
       - name: Install system libraries
         run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libmpv-dev
@@ -85,7 +81,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TITLE="$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME" | sed 's/^## //')"
+          # The annotated tag object via the API (a checkout cannot fetch both
+          # the triggering tag ref and the tags namespace, which is what killed
+          # this workflow's very first run): the message's subject line is the
+          # patchnotes heading, and the Release title drops its leading "## ".
+          TAG_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$GITHUB_REF_NAME" --jq '.object.sha')"
+          TITLE="$GITHUB_REF_NAME"
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_SHA" --jq '.object.type')" = "tag" ]; then
+            TITLE="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_SHA" --jq '.message' | head -n 1 | sed 's/^## //')"
+          fi
           echo "Release title: $TITLE"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists; not duplicating"

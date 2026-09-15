@@ -38,7 +38,11 @@ jobs:
       # validating fails here, not at a Flathub submission (the meson tests
       # are wired in meson.build; CI is where they actually run).
       - name: Install system libraries and packaging validators
-        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libmpv-dev libsqlite3-dev meson appstream desktop-file-utils
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libmpv-dev libsqlite3-dev appstream desktop-file-utils ninja-build
+      # The apt meson on the runner (1.3.x) predates meson.build's >= 1.4.0
+      # floor; pipx carries the current one.
+      - name: Install meson (pipx; the apt package is older than the 1.4 floor)
+        run: pipx install meson
       # rsgain (Phase 5c) is best-effort: the ReplayGain scan test skips when it
       # is absent, so a missing package never fails CI.
       - name: Install rsgain (best-effort)

@@ -1,0 +1,97 @@
+name: Release
+
+# A v* tag is always hand-cut (forward-only policy; the annotated message is
+# that release's full patchnotes entry, verbatim, per the house tagging
+# procedure). This workflow answers the tag with the same checks CI runs on
+# main, then creates the GitHub Release from the tag's own message - unless
+# one already exists (exists-checked: a hand-made Release is never
+# duplicated; the v0.7.0 tag shipped with no Release at all, and this class
+# dies here). Workflow shape mirrors Atrium's release.yml (CROSS-REPO GRANT
+# #117), on this repo's ubuntu job.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-and-release:
+    name: checks, then Release from the tag message
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # The annotated tag object must be local for the subject extraction
+          # below.
+          fetch-tags: true
+
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libmpv-dev
+      - name: Install rsgain (best-effort)
+        run: sudo apt-get install -y rsgain || true
+      - name: Install ffmpeg (best-effort)
+        run: sudo apt-get install -y ffmpeg || true
+
+      - name: VERSION / tag sync guard
+        run: |
+          CARGO_VERSION="$(grep -m1 '^version =' Cargo.toml | sed 's/version *= *"\(.*\)"/\1/')"
+          FILE_VERSION="$(cat VERSION)"
+          if [ -z "$FILE_VERSION" ]; then
+            echo "VERSION is empty; it is the single source of truth and meson reads it directly" >&2
+            exit 1
+          fi
+          if [ "$FILE_VERSION" != "$CARGO_VERSION" ]; then
+            echo "VERSION ($FILE_VERSION) != workspace Cargo.toml version ($CARGO_VERSION)" >&2
+            exit 1
+          fi
+          if [ "v$FILE_VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "tag ($GITHUB_REF_NAME) != VERSION ($FILE_VERSION)" >&2
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: cargo fmt --all --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+      - name: cargo clippy (music-only)
+        run: cargo clippy -p conservatory-cli -p conservatory --no-default-features --all-targets -- -D warnings
+
+      - name: cargo test (music-only)
+        run: cargo test -p conservatory-cli -p conservatory --no-default-features
+
+      - name: Create the Release from the tag's verbatim message
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME" | sed 's/^## //')"
+          echo "Release title: $TITLE"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; not duplicating"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --notes-from-tag \
+              --verify-tag \
+              --title "$TITLE"
+          fi

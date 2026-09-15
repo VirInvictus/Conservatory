@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **vir-gtk adopted at 1.4.2** (consumer wave, lock bump only): the
+  final-audit contract fixes land upstream (close_on_escape really
+  captures, Alert answers once per presentation, scope_css splits at
+  parentheses depth, at_priority warns off the scope rung,
+  bind_settings stops leaking bound scopes). No Conservatory code
+  changes; workspace suite green; `data/cargo-sources.json` regenerated
+  against the moved lock in the same commit.
 - **vir-gtk adopted at 1.4.1** (consumer wave, lock bump only): the base
   sheet now pins plain `label` text so a dark third-party
   `gtk-theme-name` can't supply light label colors underneath an app's

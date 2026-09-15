@@ -1,5 +1,13 @@
 # Patch Notes
 
+## Unreleased
+
+- **vir-gtk adopted at 1.4.1** (consumer wave, lock bump only): the base
+  sheet now pins plain `label` text so a dark third-party
+  `gtk-theme-name` can't supply light label colors underneath an app's
+  light palette (the Viaduct force-light wash). No Conservatory code
+  changes; workspace suite green.
+
 ## v0.7.0: the data-safety stamp (2026-09-13)
 
 The six-lens audit lane: the backup and restore verbs that spec 9 always promised now exist (decision 65), the mover repairs and the docs slice the same audit recorded land with them, and the move-mode sidecar-cover litter found by the 2026-09-11 functional pass is fixed. Workspace suite 669 test functions green plus the music-only lane 69; clippy `-D warnings` clean on both gates.

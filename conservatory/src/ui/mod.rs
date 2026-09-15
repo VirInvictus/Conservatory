@@ -31,3 +31,20 @@ pub mod window;
 /// Close `window` on Escape; re-exported from vir-gtk's widget kit (1.4.0),
 /// whose capture-phase shape supersedes the local default-phase copy.
 pub use vir_gtk::widgets::close_on_escape;
+
+/// A failed worker command must never vanish silently. A wedged worker used
+/// to make queue / playlist / preference edits disappear behind `let _ =`
+/// with no trace (38 call sites); the short `block_on` commands route their
+/// result through here instead, so a failure logs at error level and reaches
+/// stderr under any filter. `#[track_caller]` points the log line at the
+/// call site, not this helper.
+#[track_caller]
+pub(crate) fn log_worker_err<T>(result: conservatory_core::errors::Result<T>) {
+    if let Err(e) = result {
+        tracing::error!(
+            caller = %std::panic::Location::caller(),
+            error = %e,
+            "worker command failed; the change did not land"
+        );
+    }
+}

@@ -268,7 +268,11 @@ pub async fn undo(worker: &WorkerHandle, pool: &ReadPool, job_id: i64) -> Result
 
     for op in ops {
         if op.state == OpState::Done {
-            fsops::revert(Path::new(&op.src_path), Path::new(&op.dst_path), mode)?;
+            let src = PathBuf::from(&op.src_path);
+            let dst = PathBuf::from(&op.dst_path);
+            tokio::task::spawn_blocking(move || fsops::revert(&src, &dst, mode))
+                .await
+                .map_err(|e| Error::Move(format!("undo task failed to run: {e}")))??;
         }
         worker
             .revert_operation(
@@ -287,6 +291,11 @@ pub async fn undo(worker: &WorkerHandle, pool: &ReadPool, job_id: i64) -> Result
 
 /// Execute a job's still-`pending` operations and finalize it. Shared by
 /// [`apply`] and [`recover`]; idempotent per operation.
+///
+/// Each `relocate` runs on the blocking thread pool (`spawn_blocking`), not
+/// the worker thread: the GUI's runtime has one worker, and it also drives
+/// the player, MPRIS, and the scrobble outbox, so a large job blocking in
+/// file I/O inline would freeze them all for its duration.
 async fn drive_job(worker: &WorkerHandle, pool: &ReadPool, job: &MoveJobRow) -> Result<()> {
     let mode = MoveMode::parse(&job.mode)?;
     let ops = {
@@ -298,7 +307,11 @@ async fn drive_job(worker: &WorkerHandle, pool: &ReadPool, job: &MoveJobRow) -> 
         if op.state == OpState::Done {
             continue;
         }
-        fsops::relocate(Path::new(&op.src_path), Path::new(&op.dst_path), mode)?;
+        let src = PathBuf::from(&op.src_path);
+        let dst = PathBuf::from(&op.dst_path);
+        tokio::task::spawn_blocking(move || fsops::relocate(&src, &dst, mode))
+            .await
+            .map_err(|e| Error::Move(format!("move task failed to run: {e}")))??;
         worker
             .complete_operation(
                 op.id,

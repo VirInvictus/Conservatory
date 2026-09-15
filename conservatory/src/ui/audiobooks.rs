@@ -16,6 +16,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
@@ -33,6 +34,7 @@ use conservatory_core::mover::MoveMode;
 
 use crate::book_query::filter_books;
 use crate::query::PoolResolver;
+use crate::ui::log_worker_err;
 use crate::ui::objects::BookRow;
 use crate::ui::rows;
 use vir_gtk::widgets::{Alert, Appearance};
@@ -520,9 +522,10 @@ impl Inner {
             return;
         };
         let book_id = *book_id;
-        let _ = self
-            .rt
-            .block_on(self.worker.replace_queue_with_books(vec![book_id]));
+        log_worker_err(
+            self.rt
+                .block_on(self.worker.replace_queue_with_books(vec![book_id])),
+        );
         let (items, _) = crate::playqueue::build_audiobook_queue(&self.pool, &[book_id], 0, root);
         if items.is_empty() {
             return;
@@ -550,9 +553,10 @@ impl Inner {
         if ids.is_empty() {
             return;
         }
-        let _ = self
-            .rt
-            .block_on(self.worker.replace_queue_with_books(ids.clone()));
+        log_worker_err(
+            self.rt
+                .block_on(self.worker.replace_queue_with_books(ids.clone())),
+        );
         let (items, start) =
             crate::playqueue::build_audiobook_queue(&self.pool, &ids, activated, root);
         if !items.is_empty() {
@@ -570,7 +574,7 @@ impl Inner {
         if ids.is_empty() {
             return;
         }
-        let _ = self.rt.block_on(self.worker.enqueue_books(ids.clone()));
+        log_worker_err(self.rt.block_on(self.worker.enqueue_books(ids.clone())));
         // Build each selected book as a one-item queue, then append in order.
         let (items, _) = crate::playqueue::build_audiobook_queue(&self.pool, &ids, 0, root);
         if !items.is_empty() {
@@ -600,9 +604,10 @@ impl Inner {
             None => snap.queue_len,
         };
         let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
-        let _ = self
-            .rt
-            .block_on(self.worker.insert_queue_books_at(at as i64, queue_ids));
+        log_worker_err(
+            self.rt
+                .block_on(self.worker.insert_queue_books_at(at as i64, queue_ids)),
+        );
         player.insert_items(at, items);
         let _ = self.filter.activate_action("win.reload-queue", None);
     }
@@ -622,7 +627,7 @@ impl Inner {
         for book in &books {
             let id = book.id();
             if finish {
-                let _ = self.rt.block_on(self.worker.complete_book(id, now));
+                log_worker_err(self.rt.block_on(self.worker.complete_book(id, now)));
             } else {
                 let cur = self
                     .pool
@@ -638,7 +643,7 @@ impl Inner {
                     smart_speed: cur.as_ref().and_then(|p| p.smart_speed),
                     voice_boost: cur.as_ref().and_then(|p| p.voice_boost),
                 };
-                let _ = self.rt.block_on(self.worker.upsert_book_playback(playback));
+                log_worker_err(self.rt.block_on(self.worker.upsert_book_playback(playback)));
             }
         }
         self.toast(&format!(
@@ -701,7 +706,7 @@ impl Inner {
             let doomed = crate::playqueue::engine_indexes_where(&this.pool, |r| {
                 r.book_id.map(|b| ids.contains(&b)).unwrap_or(false)
             });
-            let _ = this.rt.block_on(this.worker.delete_books(ids.clone()));
+            log_worker_err(this.rt.block_on(this.worker.delete_books(ids.clone())));
             if let Some(player) = this.player.as_ref() {
                 crate::playqueue::remove_engine_items(player, &doomed);
             }
@@ -796,9 +801,11 @@ impl Inner {
                 smart_speed: Some(smart.is_active()),
                 voice_boost: Some(voice.is_active()),
             };
-            let _ = inner
-                .rt
-                .block_on(inner.worker.upsert_book_playback(playback));
+            log_worker_err(
+                inner
+                    .rt
+                    .block_on(inner.worker.upsert_book_playback(playback)),
+            );
             inner.toast("Playback settings saved");
         });
         dialog.present(parent);
@@ -1076,26 +1083,40 @@ impl Inner {
         let this = self.clone();
         dialog.connect_response(move |resp| {
             if resp == "move" {
-                let mut failed = 0usize;
-                for &id in &ids {
-                    if let Err(e) = this.rt.block_on(apply_book_reorg(
-                        &this.worker,
-                        &this.pool,
-                        id,
-                        &root,
-                        MoveMode::Move,
-                    )) {
-                        failed += 1;
-                        eprintln!("conservatory: re-shelve failed for book {id}: {e}");
+                // Off the GTK thread (the drop-import bridge idiom): a
+                // whole-shelf re-shelve can move thousands of files, and the
+                // inline `block_on` froze the window for the duration.
+                let worker = this.worker.clone();
+                let pool = this.pool.clone();
+                let root = root.clone();
+                let ids_inner = ids.clone();
+                let handle = this.rt.spawn(async move {
+                    let mut failed = 0usize;
+                    for &id in &ids_inner {
+                        if let Err(e) =
+                            apply_book_reorg(&worker, &pool, id, &root, MoveMode::Move).await
+                        {
+                            failed += 1;
+                            eprintln!("conservatory: re-shelve failed for book {id}: {e}");
+                        }
                     }
-                }
-                if failed > 0 {
-                    this.toast(&format!(
-                        "Re-shelve failed for {failed} book(s); see the log"
-                    ));
-                } else {
-                    this.toast(&format!("Re-shelved {} book(s)", ids.len()));
-                }
+                    failed
+                });
+                let this_done = this.clone();
+                let ids_done = ids.clone();
+                glib::spawn_future_local(async move {
+                    if let Ok(failed) = handle.await {
+                        if failed > 0 {
+                            this_done.toast(&format!(
+                                "Re-shelve failed for {failed} book(s); see the log"
+                            ));
+                        } else {
+                            this_done.toast(&format!("Re-shelved {} book(s)", ids_done.len()));
+                        }
+                        this_done.load();
+                    }
+                });
+                return; // the completion closure refreshes the shelf
             }
             this.load();
         });

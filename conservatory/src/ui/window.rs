@@ -52,6 +52,7 @@ use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
 use crate::ui::fields::{collect_assignments, credit_fields, inspector_fields};
 use crate::ui::inspector::{Inspector, build_inspector};
+use crate::ui::log_worker_err;
 use crate::ui::now_bar::{NowBar, build_now_bar};
 use crate::ui::now_playing_full::{NowPlayingFull, build_now_playing_full};
 use crate::ui::now_playing_panel::{NowPlayingPanel, build_now_playing_panel};
@@ -1248,7 +1249,7 @@ impl ConservatoryWindow {
             if len > keep_prefix + 1 {
                 let perm = shuffle_order(len, keep_prefix, seed_now());
                 if let (Some(worker), Some(rt)) = (imp.worker.get(), imp.runtime.get()) {
-                    let _ = rt.block_on(worker.reorder_queue_by_positions(perm.clone()));
+                    log_worker_err(rt.block_on(worker.reorder_queue_by_positions(perm.clone())));
                 }
                 player.reorder_queue(perm);
             }
@@ -1274,7 +1275,7 @@ impl ConservatoryWindow {
             && let Ok(mut state) = get_audio_state(&conn)
         {
             state.shuffle = on;
-            let _ = rt.block_on(worker.set_audio_state(state));
+            log_worker_err(rt.block_on(worker.set_audio_state(state)));
         }
     }
 
@@ -1308,7 +1309,7 @@ impl ConservatoryWindow {
             && let Ok(mut state) = get_audio_state(&conn)
         {
             state.repeat = mode.as_str().to_string();
-            let _ = rt.block_on(worker.set_audio_state(state));
+            log_worker_err(rt.block_on(worker.set_audio_state(state)));
         }
     }
 
@@ -1799,7 +1800,7 @@ impl ConservatoryWindow {
             let album_edit = build_album_edit(&[assignment]);
             if !album_edit.is_empty() {
                 for aid in &albums {
-                    let _ = rt.block_on(worker.update_album(*aid, album_edit.clone()));
+                    log_worker_err(rt.block_on(worker.update_album(*aid, album_edit.clone())));
                 }
             }
             if let (Some(root), [aid]) = (imp.library_root.get(), albums.as_slice()) {
@@ -1811,10 +1812,10 @@ impl ConservatoryWindow {
         }
         let track_edit = build_track_edit(std::slice::from_ref(&assignment));
         if !track_edit.is_empty() {
-            let _ = rt.block_on(worker.update_track(track_id, track_edit));
+            log_worker_err(rt.block_on(worker.update_track(track_id, track_edit)));
         }
         if let Some(g) = genres_assignment(&[assignment]) {
-            let _ = rt.block_on(worker.set_tracks_genres(vec![track_id], g));
+            log_worker_err(rt.block_on(worker.set_tracks_genres(vec![track_id], g)));
         }
         self.refresh_inspector();
         self.populate_initial();
@@ -2900,7 +2901,7 @@ impl ConservatoryWindow {
                     && let (Some(worker), Some(rt)) =
                         (win.imp().worker.get(), win.imp().runtime.get())
                 {
-                    let _ = rt.block_on(worker.set_audio_state(state.borrow().clone()));
+                    log_worker_err(rt.block_on(worker.set_audio_state(state.borrow().clone())));
                 }
                 glib::Propagation::Proceed
             });
@@ -2952,7 +2953,7 @@ impl ConservatoryWindow {
             if let Some(win) = weak.upgrade() {
                 if let (Some(worker), Some(rt)) = (win.imp().worker.get(), win.imp().runtime.get())
                 {
-                    let _ = rt.block_on(worker.save_eq_preset(name.clone(), bands));
+                    log_worker_err(rt.block_on(worker.save_eq_preset(name.clone(), bands)));
                 }
                 win.persist_and_apply_eq(bands, Some(name));
             }
@@ -2966,14 +2967,14 @@ impl ConservatoryWindow {
             return;
         }
         if let (Some(worker), Some(rt)) = (self.imp().worker.get(), self.imp().runtime.get()) {
-            let _ = rt.block_on(worker.delete_eq_preset(name.to_string()));
+            log_worker_err(rt.block_on(worker.delete_eq_preset(name.to_string())));
         }
     }
 
     /// Persist the active EQ state through the worker (Phase 5.5b-ii).
     fn persist_eq(&self, bands: [f64; EQ_CENTRES.len()], preset: Option<String>) {
         if let (Some(worker), Some(rt)) = (self.imp().worker.get(), self.imp().runtime.get()) {
-            let _ = rt.block_on(worker.set_eq_state(EqState { bands, preset }));
+            log_worker_err(rt.block_on(worker.set_eq_state(EqState { bands, preset })));
         }
     }
 
@@ -3069,7 +3070,7 @@ impl ConservatoryWindow {
         // spec §4.3 source of truth) and the drawer can render + edit it.
         let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
         if let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) {
-            let _ = rt.block_on(worker.replace_queue_with_tracks(queue_ids));
+            log_worker_err(rt.block_on(worker.replace_queue_with_tracks(queue_ids)));
         }
 
         *imp.now_labels.borrow_mut() = labels;
@@ -3292,7 +3293,7 @@ impl ConservatoryWindow {
         }
 
         let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
-        let _ = rt.block_on(worker.enqueue_tracks(queue_ids));
+        log_worker_err(rt.block_on(worker.enqueue_tracks(queue_ids)));
         {
             let mut map = imp.now_labels.borrow_mut();
             for (id, lbl) in labels {
@@ -3352,7 +3353,7 @@ impl ConservatoryWindow {
         };
 
         let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
-        let _ = rt.block_on(worker.insert_queue_tracks_at(at as i64, queue_ids));
+        log_worker_err(rt.block_on(worker.insert_queue_tracks_at(at as i64, queue_ids)));
         {
             let mut map = imp.now_labels.borrow_mut();
             for (id, lbl) in labels {
@@ -3592,7 +3593,7 @@ impl ConservatoryWindow {
                 let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
                     return;
                 };
-                let _ = rt.block_on(worker.append_playlist_entries(id, entries));
+                log_worker_err(rt.block_on(worker.append_playlist_entries(id, entries)));
                 win.toast(&format!("Added {n} item(s) to the playlist"));
             });
             self.add_action(&action);
@@ -3822,7 +3823,7 @@ impl ConservatoryWindow {
             return;
         };
         let edit = build_track_edit(&[a]);
-        let _ = rt.block_on(worker.update_track(id, edit));
+        log_worker_err(rt.block_on(worker.update_track(id, edit)));
         row.update_rating(rating);
         // Keep the inspector's Rating field in step if it is showing this row.
         self.refresh_inspector();
@@ -3905,7 +3906,7 @@ impl ConservatoryWindow {
                 })
             })
             .unwrap_or_default();
-        let _ = rt.block_on(worker.delete_tracks(ids.to_vec()));
+        log_worker_err(rt.block_on(worker.delete_tracks(ids.to_vec())));
         if let Some(player) = imp.player.get() {
             crate::playqueue::remove_engine_items(player, &doomed);
         }
@@ -4163,14 +4164,16 @@ impl ConservatoryWindow {
         // Batched worker calls: one round-trip (and one transaction) per kind,
         // never one per row — a Ctrl+A bulk edit must not freeze the GTK thread.
         if !track_edit.is_empty() {
-            let _ = rt.block_on(worker.update_tracks(track_ids.to_vec(), track_edit.clone()));
+            log_worker_err(
+                rt.block_on(worker.update_tracks(track_ids.to_vec(), track_edit.clone())),
+            );
         }
         if let Some(g) = &genres {
-            let _ = rt.block_on(worker.set_tracks_genres(track_ids.to_vec(), g.clone()));
+            log_worker_err(rt.block_on(worker.set_tracks_genres(track_ids.to_vec(), g.clone())));
         }
         if !album_edit.is_empty() {
             for &aid in &albums {
-                let _ = rt.block_on(worker.update_album(aid, album_edit.clone()));
+                log_worker_err(rt.block_on(worker.update_album(aid, album_edit.clone())));
             }
         }
 
@@ -4236,9 +4239,13 @@ impl ConservatoryWindow {
         dialog.connect_response(move |resp| {
             let Some(win) = weak.upgrade() else { return };
             if resp == "move" {
+                // The move runs off-thread; its completion closure refreshes
+                // the browse (an immediate populate here would show the
+                // pre-move tree and freeze on it).
                 win.run_scoped_move(&albums, &root);
+            } else {
+                win.populate_initial();
             }
-            win.populate_initial();
         });
         dialog.present(Some(self));
     }
@@ -4258,9 +4265,11 @@ impl ConservatoryWindow {
 
     fn run_scoped_move(&self, albums: &[i64], root: &std::path::Path) {
         let imp = self.imp();
-        let (Some(rt), Some(worker), Some(pool)) =
-            (imp.runtime.get(), imp.worker.get(), imp.pool.get())
-        else {
+        let (Some(rt), Some(worker), Some(pool)) = (
+            imp.runtime.get(),
+            imp.worker.get().cloned(),
+            imp.pool.get().cloned(),
+        ) else {
             return;
         };
         // The preview promised conflicts are skipped, not fatal, so feed
@@ -4280,30 +4289,49 @@ impl ConservatoryWindow {
         }
         let moved = plan.ops.len();
         let created_at = chrono::Utc::now().timestamp();
-        // Moving files is the headline risk (CLAUDE.md): never fail silently. The
-        // move is journaled + roll-forward-recoverable, so surface the error and
-        // let the user retry rather than swallow it.
-        if let Err(e) = rt.block_on(mover::apply(
-            worker,
-            pool,
-            MoveKind::Organize,
-            MoveMode::Move,
-            root,
-            created_at,
-            plan.ops,
-        )) {
-            self.error_dialog("Move failed", &e.to_string());
-            return;
-        }
-        if skipped > 0 {
-            self.toast(&format!(
-                "Moved {moved} file(s); {skipped} conflict(s) left in place"
-            ));
-        }
-        // Covers follow their albums after the move (Phase 5d).
-        let _ = rt.block_on(conservatory_core::covers::resync_album_covers(
-            worker, pool, root,
-        ));
+        let root = root.to_path_buf();
+        // Off the GTK thread (the drop-import bridge idiom): a scoped move can
+        // run for minutes on a big batch, and a `block_on` here froze the
+        // whole window for the duration. Moving files is the headline risk
+        // (CLAUDE.md), so failures surface in the completion closure; covers
+        // stay best-effort, logged when they fail rather than swallowed.
+        let handle = rt.spawn(async move {
+            let result = mover::apply(
+                &worker,
+                &pool,
+                MoveKind::Organize,
+                MoveMode::Move,
+                &root,
+                created_at,
+                plan.ops,
+            )
+            .await;
+            if result.is_ok()
+                && let Err(e) =
+                    conservatory_core::covers::resync_album_covers(&worker, &pool, &root).await
+            {
+                tracing::warn!(error = %e, "album cover resync after move failed");
+            }
+            result
+        });
+        let win = self.downgrade();
+        glib::spawn_future_local(async move {
+            let Some(win) = win.upgrade() else {
+                return;
+            };
+            match handle.await {
+                Ok(Ok(_job)) => {
+                    if skipped > 0 {
+                        win.toast(&format!(
+                            "Moved {moved} file(s); {skipped} conflict(s) left in place"
+                        ));
+                    }
+                    win.populate_initial();
+                }
+                Ok(Err(e)) => win.error_dialog("Move failed", &e.to_string()),
+                Err(e) => win.error_dialog("Move failed", &format!("move task failed to run: {e}")),
+            }
+        });
     }
 
     /// Present a simple error dialog (used for the file-move failure path).
@@ -4444,7 +4472,7 @@ impl ConservatoryWindow {
         if let (Some(rt), Some(worker), Some(player)) =
             (imp.runtime.get(), imp.worker.get(), imp.player.get())
         {
-            let _ = rt.block_on(worker.reorder_queue(from as i64, to as i64));
+            log_worker_err(rt.block_on(worker.reorder_queue(from as i64, to as i64)));
             player.move_item(from, to);
             // The highlight follows on the next snapshot poll (the engine's
             // current_index shifts in lock-step with the DB positions).
@@ -4467,7 +4495,7 @@ impl ConservatoryWindow {
         if sel == gtk::INVALID_LIST_POSITION {
             return;
         }
-        let _ = rt.block_on(worker.remove_queue_item(sel as i64));
+        log_worker_err(rt.block_on(worker.remove_queue_item(sel as i64)));
         player.remove_item(sel as usize);
         self.reload_queue_panel();
     }
@@ -4496,7 +4524,7 @@ impl ConservatoryWindow {
         if let (Some(rt), Some(worker), Some(player)) =
             (imp.runtime.get(), imp.worker.get(), imp.player.get())
         {
-            let _ = rt.block_on(worker.clear_queue());
+            log_worker_err(rt.block_on(worker.clear_queue()));
             player.clear_queue();
             if let Some(cur) = imp.queue_current.get() {
                 cur.set(None);
@@ -5611,7 +5639,7 @@ impl ConservatoryWindow {
                 skip_override(fwd.value()),
                 cur.inbox_policy,
             );
-            let _ = rt.block_on(worker.upsert_show_settings(settings));
+            log_worker_err(rt.block_on(worker.upsert_show_settings(settings)));
             // Apply to the episode playing now so the change is heard immediately,
             // not only from the next episode (the persisted settings cover that).
             if let Some(player) = imp.player.get() {
@@ -5736,7 +5764,7 @@ impl ConservatoryWindow {
                 smart_speed: Some(smart.is_active()),
                 voice_boost: Some(voice.is_active()),
             };
-            let _ = rt.block_on(worker.upsert_book_playback(playback));
+            log_worker_err(rt.block_on(worker.upsert_book_playback(playback)));
             // Heard immediately on the playing book, not only from the next.
             if let Some(player) = imp.player.get() {
                 player.set_spoken(speed.value(), smart.is_active(), voice.is_active());
@@ -6254,12 +6282,12 @@ impl ConservatoryWindow {
             return;
         };
         let now = chrono::Utc::now().timestamp();
-        let _ = rt.block_on(worker.save_perspective(
+        log_worker_err(rt.block_on(worker.save_perspective(
             name.to_string(),
             expression.to_string(),
             "tracks".to_string(),
             now,
-        ));
+        )));
         self.refresh_perspectives();
     }
 
@@ -6301,7 +6329,7 @@ impl ConservatoryWindow {
                 let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
                     return;
                 };
-                let _ = rt.block_on(worker.delete_perspective(id));
+                log_worker_err(rt.block_on(worker.delete_perspective(id)));
                 win.refresh_perspectives();
             }
         });
@@ -6446,7 +6474,7 @@ impl ConservatoryWindow {
             let queue_items: Vec<(MediaKind, i64)> =
                 items.iter().map(|i| (i.kind, i.track_id)).collect();
             if let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) {
-                let _ = rt.block_on(worker.replace_queue_mixed(queue_items));
+                log_worker_err(rt.block_on(worker.replace_queue_mixed(queue_items)));
             }
             imp.last_shown.set(None);
             imp.last_index.set(None);
@@ -6480,7 +6508,7 @@ impl ConservatoryWindow {
         }
         let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
         if let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) {
-            let _ = rt.block_on(worker.replace_queue_with_tracks(queue_ids));
+            log_worker_err(rt.block_on(worker.replace_queue_with_tracks(queue_ids)));
         }
         // The Now-bar resolves title/artist from the DB on item change, so no
         // `now_labels` seeding is needed here.
@@ -6507,7 +6535,7 @@ impl ConservatoryWindow {
             return;
         };
         let now = chrono::Utc::now().timestamp();
-        let _ = rt.block_on(worker.create_playlist(name, kind, query, limit, order, now));
+        log_worker_err(rt.block_on(worker.create_playlist(name, kind, query, limit, order, now)));
         self.refresh_playlists();
     }
 
@@ -6734,7 +6762,9 @@ impl ConservatoryWindow {
                         let pid = pl.id;
                         let position = r.position;
                         del.connect_clicked(move |_| {
-                            let _ = rt.block_on(worker.remove_playlist_entry(pid, position));
+                            log_worker_err(
+                                rt.block_on(worker.remove_playlist_entry(pid, position)),
+                            );
                             rebuild();
                         });
                     }
@@ -6842,7 +6872,7 @@ impl ConservatoryWindow {
                 let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) else {
                     return;
                 };
-                let _ = rt.block_on(worker.delete_playlist(id));
+                log_worker_err(rt.block_on(worker.delete_playlist(id)));
                 win.refresh_playlists();
             }
         });
@@ -6901,7 +6931,7 @@ impl ConservatoryWindow {
             return;
         };
         let n = ids.len();
-        let _ = rt.block_on(worker.append_playlist_tracks(playlist_id, ids));
+        log_worker_err(rt.block_on(worker.append_playlist_tracks(playlist_id, ids)));
         self.toast(&format!("Added {n} track(s) to the playlist"));
     }
 

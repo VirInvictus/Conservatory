@@ -46,6 +46,7 @@ use conservatory_core::db::{
 use conservatory_podcasts::{Fetcher, RefreshOutcome, RefreshStatus};
 
 use crate::playqueue::{EpisodeSource, attach_episode_chapters, build_episode_queue};
+use crate::ui::log_worker_err;
 use crate::ui::objects::EpisodeRow;
 use crate::ui::rows;
 use vir_gtk::widgets::{Alert, Appearance};
@@ -268,9 +269,10 @@ impl Inner {
         let Some(first) = rows.first() else { return };
         let starred = !first.starred();
         let ids: Vec<i64> = rows.iter().map(|r| r.id()).collect();
-        let _ = self
-            .rt
-            .block_on(self.worker.set_episodes_starred(ids, starred));
+        log_worker_err(
+            self.rt
+                .block_on(self.worker.set_episodes_starred(ids, starred)),
+        );
         if rows.len() > 1 {
             let verb = if starred { "Starred" } else { "Unstarred" };
             self.toast(&format!("{verb} {} episodes", rows.len()));
@@ -281,9 +283,10 @@ impl Inner {
     fn write_played_batch(&self, rows: &[EpisodeRow], state: PlayedState) {
         let when = (state == PlayedState::PlayedFully).then(now_secs);
         let ids: Vec<i64> = rows.iter().map(|r| r.id()).collect();
-        let _ = self
-            .rt
-            .block_on(self.worker.set_episodes_played(ids, state, when));
+        log_worker_err(
+            self.rt
+                .block_on(self.worker.set_episodes_played(ids, state, when)),
+        );
         if rows.len() > 1 {
             let verb = match state {
                 PlayedState::PlayedFully => "Marked played",
@@ -317,9 +320,10 @@ impl Inner {
             audio_url: row.audio_url(),
         };
         let settings = self.show_settings_for(std::slice::from_ref(&source));
-        let _ = self
-            .rt
-            .block_on(self.worker.replace_queue_with_episodes(vec![source.id]));
+        log_worker_err(
+            self.rt
+                .block_on(self.worker.replace_queue_with_episodes(vec![source.id])),
+        );
         let (mut items, start) =
             build_episode_queue(std::slice::from_ref(&source), 0, root, &settings);
         attach_episode_chapters(&mut items, &self.pool);
@@ -353,7 +357,7 @@ impl Inner {
             return;
         }
         let ids: Vec<i64> = rows.iter().map(|r| r.id()).collect();
-        let _ = self.rt.block_on(self.worker.enqueue_episodes(ids));
+        log_worker_err(self.rt.block_on(self.worker.enqueue_episodes(ids)));
         let sources: Vec<EpisodeSource> = rows
             .iter()
             .map(|row| EpisodeSource {
@@ -514,9 +518,11 @@ impl Inner {
                 skip_override(fwd.value()),
                 inbox_policy_from_index(policy.selected()),
             );
-            let _ = inner
-                .rt
-                .block_on(inner.worker.upsert_show_settings(settings));
+            log_worker_err(
+                inner
+                    .rt
+                    .block_on(inner.worker.upsert_show_settings(settings)),
+            );
             inner.toast("Show settings saved");
         });
         dialog.present(Some(&self.title));
@@ -727,7 +733,7 @@ impl Inner {
             // so it stays in lock-step with the DB queue (the 16a invariant).
             let doomed =
                 crate::playqueue::engine_indexes_where(&inner.pool, |r| r.show_id == Some(show_id));
-            let _ = inner.rt.block_on(inner.worker.delete_show(show_id));
+            log_worker_err(inner.rt.block_on(inner.worker.delete_show(show_id)));
             if let Some(player) = inner.player.as_ref() {
                 crate::playqueue::remove_engine_items(player, &doomed);
             }

@@ -388,8 +388,9 @@ pub struct TagWrite {
 /// journal (re-running fixes any mistake).
 ///
 /// Caveat: a stray APEv2 block on an MPEG file is *not* removed here, because
-/// lofty does not write APE on MPEG. Reliable APE stripping needs byte-level
-/// surgery (the Lattice `apestrip` technique) and is deferred to a later phase.
+/// lofty does not write APE on MPEG. Stripping needs byte surgery, which
+/// shipped separately as `ape::plan_strip` / `ape::commit_strip` behind the
+/// `apestrip` verb (Phase 8c-iii); writing and stripping stay distinct actions.
 pub fn write_track_tags(path: &Path, w: &TagWrite) -> Result<()> {
     let mut tagged = lofty::read_from_path(path)?;
     let primary = tagged.file_type().primary_tag_type();

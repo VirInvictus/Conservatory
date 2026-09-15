@@ -6,9 +6,10 @@
 //! remove it (the Phase 5b deferral), so removing one needs byte surgery: this
 //! module is the hand-rolled port of Lattice's `apestrip` technique.
 //!
-//! This file holds the pure parser (locate / validate / excise). The mutating
-//! `strip_file` / restore helpers and the `ape_strips` undo journal are the
-//! second 8c-iii commit.
+//! This file holds the whole surface: the pure parser (`locate_ape` /
+//! `strip_bytes` / `restore_bytes`) and the mutating helpers (`plan_strip` /
+//! `commit_strip`, with the atomic write primitives), exercised by the
+//! `apestrip` verb and its undo journal.
 //!
 //! ## APEv2 layout (trailing tag)
 //!

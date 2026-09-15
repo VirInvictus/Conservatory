@@ -1,8 +1,8 @@
 //! Read helpers. These take a borrowed `&Connection` so they run on a read-only
-//! pool handle (`ReadPool::open`), never on the writer (spec §2.1). The CLI and,
-//! later, the GTK side consume the `Artist` / `Album` / `Track` models through
-//! these. Phase 1b ships counts and basic lookups; richer queries (faceting,
-//! search) arrive with `conservatory-search` at Phase 3.
+//! pool handle (`ReadPool::open`), never on the writer (spec §2.1). The CLI and
+//! the GTK side consume the `Artist` / `Album` / `Track` models through these.
+//! Phase 1b shipped counts and basic lookups; faceting and the search grammar
+//! (the shared `vir_search` crate) landed with Phase 3.
 
 use std::collections::HashMap;
 

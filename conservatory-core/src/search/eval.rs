@@ -1,6 +1,7 @@
 //! In-memory evaluator (the fallback path, spec §3.4). Runs when `try_translate`
 //! can't push the whole expression to SQL (a `~regex` or `?fuzzy` node). Matching
-//! is datatype-dispatched per CalibreQuarry; per-item like `atrium-search`.
+//! is datatype-dispatched per CalibreQuarry's evaluator; the shared `vir_search`
+//! crate parses, this module evaluates against Conservatory's domain.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

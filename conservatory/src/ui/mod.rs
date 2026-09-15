@@ -26,8 +26,6 @@ pub mod track_list;
 pub mod waveform;
 pub mod window;
 
-/// Close `window` on Escape (Phase 26). Plain `gtk::Window` has no built-in
-/// Escape handling; the adw dialogs this replaces did it for free.
 /// Close `window` on Escape; re-exported from vir-gtk's widget kit (1.4.0),
 /// whose capture-phase shape supersedes the local default-phase copy.
 pub use vir_gtk::widgets::close_on_escape;

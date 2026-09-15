@@ -1,4 +1,5 @@
-//! All-or-nothing SQL translation (spec §3.4, the `atrium-search` dual path).
+//! All-or-nothing SQL translation (spec §3.4; the parse-then-translate half of
+//! the search path, in the shape Atrium's translator established).
 //!
 //! `try_translate` emits a SQL `WHERE` fragment **only if every node maps
 //! cleanly**; a `~regex` or `?fuzzy` node makes the whole thing return `None`, so

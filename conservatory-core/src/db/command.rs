@@ -4,9 +4,9 @@
 //! their own result. Consumers never construct `Command` directly: they call
 //! typed methods on [`crate::db::WorkerHandle`]. The enum is internal to `db`.
 //!
-//! Phase 1a carried the debug round-trip; Phase 1b adds the music inserts the
-//! import pipeline and fixture builder need. Update/delete and queue/podcast
-//! commands land in later sub-phases.
+//! Phase 1 carried the debug round-trip and the music inserts; the editor,
+//! mover, queue, podcast, and audiobook commands followed as their subsystems
+//! landed. This enum is the whole worker surface today.
 
 use tokio::sync::oneshot;
 

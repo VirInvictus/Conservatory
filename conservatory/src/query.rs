@@ -1,7 +1,7 @@
 //! Filter-bar composition (Phase 3c, spec §3.4): facet narrowing AND the
 //! search-grammar expression, intersected. "The panes filter; the grammar
-//! searches; they are the same surface." The grammar lives in
-//! `conservatory-search` and the storage/SQL side in `conservatory-core`; this
+//! searches; they are the same surface." The grammar lives in the shared
+//! `vir_search` crate and the storage/SQL side in `conservatory-core`; this
 //! is the thin consumer glue that joins them (the same shape as the CLI's
 //! `search` verb), kept out of the GTK widgets so it stays headless-testable.
 

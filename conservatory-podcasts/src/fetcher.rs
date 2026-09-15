@@ -18,6 +18,10 @@ use chrono::{DateTime, Duration, Utc};
 use reqwest::{Client, StatusCode, header};
 use tokio::sync::Mutex;
 
+/// An upper bound on an accepted feed body. Real feeds are kilobytes to a
+/// few megabytes; anything past this is broken or hostile.
+const MAX_FEED_BYTES: usize = 32 * 1024 * 1024;
+
 use crate::error::{FetchError, Result};
 use crate::http;
 use conservatory_core::secret::BasicAuth;
@@ -162,13 +166,25 @@ impl Fetcher {
         // Without this a 403/404/500 body would be handed to the feed parser
         // and, worse, its (usually absent) validators would overwrite the
         // stored etag/last-modified, poisoning the next conditional GET.
-        let response = response.error_for_status()?;
+        let mut response = response.error_for_status()?;
 
         let etag = header_str(&response, header::ETAG);
         let last_modified = header_str(&response, header::LAST_MODIFIED);
         let cache_control_max_age =
             header_str(&response, header::CACHE_CONTROL).and_then(|cc| parse_max_age(&cc));
-        let body = response.bytes().await?.to_vec();
+        // Stream with a cap instead of `bytes()` (which buffers the whole
+        // body before anyone looks): the feed is untrusted network input, and
+        // a hostile or broken server must not get unlimited allocation on the
+        // shared runtime (spec §13 memory budget).
+        let mut body: Vec<u8> = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if body.len() + chunk.len() > MAX_FEED_BYTES {
+                return Err(FetchError::BodyTooLarge {
+                    limit: MAX_FEED_BYTES,
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
         tracing::debug!(
             target: "conservatory::net",
             url,

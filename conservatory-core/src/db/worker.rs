@@ -1,7 +1,7 @@
 //! Single-writer SQLite worker (spec §2.1).
 //!
 //! A dedicated tokio blocking task owns the one writable `rusqlite::Connection`.
-//! Every consumer (GTK / CLI / future fetch + playback loops) holds an
+//! Every consumer (GTK, CLI, the fetch and playback loops) holds an
 //! `mpsc::Sender<Command>` and never touches the connection directly; reads go
 //! through the separate [`crate::db::ReadPool`]. The dispatch shape (typed
 //! `WorkerHandle` methods, per-op `oneshot` replies) is ported from

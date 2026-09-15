@@ -6,10 +6,10 @@
 //! playback profiles, the unified-queue model, and the podcast fetch/parse
 //! pipeline (ported from `belfry-core` at Phase 6).
 //!
-//! Phase 1a (spec §17) lands the spine: the single-writer SQLite worker, the
-//! read-only pool, and the numbered-migration runner. Phase 1b adds the music
-//! data model and FTS5; Phase 1c adds tag read and cover-art accent extraction.
-//! The import pipeline, playback, podcasts, and audiobooks follow.
+//! Landed in phases (spec §17): Phase 1 the spine (the single-writer SQLite
+//! worker, the read-only pool, the numbered-migration runner) plus the music
+//! data model, FTS5, and tag read (1b-1c); the import pipeline, playback,
+//! podcasts, and audiobooks followed at Phases 2-7.
 
 pub mod accent;
 pub mod ape;

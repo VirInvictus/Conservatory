@@ -1,8 +1,7 @@
-//! Write helpers run on the single writer connection (via the worker).
-//!
-//! Phase 1b ships the inserts the import pipeline and the fixture builder need;
-//! update/delete land with the editor and mover in later phases. Reads never
-//! come through here: they use the read pool (`reads.rs`).
+//! Write helpers run on the single writer connection (via the worker): the
+//! inserts the import pipeline needs, plus the update/delete, queue, podcast,
+//! and audiobook writes that landed with their subsystems. Reads never come
+//! through here: they use the read pool (`reads.rs`).
 
 use rusqlite::{Connection, OptionalExtension, params};
 

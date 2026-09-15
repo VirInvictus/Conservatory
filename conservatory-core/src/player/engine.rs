@@ -1085,8 +1085,8 @@ impl Engine {
     }
 
     /// Write the singleton transport cursor for the current item's `kind`
-    /// (6b-ii-c-2): `track_id` is set for a track, `episode_id` for an episode
-    /// (`id` carries whichever). The audiobook cursor lands at Phase 7.
+    /// (6b-ii-c-2): `track_id` for a track, `episode_id` for an episode,
+    /// `book_id` for an audiobook (`id` carries whichever).
     fn save_cursor(&self, kind: MediaKind, id: i64, position: f64, blocking: bool) {
         let (track_id, episode_id, book_id) = match kind {
             MediaKind::Track => (Some(id), None, None),

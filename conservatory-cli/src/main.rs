@@ -1,8 +1,9 @@
 //! Conservatory headless CLI. The batch surface that pairs with the GUI (the
-//! Hermitage / CalibreQuarry / Belfry pattern). Phase 1a ships a single debug
-//! verb that exercises the worker + read-pool round-trip; the real verbs
-//! (import, organize, search, tag, queue, podcast, stats) land at Phase 2+
-//! (spec §9).
+//! Hermitage / CalibreQuarry / Belfry pattern): every non-graphical action has
+//! a verb, which is how the engine stays testable. The verbs (import, organize,
+//! search, tag, queue, podcast, audiobook, the maintenance suite, and
+//! backup/restore) are spec §9's surface; the `debug` verbs are Phase 1's
+//! smoke tests.
 
 use std::path::{Path, PathBuf};
 

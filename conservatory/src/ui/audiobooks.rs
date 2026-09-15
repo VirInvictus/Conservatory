@@ -3,13 +3,14 @@
 //! shelf is the first `gtk::GridView` in the app (every other browse is a
 //! `ColumnView`) and the first use of the median-cut `accent_rgb` in the GUI.
 //!
-//! Browse + filter (7b-ii) + bulk edit (7b-iii): the shelf is `MultiSelection`,
-//! and a pencil button / `Ctrl+E` opens a bulk-edit dialog over the selection;
-//! a path-affecting edit re-shelves the books through the journaled mover behind
-//! a confirm. A book becomes a `PlayableItem` only at Phase 7c, so there is still
-//! no play / queue action here. Reads go through the pool; writes and the move go
-//! through the worker (`apply_book_edit` / `apply_book_reorg`); the player is
-//! threaded in for 7c but unused now.
+//! Browse + filter (7b-ii) + bulk edit (7b-iii) + playback (7c): the shelf is
+//! `MultiSelection`, and a pencil button / `Ctrl+E` opens a bulk-edit dialog
+//! over the selection; a path-affecting edit re-shelves the books through the
+//! journaled mover behind a confirm. Play, Add to Queue, and resume ride the
+//! unified queue (a book is one `PlayableItem`), and the playback settings
+//! dialog edits Smart Speed / Voice Boost for books like for episodes. Reads
+//! go through the pool; writes and the move go through the worker
+//! (`apply_book_edit` / `apply_book_reorg`).
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::BTreeSet;

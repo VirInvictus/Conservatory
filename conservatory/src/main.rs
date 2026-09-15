@@ -1,7 +1,7 @@
-//! Conservatory GTK4 binary (plain GTK4 since Phase 26, spec §2.4). Phase 3b
-//! launched the faceted browse
-//! window (spec §3.3); the player, podcasts, and audiobooks tabs follow in later
-//! phases. All data logic lives in `conservatory-core`; this binary renders.
+//! Conservatory GTK4 binary (plain GTK4 since Phase 26, spec §2.4): the faceted
+//! Columns UI browse (Phase 3b), the unified libmpv player (Phase 4), the
+//! Podcasts and Audiobooks tabs (Phases 6 and 7), and the themed shell. All
+//! data logic lives in `conservatory-core`; this binary renders.
 
 use std::path::PathBuf;
 

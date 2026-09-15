@@ -17,9 +17,10 @@
 //! Phase 6a-ii-b adds parsing ([`parse`] via feed-rs + the hand-rolled
 //! [`namespace`] handler) and the [`refresh`] orchestration (fetch → parse →
 //! upsert through the core worker). Phase 6a-iii-a adds [`opml`] import/export
-//! round-trip. Phase 6a-iii-b adds the [`credentials`] store (HTTP Basic auth
-//! in libsecret) and episode [`download`] into the managed tree. Phase
-//! 6b-ii-c-3-b adds inbox-policy routing on the [`refresh`] path and
+//! round-trip. Phase 6a-iii-b adds the credential store (HTTP Basic auth in
+//! libsecret; since Phase 9 it lives in core's `credentials` module, so it is
+//! no longer a plugin path here) and episode [`download`] into the managed
+//! tree. Phase 6b-ii-c-3-b adds inbox-policy routing on the [`refresh`] path and
 //! [`retention`] pruning of downloaded episodes beyond a show's `keep_count`.
 //! Triage browse / actions are 6b.
 

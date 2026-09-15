@@ -10,6 +10,11 @@ pub enum FetchError {
     #[error("invalid feed url: {0}")]
     InvalidUrl(String),
 
+    /// The feed body exceeded the size cap (untrusted network input, spec
+    /// §13 memory budget); the refresh is a failure, not a partial parse.
+    #[error("feed body exceeds the {limit} byte cap")]
+    BodyTooLarge { limit: usize },
+
     /// The host is in a 429 cooldown; retry after the given seconds.
     #[error("rate limited; retry after {retry_after_secs}s")]
     RateLimited { retry_after_secs: u64 },

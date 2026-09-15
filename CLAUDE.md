@@ -1,6 +1,6 @@
 # CLAUDE.md (Conservatory)
 
-Per-project guidance. Overrides `~/.claude/CLAUDE.md` only where they conflict.
+Per-project guidance. Overrides the global `~/.zcode/AGENTS.md` only where they conflict.
 
 ## What Conservatory is
 

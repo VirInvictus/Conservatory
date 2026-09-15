@@ -108,8 +108,10 @@ The template is user-editable (config `library.path_template`, spec §10). Chang
 
 ## Examples
 
+The music tree renders under the literal `Music/` level (the managed root splits into `Music/ | Podcasts/ | Audiobooks/`).
+
 | Album | Rendered path (default template) |
 |---|---|
-| Boards of Canada, *Geogaddi* (2002), Electronic | `Electronic/Boards of Canada/Geogaddi (2002)/03 - Music Is Math.flac` |
-| Various, *Artificial Intelligence* (1992), Electronic | `Electronic/Various Artists/Artificial Intelligence (1992)/01 - I.A.O. (Polygon Window).flac` |
-| Bill Evans, *Sunday at the Village Vanguard* (1961), Jazz | `Jazz/Evans, Bill/Sunday at the Village Vanguard (1961)/01 - Gloria's Step.flac` |
+| Boards of Canada, *Geogaddi* (2002), Electronic | `Music/Electronic/Boards of Canada/Geogaddi (2002)/03 - Music Is Math.flac` |
+| Various, *Artificial Intelligence* (1992), Electronic | `Music/Electronic/Various Artists/Artificial Intelligence (1992)/01 - I.A.O. (Polygon Window).flac` |
+| Bill Evans, *Sunday at the Village Vanguard* (1961), Jazz | `Music/Jazz/Evans, Bill/Sunday at the Village Vanguard (1961)/01 - Gloria's Step.flac` |

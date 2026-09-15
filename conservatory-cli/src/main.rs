@@ -547,8 +547,9 @@ enum AudiobookAction {
     /// Import one book (a folder or a single `.m4b`) into the library: resolve it
     /// into rows and move its files into the managed `Audiobooks/` tree via the
     /// journaled, undoable mover (spec §5.4, §5.7). Defaults to copy; a move/undo
-    /// conflict refuses the import (nonzero exit) with nothing written. One book
-    /// per call; a whole-`Author/*`-tree batch is a later phase.
+    /// conflict refuses the import (nonzero exit) with nothing written. The
+    /// source may be one book folder, one `.m4b`, or a whole author tree: a
+    /// multi-book walk imports every discovered book (v0.4.4).
     Import {
         /// Path to the SQLite database.
         db: PathBuf,

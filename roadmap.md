@@ -1459,9 +1459,11 @@ Second burst, same day (the audit's "deferred player/browser clusters" line):
   evaluated in-memory only since 029d6fc: the matchers shipped in
   vir-search 1.3.0 as AST/eval additions, and the all-or-nothing rule means
   any query touching them rides the in-memory path on every surface. The
-  translation lives in vir-search's `sql_translate` (the library, not this
-  repo), so this closes when a consumer wave adopts a vir-search release
-  that translates the new kinds; the books/podcast fields stay eval-only
+  translation lives in THIS repo's search layer (`sql_translate` is a
+  Conservatory module; the correction below was recorded 2026-09-15: the
+  vir-search library has never carried SQL translation and never will, by
+  charter), so this closes when this repo extends its own translator to
+  the wildcard and list kinds; the books/podcast fields stay eval-only
   regardless (their tables are not the music fast path).
 
 ## Functional-pass findings (2026-09-11)

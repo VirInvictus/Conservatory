@@ -13,7 +13,7 @@ version = "0.7.0"
 edition = "2024"
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/virinvictus/Conservatory"
+repository = "https://github.com/VirInvictus/Conservatory"
 authors = ["Brandon LaRocque <larocque.brandon@gmail.com>"]
 
 [workspace.dependencies]

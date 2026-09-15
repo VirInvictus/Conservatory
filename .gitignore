@@ -17,9 +17,9 @@
 /build
 /_build
 
-# Compiled GSettings schemas — produced by the build; source XML is
-# checked in, the binary blob is regenerated.
-data/gschemas.compiled
+# flatpak-builder state from a bare run at the repo root (the manifest is
+# data/, so this only appears when the command is invoked from .).
+/.flatpak-builder/
 
 # Memory-diagnostic capture file produced by `--debug` runs.
 debug-memory.log

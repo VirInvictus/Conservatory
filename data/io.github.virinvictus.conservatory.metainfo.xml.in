@@ -49,6 +49,7 @@
   <icon type="stock">io.github.virinvictus.conservatory</icon>
 
   <url type="homepage">https://github.com/VirInvictus/Conservatory</url>
+  <url type="donation">https://github.com/sponsors/VirInvictus</url>
   <url type="bugtracker">https://github.com/VirInvictus/Conservatory/issues</url>
   <url type="vcs-browser">https://github.com/VirInvictus/Conservatory</url>
 

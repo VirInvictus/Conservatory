@@ -23,6 +23,10 @@ pub enum FixtureScale {
     Medium,
     /// 100 artists × 10 albums × 12 tracks = 12,000 tracks.
     Large,
+    /// 1,000 artists × 5 albums × 10 tracks = 50,000 tracks. The mem_check
+    /// harness's corpus (`conservatory-cli` bin `mem_check`): the spec §13
+    /// design target the gate is written against.
+    Gate,
 }
 
 impl FixtureScale {
@@ -31,6 +35,7 @@ impl FixtureScale {
             Self::Small => (5, 2, 8),
             Self::Medium => (50, 4, 10),
             Self::Large => (100, 10, 12),
+            Self::Gate => (1000, 5, 10),
         }
     }
 }
@@ -42,6 +47,7 @@ impl FromStr for FixtureScale {
             "small" => Ok(Self::Small),
             "medium" => Ok(Self::Medium),
             "large" => Ok(Self::Large),
+            "gate" => Ok(Self::Gate),
             other => Err(Error::InvalidEnum {
                 field: "fixture_scale",
                 value: other.to_string(),

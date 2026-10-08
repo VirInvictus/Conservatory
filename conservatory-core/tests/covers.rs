@@ -279,3 +279,47 @@ async fn reimport_into_existing_album_backfills_accent() {
     );
     worker.shutdown_ack().await.unwrap();
 }
+
+/// The 50k real-library gate's finding: after an undo of a move-mode import,
+/// album rows carry their pre-import (absolute, unmanaged) source paths, and a
+/// resync that followed them would `root.join` right out of the managed tree,
+/// overwriting unmanaged files in place. The resync must skip rows whose
+/// folder escapes the root.
+#[tokio::test]
+async fn resync_never_writes_outside_the_root() {
+    let dir = tempdir().unwrap();
+    let (pool, worker, lib) = managed_lib(dir.path()).await;
+
+    // An unmanaged folder outside the root, holding a file the resync would
+    // decide to overwrite if it followed the absolute folder_path.
+    let outside = dir.path().join("unmanaged");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("cover.jpg"), b"original unmanaged bytes").unwrap();
+
+    // Setup writes through a direct connection: the read pool is read-only by
+    // design and no worker command sets a folder_path (it is mover-owned).
+    {
+        let conn = rusqlite::Connection::open(dir.path().join("lib.db")).unwrap();
+        conn.execute(
+            "UPDATE albums SET folder_path = ?1, cover_path = ?2 WHERE id = 1",
+            rusqlite::params![
+                outside.to_string_lossy().as_ref(),
+                outside.join("cover.jpg").to_string_lossy().as_ref()
+            ],
+        )
+        .unwrap();
+    }
+
+    resync_album_covers(&worker, &pool, &lib).await.unwrap();
+
+    assert_eq!(
+        std::fs::read(outside.join("cover.jpg")).unwrap(),
+        b"original unmanaged bytes",
+        "the unmanaged cover was never touched"
+    );
+    // And nothing was materialised anywhere else in the outside tree.
+    let stray: Vec<_> = std::fs::read_dir(&outside).unwrap().collect();
+    assert_eq!(stray.len(), 1, "only the original cover.jpg exists");
+
+    worker.shutdown_ack().await.unwrap();
+}

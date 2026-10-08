@@ -95,6 +95,17 @@ pub async fn resync_album_covers(
         if folder.is_empty() {
             continue;
         }
+        // A folder_path that escapes the root is not a managed location. It
+        // happens after an undo of a move-mode *import*: the rows revert to
+        // their pre-import (absolute, unmanaged) source paths, and `root.join`
+        // an absolute path lands there — the resync would write (or, worse,
+        // overwrite in place) cover files in a folder the app does not own.
+        // The 50k real-library gate caught exactly that: canonical covers
+        // materialised in the user's source tree. Skip unmanaged rows.
+        if Path::new(folder).is_absolute() {
+            tracing::debug!(target: "conservatory::io", folder = %folder, "covers: resync skips an unmanaged (absolute) album path");
+            continue;
+        }
         // Already in place: skip (no rewrite churn on a no-op organize).
         if let Some(cp) = &album.cover_path
             && cp.starts_with(&format!("{folder}/"))

@@ -146,6 +146,11 @@ mod imp {
         pub status_left: OnceCell<gtk::Label>,
         pub status_right: OnceCell<gtk::Label>,
         pub last_play_state: Cell<(Option<i64>, bool)>,
+        /// The window's authoritative shuffle flag. The engine snapshot is a
+        /// ~100 ms-polled cache, so a toggle followed quickly by a double-click
+        /// read a stale flag there and the play ran linearly ("shuffle doesn't
+        /// work"); the window sets this itself at toggle and restore time.
+        pub shuffle_on: Cell<bool>,
         // The stateful "stop after current" menu action (Phase 11d), held so the
         // poll can sync its checked state when the engine disarms at the boundary.
         pub stop_action: OnceCell<gio::SimpleAction>,
@@ -1225,6 +1230,7 @@ impl ConservatoryWindow {
             let repeat = Repeat::from_stored(&state.repeat);
             player.set_repeat(repeat);
             player.set_shuffle(state.shuffle);
+            imp.shuffle_on.set(state.shuffle);
             if let Some(now) = imp.now_bar.get() {
                 now.set_repeat(repeat);
                 now.set_shuffle(state.shuffle);
@@ -1246,7 +1252,7 @@ impl ConservatoryWindow {
             return;
         };
         let snap = player.snapshot();
-        let on = !snap.shuffle;
+        let on = !imp.shuffle_on.get();
         if on {
             // Shuffle the tail after the currently-playing item; if nothing is
             // playing, the whole queue is fair game.
@@ -1261,6 +1267,7 @@ impl ConservatoryWindow {
             }
         }
         player.set_shuffle(on);
+        imp.shuffle_on.set(on);
         if let Some(now) = imp.now_bar.get() {
             now.set_shuffle(on);
         }
@@ -2957,6 +2964,12 @@ impl ConservatoryWindow {
     /// (its constraint is empty).
     fn on_facet_activated(&self, pane: usize) {
         self.recompute_from(pane);
+        // The first click of the double-click queued a debounced recompute;
+        // the synchronous one above just did that work, so drop the pending
+        // duplicate instead of rebuilding every pane a second time.
+        if let Some(c) = self.imp().coalescer.get() {
+            c.cancel();
+        }
         self.play_leaf_from(0);
     }
 
@@ -3013,7 +3026,9 @@ impl ConservatoryWindow {
         // Shuffle-on (Phase 17b): reorder the built queue so the activated item
         // leads and the rest are shuffled. The DB queue written below mirrors it by
         // construction (same order), so the engine and the DB stay lock-step.
-        if player.snapshot().shuffle && items.len() > 1 {
+        // The window's own flag, not the polled engine snapshot: a toggle
+        // followed within one ~100 ms pump cycle by this play must still shuffle.
+        if imp.shuffle_on.get() && items.len() > 1 {
             let perm = shuffle_play_order(items.len(), start, seed_now());
             items = perm.iter().map(|&o| items[o].clone()).collect();
             start = 0;
@@ -3021,9 +3036,26 @@ impl ConservatoryWindow {
 
         // Write the DB queue through so it mirrors what the engine plays (the
         // spec §4.3 source of truth) and the drawer can render + edit it.
+        // Off the GTK thread: this write is one transaction over every queued
+        // row, and block_on here parked the main loop for its whole duration -
+        // the repeated-double-click freeze. The drawer reload chains behind
+        // the write so it still reads the new queue.
         let queue_ids: Vec<i64> = items.iter().map(|i| i.track_id).collect();
-        if let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get()) {
-            log_worker_err(rt.block_on(worker.replace_queue_with_tracks(queue_ids)));
+        if let (Some(rt), Some(worker)) = (imp.runtime.get(), imp.worker.get().cloned()) {
+            // The drop-import bridge idiom: the Send work (the DB write) on the
+            // runtime, the GTK work (the drawer reload) on the main context.
+            let handle = rt.spawn(async move { worker.replace_queue_with_tracks(queue_ids).await });
+            let win = self.downgrade();
+            glib::spawn_future_local(async move {
+                let Some(win) = win.upgrade() else {
+                    return;
+                };
+                match handle.await {
+                    Ok(res) => log_worker_err(res),
+                    Err(e) => tracing::error!(error = %e, "queue write task failed to run"),
+                }
+                win.reload_queue_panel();
+            });
         }
 
         *imp.now_labels.borrow_mut() = labels;
@@ -3033,7 +3065,6 @@ impl ConservatoryWindow {
             cur.set(Some(start as i64));
         }
         player.play_queue(items, start);
-        self.reload_queue_panel();
     }
 
     /// Re-read the queue from the DB and repopulate the drawer (the playing-row
@@ -6454,7 +6485,8 @@ impl ConservatoryWindow {
         }
         // Shuffle-on (Phase 17b): the playlist plays shuffled (its first entry
         // leads, the rest shuffled), the DB queue mirroring it by construction.
-        if player.snapshot().shuffle && items.len() > 1 {
+        // The window's own flag; the polled snapshot lags a pump cycle.
+        if imp.shuffle_on.get() && items.len() > 1 {
             let perm = shuffle_play_order(items.len(), start, seed_now());
             items = perm.iter().map(|&o| items[o].clone()).collect();
             start = 0;

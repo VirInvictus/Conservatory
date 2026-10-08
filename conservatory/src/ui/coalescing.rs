@@ -84,6 +84,17 @@ where
         inner.timer = Some(glib::timeout_add_local_once(interval, move || this.flush()));
     }
 
+    /// Drop the pending batch and its timer without performing: the caller
+    /// did the same work synchronously (the facet double-click recomputes
+    /// inline, and the click that preceded it queued a duplicate).
+    pub fn cancel(&self) {
+        let mut inner = self.inner.borrow_mut();
+        if let Some(id) = inner.timer.take() {
+            id.remove();
+        }
+        inner.pending.clear();
+    }
+
     /// Flush now: deliver the coalesced batch to `perform`.
     pub fn flush(&self) {
         let (batch, perform) = {

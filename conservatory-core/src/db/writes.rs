@@ -1026,14 +1026,27 @@ pub(crate) fn reorder_playlist_entry(
 }
 
 /// Replace the whole queue with `track_ids` in order (the "play these now" path).
+/// Multi-row INSERTs, one statement per 400-row chunk: this write sits behind
+/// every double-click-to-play, and a transaction of per-row executes over an
+/// 11k-track queue parked the player on it for the whole batch.
 pub(crate) fn replace_queue_with_tracks(conn: &mut Connection, track_ids: &[i64]) -> Result<()> {
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM queue", [])?;
-    for (pos, &track_id) in track_ids.iter().enumerate() {
-        tx.execute(
-            "INSERT INTO queue (position, kind, track_id) VALUES (?1, 'track', ?2)",
-            params![pos as i64, track_id],
-        )?;
+    const CHUNK: usize = 400;
+    for (chunk_ix, chunk) in track_ids.chunks(CHUNK).enumerate() {
+        let base = chunk_ix * CHUNK;
+        let mut sql = String::with_capacity(chunk.len() * 24 + 48);
+        sql.push_str("INSERT INTO queue (position, kind, track_id) VALUES ");
+        for i in 0..chunk.len() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            sql.push_str(&format!("({}, 'track', ?)", base + i));
+        }
+        let mut stmt = tx.prepare(&sql)?;
+        for track_id in chunk {
+            stmt.execute(params![track_id])?;
+        }
     }
     tx.commit()?;
     Ok(())

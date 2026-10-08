@@ -654,10 +654,12 @@ impl Leaf {
     /// `filtered` distinguishes "the library is empty" from "nothing matches the
     /// current filter" so the empty state can say the useful thing.
     pub fn set_tracks(&self, tracks: &[TrackBrief], filtered: bool) {
-        self.store.remove_all();
-        for t in tracks {
-            self.store.append(&TrackRow::new(t));
-        }
+        // One splice, one items-changed emission: remove_all + an append loop
+        // emitted per row, and every emission cascades through the sort and
+        // selection models (the MultiSelection re-keys an internal item map
+        // per emission), which was the facet-click freeze on a 10k library.
+        let rows: Vec<TrackRow> = tracks.iter().map(TrackRow::new).collect();
+        self.store.splice(0, self.store.n_items(), &rows);
         if tracks.is_empty() {
             if filtered {
                 self.empty_page

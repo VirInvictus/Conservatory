@@ -219,10 +219,10 @@ pub fn build_queue_panel(
 impl QueuePanel {
     /// Replace the rows from a fresh `load_queue_display` read.
     pub fn set_rows(&self, rows: &[conservatory_core::db::QueueDisplayRow]) {
-        self.store.remove_all();
-        for row in rows {
-            self.store.append(&QueueRow::new(row));
-        }
+        // One splice, one items-changed emission (the Leaf::set_tracks note:
+        // per-row appends cascade an emission through the model chain each).
+        let rows: Vec<QueueRow> = rows.iter().map(QueueRow::new).collect();
+        self.store.splice(0, self.store.n_items(), &rows);
     }
 
     /// Toggle the drawer's visibility.

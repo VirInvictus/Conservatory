@@ -216,14 +216,45 @@ fn cover_column(root: Option<PathBuf>, cache: CoverCache) -> gtk::ColumnViewColu
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
         let row = track(&item.item().expect("item"));
         let img = item.child().and_downcast::<gtk::Image>().expect("Image");
-        // Decode at 2x the display size for crispness on HiDPI.
-        let tex = root
+        // Decode at 2x the display size for crispness on HiDPI. A cache miss
+        // shows the placeholder and queues the decode into the cache's
+        // budgeted idle drain (an inline decode here was the browse jank on a
+        // cold facet: ~30 covers at 10-30 ms each, all inside one bind). The
+        // repaint hook re-validates its cell, so a recycled image never
+        // paints another row's cover.
+        let cover = root
             .as_ref()
             .zip(row.cover_path())
-            .and_then(|(r, cp)| cache.texture(&r.join(cp), COVER_PX * 2));
+            .map(|(r, cp)| r.join(cp));
+        let tex = cover
+            .as_ref()
+            .and_then(|cp| cache.texture(cp, COVER_PX * 2));
         match tex {
             Some(t) => img.set_paintable(Some(&t)),
-            None => img.set_icon_name(Some(COVER_PLACEHOLDER)),
+            None => {
+                img.set_icon_name(Some(COVER_PLACEHOLDER));
+                if let Some(cp) = cover {
+                    let img_weak = img.downgrade();
+                    let item_weak = item.downgrade();
+                    let repaint = Rc::new(
+                        move |path: &std::path::Path, tex: Option<gtk::gdk::Texture>| {
+                            if let (Some(item), Some(img), Some(tex)) =
+                                (item_weak.upgrade(), img_weak.upgrade(), tex)
+                            {
+                                let still_shown = item
+                                    .item()
+                                    .and_downcast::<TrackRow>()
+                                    .and_then(|r| r.cover_path())
+                                    .is_some_and(|cur| cur.as_str() == path.to_string_lossy());
+                                if still_shown {
+                                    img.set_paintable(Some(&tex));
+                                }
+                            }
+                        },
+                    );
+                    cache.request(cp, COVER_PX * 2, repaint);
+                }
+            }
         }
     });
     let col = gtk::ColumnViewColumn::new(Some(""), Some(factory));

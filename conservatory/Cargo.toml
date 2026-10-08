@@ -21,6 +21,12 @@ audiobooks = ["dep:conservatory-audiobooks"]
 
 # GTK4 lands at Phase 3b (the faceted browse window); plain GTK4 only since
 # Phase 26. The build needs the system gtk4 dev libraries (CI installs them).
+[build-dependencies]
+# The Now-bar's transport icons ride a GResource compiled into the binary (see
+# build.rs), so they resolve in every environment and icon theme; the bundle is
+# generated from data/icons/conservatory.gresource.xml.
+glib-build-tools = { workspace = true }
+
 [dependencies]
 vir-gtk = { git = "https://github.com/VirInvictus/vir-gtk.git" }
 conservatory-core = { path = "../conservatory-core" }

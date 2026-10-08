@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <!-- The Now-bar's transport symbols, bundled into the binary so they resolve
+       in every environment and icon theme (GtkApplication appends <resource
+       base>/icons to the default IconTheme's resource path; hicolor-style
+       scalable/actions subdirs are what the themed lookup expects). Copied
+       from adwaita-icon-theme, CC0; see ATTRIBUTIONS.md. -->
+  <gresource prefix="/io/github/virinvictus/Conservatory/icons/scalable/actions/">
+    <file alias="media-skip-backward-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/media-skip-backward-symbolic.svg</file>
+    <file alias="media-skip-forward-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/media-skip-forward-symbolic.svg</file>
+    <file alias="media-seek-backward-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/media-seek-backward-symbolic.svg</file>
+    <file alias="media-seek-forward-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/media-seek-forward-symbolic.svg</file>
+    <file alias="media-playlist-shuffle-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/media-playlist-shuffle-symbolic.svg</file>
+    <file alias="media-playlist-repeat-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/media-playlist-repeat-symbolic.svg</file>
+    <file alias="media-playback-start-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/media-playback-start-symbolic.svg</file>
+    <file alias="media-playback-pause-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/media-playback-pause-symbolic.svg</file>
+    <file alias="preferences-other-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/preferences-other-symbolic.svg</file>
+    <file alias="audio-speakers-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/audio-speakers-symbolic.svg</file>
+    <file alias="audio-volume-high-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/audio-volume-high-symbolic.svg</file>
+    <file alias="audio-volume-low-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/audio-volume-low-symbolic.svg</file>
+    <file alias="audio-volume-medium-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/audio-volume-medium-symbolic.svg</file>
+    <file alias="audio-volume-muted-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/audio-volume-muted-symbolic.svg</file>
+    <file alias="audio-x-generic-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/audio-x-generic-symbolic.svg</file>
+    <file alias="dialog-information-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/dialog-information-symbolic.svg</file>
+    <file alias="document-edit-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/document-edit-symbolic.svg</file>
+    <file alias="document-properties-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/document-properties-symbolic.svg</file>
+    <file alias="document-save-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/document-save-symbolic.svg</file>
+    <file alias="emblem-synchronizing-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/emblem-synchronizing-symbolic.svg</file>
+    <file alias="emblem-system-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/emblem-system-symbolic.svg</file>
+    <file alias="folder-download-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/folder-download-symbolic.svg</file>
+    <file alias="go-previous-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/go-previous-symbolic.svg</file>
+    <file alias="list-add-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/list-add-symbolic.svg</file>
+    <file alias="mail-unread-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/mail-unread-symbolic.svg</file>
+    <file alias="media-playlist-repeat-song-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/media-playlist-repeat-song-symbolic.svg</file>
+    <file alias="media-record-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/media-record-symbolic.svg</file>
+    <file alias="microphone-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/microphone-symbolic.svg</file>
+    <file alias="network-wireless-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/network-wireless-symbolic.svg</file>
+    <file alias="non-starred-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/non-starred-symbolic.svg</file>
+    <file alias="object-select-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/object-select-symbolic.svg</file>
+    <file alias="open-menu-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/open-menu-symbolic.svg</file>
+    <file alias="preferences-system-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/preferences-system-symbolic.svg</file>
+    <file alias="starred-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/starred-symbolic.svg</file>
+    <file alias="system-search-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/system-search-symbolic.svg</file>
+    <file alias="tag-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/tag-symbolic.svg</file>
+    <file alias="user-trash-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/user-trash-symbolic.svg</file>
+    <file alias="view-fullscreen-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/view-fullscreen-symbolic.svg</file>
+    <file alias="view-list-ordered-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/view-list-ordered-symbolic.svg</file>
+    <file alias="view-list-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/view-list-symbolic.svg</file>
+    <file alias="view-more-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/view-more-symbolic.svg</file>
+    <file alias="view-refresh-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/view-refresh-symbolic.svg</file>
+    <file alias="weather-clear-night-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/weather-clear-night-symbolic.svg</file>
+    <file alias="book-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/book-symbolic.svg</file>
+    <file alias="book-open-variant-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/book-open-variant-symbolic.svg</file>
+    <file alias="podcast-symbolic.svg" preprocess="xml-stripblanks">hicolor/symbolic/actions/podcast-symbolic.svg</file>
+  </gresource>
+</gresources>

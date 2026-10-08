@@ -110,7 +110,14 @@ fn main() -> glib::ExitCode {
     register_bundled_fonts();
     conservatory_core::debug::log_memory("startup");
 
-    let app = gtk::Application::builder().application_id(APP_ID).build();
+    // Register the bundled icons BEFORE any widget exists (see build.rs): the
+    // GtkApplication resource base path makes the IconTheme consult them by
+    // stock name, so transport controls render whatever the desktop theme lacks.
+    gtk::gio::resources_register_include!("conservatory.gresource").expect("bundled icon resource");
+    let app = gtk::Application::builder()
+        .application_id(APP_ID)
+        .resource_base_path("/io/github/virinvictus/Conservatory")
+        .build();
 
     app.connect_startup(|_| {
         // Kanagawa Dragon is dark-only (Phase 12a). The owned sheet (26l) paints

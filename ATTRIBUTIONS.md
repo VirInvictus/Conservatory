@@ -84,4 +84,5 @@ The typography (Phase 13d) ships its own fonts so the app never assumes a host f
 |---|---|---|---|
 | Inter | SIL OFL 1.1 | [rsms/inter](https://github.com/rsms/inter) (via the google/fonts mirror) | The base UI: chrome, menus, the dense track list and facet panes, property values. Variable; tabular figures by default | 
 | Fraunces | SIL OFL 1.1 | [undercasetype/Fraunces](https://github.com/undercasetype/Fraunces) (via the google/fonts mirror) | Headers and titles (`.title-*`, `.heading`). Variable; a warm display serif | 
-| IBM Plex Mono | SIL OFL 1.1 | [IBM/plex](https://github.com/IBM/plex) (via the google/fonts mirror) | Technical fields (`.tech`): file paths, the status-bar codec/bitrate line, MusicBrainz ids | 
+| IBM Plex Mono | SIL OFL 1.1 | [IBM/plex](https://github.com/IBM/plex) (via the google/fonts mirror) | Technical fields (`.tech`): file paths, the status-bar codec/bitrate line, MusicBrainz ids |
+| adwaita-icon-theme (the Now-bar / header / sidebar UI icon bundle, 43 icons) | GNOME Project | [CC0-1.0](https://github.com/GNOME/adwaita-icon-theme) | `data/icons/hicolor/symbolic/actions/` (three kind glyphs — book, open book, podcast — are the app's own) |

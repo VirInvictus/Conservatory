@@ -120,3 +120,15 @@ install_data(
     'data/icons/hicolor/scalable/apps/' + application_id + '.svg',
     install_dir: datadir / 'icons' / 'hicolor' / 'scalable' / 'apps',
 )
+
+# The transport symbols the Now-bar shells out to (prev / next / chapters /
+# shuffle / repeat / playback, plus the podcast preferences entry), bundled
+# into hicolor: icon themes are not obliged to carry media names (the 1.0
+# hands-on gate hit exactly that - the user's theme left prev / next /
+# shuffle rendering as image-missing boxes), and hicolor is the terminal
+# fallback of every theme lookup. Copied from adwaita-icon-theme (CC0);
+# recorded in ATTRIBUTIONS.md.
+install_subdir(
+    'data/icons/hicolor/symbolic',
+    install_dir: datadir / 'icons' / 'hicolor',
+)

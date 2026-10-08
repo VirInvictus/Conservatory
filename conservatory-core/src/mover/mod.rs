@@ -121,15 +121,19 @@ impl MoveKind {
 }
 
 /// A reason a planned operation cannot run. A plan with any conflict is refused
-/// by [`apply`] (no silent overwrite or auto-rename, the safe default).
+/// by [`apply`] (no silent overwrite or auto-rename, the safe default). Every
+/// variant names the files involved, so a conflict report is actionable on its
+/// own (the pre-1.0 gate's real-library run surfaced 25 duplicates and the
+/// op-index form gave no way to see which files competed).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Conflict {
-    /// Two or more operations target the same path. Indices are into the input.
-    DuplicateTarget { dst: PathBuf, ops: Vec<usize> },
+    /// Two or more operations target the same path. `srcs` are the competing
+    /// source files, in op order.
+    DuplicateTarget { dst: PathBuf, srcs: Vec<PathBuf> },
     /// The source file does not exist.
-    MissingSource { src: PathBuf, op: usize },
+    MissingSource { src: PathBuf },
     /// The destination already exists (refusing to overwrite).
-    TargetExists { dst: PathBuf, op: usize },
+    TargetExists { dst: PathBuf, src: PathBuf },
 }
 
 /// The dry-run preview: the operations that would run, the conflicts that block
@@ -156,12 +160,13 @@ pub fn plan(ops: Vec<MoveOp>) -> MovePlan {
     // Duplicate targets across the batch (reuses the Phase 2a collision finder).
     let dsts: Vec<PathBuf> = ops.iter().map(|o| o.dst.clone()).collect();
     for (dst, idxs) in find_collisions(&dsts) {
-        conflicts.push(Conflict::DuplicateTarget { dst, ops: idxs });
+        let srcs = idxs.iter().map(|&i| ops[i].src.clone()).collect();
+        conflicts.push(Conflict::DuplicateTarget { dst, srcs });
     }
 
     let mut actionable = Vec::new();
     let mut skipped = 0;
-    for (i, op) in ops.into_iter().enumerate() {
+    for op in ops.into_iter() {
         if op.src == op.dst {
             skipped += 1;
             continue;
@@ -169,14 +174,13 @@ pub fn plan(ops: Vec<MoveOp>) -> MovePlan {
         if !op.src.exists() {
             conflicts.push(Conflict::MissingSource {
                 src: op.src.clone(),
-                op: i,
             });
             continue;
         }
         if op.dst.exists() {
             conflicts.push(Conflict::TargetExists {
                 dst: op.dst.clone(),
-                op: i,
+                src: op.src.clone(),
             });
             continue;
         }

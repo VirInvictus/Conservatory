@@ -96,8 +96,8 @@
 
   <!-- Screenshots are a Flathub requirement and are captured against the
        real Kanagawa Dragon look, at 16:9, from the demo library rather than
-       Brandon's own. Left commented until the final icon pass lands, because
-       a screenshot showing a placeholder icon is worse than none. -->
+       Brandon's own. The icon pass landed 2026-10-07 (the Dragon glasshouse);
+       the capture happens with the sandboxed install pass. -->
   <!--
   <screenshots>
     <screenshot type="default">

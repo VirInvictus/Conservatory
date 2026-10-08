@@ -270,6 +270,8 @@ modules:
 # Still owed, tracked rather than hidden:
 #
 # 1. The end-to-end sandboxed build + install + run pass is the Phase 20
-#    gate and stays with Brandon (roadmap.md Phase 20, the Flatpak box).
-# 2. The icon is still the placeholder glasshouse from logo.svg, and the
-#    metainfo screenshots stay commented out until the real mark lands.
+#    gate and stays with Brandon (roadmap.md Phase 20, the Flatpak box);
+#    the screenshots come out of that pass (the metainfo block stays
+#    commented until then).
+# 2. The icon landed 2026-10-07: the Dragon-accent glasshouse (spec §15),
+#    kept identical to logo.svg.

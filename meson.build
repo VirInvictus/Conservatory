@@ -112,10 +112,10 @@ if desktop_file_validate.found()
          args: [meson.current_source_dir() / 'data' / application_id + '.desktop'])
 endif
 
-# Scalable app icon. Currently the placeholder glasshouse from logo.svg; the
-# final conservatory-silhouette mark is Brandon's call (spec §15), and the
-# metainfo screenshots stay commented out until it lands, because a screenshot
-# showing a placeholder icon is worse than no screenshot.
+# Scalable app icon: the Dragon-accent glasshouse (the Phase 20 icon pass,
+# adopted 2026-10-07, kept identical to logo.svg). The metainfo screenshots
+# stay commented out until the sandboxed install pass captures them against
+# the demo library.
 install_data(
     'data/icons/hicolor/scalable/apps/' + application_id + '.svg',
     install_dir: datadir / 'icons' / 'hicolor' / 'scalable' / 'apps',

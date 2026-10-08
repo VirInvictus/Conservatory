@@ -42,7 +42,11 @@ pub fn person_sort_name(name: &str) -> String {
 }
 
 fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
-    if s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix) {
+    // `get` declines a non-char-boundary end index, so a name opening in
+    // multi-byte script (e.g. `レ...`) never panics on the byte-length slice:
+    // an ASCII article can only match a name whose first bytes are ASCII.
+    let head = s.get(..prefix.len())?;
+    if head.eq_ignore_ascii_case(prefix) {
         Some(&s[prefix.len()..])
     } else {
         None
@@ -59,6 +63,18 @@ mod tests {
         assert_eq!(derive_sort_name("an Album"), "Album, An");
         assert_eq!(derive_sort_name("Aphex Twin"), "Aphex Twin"); // "A" only as a word
         assert_eq!(derive_sort_name("Boards of Canada"), "Boards of Canada");
+    }
+
+    #[test]
+    fn sort_name_never_panics_on_multibyte_script() {
+        // The real-library crash (Phase 20 gate): a name opening in katakana
+        // put the article check's byte-length slice inside a character.
+        // Multi-byte openings have no leading article; they pass through.
+        assert_eq!(derive_sort_name("レイヤー・ガール"), "レイヤー・ガール");
+        assert_eq!(derive_sort_name("Éclats D'Anvers"), "Éclats D'Anvers");
+        // And an ASCII article after multi-byte text still can't match: the
+        // article must be at the very start.
+        assert_eq!(derive_sort_name("ft. The Weeknd"), "ft. The Weeknd");
     }
 
     #[test]

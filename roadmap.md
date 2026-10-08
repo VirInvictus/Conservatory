@@ -1299,11 +1299,11 @@ Already specified above (see "Phase 9 — Listening history sync"), now sub-phas
 
 No new features: the readiness gate that earns the `1.0.0` tag, gathering the tracked pre-1.0 items (see "Tracked pre-1.0 items" under Phase 15) and the packaging the 0.1.0 gate deferred.
 
-- [ ] **50k real-library memory gate:** confirm the spec §13 idle target (< 200 MB) on a working copy of Brandon's real ~50k-track library (the synthetic fixture tops out at 12k, extrapolating to ~215–230 MB); optimize if over before the tag. *(The tracked pre-1.0 item's copy under Phase 15; one session ticks both.)*
-- [ ] **Full-library move-safety pass:** run the Phase 15a move / undo / crash checks against a working copy of the real library (the 0.1.0 gate was synthetic-only). *(The tracked pre-1.0 item's copy under Phase 15; one session ticks both.)*
+- [ ] **50k real-library memory gate:** confirm the spec §13 idle target (< 200 MB) on a working copy of Brandon's real ~50k-track library (the synthetic fixture tops out at 12k, extrapolating to ~215–230 MB); optimize if over before the tag. *(The tracked pre-1.0 item's copy under Phase 15; one session ticks both.)* **Measured 2026-10-07 (the Phase 20 session), over budget, optimization owed before the tag.** The mem_check harness landed first (one command; 34 MB core-side at 50k, the GTK floor deliberately absent), then the gate ran against the hardlink working copy of the real library (`/mnt/SharedData/conservatory-gate/`, 10,953 real tracks imported after quarantine): **50k synthetic idle 222 MB; 11k real idle 260 MB; 11k real playback-active 322 MB** (playback budget 300 MB). MALLOC_ARENA_MAX=1 saves 2 MB (real allocations, not fragmentation); the cover cache already decodes at scale. The overage is GUI-side model/content layer: heaptrack attribution, then a leaf row-object diet, is the planned optimize pass. The real library costs more than 50k synthetic at a quarter of the tracks: per-row content, not row count, dominates.
+- [x] **Full-library move-safety pass:** run the Phase 15a move / undo / crash checks against a working copy of the real library (the 0.1.0 gate was synthetic-only). *(The tracked pre-1.0 item's copy under Phase 15; one session ticks both.)* **Done 2026-10-07** on the hardlink working copy (zero extra disk; renames never touch contents, checksum samples of the original verified before/after). Dry-run accuracy: a 26-move plan and a 716-move plan each executed exactly as previewed. Undo round-trip: byte-identical audio on full manifests + SHA-256 spot checks, twice. Crash-replay: `organize --apply` SIGKILLed at 342/716 ops, recovery rolled it to 716/716 completed and a follow-up dry-run planned zero moves. The pass found and fixed five real bugs, each its own commit: the sort-name multi-byte panic (12dd912), the Windows-forbidden-character sanitizer gap that EINVAL'd colon titles on the NTFS volume (bd90bd6), conflict reports carrying unreadable op indices (35d702f), the covers resync writing outside the managed root (aa06a82), and `organize` skipping the recovery gate entirely (9bbdbb6). Findings recorded below: the album-merge render split, undo cover stragglers, and .lrc litter.
 - [x] **Library-root decision (§16.14)** *(settled 2026-08-05: `~/Conservatory`, shipped v0.3.10)*. Brandon picked the owned-directory-at-home-root option, on the Calibre precedent (`~/Calibre Library`): symmetric `{Music,Podcasts,Audiobooks}/`, no `Music/Conservatory/Music` stutter. `LibraryConfig::default()` now resolves `$HOME/Conservatory` (glib-free, same `$HOME` idiom as `config_path`); a CLI positional and an explicit `[library] root` still override. The rejected alternatives are recorded in spec §16.14.
 - [x] **App-id decision** *(settled 2026-07-26: `io.github.virinvictus.conservatory`)*. Three spellings had been in play, with the docs contradicting the code. `org.gnome.Conservatory` was struck as unavailable: GNOME Circle does not grant `org.gnome.*` ids and Circle members keep their own, so the spec's "if accepted into GNOME Circle" premise was simply wrong. `org.virinvictus.Conservatory`, which the code had carried since early on, was struck because Flathub requires the prefix be a domain the author controls and `virinvictus.org` is not owned (`VirInvictus.github.io` carries no `CNAME`); it stays valid only for local, sideloaded builds. The winner is verifiable on Flathub today and its lowercase final segment matches the three siblings already on that form (`atrium`, `hermitage`, `framework`). Synced in the same pass: `spec.md` §12 and §15, `conservatory/src/main.rs:22`, `docs/hyprland.md` (prose plus both `windowrulev2` examples), and the Phase 25 item below. *(Surfaced by the 2026-07-23 reconciliation sweep, which deliberately did not pick a winner.)* **Follow-on, not this project's to fix:** `Colophon` and `Viaduct` ship `org.virinvictus.*` manifests and will hit the same Flathub wall; raised for their own roadmaps.
-- [ ] **Flatpak + AppStream:** the manifest under `io.github.virinvictus.conservatory`, a validating `metainfo.xml` (releases tag, 16:9 screenshots, SPDX license, `appstreamcli validate` clean), the Meson packaging wrapper wired end-to-end, and GNOME Circle readiness (§12). The final icon pass (a conservatory silhouette, §15).
+- [ ] **Flatpak + AppStream:** the manifest under `io.github.virinvictus.conservatory`, a validating `metainfo.xml` (releases tag, 16:9 screenshots, SPDX license, `appstreamcli validate` clean), the Meson packaging wrapper wired end-to-end, and GNOME Circle readiness (§12). The final icon pass (a conservatory silhouette, §15). **Progress 2026-10-07:** the four tool modules were already in the manifest; the metainfo validates clean under `appstreamcli validate --no-net --pedantic`, the Circle AppCriteria are gathered and assessed (blockers: Flathub availability itself, the icon, screenshots, and the libadwaita criterion: the app deliberately ships plain GTK4 with an owned stylesheet since Phase 26, and Circle's criteria list "GTK 4 + Libadwaita"; that call is Brandon's), and `conservatory.doap` landed (the criteria expect one). Remaining: the sandboxed build+install+run (Brandon's hands-on gate), the icon, the screenshots, the Flathub submission.
 - [ ] **Bundle the four shelled-out external tools in the Flatpak** *(added 2026-08-08; the sandbox has no host PATH, so without bundling every feature below silently degrades to its absent-tool fallback)*: `rsgain` (ReplayGain scanning, `conservatory-core/src/replaygain.rs`), `flac` (integrity test-decode, `conservatory-core/src/verify.rs`), `ffmpeg` (strict-decode verify in `verify.rs` + the 19a waveform envelope, `conservatory-core/src/waveform.rs`), and `ffprobe` (M4B chapter reads, `conservatory-audiobooks/src/ffprobe.rs`). Each becomes a manifest module (or rides a shared ffmpeg extension where Flathub offers one); the native (non-Flatpak) build keeps using the host tools. Flagged in `ATTRIBUTIONS.md`.
   **Approach decided 2026-09-06** (Brandon delegated the call to a researched opinion): **own manifest modules, not a shared extension.** The `org.freedesktop.Platform.ffmpeg-full` extension was struck on three counts: it is a codec-library extension (the CLI binaries are not its contract; Flatpak has no extension property for PATH), it is `if-not-available`-optional so installs without it reintroduce the exact silent-degrade problem this box exists to solve, and it is discontinued since freedesktop 25.08 (succeeded by the also libs-only `codecs-extra`) while this manifest targets GNOME 50 on that very base; it never covered flac/rsgain anyway. Honest degrade was rejected as an end state (it silently kills ReplayGain scan, verify, the waveform envelope, and M4B chapters inside Flatpak). The module plan, three sources for four tools: a minimal ffmpeg module (decoders for flac/mp3/aac/opus/vorbis/wav, tools enabled, docs and autodetect off) yields both `ffmpeg` and `ffprobe`; `flac` is a small cmake module; `rsgain` rides three small deps (`libebur128`, `taglib`, `libinih`) and links the bundled ffmpeg libs. Module work plus a sandboxed build verification stays with the Phase 20 gate (the libmpv module remains the hard blocker).
 - *Usable artifact:* a `v1.0.0` tag the move logic, the memory budget, and a real installable Flatpak build have all earned, numbers recorded. **Tags `1.0.0`.**
@@ -1624,7 +1624,62 @@ crash-recovery stale plan, see v0.4.5); the rest is recorded:
 - [x] LOW — GitHub hardening landed: SHA-pinned actions, permissions floor, concurrency group, setup-uv v10.1.0 with enable-cache false, actions-only dependabot, SECURITY.md + PVR + two issue templates. No CONTRIBUTING.md: the README section carries it.
 - [x] Feature candidates ordered into the slotted-features section below, with the dependency-flagged watch folder last and gated.
 
-**CONFIRMED-prior (final-audit verification):** still open and accurate: TOCTOU rename overwrite (fsops.rs:76); three unbounded block_on flows; drive_job starvation on the 1-worker runtime; audiobook import partial-commit; sidecar-cover litter; daily-driver wording; podcast-fields degrade caveat; milestone-table + v0.2.0 records; CONTRIBUTING/SECURITY/templates; vir-search SQL push-down box. All Wave-2 named fixes verified landed (mover-revert idempotency, GUI startup recovery, backup|restore verbs, schema.md 0022, cargo-sources guard, theme.md, search-grammar dates, CLAUDE.md corrections). Slop-reader verdict: cleanest prose in the workspace; the em-dash sweep is the only systemic prose failure.
+**CONFIRMED-prior (final-audit verification):** resolved across v0.8.0 and the 2026-10-07 Phase 20 session. The threading cluster (the three unbounded block_on flows and the drive_job starvation on the 1-worker runtime) landed in v0.8.0's bc2bbab, misrecorded as open here afterward. The 2026-10-07 session closed the rest against the v0.8.0 tree, each verified first: TOCTOU rename overwrite → RENAME_NOREPLACE with a forward-only overwrite policy (09e81c3); audiobook import partial-commit → structured `Error::MoveRefused` + `delete_books` rollback (09e81c3); book sidecar-cover litter → the music `CoverSource` journal shape extended to books (09e81c3); vir-search SQL push-down for Prefix/Suffix/In → LIKE shapes with parity coverage (09e81c3). Daily-driver wording, podcast-fields caveat, milestone table, CONTRIBUTING/SECURITY/templates: closed in the v0.8.0 docs wave. Wave-2 named fixes verified landed (mover-revert idempotency, GUI startup recovery, backup|restore, schema.md 0022, cargo-sources guard, theme.md, search-grammar dates, CLAUDE.md corrections). Slop-reader verdict: cleanest prose in the workspace; the em-dash sweep is the only systemic prose failure.
+
+## Phase 20 gate findings (2026-10-07; the full-library pass, open boxes)
+
+The full-library move-safety pass and the memory gate ran against a
+hardlink working copy of the real library (10,953 tracks after
+quarantine; see the Phase 20 boxes above). The mover's core guarantees
+held everywhere; what the real library surfaced beyond the five fixed
+bugs:
+
+- [ ] **Import album-merge renders split trees.** Two source album
+      groups (the same album shelved under two genre folders, e.g.
+      Hammock under `Ambient/` and `Post-Rock/`) resolve into ONE
+      `albums` row via `get_or_create_album`, but each group's tracks
+      render with the group's OWN fields (the import builds
+      `TrackFields` from the planned album, not the matched row), so
+      the year tag in one copy and not the other lands the album in
+      two folders (`Loyal Bros (2021)/` and `Loyal Bros/`). A fresh
+      `organize` then plans 25 "surprise" relocations on a
+      just-imported library: the tree an import leaves is not what the
+      engine renders. Fix direction: render matched groups from the
+      ROW's fields (and/or backfill the row's NULL fields from the
+      incoming group), plus a regression test on a two-genre import.
+      The 25 real duplicates behind this are also a curation item:
+      none of the 25 pairs was byte-identical (different rips), and
+      they sit quarantined at
+      `/mnt/SharedData/conservatory-gate/quarantine/` pending
+      Brandon's keep-one decision (the `duplicates` verb reports the
+      class; the live library still holds both copies).
+- [ ] **Undo leaves resync-written covers behind.** Covers are synced
+      idempotently rather than journaled (by design, covers.rs), so an
+      undo of an organize/import moves the audio back but strands the
+      covers the post-move resync wrote into the now-abandoned folders
+      (13 in the crash test; mover.md's "pruning empty directories"
+      out-of-scope note is the same class, but these carry file
+      bytes). Fix direction: the undo's resync sweep removes covers
+      under folders the job's revert orphaned, or the resync records
+      its writes in the job row for the undo to clean.
+- [ ] **.lrc lyrics litter move-mode imports.** The importer consumes
+      audio (+ journaled sidecar covers since 09e81c3) but knows
+      nothing of sibling `.lrc` files: a move-mode import leaves every
+      lyric file behind in an otherwise-consumed source folder (9.5k
+      non-audio files in the gate's source copy). Same litter class as
+      the 2026-09-11 sidecar finding; the lyrics module (`lyrics.rs`)
+      is the consumer that should claim them.
+- [ ] **Facet-switch latency misses §13 at real-library scale.**
+      Clicking between facet selections (e.g. Acid Techno → [All])
+      takes ~3-5 s on the 10,953-track working copy; §13 budgets
+      < 100 ms for facet-change to track-list repaint. The SQL is
+      innocent (the full 11k `facet_tracks` query runs in 55 ms; the
+      mem_check harness loads 50k headless in ~1 s): the cost is
+      GUI-side, the leaf model rebuild plus per-row work, and it pairs
+      with the memory overage the 50k gate measured (both are the
+      GUI model layer). Needs a profiler pass (heaptrack/sysprof)
+      before the leaf diet lands; run it together with the memory
+      optimize pass.
 
 ### Slotted features (the final audit's L4, ordered 2026-09-15)
 
@@ -1632,7 +1687,7 @@ Each box needs its own go before it is built; the mem_check harness lands
 before the 50k-library gate session so the gate is one command by then.
 
 - [ ] Phase 20 packaging first: the sandboxed install-and-run pass (Brandon's hands-on gate; the IBMPlexMono-Medium.ttf keep/trim call inside it), the icon, and the screenshots.
-- [ ] The mem_check harness port from Viaduct: a synthetic corpus, `VmHWM` read from `/proc/self/status`, pass/fail against the spec §13 budgets; converts the 50k-library memory gate into one command.
+- [x] The mem_check harness port from Viaduct: a synthetic corpus, `VmHWM` read from `/proc/self/status`, pass/fail against the spec §13 budgets; converts the 50k-library memory gate into one command. *(Landed 2026-10-07 as the `mem_check` bin in `conservatory-cli` (b4b7b2f): `FixtureScale::Gate` (1,000 × 5 × 10 = 50,000 tracks) through the real worker, the GUI's exact startup load, VmHWM/VmRSS checkpoints plus a drop-and-settle leak check; `cargo run --release --bin mem_check`.)*
 - [ ] Backup rotation: `backup --rotate N`, a `[backup]` config section, and a documented systemd user timer; with the curated-JSON export below, it makes spec §5.6's protection story fully true.
 - [ ] Missing-file audit tier + a MISSING verify verdict: an existence-only walk that short-circuits before the decoder, so a vanished file stops classifying as CORRUPT via verify.rs's read-failure branch.
 - [ ] Curated-layer JSON export: the read-only `export-curated` verb (serde and serde_json are already in-tree).

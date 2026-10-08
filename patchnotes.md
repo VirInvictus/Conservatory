@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+- **The Phase 20 gate ran against the real library** (the 1.0.0
+  endgame's quality half): the full-library move-safety pass and the
+  50k memory gate, on a zero-cost hardlink working copy of Brandon's
+  10,953-track library. The mover's core guarantees held everywhere
+  (dry-run plans executed exactly; undos restored byte-identical audio;
+  a SIGKILL mid-job rolled forward to completion), and the real
+  library surfaced five defects, all fixed in this wave:
+  `derive_sort_name` panicked on multi-byte (katakana) names
+  (12dd912); the path sanitizer let Windows-forbidden characters
+  through, and a colon in an album title returned EINVAL from
+  rename() on the NTFS volume mid-import (bd90bd6); conflict reports
+  carried unreadable op indices instead of file paths (35d702f); the
+  covers resync wrote into unmanaged space after an import undo,
+  overwriting files outside the library root in place (aa06a82); and
+  the CLI's `organize` never ran the recovery gate its own docs
+  claimed, leaving a killed job stuck forever (9bbdbb6). The confirmed
+  prior wave also landed: RENAME_NOREPLACE for forward moves, the
+  audiobook import rollback on a late conflict refusal, the book
+  sidecar-cover journal, and SQL push-down for the wildcard/list
+  search kinds (09e81c3).
+- **The mem_check harness landed** (b4b7b2f): the Viaduct port turns
+  the memory gate into one command, `cargo run --release --bin
+  mem_check`: the synthetic 50k-track corpus through the real worker,
+  the GUI's exact browse load, VmHWM/RSS checkpoints against the
+  spec §13 budget.
+  Measured (recorded in the Phase 20 boxes, optimization owed before
+  the tag): 50k synthetic idle 222 MB (budget 200), 11k real idle
+  260 MB, 11k playback-active 322 MB (budget 300); core-side share is
+  only 34 MB, so the overage is the GUI model layer, shared with the
+  newly measured facet-switch lag (3-5 s against the 100 ms budget).
+- **GNOME Circle readiness half-landed**: `conservatory.doap` added
+  (47dfca7), the metainfo validates clean under
+  `appstreamcli validate --no-net --pedantic`, and the Circle criteria
+  are assessed in the Phase 20 box; the icon, screenshots, the
+  sandboxed build, and the Flathub submission remain, plus the
+  libadwaita criterion call (the app deliberately ships plain GTK4).
+
 - **vir-gtk adopted at 1.4.3** (consumer wave, lock bump only): a
   presented `Alert` now keeps answering after the caller drops the
   Alert value - the response state anchors to the dialog window, where

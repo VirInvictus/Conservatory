@@ -27,11 +27,6 @@ pub type RowContextFn = Rc<dyn Fn(u32, f64, f64, gtk::Widget)>;
 /// Click-to-rate callback (Phase 16b): `(row position, new rating 0..=5)`.
 pub type RowRateFn = Rc<dyn Fn(u32, u8)>;
 
-/// Inline cell-edit commit (the 16c follow-on): `(row position, assignment
-/// key, entered value)`. The key is a `Field::parse` spelling, so the window
-/// routes title / artist / album / genre through one handler.
-pub type RowEditFn = Rc<dyn Fn(u32, &'static str, String)>;
-
 /// The full leaf-column catalog as `(id, display title)` in canonical order
 /// (Phase 18b), for the Preferences editor. Each `id` is the `[browse].columns`
 /// config token `build_column` maps to a column; the default visible set is
@@ -89,12 +84,12 @@ fn column_sorter(key: TrackSort) -> gtk::CustomSorter {
 }
 
 /// A text column reading `field(row)` into a (optionally right-aligned) label,
-/// sortable by `key`. When `edit_key` is `Some`, a click on the cell of an
-/// already-selected row swaps the label for an entry (the Explorer-rename
-/// idiom; a first click just selects, and double-click play survives because
-/// a double-click's first press lands on a selected row and the second on the
-/// editor, which swallows it only when the row was already the target of a
-/// deliberate second click).
+/// sortable by `key`. Clicking a cell selects the row; the row's double-click
+/// (`activate`) plays it. Editing lives on `Ctrl+E` / `Alt+Enter` / the row
+/// context menu — never on a click gesture, which used to fight the
+/// double-click (a first press on an already-selected row opened an inline
+/// editor instead of playing, and an editor that lost the focus race stayed
+/// open as a grey box; the 1.0 hands-on gate retired the whole idiom).
 #[allow(clippy::too_many_arguments)]
 fn text_column(
     title: &str,
@@ -104,11 +99,7 @@ fn text_column(
     field: fn(&TrackRow) -> String,
     on_context: RowContextFn,
     tech: bool,
-    edit_key: Option<&'static str>,
-    selection: Option<gtk::MultiSelection>,
-    on_edit: &RowEditFn,
 ) -> gtk::ColumnViewColumn {
-    let on_edit = on_edit.clone();
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
@@ -139,25 +130,6 @@ fn text_column(
             }
         });
         label.add_controller(gesture);
-
-        // Inline editing (the 16c follow-on): second click on a selected cell.
-        if let (Some(key), Some(selection)) = (edit_key, selection.as_ref()) {
-            let on_edit = on_edit.clone();
-            let item_weak = item.downgrade();
-            let selection = selection.clone();
-            let click = gtk::GestureClick::new();
-            click.set_button(gtk::gdk::BUTTON_PRIMARY);
-            click.connect_pressed(move |_, _, _, _| {
-                let Some(item) = item_weak.upgrade() else {
-                    return;
-                };
-                if !selection.is_selected(item.position()) {
-                    return;
-                }
-                begin_cell_edit(&item, key, on_edit.clone());
-            });
-            label.add_controller(click);
-        }
     });
     factory.connect_bind(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
@@ -170,67 +142,6 @@ fn text_column(
     col.set_resizable(true);
     col.set_sorter(Some(&column_sorter(key)));
     col
-}
-
-/// Swap a text cell's label for an entry (the inline editor). Enter commits,
-/// Escape cancels, focus loss commits (the MusicBee convention). The label is
-/// restored in every case; an unchanged value skips the write entirely.
-fn begin_cell_edit(item: &gtk::ListItem, key: &'static str, on_edit: RowEditFn) {
-    let Some(label) = item.child().and_downcast::<gtk::Label>() else {
-        return;
-    };
-    let old = label.text().to_string();
-    let entry = gtk::Entry::new();
-    entry.set_text(&old);
-    entry.set_hexpand(true);
-    entry.set_vexpand(true);
-    item.set_child(Some(&entry));
-    entry.grab_focus();
-    let pos = item.position();
-    let finished = Rc::new(std::cell::Cell::new(false));
-    let finish = Rc::new({
-        let item_weak = item.downgrade();
-        let label = label.downgrade();
-        let finished = finished.clone();
-        let entry = entry.downgrade();
-        move |commit: bool| {
-            if finished.replace(true) {
-                return; // Enter / Escape / focus-loss fire in sequence; first wins.
-            }
-            if let (Some(item), Some(label)) = (item_weak.upgrade(), label.upgrade()) {
-                item.set_child(Some(&label));
-            }
-            if commit && let Some(entry) = entry.upgrade() {
-                let value = entry.text().to_string();
-                if value != old {
-                    on_edit(pos, key, value);
-                }
-            }
-        }
-    });
-    {
-        let finish = finish.clone();
-        entry.connect_activate(move |_| finish(true));
-    }
-    {
-        let finish = finish.clone();
-        let controller = gtk::EventControllerKey::new();
-        controller.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk::gdk::Key::Escape {
-                finish(false);
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
-            }
-        });
-        entry.add_controller(controller);
-    }
-    let controller = gtk::EventControllerFocus::new();
-    {
-        let finish = finish.clone();
-        controller.connect_leave(move |_| finish(true));
-    }
-    entry.add_controller(controller);
 }
 
 /// Set the play-status glyph on `img` from a `TrackRow::playing` state; `None`
@@ -517,15 +428,10 @@ fn build_column(
     id: &str,
     root: &Option<PathBuf>,
     cache: &CoverCache,
-    selection: Option<gtk::MultiSelection>,
     on_context: &RowContextFn,
     on_rate: &RowRateFn,
-    on_edit: &RowEditFn,
 ) -> Option<gtk::ColumnViewColumn> {
     let ctx = on_context.clone();
-    // The editable text columns (the 16c inline editor): second click on a
-    // selected cell edits. Album edits retitle the whole album (the bulk
-    // semantics); genre sets the raw multi-value set.
     let col = match id {
         "cover" => cover_column(root.clone(), cache.clone()),
         "glyph" => glyph_column(),
@@ -537,9 +443,6 @@ fn build_column(
             TrackRow::artist,
             ctx,
             false,
-            Some("artist"),
-            selection.clone(),
-            on_edit,
         ),
         "album" => text_column(
             "Album",
@@ -549,9 +452,6 @@ fn build_column(
             TrackRow::album,
             ctx,
             false,
-            Some("album"),
-            selection.clone(),
-            on_edit,
         ),
         "genre" => text_column(
             "Genre",
@@ -561,9 +461,6 @@ fn build_column(
             TrackRow::genres,
             ctx,
             false,
-            Some("genre"),
-            selection.clone(),
-            on_edit,
         ),
         "title" => text_column(
             "Title",
@@ -573,9 +470,6 @@ fn build_column(
             TrackRow::title,
             ctx,
             false,
-            Some("title"),
-            selection.clone(),
-            on_edit,
         ),
         "duration" => fixed(
             text_column(
@@ -586,9 +480,6 @@ fn build_column(
                 TrackRow::duration_text,
                 ctx,
                 true,
-                None,
-                None,
-                on_edit,
             ),
             80,
         ),
@@ -601,9 +492,6 @@ fn build_column(
                 TrackRow::year_text,
                 ctx,
                 true,
-                None,
-                None,
-                on_edit,
             ),
             64,
         ),
@@ -616,9 +504,6 @@ fn build_column(
                 TrackRow::track_no_text,
                 ctx,
                 true,
-                None,
-                None,
-                on_edit,
             ),
             48,
         ),
@@ -631,9 +516,6 @@ fn build_column(
                 TrackRow::format_text,
                 ctx,
                 true,
-                None,
-                None,
-                on_edit,
             ),
             72,
         ),
@@ -646,9 +528,6 @@ fn build_column(
                 TrackRow::bitrate_text,
                 ctx,
                 true,
-                None,
-                None,
-                on_edit,
             ),
             72,
         ),
@@ -661,9 +540,6 @@ fn build_column(
                 TrackRow::play_count_text,
                 ctx,
                 true,
-                None,
-                None,
-                on_edit,
             ),
             64,
         ),
@@ -676,9 +552,6 @@ fn build_column(
                 TrackRow::added_text,
                 ctx,
                 true,
-                None,
-                None,
-                on_edit,
             ),
             108,
         ),
@@ -691,9 +564,6 @@ fn build_column(
                 TrackRow::last_played_text,
                 ctx,
                 true,
-                None,
-                None,
-                on_edit,
             ),
             108,
         ),
@@ -709,7 +579,6 @@ pub fn build_leaf(
     row_style: conservatory_core::config::RowStyle,
     on_context: RowContextFn,
     on_rate: RowRateFn,
-    on_edit: RowEditFn,
 ) -> Leaf {
     let store = gio::ListStore::new::<TrackRow>();
     let cover_cache = CoverCache::new();
@@ -741,30 +610,14 @@ pub fn build_leaf(
         if !seen.insert(id.as_str()) {
             continue;
         }
-        if let Some(col) = build_column(
-            id,
-            &root,
-            &cover_cache,
-            Some(selection.clone()),
-            &on_context,
-            &on_rate,
-            &on_edit,
-        ) {
+        if let Some(col) = build_column(id, &root, &cover_cache, &on_context, &on_rate) {
             view.append_column(&col);
             added += 1;
         }
     }
     if added == 0 {
         for id in conservatory_core::config::default_columns() {
-            if let Some(col) = build_column(
-                &id,
-                &root,
-                &cover_cache,
-                Some(selection.clone()),
-                &on_context,
-                &on_rate,
-                &on_edit,
-            ) {
+            if let Some(col) = build_column(&id, &root, &cover_cache, &on_context, &on_rate) {
                 view.append_column(&col);
             }
         }

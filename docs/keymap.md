@@ -24,7 +24,7 @@
 | `Double-click` / `Enter` | Play the track, or the facet value under the cursor, replacing the queue (the deadbeef-cui activate-to-play, Phase 13e-i) |
 | `Ctrl+Enter` | Append the selection to the queue |
 | `Ctrl+S` | Save the current filter as a Perspective (the binding is deferred; the sidebar's save button is the wired path, Phase 3c) |
-| `Ctrl+E` | Edit metadata for the selection (bulk editor, Phase 5) |
+| `Ctrl+E` / `Alt+Enter` | Edit metadata for the selection (bulk editor, Phase 5; `Alt+Enter` since the 1.0 hands-on pass retired click-to-edit cells so double-click stays play) |
 | `Delete` | Remove from library (the key stays unbound; the right-click menu's Remove from Library is the confirmed path since Phase 16a, and files always stay on disk) |
 
 ## Playback

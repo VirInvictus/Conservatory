@@ -446,7 +446,6 @@ impl ConservatoryWindow {
                 .collect();
         let weak = self.downgrade();
         let ctx_weak = weak.clone();
-        let edit_weak = weak.clone();
         let leaf = build_leaf(
             imp.library_root.get().cloned(),
             &config.browse.columns,
@@ -459,11 +458,6 @@ impl ConservatoryWindow {
             Rc::new(move |pos, rating| {
                 if let Some(win) = weak.upgrade() {
                     win.set_row_rating(pos, rating);
-                }
-            }),
-            Rc::new(move |pos, key, value| {
-                if let Some(win) = edit_weak.upgrade() {
-                    win.edit_row_cell(pos, key, value);
                 }
             }),
         );
@@ -645,7 +639,7 @@ impl ConservatoryWindow {
         header.pack_end(&panel_group);
 
         let edit_btn = gtk::Button::from_icon_name("document-edit-symbolic");
-        edit_btn.set_tooltip_text(Some("Edit selected tracks (Ctrl+E)"));
+        edit_btn.set_tooltip_text(Some("Edit selected tracks (Ctrl+E / Alt+Enter)"));
         let weak = self.downgrade();
         edit_btn.connect_clicked(move |_| {
             if let Some(win) = weak.upgrade() {
@@ -877,10 +871,22 @@ impl ConservatoryWindow {
                     glib::Propagation::Stop
                 })),
             ));
-            // Ctrl+E opens the bulk-edit dialog over the selection (spec §3.5).
+            // Ctrl+E and Alt+Enter open the bulk-edit dialog over the selection
+            // (spec §3.5; Alt+Enter since the 1.0 hands-on pass retired the
+            // click-to-edit cell gesture so double-click stays play).
             let weak = self.downgrade();
             append.add_shortcut(gtk::Shortcut::new(
                 gtk::ShortcutTrigger::parse_string("<Control>e"),
+                Some(gtk::CallbackAction::new(move |_, _| {
+                    if let Some(win) = weak.upgrade() {
+                        win.prompt_bulk_edit();
+                    }
+                    glib::Propagation::Stop
+                })),
+            ));
+            let weak = self.downgrade();
+            append.add_shortcut(gtk::Shortcut::new(
+                gtk::ShortcutTrigger::parse_string("<Alt>Return"),
                 Some(gtk::CallbackAction::new(move |_, _| {
                     if let Some(win) = weak.upgrade() {
                         win.prompt_bulk_edit();
@@ -1763,62 +1769,6 @@ impl ConservatoryWindow {
             format!("{n} tracks selected")
         };
         inspector.show(&title, &fields, cover_abs.as_deref(), accent);
-    }
-
-    /// The inline cell editor's commit path (the 16c follow-on). `key` is the
-    /// `Field::parse` spelling; an empty value clears through the same parse
-    /// the bulk edit uses. Album-level keys retitle the whole album (the bulk
-    /// semantics, surfaced in the cell's edit), and a path-affecting edit
-    /// runs the same confirm-and-move pipeline as the bulk dialog.
-    fn edit_row_cell(&self, pos: u32, key: &'static str, value: String) {
-        let imp = self.imp();
-        let (Some(rt), Some(worker), Some(pool)) =
-            (imp.runtime.get(), imp.worker.get(), imp.pool.get())
-        else {
-            return;
-        };
-        let Some(leaf) = imp.leaf.get() else { return };
-        let Some(row) = leaf.selection.item(pos).and_downcast::<TrackRow>() else {
-            return;
-        };
-        let track_id = row.brief().id;
-        let Ok(assignment) = parse_assignment(&format!("{key}={value}")) else {
-            self.toast("Invalid value; not applied");
-            return;
-        };
-        if assignment.field.is_album_level() {
-            let albums: Vec<i64> = {
-                let Ok(conn) = pool.open() else { return };
-                track_render_rows(&conn)
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|r| r.track_id == track_id)
-                    .and_then(|r| r.album_id)
-                    .into_iter()
-                    .collect()
-            };
-            let album_edit = build_album_edit(&[assignment]);
-            if !album_edit.is_empty() {
-                for aid in &albums {
-                    log_worker_err(rt.block_on(worker.update_album(*aid, album_edit.clone())));
-                }
-            }
-            if let (Some(root), [aid]) = (imp.library_root.get(), albums.as_slice()) {
-                self.confirm_and_move(std::slice::from_ref(aid), root.clone());
-                return; // the confirm dialog refreshes when it closes
-            }
-            self.populate_initial();
-            return;
-        }
-        let track_edit = build_track_edit(std::slice::from_ref(&assignment));
-        if !track_edit.is_empty() {
-            log_worker_err(rt.block_on(worker.update_track(track_id, track_edit)));
-        }
-        if let Some(g) = genres_assignment(&[assignment]) {
-            log_worker_err(rt.block_on(worker.set_tracks_genres(vec![track_id], g)));
-        }
-        self.refresh_inspector();
-        self.populate_initial();
     }
 
     /// The General preferences page (Phase 10b): the `[library]` and `[genre]`

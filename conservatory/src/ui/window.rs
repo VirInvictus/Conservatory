@@ -38,7 +38,7 @@ use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp, organize_ops};
 use conservatory_core::{
     Assignment, Config, ImportMode, PlaybackConfig, PlayerHandle, Repeat, ScrobbleService,
     TagWrite, any_path_affecting, build_album_edit, build_track_edit, common_value,
-    genres_assignment, parse_assignment, shuffle_order, write_track_tags,
+    genres_assignment, parse_assignment, write_track_tags,
 };
 
 #[cfg(any(feature = "podcasts", feature = "audiobooks"))]
@@ -1238,35 +1238,32 @@ impl ConservatoryWindow {
         }
     }
 
-    /// Toggle shuffle (Phase 17b, the Now-bar button / Ctrl+K). Turning it **on**
-    /// reorders the upcoming queue tail in place: it computes one permutation and
-    /// applies it to *both* the DB queue (`reorder_queue_by_positions`) and the live
-    /// engine queue (`reorder_queue`), so the two stay lock-step and the queue view
-    /// keeps showing the true play order (spec §6.1). The played + currently-playing
-    /// prefix stays put. Turning it **off** leaves the order as-is (non-destructive);
-    /// it just stops governing future plays. Either way the flag is applied to the
-    /// engine, reflected on the button, and persisted to `audio_state`.
+    /// Toggle shuffle (Phase 17b, the Now-bar button / Ctrl+K). The engine is
+    /// authoritative: turning it **on** reshuffles the live queue around the
+    /// playing item there (where the true queue and cursor live) and returns
+    /// the permutation, which the DB mirror applies off the GTK thread so the
+    /// drawer stays lock-step. The played + currently-playing prefix stays
+    /// put. Turning it **off** leaves the order as-is (non-destructive); it
+    /// just stops governing future plays. Either way the flag is applied to
+    /// the engine, reflected on the button and the window's own copy, and
+    /// persisted to `audio_state`.
     fn toggle_shuffle(&self) {
         let imp = self.imp();
         let Some(player) = imp.player.get() else {
             return;
         };
-        let snap = player.snapshot();
         let on = !imp.shuffle_on.get();
-        if on {
-            // Shuffle the tail after the currently-playing item; if nothing is
-            // playing, the whole queue is fair game.
-            let keep_prefix = snap.current_index.map_or(0, |c| c + 1);
-            let len = snap.queue_len;
-            if len > keep_prefix + 1 {
-                let perm = shuffle_order(len, keep_prefix, seed_now());
-                if let (Some(worker), Some(rt)) = (imp.worker.get(), imp.runtime.get()) {
-                    log_worker_err(rt.block_on(worker.reorder_queue_by_positions(perm.clone())));
-                }
-                player.reorder_queue(perm);
-            }
+        // One call: the engine applies the flag, reshuffles, and returns the
+        // permutation (None when turning off).
+        if let (Some(perm), Some(worker), Some(rt)) = (
+            player.set_shuffle(on),
+            imp.worker.get().cloned(),
+            imp.runtime.get(),
+        ) {
+            rt.spawn(async move {
+                log_worker_err(worker.reorder_queue_by_positions(perm).await);
+            });
         }
-        player.set_shuffle(on);
         imp.shuffle_on.set(on);
         if let Some(now) = imp.now_bar.get() {
             now.set_shuffle(on);

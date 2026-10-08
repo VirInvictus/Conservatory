@@ -118,11 +118,16 @@ pub enum PlayerCommand {
     /// Set the repeat mode (Phase 17a): Off plays to the end and stops, All wraps
     /// the queue, One replays the current item. Applied live to the advance logic.
     SetRepeat(Repeat),
-    /// Set shuffle on/off (Phase 17b). The engine stores the flag (a repeat-all
-    /// lap reshuffles when it is on) and re-applies context-aware ReplayGain to the
-    /// current track (Phase 17c); the *reorder* of the live queue is a separate
-    /// `ReorderQueue`, so the GUI can persist the same permutation to the DB queue.
-    SetShuffle(bool),
+    /// Set shuffle on/off (Phase 17b, engine-authoritative since the 1.0 gate).
+    /// Turning it on reshuffles the engine's live queue around the playing item
+    /// and replies with the permutation it applied (`perm[new] = old`), for the
+    /// GUI to mirror into the DB queue; turning it off replies `None` (the order
+    /// is left as-is, non-destructive). Either way context-aware ReplayGain is
+    /// re-applied to the current track (Phase 17c).
+    SetShuffle {
+        on: bool,
+        reply: std::sync::mpsc::Sender<Option<Vec<usize>>>,
+    },
     /// Reorder the whole queue by a permutation (`perm[new] = old`), the shuffle
     /// path (Phase 17b). The playing item keeps playing; its index follows. Applied
     /// in lock-step with `worker.reorder_queue_by_positions` (the same permutation).
@@ -407,11 +412,15 @@ impl PlayerHandle {
         let _ = self.tx.send(PlayerCommand::SetRepeat(repeat));
     }
 
-    /// Set shuffle on/off (Phase 17b). Pair with [`Self::reorder_queue`] +
-    /// `worker.reorder_queue_by_positions` (the same permutation) to shuffle the
-    /// live queue in place.
-    pub fn set_shuffle(&self, on: bool) {
-        let _ = self.tx.send(PlayerCommand::SetShuffle(on));
+    /// Set shuffle on/off (Phase 17b). The engine reshuffles its live queue and
+    /// returns the permutation it applied — mirror it into the DB queue with
+    /// `worker.reorder_queue_by_positions(perm)` so the drawer stays lock-step.
+    /// Blocks briefly on the engine's answer (an in-memory reorder); `None`
+    /// when shuffle turned off (nothing reordered).
+    pub fn set_shuffle(&self, on: bool) -> Option<Vec<usize>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = self.tx.send(PlayerCommand::SetShuffle { on, reply: tx });
+        rx.recv().ok().flatten()
     }
 
     /// Reorder the live queue by a permutation (`perm[new] = old`), Phase 17b.

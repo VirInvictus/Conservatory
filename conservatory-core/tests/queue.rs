@@ -1573,3 +1573,101 @@ fn assert_positions_contiguous(pool: &ReadPool) {
         "positions must be a dense 0..n range in order"
     );
 }
+
+/// Shuffle is engine-authoritative (the 1.0 gate's fix): toggling it on
+/// reshuffles the engine's live queue around the playing item and returns the
+/// permutation it applied — nothing can skip it via a stale snapshot. Turning
+/// it off reorders nothing and reports `None`.
+#[test]
+fn set_shuffle_is_engine_authoritative() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let dbdir = tempdir().unwrap();
+    let libdir = tempdir().unwrap();
+    let srcdir = tempdir().unwrap();
+    let db = dbdir.path().join("library.db");
+    let root = libdir.path().to_path_buf();
+    let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio");
+    for name in ["sample.flac", "sample.mp3", "sample.opus", "sample.m4a"] {
+        std::fs::copy(fixtures_dir.join(name), srcdir.path().join(name)).unwrap();
+    }
+    let worker = {
+        let _guard = runtime.enter();
+        spawn_worker(db.clone()).unwrap()
+    };
+    let pool = ReadPool::new(db.clone(), 3).unwrap();
+    runtime.block_on(async {
+        let opts = ImportOptions {
+            library_root: root.clone(),
+            mode: MoveMode::Copy,
+        };
+        import_folder(&worker, &pool, srcdir.path(), &opts)
+            .await
+            .unwrap();
+    });
+    let cfg = PlaybackConfig::default();
+    let items: Vec<PlayableItem> = {
+        let conn = pool.open().unwrap();
+        search_rows(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|row| {
+                let track = get_track(&conn, row.track_id).unwrap().unwrap();
+                PlayableItem {
+                    track_id: track.id,
+                    source: root.join(&track.file_path),
+                    profile: resolve_music_profile(&track, &cfg),
+                    album_id: track.album_id,
+                    kind: conservatory_core::db::MediaKind::Track,
+                    streaming: false,
+                    chapters: [].into(),
+                    segments: [].into(),
+                }
+            })
+            .collect()
+    };
+    let len = items.len();
+
+    let player = player::spawn_null(worker.clone(), runtime.handle().clone()).unwrap();
+    player.play_queue(items, 0);
+    player.pause();
+    let wait_for = |pred: &dyn Fn(&PlayerSnapshot) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if pred(&player.snapshot()) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "snapshot condition not met in time"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    wait_for(&|s| s.current_index == Some(0) && s.paused);
+    let before = player.snapshot().track_id;
+
+    // Toggle on: a valid permutation comes back, playing head anchored at row 0.
+    let perm = player
+        .set_shuffle(true)
+        .expect("shuffle on returns the applied perm");
+    assert_eq!(perm.len(), len);
+    let mut sorted = perm.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted,
+        (0..len).collect::<Vec<_>>(),
+        "perm[new] = old, bijective"
+    );
+    assert_eq!(perm[0], 0, "the playing head stays anchored");
+    wait_for(&|s| s.queue_len == len && s.track_id == before);
+
+    // Toggle off: nothing reorders, nothing reported.
+    assert_eq!(player.set_shuffle(false), None);
+
+    player.shutdown();
+    runtime.block_on(worker.shutdown_ack()).ok();
+}

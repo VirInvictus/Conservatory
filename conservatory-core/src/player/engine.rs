@@ -524,14 +524,26 @@ impl Engine {
                 // is handled at end-of-queue, not here.
                 self.resync_prefetch();
             }
-            PlayerCommand::SetShuffle(on) => {
+            PlayerCommand::SetShuffle { on, reply } => {
                 self.shuffle = on;
-                // Re-apply context-aware ReplayGain to the current track live
-                // (Phase 17c): album gain ↔ track gain follows the shuffle state, a
-                // gap-free chain rebuild (the set_eq path). Spoken word carries no
-                // RG so this is a no-op there. Extract the profile before touching
-                // the host to release the queue borrow. No reorder here: the GUI
-                // drives that via `ReorderQueue` so the DB persists the same perm.
+                // Engine-authoritative shuffle (the 1.0 gate's fix): toggling on
+                // reshuffles the live queue around the playing item right here,
+                // where the true queue and cursor live, so it can never be
+                // skipped by a stale GUI snapshot (the old failure mode: toggle
+                // then play read a lagging flag and ran linearly). The GUI
+                // mirrors the returned permutation into the DB queue so the
+                // drawer stays lock-step. Turning off reorders nothing
+                // (non-destructive). Re-apply context-aware ReplayGain to the
+                // current track live (Phase 17c): album gain ↔ track gain
+                // follows the shuffle state, a gap-free chain rebuild. Spoken
+                // word carries no RG so this is a no-op there.
+                let mut applied = None;
+                if on && self.queue.len() > 1 {
+                    let keep = self.current.map_or(0, |c| c + 1);
+                    let perm = shuffle_order(self.queue.len(), keep, seed_now());
+                    self.reorder_queue(perm.clone());
+                    applied = Some(perm);
+                }
                 let live = self
                     .current_item()
                     .filter(|i| i.kind == MediaKind::Track)
@@ -539,6 +551,7 @@ impl Engine {
                 if let Some(profile) = live {
                     let _ = self.host.apply_profile(&profile);
                 }
+                let _ = reply.send(applied);
             }
             PlayerCommand::ReorderQueue(perm) => self.reorder_queue(perm),
             PlayerCommand::SetScrobble(service) => self.scrobble = service,

@@ -2955,8 +2955,18 @@ async fn run_organize(
     let worker = spawn_worker(db.clone()).context("spawning worker")?;
     let pool = ReadPool::new(db, 3).context("opening read pool")?;
 
-    // The journal-inspection surfaces run *without* the recovery gate: they
+    // Roll a job a crash left in_progress forward before anything else (the
+    // same gate `run_import` applies; docs/mover.md's "the CLI gates every
+    // mutating verb behind recovery"). Without it, a killed `organize --apply`
+    // leaves the job stuck and no CLI surface ever drives it home. The
+    // journal-inspection surfaces below still run *without* the gate: they
     // exist precisely for when recovery itself cannot succeed.
+    if !jobs && cancel_job.is_none() {
+        mover::recover(&worker, &pool)
+            .await
+            .context("recovery (a stuck job? `organize --jobs` lists it, `organize --cancel-job <ID>` clears it)")?;
+    }
+
     if jobs {
         let summaries = {
             let conn = pool.open().context("opening pool connection")?;

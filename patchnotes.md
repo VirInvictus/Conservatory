@@ -1,5 +1,18 @@
 # Patch Notes
 
+## Unreleased
+
+- **Shuffle is engine-authoritative** (the "shuffle doesn't actually
+  work" fix): turning it on reshuffles the engine's live queue around
+  the playing item and returns the permutation for the DB mirror, so a
+  stale UI snapshot can no longer skip the reorder; play paths read the
+  window's own flag instead of the lagging engine snapshot. Cover
+  decodes drain through a budgeted idle queue (8 ms slices at idle
+  priority) instead of decoding inline inside a bind, the browse jank
+  on a cold facet.
+- (previous hands-on fixes: the shuffle permutation mirror, the budgeted
+  cover drain — see the v0.9.0 entry below for the gate itself.)
+
 ## v0.9.0: the real-library gate and the browse interaction lane (2026-10-08)
 
 The Phase 20 gate session and the hands-on feedback wave: the release-blocking verifications the 1.0 tag runs on, executed against a working copy of the real library, the fixes the real library surfaced, and the browse interaction lane that followed. Workspace suite 684 test functions green; clippy `-D warnings` clean.

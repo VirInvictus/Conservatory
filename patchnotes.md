@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **The browse interaction lane** (post-gate hands-on feedback):
+  double-click plays instead of opening the cell editor — the
+  Explorer-style click-again-to-edit cells fought the activate-to-play
+  idiom and stranded grey entry boxes, so editing consolidated on
+  `Ctrl+E` / `Alt+Enter` / the context menu (a650e24); the facet-click
+  and double-click freezes lost their main-thread blockers (one model
+  splice instead of ~11k per-row emissions, no double recompute, the
+  queue write batched and off the GTK thread, shuffle plays reading the
+  window's own flag rather than the lagging snapshot) (1cec3f6); and
+  every icon the app requests now rides a GResource compiled into the
+  binary, so transport, header, stars and sidebar render under any icon
+  theme or environment (68a866e).
+
 - **The Phase 20 gate ran against the real library** (the 1.0.0
   endgame's quality half): the full-library move-safety pass and the
   50k memory gate, on a zero-cost hardlink working copy of Brandon's

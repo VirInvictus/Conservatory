@@ -1634,6 +1634,7 @@ quarantine; see the Phase 20 boxes above). The mover's core guarantees
 held everywhere; what the real library surfaced beyond the five fixed
 bugs:
 
+- [x] **Facet-switch latency: the first fix landed** (the box below; 1cec3f6); the deeper model-layer pass is the memory lane's twin.
 - [ ] **Import album-merge renders split trees.** Two source album
       groups (the same album shelved under two genre folders, e.g.
       Hammock under `Ambient/` and `Post-Rock/`) resolve into ONE
@@ -1677,9 +1678,17 @@ bugs:
       mem_check harness loads 50k headless in ~1 s): the cost is
       GUI-side, the leaf model rebuild plus per-row work, and it pairs
       with the memory overage the 50k gate measured (both are the
-      GUI model layer). Needs a profiler pass (heaptrack/sysprof)
-      before the leaf diet lands; run it together with the memory
-      optimize pass.
+      GUI model layer). **First fix landed 2026-10-08** (1cec3f6): the
+      leaf and drawer models splice once instead of ~11k per-row
+      emissions, the facet double-click no longer recomputes twice,
+      the double-click play path no longer parks the GTK thread on the
+      11k-row queue write (batched multi-row INSERTs, off-thread with
+      the drawer reload chained behind), and shuffle plays read the
+      window's own flag instead of the lagging engine snapshot. The
+      acid-techno facet queued all 33 tracks and played on the fixed
+      build. Remaining, with the memory overage: heaptrack/sysprof
+      attribution, then the stable master store + incremental filter
+      (the deadbeef-cui shape) if the splice alone still misses §13.
 
 ### Slotted features (the final audit's L4, ordered 2026-09-15)
 

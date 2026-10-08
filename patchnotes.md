@@ -1,19 +1,21 @@
 # Patch Notes
 
-## Unreleased
+## v0.9.0: the real-library gate and the browse interaction lane (2026-10-08)
+
+The Phase 20 gate session and the hands-on feedback wave: the release-blocking verifications the 1.0 tag runs on, executed against a working copy of the real library, the fixes the real library surfaced, and the browse interaction lane that followed. Workspace suite 684 test functions green; clippy `-D warnings` clean.
 
 - **The browse interaction lane** (post-gate hands-on feedback):
-  double-click plays instead of opening the cell editor — the
+  double-click plays instead of opening the cell editor (the
   Explorer-style click-again-to-edit cells fought the activate-to-play
-  idiom and stranded grey entry boxes, so editing consolidated on
-  `Ctrl+E` / `Alt+Enter` / the context menu (a650e24); the facet-click
+  idiom and stranded grey entry boxes), so editing consolidated on
+  `Ctrl+E` / `Alt+Enter` / the context menu; the facet-click
   and double-click freezes lost their main-thread blockers (one model
   splice instead of ~11k per-row emissions, no double recompute, the
   queue write batched and off the GTK thread, shuffle plays reading the
-  window's own flag rather than the lagging snapshot) (1cec3f6); and
+  window's own flag rather than the lagging snapshot); and
   every icon the app requests now rides a GResource compiled into the
   binary, so transport, header, stars and sidebar render under any icon
-  theme or environment (68a866e).
+  theme or environment.
 
 - **The Phase 20 gate ran against the real library** (the 1.0.0
   endgame's quality half): the full-library move-safety pass and the
@@ -22,20 +24,20 @@
   (dry-run plans executed exactly; undos restored byte-identical audio;
   a SIGKILL mid-job rolled forward to completion), and the real
   library surfaced five defects, all fixed in this wave:
-  `derive_sort_name` panicked on multi-byte (katakana) names
-  (12dd912); the path sanitizer let Windows-forbidden characters
+  `derive_sort_name` panicked on multi-byte (katakana) names; the
+  path sanitizer let Windows-forbidden characters
   through, and a colon in an album title returned EINVAL from
-  rename() on the NTFS volume mid-import (bd90bd6); conflict reports
-  carried unreadable op indices instead of file paths (35d702f); the
+  rename() on the NTFS volume mid-import; conflict reports
+  carried unreadable op indices instead of file paths; the
   covers resync wrote into unmanaged space after an import undo,
-  overwriting files outside the library root in place (aa06a82); and
+  overwriting files outside the library root in place; and
   the CLI's `organize` never ran the recovery gate its own docs
-  claimed, leaving a killed job stuck forever (9bbdbb6). The confirmed
+  claimed, leaving a killed job stuck forever. The confirmed
   prior wave also landed: RENAME_NOREPLACE for forward moves, the
   audiobook import rollback on a late conflict refusal, the book
   sidecar-cover journal, and SQL push-down for the wildcard/list
-  search kinds (09e81c3).
-- **The mem_check harness landed** (b4b7b2f): the Viaduct port turns
+  search kinds.
+- **The mem_check harness landed**: the Viaduct port turns
   the memory gate into one command, `cargo run --release --bin
   mem_check`: the synthetic 50k-track corpus through the real worker,
   the GUI's exact browse load, VmHWM/RSS checkpoints against the
@@ -45,16 +47,21 @@
   260 MB, 11k playback-active 322 MB (budget 300); core-side share is
   only 34 MB, so the overage is the GUI model layer, shared with the
   newly measured facet-switch lag (3-5 s against the 100 ms budget).
-- **GNOME Circle readiness half-landed**: `conservatory.doap` added
-  (47dfca7), the metainfo validates clean under
+- **The final icon pass landed**: the placeholder glasshouse re-paletted
+  to the Dragon accent (spec §15), adopted as the app icon and kept
+  identical to `logo.svg`.
+- **GNOME Circle readiness half-landed**: `conservatory.doap` added,
+  the metainfo validates clean under
   `appstreamcli validate --no-net --pedantic`, and the Circle criteria
-  are assessed in the Phase 20 box; the icon, screenshots, the
-  sandboxed build, and the Flathub submission remain, plus the
-  libadwaita criterion call (the app deliberately ships plain GTK4).
+  are assessed in the Phase 20 box; the screenshots, the sandboxed
+  build, and the Flathub submission remain, plus the libadwaita
+  criterion call (the app deliberately ships plain GTK4). Sponsorship
+  went live alongside: GitHub Sponsors and Liberapay (the FUNDING file
+  and the metainfo donation URL).
 
 - **vir-gtk adopted at 1.4.3** (consumer wave, lock bump only): a
   presented `Alert` now keeps answering after the caller drops the
-  Alert value - the response state anchors to the dialog window, where
+  Alert value: the response state anchors to the dialog window, where
   1.4.2 let it die with the struct and left fire-and-forget dialogs
   with dead buttons (found live in Quire's discard guard). No
   Conservatory code changes; suite 676 green. `data/cargo-sources.json`
@@ -72,8 +79,9 @@
   round-trip fuzz, Debug derives, a capped degradation log, and
   `examples/mini_consumer.rs`. The roadmap push-down attribution
   correction and the search-grammar date-keyword fixes ride the same
-  wave (see the #117 commits). No Conservatory code changes; workspace
+  wave. No Conservatory code changes; workspace
   suite green.
+
 ## v0.8.0: the blitz hardening (2026-09-15)
 
 The final-audit execution lane: the executed findings of the 2026-09-13 final audit in one pass, headed by the repair in the module that exists for exactly this. Workspace suite 676 test functions green plus the music-only lane 69; clippy `-D warnings` clean on both gates.

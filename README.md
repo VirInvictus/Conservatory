@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GTK-4.14%2B-4a86cf" alt="GTK 4.14+">
-  <img src="https://img.shields.io/badge/status-v0.7.0%20%C2%B7%20in%20development-brightgreen" alt="Status: v0.7.0, in development">
+  <img src="https://img.shields.io/badge/status-v0.9.0%20%C2%B7%20in%20development-brightgreen" alt="Status: v0.9.0, in development">
 </p>
 
 ---
@@ -158,7 +158,7 @@ Five workspace crates, plus the shared `vir-search` and `vir-gtk` libraries cons
 
 ## Project status
 
-**v0.7.0. A music library manager, a real player, a full podcast client, and an audiobook player in one app, in development toward the daily-driver bar.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
+**v0.9.0. A music library manager, a real player, a full podcast client, and an audiobook player in one app, in development toward the daily-driver bar.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
 
 Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [patchnotes](patchnotes.md) the per-release notes):
 
@@ -181,8 +181,10 @@ Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [
 - **The 0.5.0 interaction tier:** rating drag-sweep, inline cell editing with clear-to-empty, mixed-kind static playlists (episodes and audiobooks in one playlist, with a drag-reorder editor), the inspector's multi-select aggregate, a tighter facet-pane density, and the per-row cover column off by default with an optional row-line / zebra setting.
 - **The 0.6.0 consumer wave:** the gtk4 0.11 platform bump and the vir-gtk 1.4.0 widget kit (the hand-rolled dialogs moved into the shared kit), with vir-search 1.4.2's parser hardening riding along.
 - **0.7.0, the data-safety stamp:** the `backup` and `restore` verbs (a consistent `VACUUM INTO` snapshot through the single-writer worker; the documented replace path with a checkpoint, an atomic rename, and post-restore reopen), GUI startup roll-forward recovery, and move-mode sidecar-cover journaling.
+- **0.8.0, the blitz hardening:** the final-audit execution wave (the backup restore crash window closed, the move-preview promise kept, the importers' pre-commit integrity, the threading lane (no main-thread `block_on` freezes, no silent worker failures), the podcast fetch cap, and the docs reconciliation).
+- **0.9.0, the real-library gate and the browse interaction lane:** the full-library move-safety pass passed (byte-identical undos, crash-replay to completion) and the 50k memory gate measured, both against a working copy of the real library; six real-library defects fixed (a multi-byte name panic, Windows-forbidden characters in rendered paths, unreadable conflict reports, cover writes outside the root, `organize` skipping the recovery gate, plus the confirmed-prior mover and search wave); the mem_check harness (one-command memory gate); double-click plays and editing moved to `Ctrl+E` / `Alt+Enter` / the context menu; the facet-click and double-click freezes lifted (one model splice, batched off-thread queue writes); every UI icon bundled so nothing depends on the desktop icon theme; and the GNOME Circle readiness half-landed (`.doap`, validating metainfo, the criteria assessed).
 
-Not built yet: the 1.0 endgame. The Flatpak manifest now carries every build dependency as its own module (libmpv, ffmpeg, flac, rsgain) and a local flatpak-builder build succeeds; what remains is the real-library verification session (the 50k memory gate and the move-safety pass) and the sandboxed install-and-run pass plus the icon and screenshots. The roadmap has the full picture.
+Not built yet: the 1.0 endgame. The real-library verification session has run (the move-safety pass passed; the 50k memory gate measured over budget, so the model-layer optimize pass is owed before the tag). What remains is the model-layer optimize pass, the sandboxed install-and-run pass, the screenshots, and the Flathub submission. The roadmap has the full picture.
 
 ## Documentation
 

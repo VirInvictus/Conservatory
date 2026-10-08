@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns="http://usefulinc.com/ns/doap"
+         xmlns:foaf="http://xmlns.com/foaf/0.1/"
+         xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <!-- Project description (DOAP), the GNOME App Organization metadata
+       expectation for Circle candidates. Keep the maintainer block current. -->
+  <Project rdf:about="https://github.com/VirInvictus/Conservatory">
+    <name>Conservatory</name>
+    <shortdesc>Own and organise your music, podcasts and audiobooks</shortdesc>
+    <description>
+      Conservatory is Calibre for audio: a native GTK4 library manager where
+      the database owns the library and the app moves the files to match it.
+      Browse is a faceted Columns UI, playback is a libmpv engine, and one
+      unified queue interleaves music tracks, podcast episodes and audiobooks.
+    </description>
+    <homepage rdf:resource="https://github.com/VirInvictus/Conservatory"/>
+    <bug-database rdf:resource="https://github.com/VirInvictus/Conservatory/issues"/>
+    <license rdf:resource="https://spdx.org/licenses/GPL-3.0-or-later.html"/>
+    <programming-language>Rust</programming-language>
+    <category rdf:resource="https://api.gnome.org/doap/categories/apps"/>
+    <repository>
+      <GitRepository>
+        <location rdf:resource="https://github.com/VirInvictus/Conservatory.git"/>
+        <browse rdf:resource="https://github.com/VirInvictus/Conservatory"/>
+      </GitRepository>
+    </repository>
+    <maintainer>
+      <foaf:Person>
+        <foaf:name>Brandon LaRocque</foaf:name>
+        <foaf:account>
+          <foaf:OnlineAccount>
+            <foaf:accountServiceHomepage rdf:resource="https://github.com"/>
+            <foaf:accountName>VirInvictus</foaf:accountName>
+          </foaf:OnlineAccount>
+        </foaf:account>
+      </foaf:Person>
+    </maintainer>
+  </Project>
+</rdf:RDF>

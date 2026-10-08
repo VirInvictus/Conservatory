@@ -6,6 +6,13 @@
 //! then renamed into place). Every operation is **idempotent**: re-running a
 //! completed move is a no-op. That is what makes roll-forward replay safe across
 //! a crash between the file move and the journal-complete write (docs/mover.md).
+//!
+//! Forward moves never overwrite: the same-filesystem rename runs with
+//! `RENAME_NOREPLACE`, so a destination that appeared after the plan's
+//! existence check is a surfaced conflict, not a silently replaced file. Only
+//! the undo retry (`revert`) may overwrite, because its crash window leaves
+//! both copies of a cross-filesystem move-back in place and the retry must
+//! complete over its own copy.
 
 use std::fs::{self, File};
 use std::io;
@@ -18,10 +25,51 @@ use super::MoveMode;
 /// destination.
 const PART_SUFFIX: &str = ".conservatory-part";
 
+/// Whether a move's rename may replace a destination that already exists.
+/// Forward operations (`relocate`) refuse; the undo retry (`revert`) allows,
+/// per the module doc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Overwrite {
+    Refused,
+    Allowed,
+}
+
 /// Move or copy `src` to `dst` per `mode`. Idempotent: if `src` is gone and a
 /// valid `dst` already exists, the operation already completed and this is a
-/// no-op success.
+/// no-op success. A move never replaces an existing destination: a `dst` that
+/// appeared after the plan is an [`io::ErrorKind::AlreadyExists`] conflict.
 pub fn relocate(src: &Path, dst: &Path, mode: MoveMode) -> io::Result<()> {
+    relocate_inner(src, dst, mode, Overwrite::Refused)
+}
+
+/// Undo a previously-applied operation. For `Move`, move the file back to its
+/// source; for `Copy`, delete the copied destination and leave the source.
+///
+/// Idempotent across the undo crash window (a crash between the move-back and
+/// the journal's `revert_operation` write leaves the op `done` while its file
+/// is already home): for `Move`, a missing destination (the managed path) with
+/// the source present is the already-reverted state and comes back as a no-op
+/// success through [`relocate`]'s guard, and a crash mid-copy with *both*
+/// copies present re-runs the move over the restored file. The retry of
+/// `mover::undo` therefore finishes a job a crash interrupted (recovery only
+/// drives in_progress jobs, and a job stays `completed` across an undo).
+pub fn revert(src: &Path, dst: &Path, mode: MoveMode) -> io::Result<()> {
+    match mode {
+        MoveMode::Move => relocate_inner(dst, src, MoveMode::Move, Overwrite::Allowed),
+        MoveMode::Copy => {
+            if dst.try_exists()? {
+                tracing::debug!(target: "conservatory::io", dst = %dst.display(), "mover: revert (delete copy)");
+                fs::remove_file(dst)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The shared relocate body; `overwrite` distinguishes the forward apply
+/// (never replaces) from the undo retry (completes over its own copy, the
+/// cross-filesystem move-back crash window).
+fn relocate_inner(src: &Path, dst: &Path, mode: MoveMode, overwrite: Overwrite) -> io::Result<()> {
     if src == dst {
         return Ok(());
     }
@@ -30,7 +78,7 @@ pub fn relocate(src: &Path, dst: &Path, mode: MoveMode) -> io::Result<()> {
         Ok(meta) => {
             ensure_parent(dst)?;
             match mode {
-                MoveMode::Move => move_one(src, dst, meta.len()),
+                MoveMode::Move => move_one(src, dst, meta.len(), overwrite),
                 MoveMode::Copy => copy_one(src, dst, meta.len()),
             }
         }
@@ -48,43 +96,107 @@ pub fn relocate(src: &Path, dst: &Path, mode: MoveMode) -> io::Result<()> {
     }
 }
 
-/// Undo a previously-applied operation. For `Move`, move the file back to its
-/// source; for `Copy`, delete the copied destination and leave the source.
-///
-/// Idempotent across the undo crash window (a crash between the move-back and
-/// the journal's `revert_operation` write leaves the op `done` while its file
-/// is already home): for `Move`, a missing destination (the managed path) with
-/// the source present is the already-reverted state and comes back as a no-op
-/// success through [`relocate`]'s guard, and a crash mid-copy with *both*
-/// copies present re-runs the move over the restored file. The retry of
-/// `mover::undo` therefore finishes a job a crash interrupted (recovery only
-/// drives in_progress jobs, and a job stays `completed` across an undo).
-pub fn revert(src: &Path, dst: &Path, mode: MoveMode) -> io::Result<()> {
-    match mode {
-        MoveMode::Move => relocate(dst, src, MoveMode::Move),
-        MoveMode::Copy => {
-            if dst.try_exists()? {
-                tracing::debug!(target: "conservatory::io", dst = %dst.display(), "mover: revert (delete copy)");
-                fs::remove_file(dst)?;
-            }
-            Ok(())
-        }
-    }
-}
-
-fn move_one(src: &Path, dst: &Path, src_len: u64) -> io::Result<()> {
-    match fs::rename(src, dst) {
+fn move_one(src: &Path, dst: &Path, src_len: u64, overwrite: Overwrite) -> io::Result<()> {
+    let renamed = match overwrite {
+        Overwrite::Allowed => fs::rename(src, dst),
+        Overwrite::Refused => rename_no_replace(src, dst),
+    };
+    match renamed {
         Ok(()) => {
             tracing::debug!(target: "conservatory::io", src = %src.display(), dst = %dst.display(), bytes = src_len, "mover: rename");
             Ok(())
         }
         Err(e) if is_cross_device(&e) => {
+            // Cross-filesystem replay: a crash between the copy and the source
+            // removal leaves both copies in place. A destination matching the
+            // source by size is the completed copy (the crate's size-match
+            // idempotency discipline, as in `copy_one`), so the move finishes
+            // by dropping the source; a different size is a foreign file that
+            // appeared after the plan, and a refused-overwrite move surfaces
+            // it instead of clobbering. An allowed overwrite (the undo retry)
+            // re-copies over its own file, as before.
+            if overwrite == Overwrite::Refused && dst.try_exists()? {
+                let dst_len = fs::metadata(dst)?.len();
+                if dst_len == src_len {
+                    tracing::debug!(target: "conservatory::io", src = %src.display(), dst = %dst.display(), "mover: cross-device copy already complete (replay); removing source");
+                    return fs::remove_file(src);
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "destination {} appeared after the plan; refusing to overwrite",
+                        dst.display()
+                    ),
+                ));
+            }
             copy_across(src, dst, src_len)?;
             tracing::debug!(target: "conservatory::io", src = %src.display(), "mover: remove source after cross-device copy");
             fs::remove_file(src)
         }
         Err(e) => Err(e),
     }
+}
+
+/// `rename(2)` with `RENAME_NOREPLACE` on Linux: an existing destination fails
+/// with `AlreadyExists` instead of being replaced. Kernels without `renameat2`
+/// (`ENOSYS`) and filesystems that reject the flag (`EINVAL`) fall back to the
+/// check-then-rename shape, which reopens only the narrow post-check race on
+/// systems where the atomic form does not exist.
+fn rename_no_replace(src: &Path, dst: &Path) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        match (
+            std::ffi::CString::new(src.as_os_str().as_encoded_bytes()),
+            std::ffi::CString::new(dst.as_os_str().as_encoded_bytes()),
+        ) {
+            (Ok(src_c), Ok(dst_c)) => {
+                // SAFETY: both pointers are valid NUL-terminated paths for the
+                // duration of the call; renameat2 does not retain them.
+                let rc = unsafe {
+                    libc::renameat2(
+                        libc::AT_FDCWD,
+                        src_c.as_ptr(),
+                        libc::AT_FDCWD,
+                        dst_c.as_ptr(),
+                        libc::RENAME_NOREPLACE,
+                    )
+                };
+                if rc == 0 {
+                    return Ok(());
+                }
+                let err = io::Error::last_os_error();
+                match err.raw_os_error() {
+                    // The flag is unsupported here: degrade to the racy
+                    // pre-check rather than refuse every move.
+                    Some(libc::ENOSYS) | Some(libc::EINVAL) => fallback_no_replace(src, dst),
+                    _ => Err(err),
+                }
+            }
+            // A path with an interior NUL is not a valid file name; report it
+            // the way the syscall would.
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path contains an interior NUL byte",
+            )),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        fallback_no_replace(src, dst)
+    }
+}
+
+fn fallback_no_replace(src: &Path, dst: &Path) -> io::Result<()> {
+    if dst.try_exists()? {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "destination {} appeared after the plan; refusing to overwrite",
+                dst.display()
+            ),
+        ));
+    }
+    fs::rename(src, dst)
 }
 
 fn copy_one(src: &Path, dst: &Path, src_len: u64) -> io::Result<()> {
@@ -308,5 +420,22 @@ mod tests {
         write(&p, b"x");
         relocate(&p, &p, MoveMode::Move).unwrap();
         assert_eq!(fs::read(&p).unwrap(), b"x");
+    }
+
+    #[test]
+    fn forward_move_refuses_a_destination_that_already_exists() {
+        // The TOCTOU fix: a destination that appeared after the plan's exists()
+        // check is a surfaced conflict, not a silently replaced file.
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src.flac");
+        let dst = dir.path().join("dst.flac");
+        write(&src, b"mine");
+        write(&dst, b"foreign");
+
+        let err = relocate(&src, &dst, MoveMode::Move).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        // Both files are untouched: nothing was consumed or clobbered.
+        assert_eq!(fs::read(&src).unwrap(), b"mine");
+        assert_eq!(fs::read(&dst).unwrap(), b"foreign");
     }
 }

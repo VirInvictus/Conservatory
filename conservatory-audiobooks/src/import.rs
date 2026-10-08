@@ -10,7 +10,10 @@
 //! Two passes, the shape of the music importer: a pure **resolve** pass renders
 //! the book folder and pre-checks for move conflicts (no DB writes), then a
 //! **persist** pass creates the rows and runs the move job only if the plan is
-//! clear, so a conflicting import leaves the database untouched.
+//! clear, so a conflicting import leaves the database untouched. The one window
+//! the two passes cannot close is a conflict that appears *between* the
+//! pre-check and `apply`'s own re-plan; there the persist pass rolls the book
+//! rows back, so the guarantee holds against the race too.
 //!
 //! One physical file can back many chapters (a single M4B), so move ops are
 //! built **per unique source file**, not per chapter: each op carries the
@@ -26,8 +29,9 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use conservatory_core::db::models::{Book, BookChapter};
 use conservatory_core::db::{ReadPool, WorkerHandle};
+use conservatory_core::errors::Error;
 use conservatory_core::mover::{self, Conflict, MoveKind, MoveMode, MoveOp};
-use conservatory_core::{BookFields, PathTemplate, compute_accent, sync_album_cover};
+use conservatory_core::{BookFields, CoverSource, PathTemplate, compute_accent, sync_album_cover};
 
 use crate::error::{ReadError, Result};
 use crate::{discover_book_roots, read_book};
@@ -53,7 +57,9 @@ pub struct BookImportReport {
     pub files: usize,
     pub book_id: Option<i64>,
     pub job_id: Option<i64>,
-    /// Non-empty means the import was refused; no rows were created.
+    /// Non-empty means the import was refused: either nothing was created (the
+    /// pre-check caught it) or the rows were rolled back (a conflict appeared
+    /// between the pre-check and apply). Either way no rows remain.
     pub conflicts: Vec<Conflict>,
 }
 
@@ -116,9 +122,27 @@ pub async fn import_book(
     let folder_rel = render_book_folder(&draft);
     let folder_rel_str = folder_rel.to_string_lossy().into_owned();
     let book_dir_abs = opts.library_root.join(&folder_rel);
-    let accent = draft.cover.as_deref().and_then(|b| compute_accent(b).ok());
+    let accent = draft
+        .cover
+        .as_ref()
+        .and_then(|c| compute_accent(c.bytes()).ok());
 
     let files = plan_file_moves(&draft, &folder_rel, &book_dir_abs);
+
+    // The cover's provenance decides the move-mode shape (the music import's
+    // `CoverSource` split): a sidecar rides the journal — consumed with the
+    // audio, so the source folder is left clean, a crash rolls forward, and
+    // undo restores it — while embedded art has no file to consume and writes
+    // the canonical copy after the move. Copy mode never claims the sidecar.
+    let claimed_sidecar = match (&draft.cover, opts.mode) {
+        (Some(CoverSource::Sidecar { path, .. }), MoveMode::Move) => Some(path.clone()),
+        _ => None,
+    };
+    let cover_rel = claimed_sidecar.as_ref().and_then(|p| {
+        p.file_name()
+            .map(|name| folder_rel.join(name))
+            .map(|rel| rel.to_string_lossy().into_owned())
+    });
 
     // Heal any interrupted job BEFORE planning: recovery rolls interrupted
     // moves forward, so the pre-check and the apply must both see the
@@ -130,8 +154,21 @@ pub async fn import_book(
 
     // Pre-check the move before any DB write: a folder-exists, duplicate-target,
     // or vanished-source conflict refuses the whole import (the trust guarantee,
-    // spec §5.4).
-    let pre = mover::plan(provisional_ops(&files));
+    // spec §5.4). The claimed sidecar rides the same list, so a cover collision
+    // refuses before any row exists.
+    let mut provisional = provisional_ops(&files);
+    if let (Some(src), Some(rel)) = (&claimed_sidecar, &cover_rel) {
+        provisional.push(MoveOp {
+            track_id: None,
+            album_id: None,
+            book_id: None,
+            src: src.clone(),
+            dst: opts.library_root.join(rel),
+            db_old: None,
+            db_new: Some(rel.clone()),
+        });
+    }
+    let pre = mover::plan(provisional);
     if pre.is_blocked() {
         return Ok(BookImportReport {
             title: draft.title.clone(),
@@ -210,7 +247,7 @@ pub async fn import_book(
         .collect();
     worker.replace_book_chapters(book_id, chapters).await?;
 
-    let ops = files
+    let mut ops: Vec<MoveOp> = files
         .iter()
         .map(|f| MoveOp {
             track_id: None,
@@ -222,22 +259,49 @@ pub async fn import_book(
             db_new: Some(f.db_new.clone()),
         })
         .collect();
-    let job_id = mover::apply(
-        worker,
-        pool,
-        MoveKind::Import,
-        opts.mode,
-        &opts.library_root,
-        now.timestamp(),
-        ops,
-    )
-    .await?;
+    // The claimed sidecar rides the same journal (one cover-shaped op: `book_id`
+    // set, no `track_id`/`album_id`). No managed cover existed before the
+    // import, so `db_old` is `None`: the post-move write below records the
+    // pointer, and undo clears it.
+    if let (Some(src), Some(rel)) = (&claimed_sidecar, &cover_rel) {
+        ops.push(MoveOp {
+            track_id: None,
+            album_id: None,
+            book_id: Some(book_id),
+            src: src.clone(),
+            dst: opts.library_root.join(rel),
+            db_old: None,
+            db_new: Some(rel.clone()),
+        });
+    }
+    let job_id = match apply_import_job(worker, pool, book_id, ops, opts, now.timestamp()).await? {
+        Applied::Job(job_id) => job_id,
+        Applied::Refused(conflicts) => {
+            return Ok(BookImportReport {
+                title: draft.title.clone(),
+                conflicts,
+                ..Default::default()
+            });
+        }
+    };
 
-    // Cover to disk (the move created the book folder). Best-effort: a cover
-    // failure never fails an otherwise-successful import (covers re-derive), but
-    // a DB-write failure means the worker is wedged, so surface it. The accent is
-    // already on the book row, so the cover write keeps it (`None`).
-    if let Some(bytes) = &draft.cover
+    // Cover bookkeeping (the move created the book folder). A claimed sidecar
+    // already sits in the book folder (the move moved it): point the book at
+    // the moved file instead of writing a second, canonical copy — undo then
+    // clears the pointer and restores the file. Embedded art, and a copy-mode
+    // import whose sidecar stayed at the source, still write the canonical
+    // copy. Best-effort: a cover failure never fails an otherwise-successful
+    // import (covers re-derive), but a DB-write failure means the worker is
+    // wedged, so surface it. The accent is already on the book row, so the
+    // cover write keeps it (`None`).
+    if let Some(rel) = &cover_rel {
+        if let Err(e) = worker
+            .set_book_cover_path(book_id, Some(rel.clone()), None)
+            .await
+        {
+            tracing::warn!(book_id, error = %e, "book cover path not recorded");
+        }
+    } else if let Some(bytes) = draft.cover.as_ref().map(|c| c.bytes())
         && let Ok(cover_path) = sync_album_cover(&opts.library_root, &folder_rel_str, bytes, None)
         && let Err(e) = worker
             .set_book_cover_path(book_id, Some(cover_path), None)
@@ -251,7 +315,7 @@ pub async fn import_book(
         authors: author_ids.len(),
         narrators: narrator_ids.len(),
         chapters: draft.chapters.len(),
-        files: files.len(),
+        files: files.len() + usize::from(claimed_sidecar.is_some()),
         book_id: Some(book_id),
         job_id: Some(job_id),
         conflicts: Vec::new(),
@@ -318,4 +382,141 @@ fn provisional_ops(files: &[FileMove]) -> Vec<MoveOp> {
             db_new: Some(f.db_new.clone()),
         })
         .collect()
+}
+
+/// What running the import's move job did.
+enum Applied {
+    /// The job was journaled and is running (or completed).
+    Job(i64),
+    /// `apply`'s own re-plan refused: a conflict appeared after the pre-check,
+    /// with the book rows already written. [`apply_import_job`] rolled them
+    /// back, so the refusal leaves nothing behind.
+    Refused(Vec<Conflict>),
+}
+
+/// Run the import's move job, rolling the freshly-written book rows back if
+/// `apply`'s re-plan refuses. The pre-check twin ran before the rows were
+/// written, so a refusal here can only be a conflict that appeared in between;
+/// the module contract ("a conflicting import leaves the database untouched")
+/// means those rows come back out. The delete cascades the chapters and the
+/// author/narrator links, and no file was touched because a refusal happens
+/// before the job is journaled.
+async fn apply_import_job(
+    worker: &WorkerHandle,
+    pool: &ReadPool,
+    book_id: i64,
+    ops: Vec<MoveOp>,
+    opts: &BookImportOptions,
+    created_at: i64,
+) -> Result<Applied> {
+    match mover::apply(
+        worker,
+        pool,
+        MoveKind::Import,
+        opts.mode,
+        &opts.library_root,
+        created_at,
+        ops,
+    )
+    .await
+    {
+        Ok(job_id) => Ok(Applied::Job(job_id)),
+        Err(Error::MoveRefused(conflicts)) => {
+            worker.delete_books(vec![book_id]).await?;
+            Ok(Applied::Refused(conflicts))
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use conservatory_core::db::models::Book;
+    use conservatory_core::db::{list_books, spawn_worker};
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn an_apply_refusal_after_the_rows_rolls_the_book_back() {
+        // The partial-commit window (the final audit): the pre-check ran
+        // before the rows were written, so a conflict that appears in between
+        // refuses in `apply`, with the book already persisted. The rollback
+        // must leave the database exactly as it was and touch no file.
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("lib.db");
+        let worker = spawn_worker(db.clone()).unwrap();
+        let pool = ReadPool::new(db, 1).unwrap();
+
+        let book_id = worker
+            .insert_book(Book {
+                id: 0,
+                title: "Race Loser".into(),
+                subtitle: None,
+                series_id: None,
+                series_sequence: None,
+                year: Some(2021),
+                publisher: None,
+                isbn: None,
+                asin: None,
+                description: None,
+                language: None,
+                shelf_genre: None,
+                cover_path: None,
+                accent_rgb: None,
+                folder_path: "Audiobooks/Author, Test/Standalone/Race Loser (2021)".into(),
+                rating: 0,
+                starred: false,
+                added_at: None,
+            })
+            .await
+            .unwrap();
+
+        // The destination appears after any pre-check would have run.
+        let src = dir.path().join("src.m4b");
+        std::fs::write(&src, b"audio").unwrap();
+        let root = dir.path().join("lib");
+        let dst = root.join("book.m4b");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&dst, b"someone else got here first").unwrap();
+
+        let opts = BookImportOptions {
+            library_root: root,
+            mode: MoveMode::Move,
+        };
+        let applied = apply_import_job(
+            &worker,
+            &pool,
+            book_id,
+            vec![MoveOp {
+                track_id: None,
+                album_id: None,
+                book_id: Some(book_id),
+                src: src.clone(),
+                dst: dst.clone(),
+                db_old: Some("source.m4b".into()),
+                db_new: Some("book.m4b".into()),
+            }],
+            &opts,
+            0,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            matches!(applied, Applied::Refused(_)),
+            "the conflicting apply must refuse"
+        );
+        let conn = pool.open().unwrap();
+        assert!(
+            list_books(&conn).unwrap().is_empty(),
+            "the book rows were rolled back"
+        );
+        drop(conn);
+        // Nothing was consumed and nothing was clobbered: the source survives
+        // and the foreign destination is exactly as the interloper left it.
+        assert_eq!(std::fs::read(&src).unwrap(), b"audio");
+        assert_eq!(std::fs::read(&dst).unwrap(), b"someone else got here first");
+
+        worker.shutdown_ack().await.unwrap();
+    }
 }

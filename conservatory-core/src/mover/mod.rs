@@ -204,10 +204,7 @@ pub async fn apply(
 ) -> Result<i64> {
     let plan = plan(ops);
     if plan.is_blocked() {
-        return Err(Error::Move(format!(
-            "{} conflict(s); refusing to move (run a dry-run plan to inspect)",
-            plan.conflicts.len()
-        )));
+        return Err(Error::MoveRefused(plan.conflicts));
     }
 
     let root = library_root.to_string_lossy().into_owned();

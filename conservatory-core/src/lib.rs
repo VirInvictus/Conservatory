@@ -39,7 +39,7 @@ pub mod tags;
 pub mod verify;
 pub mod waveform;
 
-pub use accent::{compute_accent, find_cover_bytes};
+pub use accent::{CoverSource, compute_accent, find_cover_bytes};
 pub use ape::{
     ApeSpan, StripPlan, commit_strip, has_ape, locate_ape, plan_strip, restore_bytes, strip_bytes,
     write_atomic_plain, write_atomic_verified,

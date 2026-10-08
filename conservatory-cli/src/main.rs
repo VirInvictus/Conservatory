@@ -1624,7 +1624,7 @@ fn audiobook_debug_read(path: PathBuf) -> Result<()> {
     println!("asin:         {}", opt(&draft.asin));
     println!("language:     {}", opt(&draft.language));
     match &draft.cover {
-        Some(bytes) => println!("cover:        {} bytes", bytes.len()),
+        Some(cover) => println!("cover:        {} bytes", cover.bytes().len()),
         None => println!("cover:        (none)"),
     }
     if let Some(desc) = &draft.description {

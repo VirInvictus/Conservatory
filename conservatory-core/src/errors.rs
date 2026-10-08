@@ -32,6 +32,13 @@ pub enum Error {
     #[error("move: {0}")]
     Move(String),
 
+    /// A move `apply` refused: the re-plan over the live filesystem found
+    /// conflicts, so nothing was journaled and no file was touched. Structured
+    /// (rather than a `Move` string) so an importer that wrote its rows before
+    /// calling `apply` can recognise the refusal and undo them.
+    #[error("move refused: {} conflict(s); refusing to move (run a dry-run plan to inspect)", .0.len())]
+    MoveRefused(Vec<crate::mover::Conflict>),
+
     #[error("backup: {0}")]
     Backup(String),
 

@@ -81,8 +81,11 @@ pub struct BookDraft {
     pub asin: Option<String>,
     pub description: Option<String>,
     pub language: Option<String>,
-    /// Embedded or sidecar cover bytes; the accent is computed at import (7a-iii).
-    pub cover: Option<Vec<u8>>,
+    /// Embedded or sidecar cover (7a-iii). A sidecar carries its source path
+    /// so a move-mode import can journal the file into the managed tree
+    /// (and undo restores it) instead of leaving it behind in the source
+    /// folder; embedded art has no file to consume.
+    pub cover: Option<conservatory_core::CoverSource>,
     pub chapters: Vec<ChapterDraft>,
 }
 
@@ -122,7 +125,10 @@ pub fn read_book(path: &Path) -> Result<BookDraft> {
     let authors = first_nonempty(vec![sidecar.authors, tags.authors, folder_author]);
     let narrators = first_nonempty(vec![sidecar.narrators, tags.narrators]);
 
-    let cover = tags.cover.or_else(|| sidecar_cover(&book_dir));
+    let cover = tags
+        .cover
+        .map(conservatory_core::CoverSource::Embedded)
+        .or_else(|| sidecar_cover(&book_dir));
 
     let chapters = chapters::resolve_chapters(&files, title.as_deref())?;
 
@@ -272,12 +278,15 @@ fn is_audiobook_audio(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// A sibling `cover.jpg`/`cover.png` (Audiobookshelf convention), read as bytes.
-fn sidecar_cover(dir: &Path) -> Option<Vec<u8>> {
+/// A sibling `cover.jpg`/`cover.png` (Audiobookshelf convention). The source
+/// path rides along so a move-mode import can journal the file itself (the
+/// core `CoverSource` shape, mirroring the music importer).
+fn sidecar_cover(dir: &Path) -> Option<conservatory_core::CoverSource> {
     const NAMES: &[&str] = &["cover.jpg", "cover.jpeg", "cover.png", "folder.jpg"];
     for name in NAMES {
-        if let Ok(bytes) = std::fs::read(dir.join(name)) {
-            return Some(bytes);
+        let path = dir.join(name);
+        if let Ok(bytes) = std::fs::read(&path) {
+            return Some(conservatory_core::CoverSource::Sidecar { path, bytes });
         }
     }
     None

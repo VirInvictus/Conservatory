@@ -28,9 +28,11 @@ A crash between (2) and (3) leaves the operation `pending` while the file is alr
 ## The per-file primitive (`fsops`)
 
 `relocate(src, dst, mode)`:
-- same-filesystem `rename` (atomic) fast path;
-- on a cross-device error (`EXDEV`), fall back to **copy → fsync → verify (size) → delete source** (Move) or keep source (Copy), via a same-dir temp file (`.conservatory-part`), modeled on Atrium's `write_atomic`;
+- same-filesystem `rename` (atomic) fast path, run with `RENAME_NOREPLACE`: a destination that exists — including one that appeared after the plan's existence check — fails the op with `AlreadyExists` instead of being silently replaced (kernels or filesystems without `renameat2` degrade to check-then-rename, which reopens only that narrow race);
+- on a cross-device error (`EXDEV`), fall back to **copy → fsync → verify (size) → delete source** (Move) or keep source (Copy), via a same-dir temp file (`.conservatory-part`), modeled on Atrium's `write_atomic`. A replay that finds the destination already matching the source by size (the crash window between copy and source removal) finishes the move by dropping the source; a same-size match is the crate's idempotency discipline, as in `copy_one`;
 - **idempotent**: `src` gone and a valid `dst` present is a no-op success (the op completed before a crash).
+
+The undo retry (`revert`) is the one overwrite-allowed path: its own crash window (a cross-filesystem move-back interrupted between copy and source removal) leaves both copies in place, and the retry must complete over them. Forward moves never overwrite.
 
 ## Conflict policy
 

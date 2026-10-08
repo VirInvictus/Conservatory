@@ -258,6 +258,22 @@ fn apply_db_path(
             }
         }
     }
+    // The book cover op's import shape (`book_id` set, `track_id`/`album_id`
+    // `None`): the undo clears `books.cover_path` under its (book_id, from)
+    // guard, exactly the album branch's reasoning. The forward pointer is the
+    // import's post-move write; the reorg-shaped op (both paths set) is
+    // handled by the guarded rewrite inside the book branch below.
+    if let Some(book_id) = book_id
+        && track_id.is_none()
+        && album_id.is_none()
+        && let Some(from) = from
+        && to.is_none()
+    {
+        tx.execute(
+            "UPDATE books SET cover_path = NULL WHERE id = ?1 AND cover_path = ?2",
+            params![book_id, from],
+        )?;
+    }
     let Some(to) = to else { return Ok(()) };
     if let Some(track_id) = track_id {
         tx.execute(

@@ -17,6 +17,143 @@ fn multi_fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/multi/Test Author/Test Book")
 }
 
+/// A consumable copy of the multi-file fixture plus a sidecar cover, so the
+/// move-mode tests never touch the committed fixtures.
+fn sidecar_source(dir: &std::path::Path) -> PathBuf {
+    let src = dir.join("src/Test Book");
+    std::fs::create_dir_all(&src).unwrap();
+    for name in ["01.mp3", "02.mp3"] {
+        std::fs::copy(multi_fixture().join(name), src.join(name)).unwrap();
+    }
+    std::fs::write(src.join("cover.jpg"), b"sidecar bytes").unwrap();
+    src
+}
+
+/// The book-import twin of the music sidecar fix (roadmap 2026-09-13): a
+/// move-mode import used to duplicate the sidecar into the managed tree and
+/// leave the original behind in the otherwise-consumed source folder. Now the
+/// sidecar rides the journal like the audio, and undo restores both.
+#[tokio::test]
+async fn move_mode_journals_the_sidecar_cover_and_undo_restores_both() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("lib.db");
+    let root = dir.path().join("lib");
+    let worker = spawn_worker(db.clone()).unwrap();
+    let pool = ReadPool::new(db, 3).unwrap();
+    let src = sidecar_source(dir.path());
+
+    let report = import_book(
+        &worker,
+        &pool,
+        &src,
+        &BookImportOptions {
+            library_root: root.clone(),
+            mode: MoveMode::Move,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(report.conflicts.is_empty(), "clean import");
+    let book_id = report.book_id.expect("a book was created");
+    assert_eq!(report.files, 3, "two audio files + the journaled sidecar");
+
+    // The source folder is consumed clean: no cover left behind.
+    assert!(!src.join("01.mp3").exists(), "audio consumed by the move");
+    assert!(
+        !src.join("cover.jpg").exists(),
+        "sidecar consumed by the move"
+    );
+
+    // The sidecar sits in the managed book folder and the book points at it.
+    let conn = pool.open().unwrap();
+    let book = get_book(&conn, book_id).unwrap().unwrap();
+    let cover_rel = book.cover_path.clone().expect("cover recorded");
+    assert_eq!(
+        cover_rel,
+        "Audiobooks/Author, Test/Standalone/Test Book (2021)/cover.jpg"
+    );
+    drop(conn);
+    let managed = root.join(&cover_rel);
+    assert!(managed.exists(), "the sidecar moved into the tree");
+    assert_eq!(std::fs::read(&managed).unwrap(), b"sidecar bytes");
+
+    // Undo restores both: the audio and the sidecar return to the source, and
+    // the pointer is cleared rather than left dangling at a moved-back file.
+    conservatory_core::mover::undo(&worker, &pool, report.job_id.unwrap())
+        .await
+        .unwrap();
+    assert!(src.join("01.mp3").exists(), "audio restored by undo");
+    assert!(src.join("cover.jpg").exists(), "sidecar restored by undo");
+    assert!(!managed.exists(), "managed sidecar removed by undo");
+    let conn = pool.open().unwrap();
+    let book = get_book(&conn, book_id).unwrap().unwrap();
+    assert!(
+        book.cover_path.is_none(),
+        "cover pointer cleared by undo, not left dangling"
+    );
+    let chapters = book_chapters(&conn, book_id).unwrap();
+    assert!(
+        chapters
+            .iter()
+            .all(|ch| ch.file_path.starts_with(src.to_string_lossy().as_ref())),
+        "chapters point back at the source after undo: {:?}",
+        chapters.iter().map(|c| &c.file_path).collect::<Vec<_>>()
+    );
+    drop(conn);
+
+    worker.shutdown_ack().await.unwrap();
+}
+
+/// Copy mode never claims the sidecar: the source folder keeps it and the
+/// import writes the canonical copy from its bytes, as before the fix.
+#[tokio::test]
+async fn copy_mode_keeps_the_sidecar_and_writes_the_canonical_copy() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("lib.db");
+    let root = dir.path().join("lib");
+    let worker = spawn_worker(db.clone()).unwrap();
+    let pool = ReadPool::new(db, 3).unwrap();
+    let src = sidecar_source(dir.path());
+
+    let report = import_book(
+        &worker,
+        &pool,
+        &src,
+        &BookImportOptions {
+            library_root: root.clone(),
+            mode: MoveMode::Copy,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(report.conflicts.is_empty(), "clean import");
+    assert_eq!(report.files, 2, "audio only; the sidecar is not consumed");
+    assert!(
+        src.join("cover.jpg").exists(),
+        "copy leaves the source sidecar"
+    );
+    assert!(src.join("01.mp3").exists(), "copy leaves the source audio");
+
+    let book_id = report.book_id.expect("a book was created");
+    let conn = pool.open().unwrap();
+    let book = get_book(&conn, book_id).unwrap().unwrap();
+    let cover_rel = book.cover_path.clone().expect("cover recorded");
+    assert_eq!(
+        cover_rel,
+        "Audiobooks/Author, Test/Standalone/Test Book (2021)/cover.jpg"
+    );
+    drop(conn);
+    assert_eq!(
+        std::fs::read(root.join(&cover_rel)).unwrap(),
+        b"sidecar bytes",
+        "the canonical copy is written from the sidecar bytes"
+    );
+
+    worker.shutdown_ack().await.unwrap();
+}
+
 #[tokio::test]
 async fn import_multi_file_book_copies_and_records_rows() {
     let dir = tempdir().unwrap();

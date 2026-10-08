@@ -77,13 +77,28 @@ fn field_sql(field: Field, kind: &MatchKind, p: &mut Vec<SqlValue>) -> Option<St
     }
     match kind {
         // Regex / fuzzy can't be pushed down: bail so the whole query falls back.
-        // Prefix/suffix/in are new (vir-search 1.3.0) and are also eval-side for
-        // now; pushing them down is a follow-up once their SQL shape settles.
-        MatchKind::Regex(_)
-        | MatchKind::Fuzzy(_)
-        | MatchKind::Prefix(_)
-        | MatchKind::Suffix(_)
-        | MatchKind::In(_) => None,
+        // Prefix/suffix/in push down as LIKE shapes (the 2026-09-06 tracked box):
+        // a prefix is `v%`, a suffix `%v`, a list an OR of exact-LIKEs. SQL's
+        // LIKE is ASCII-case-insensitive like the eval path's exact matching;
+        // accent folding stays eval-only, the established substring/exact
+        // approximation. Numeric fields have no candidates in eval, and
+        // `text_cond` gives them `0=1`, so the paths agree there too.
+        MatchKind::Regex(_) | MatchKind::Fuzzy(_) => None,
+        MatchKind::Prefix(v) => Some(text_cond(field, &format!("{}%", like_escape(v)), p)),
+        MatchKind::Suffix(v) => Some(text_cond(field, &format!("%{}", like_escape(v)), p)),
+        MatchKind::In(items) => {
+            // SQL's `IN` is case-sensitive and the eval path is not, so each
+            // element is an exact-LIKE; an empty list matches nothing, as eval
+            // does.
+            if items.is_empty() {
+                return Some("0=1".into());
+            }
+            let conds: Vec<String> = items
+                .iter()
+                .map(|item| text_cond(field, &like_escape(item), p))
+                .collect();
+            Some(format!("({})", conds.join(" OR ")))
+        }
         MatchKind::Substring(v) => Some(text_cond(field, &like(v, false), p)),
         MatchKind::Exact(v) => Some(text_cond(field, &like(v, true), p)),
         MatchKind::HasAny => Some(presence_sql(field, true)),
@@ -280,16 +295,19 @@ fn value_sql(value: &Value) -> Option<SqlValue> {
     }
 }
 
-/// Escape `%` `_` `\` so a substring/exact value is matched literally by LIKE.
-fn like(v: &str, exact: bool) -> String {
-    let escaped = v
-        .replace('\\', "\\\\")
+/// Escape `%` `_` `\` so a value is matched literally by LIKE.
+fn like_escape(v: &str) -> String {
+    v.replace('\\', "\\\\")
         .replace('%', "\\%")
-        .replace('_', "\\_");
+        .replace('_', "\\_")
+}
+
+/// A LIKE pattern for a substring or exact match.
+fn like(v: &str, exact: bool) -> String {
     if exact {
-        escaped
+        like_escape(v)
     } else {
-        format!("%{escaped}%")
+        format!("%{}%", like_escape(v))
     }
 }
 
@@ -339,6 +357,35 @@ mod tests {
         assert!(tr("artist:?boards").is_none());
         // A regex anywhere poisons the whole translation (all-or-nothing).
         assert!(tr("genre:ambient AND title:~rx").is_none());
+    }
+
+    #[test]
+    fn wildcards_and_lists_push_down_as_like_shapes() {
+        // Prefix: `v%`, suffix: `%v`, list: an OR of exact-LIKEs.
+        let c = tr("genre:ambient*").unwrap();
+        assert!(c.sql.contains("g.name LIKE ?"), "prefix: {}", c.sql);
+        assert_eq!(c.params, vec![SqlValue::Text("ambient%".into())]);
+
+        let c = tr("genre:*wave").unwrap();
+        assert!(c.sql.contains("g.name LIKE ?"), "suffix: {}", c.sql);
+        assert_eq!(c.params, vec![SqlValue::Text("%wave".into())]);
+
+        let c = tr("genre:(ambient,jazz)").unwrap();
+        assert!(c.sql.contains(" OR "), "list: {}", c.sql);
+        assert_eq!(
+            c.params,
+            vec![
+                SqlValue::Text("ambient".into()),
+                SqlValue::Text("jazz".into())
+            ]
+        );
+
+        // LIKE metacharacters in a wildcard value are escaped, not operators.
+        let c = tr("title:50%*").unwrap();
+        assert_eq!(c.params, vec![SqlValue::Text("50\\%%".into())]);
+
+        // Book fields stay eval-only regardless of kind (all-or-nothing).
+        assert!(tr("author:sanderson*").is_none());
     }
 
     #[test]

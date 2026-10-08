@@ -78,6 +78,18 @@ async fn sql_and_eval_agree_on_the_translatable_subset() {
         "NOT genre:Jazz",
         "format:true",
         "rating:false",
+        // Wildcard and list kinds (the push-down box): the SQL shapes must
+        // agree with eval now that they translate instead of falling back.
+        // Values stay single-word (an unquoted space splits the term, and bare
+        // text is the one intentional FTS/eval difference this test excludes).
+        "genre:Elec*",
+        "genre:*ctronic",
+        "artist:Artist*",
+        "album:Album*",
+        "album:*-0",
+        "genre:(Electronic,Jazz)",
+        "format:(flac,mp3)",
+        "shelfgenre:(Jazz,Missing)",
     ];
 
     for expr in expressions {

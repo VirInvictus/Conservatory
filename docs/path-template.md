@@ -95,7 +95,7 @@ The render loop is shared with the music `TrackFields` through a small internal 
 
 Rendered components are made filesystem-safe before they touch disk:
 
-- Strip or replace path separators (`/`, and `\` on principle) inside a component.
+- Replace path separators (`/`, and `\` on principle) inside a component, along with the rest of the Windows-forbidden set (`< > : " | ? *`): legal on Linux native filesystems, but `:` returns EINVAL on ntfs-3g/FUSE and the rest break the same portability (the 50k gate's real-library import died on a colon-titled album).
 - Guard against reserved names and trailing dots/spaces.
 - Cap component length to stay within common filesystem limits; the cap is applied per component, not per full path.
 - Collapse whitespace; never emit an empty component (a missing `{year}` collapses the ` (<Year>)` suffix rather than leaving `()`).

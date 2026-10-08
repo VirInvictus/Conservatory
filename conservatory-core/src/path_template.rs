@@ -389,11 +389,21 @@ fn remove_empty_pairs(s: &str, open: char, close: char) -> String {
 /// Make a single path component filesystem-safe (docs/path-template.md). The
 /// embedded tag keeps the true value (spec §5.5); only the on-disk name changes.
 fn sanitize_component(raw: &str) -> String {
-    // Replace path separators and control characters; collapse whitespace.
+    // Replace path separators, the rest of the Windows-forbidden set, and
+    // control characters; collapse whitespace. The Windows chars (`< > : " |
+    // ? *`) are legal on Linux native filesystems but fatal elsewhere: `:`
+    // returns EINVAL on ntfs-3g/FUSE (the 50k gate's real-library import died
+    // on a colon-titled album), and the rest break the same portability the
+    // reserved-name guard below exists for.
     let replaced: String = raw
         .chars()
         .map(|c| {
-            if c == '/' || c == '\\' || c == '\0' || c.is_control() {
+            if c == '/'
+                || c == '\\'
+                || c == '\0'
+                || c.is_control()
+                || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*')
+            {
                 '_'
             } else {
                 c
@@ -578,6 +588,25 @@ mod tests {
         f.year = None;
         let rendered = render(&f);
         assert!(rendered.contains("/CON_/"), "{rendered}");
+    }
+
+    #[test]
+    fn windows_forbidden_characters_are_replaced() {
+        // The 50k gate's real-library finding: a colon in an album title is
+        // legal on ext4 but returns EINVAL from ntfs-3g/FUSE, so an import
+        // onto an NTFS volume died mid-job. The whole Windows-forbidden set
+        // replaces for portability, like the reserved-name guard.
+        let mut f = fields();
+        f.album = Some("I Don't Like Shit: An Album <Test> \"Quote\" | Pipe? No*");
+        let rendered = render(&f);
+        assert!(
+            !rendered.contains(['<', '>', ':', '"', '|', '?', '*']),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("I Don't Like Shit_ An Album _Test_ _Quote_ _ Pipe_ No_"),
+            "{rendered}"
+        );
     }
 
     #[test]

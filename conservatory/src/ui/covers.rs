@@ -55,12 +55,7 @@ impl CoverCache {
     /// caller shows the placeholder; the repaint hook it passed re-validates
     /// its own widget before painting), `false` when the texture is already
     /// cached.
-    pub fn request(
-        &self,
-        path: PathBuf,
-        size: i32,
-        repaint: CoverRepaint,
-    ) -> bool {
+    pub fn request(&self, path: PathBuf, size: i32, repaint: CoverRepaint) -> bool {
         if self.inner.borrow().contains_key(&path) {
             return false;
         }

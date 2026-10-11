@@ -1701,7 +1701,7 @@ before the 50k-library gate session so the gate is one command by then.
 - [ ] Missing-file audit tier + a MISSING verify verdict: an existence-only walk that short-circuits before the decoder, so a vanished file stops classifying as CORRUPT via verify.rs's read-failure branch.
 - [ ] Curated-layer JSON export: the read-only `export-curated` verb (serde and serde_json are already in-tree).
 - [ ] Library-health GUI page (the threading split it needed landed 2026-09-15) and listening-history surfaces (the sessions table has been written since 6c-ii and is read by exactly one CLI printer).
-- [ ] MPRIS Shuffle + LoopStatus parity: the engine has both states and the zbus wiring exists for the rest, but headset and desktop controls cannot see them today. (Shuffle's behavior itself became engine-authoritative on 2026-10-08 — the toggle reshuffles the live queue and reports the permutation for the DB mirror — so the property exposure is the only piece left.)
+- [ ] MPRIS Shuffle + LoopStatus parity: the engine has both states and the zbus wiring exists for the rest, but headset and desktop controls cannot see them today. (Shuffle's behavior itself became engine-authoritative on 2026-10-08: the toggle reshuffles the live queue and reports the permutation for the DB mirror, so the property exposure is the only piece left.)
 - [ ] Waveform envelope for downloaded episodes (waveform.rs is format-agnostic; audiobooks stay a recorded open question).
 - [ ] Show-in-Files context action (`gtk::FileLauncher`; the Calibre idiom).
 - [ ] PEQ band editor (gated on Brandon's audible re-check).

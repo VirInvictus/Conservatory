@@ -1,17 +1,35 @@
 # Patch Notes
 
-## Unreleased
+## v0.9.1: the browse follow-ups (2026-10-11)
+
+The first post-gate hands-on fixes, both from daily-driving the real
+library on the v0.9.0 build: shuffle that only worked when the stars
+aligned, and a browse stall on a cold facet. Workspace suite 685 test
+functions green; clippy `-D warnings` clean.
 
 - **Shuffle is engine-authoritative** (the "shuffle doesn't actually
-  work" fix): turning it on reshuffles the engine's live queue around
-  the playing item and returns the permutation for the DB mirror, so a
-  stale UI snapshot can no longer skip the reorder; play paths read the
-  window's own flag instead of the lagging engine snapshot. Cover
-  decodes drain through a budgeted idle queue (8 ms slices at idle
-  priority) instead of decoding inline inside a bind, the browse jank
-  on a cold facet.
-- (previous hands-on fixes: the shuffle permutation mirror, the budgeted
-  cover drain — see the v0.9.0 entry below for the gate itself.)
+  work" fix): toggle-to-play keyed its shuffle off the engine's polled
+  snapshot, which lags a ~100 ms pump cycle, so toggling just before
+  playing read `queue_len = 0` and silently skipped both the reorder
+  and the flag. `SetShuffle` now carries a reply: turning shuffle on
+  reshuffles the engine's live queue around the playing item, right
+  where the true queue and cursor live, and returns the permutation
+  (turning it off returns `None`, non-destructive as before). The GUI
+  mirrors that exact permutation into the DB queue off the GTK thread,
+  so the drawer stays lock-step, and play paths read the window's own
+  flag instead of the lagging snapshot. ReplayGain re-apply and
+  prefetch resync ride the reorder as before; the returned permutation
+  is tested bijective and head-anchored, with the current track
+  surviving the reshuffle.
+- **Cover decodes drain through a budgeted idle queue**: a cold facet
+  bind decoded ~30 cover files inline at 10-30 ms each, all inside one
+  bind call, the browse jank on a big library. Cover misses now queue
+  into the cover cache and drain on the main loop in 8 ms
+  time-budgeted slices at idle priority: requesting cells show the
+  placeholder until their decode lands, each repaint re-validates its
+  own cell (a recycled image never paints another row's cover), and
+  input always outranks the drain. The deadbeef-cui chunked-fill
+  shape, no threads.
 
 ## v0.9.0: the real-library gate and the browse interaction lane (2026-10-08)
 

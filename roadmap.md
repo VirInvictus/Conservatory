@@ -1635,60 +1635,11 @@ held everywhere; what the real library surfaced beyond the five fixed
 bugs:
 
 - [x] **Facet-switch latency: the first fix landed** (the box below; 1cec3f6); the deeper model-layer pass is the memory lane's twin.
-- [ ] **Import album-merge renders split trees.** Two source album
-      groups (the same album shelved under two genre folders, e.g.
-      Hammock under `Ambient/` and `Post-Rock/`) resolve into ONE
-      `albums` row via `get_or_create_album`, but each group's tracks
-      render with the group's OWN fields (the import builds
-      `TrackFields` from the planned album, not the matched row), so
-      the year tag in one copy and not the other lands the album in
-      two folders (`Loyal Bros (2021)/` and `Loyal Bros/`). A fresh
-      `organize` then plans 25 "surprise" relocations on a
-      just-imported library: the tree an import leaves is not what the
-      engine renders. Fix direction: render matched groups from the
-      ROW's fields (and/or backfill the row's NULL fields from the
-      incoming group), plus a regression test on a two-genre import.
-      The 25 real duplicates behind this are also a curation item:
-      none of the 25 pairs was byte-identical (different rips), and
-      they sit quarantined at
-      `/mnt/SharedData/conservatory-gate/quarantine/` pending
-      Brandon's keep-one decision (the `duplicates` verb reports the
-      class; the live library still holds both copies).
-- [ ] **Undo leaves resync-written covers behind.** Covers are synced
-      idempotently rather than journaled (by design, covers.rs), so an
-      undo of an organize/import moves the audio back but strands the
-      covers the post-move resync wrote into the now-abandoned folders
-      (13 in the crash test; mover.md's "pruning empty directories"
-      out-of-scope note is the same class, but these carry file
-      bytes). Fix direction: the undo's resync sweep removes covers
-      under folders the job's revert orphaned, or the resync records
-      its writes in the job row for the undo to clean.
-- [ ] **.lrc lyrics litter move-mode imports.** The importer consumes
-      audio (+ journaled sidecar covers since 09e81c3) but knows
-      nothing of sibling `.lrc` files: a move-mode import leaves every
-      lyric file behind in an otherwise-consumed source folder (9.5k
-      non-audio files in the gate's source copy). Same litter class as
-      the 2026-09-11 sidecar finding; the lyrics module (`lyrics.rs`)
-      is the consumer that should claim them.
-- [ ] **Facet-switch latency misses §13 at real-library scale.**
-      Clicking between facet selections (e.g. Acid Techno → [All])
-      takes ~3-5 s on the 10,953-track working copy; §13 budgets
-      < 100 ms for facet-change to track-list repaint. The SQL is
-      innocent (the full 11k `facet_tracks` query runs in 55 ms; the
-      mem_check harness loads 50k headless in ~1 s): the cost is
-      GUI-side, the leaf model rebuild plus per-row work, and it pairs
-      with the memory overage the 50k gate measured (both are the
-      GUI model layer). **First fix landed 2026-10-08** (1cec3f6): the
-      leaf and drawer models splice once instead of ~11k per-row
-      emissions, the facet double-click no longer recomputes twice,
-      the double-click play path no longer parks the GTK thread on the
-      11k-row queue write (batched multi-row INSERTs, off-thread with
-      the drawer reload chained behind), and shuffle plays read the
-      window's own flag instead of the lagging engine snapshot. The
-      acid-techno facet queued all 33 tracks and played on the fixed
-      build. Remaining, with the memory overage: heaptrack/sysprof
-      attribution, then the stable master store + incremental filter
-      (the deadbeef-cui shape) if the splice alone still misses §13.
+- **Bugs moved to the tracker (2026-11-13):** the four gate-surfaced
+  defects live as issues now — #7 (import album-merge split trees),
+  #8 (undo strands resync covers), #9 (.lrc litter in move-mode
+  imports), #10 (facet-switch latency at scale, first fix 1cec3f6
+  recorded in the issue). The roadmap carries plans only.
 
 ### Slotted features (the final audit's L4, ordered 2026-09-15)
 

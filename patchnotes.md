@@ -1,5 +1,24 @@
 # Patch Notes
 
+## v0.10.1: the Release mint reads the tag object (2026-11-17)
+
+Issue #11, filed from the fleet-wide release-notes sweep: the Release
+workflow's publish step derived the title correctly but minted the
+body with `gh --notes-from-tag`, which is unreliable inside Actions
+(checkout rewrites the tag ref to the resolved commit SHA, the
+annotated object is gone locally, and gh silently falls back to the
+commit message). The step now force-restores the tag ref after
+checkout, guards on the object type (a lightweight tag errors loudly
+instead of guessing), and reads the verbatim message once with
+`git for-each-ref %(contents)`: one read serves both the body and the
+title, whose first line is the patchnotes heading. The
+already-exists guard is unchanged. No behavior change to the app, and
+this repo's eleven existing releases all matched their tags, so there
+is nothing to repair. The first tag cut after this lands (v0.10.1
+itself) is the end-to-end verification: the Release body must equal
+the tag message byte-for-byte.
+
+
 ## v0.10.0: the master-store browse (2026-11-17)
 
 Tracker issue #10, the last of the four the real-library gate

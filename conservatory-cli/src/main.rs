@@ -110,7 +110,7 @@ enum Command {
     DebugFixture {
         /// Path to the SQLite database (created if absent).
         db: PathBuf,
-        /// Fixture scale: small | medium | large.
+        /// Fixture scale: small | medium | large | gate (50k tracks, the spec §13 scale).
         #[arg(long, default_value = "small")]
         scale: String,
     },
@@ -1544,7 +1544,7 @@ async fn run_roundtrip(db: PathBuf) -> Result<()> {
 fn debug_fixture(db: PathBuf, scale: String) -> Result<()> {
     let scale: FixtureScale = scale
         .parse()
-        .with_context(|| format!("invalid scale {scale:?} (expected small|medium|large)"))?;
+        .with_context(|| format!("invalid scale {scale:?} (expected small|medium|large|gate)"))?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

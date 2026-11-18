@@ -4,6 +4,7 @@
 //! GTK sort and the headless `sort_tracks` never diverge. Multi-select comes free
 //! from `MultiSelection` (Ctrl/Shift). Rating renders as accent-tinted stars.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -56,17 +57,43 @@ const MAX_STARS: i32 = 5;
 const COVER_PX: i32 = 24;
 const COVER_PLACEHOLDER: &str = "audio-x-generic-symbolic";
 
-/// The leaf table: its backing store (for repopulation), the selection (for
-/// multi-select + reading the visible order), the `ColumnView` (for row
-/// activation), the scroller, and a `Stack` that swaps the table for an empty
-/// state (Phase 13b). `stack` is the placeable widget.
+/// The leaf table: its backing master store (every library track, rebuilt only
+/// on a data refresh), the selection (for multi-select + reading the visible
+/// order), the `ColumnView` (for row activation), the scroller, and a `Stack`
+/// that swaps the table for an empty state (Phase 13b). `stack` is the
+/// placeable widget.
 pub struct Leaf {
+    /// The master store (the deadbeef-cui shape, issue #10): rows live here
+    /// for the window's lifetime; a facet or query switch filters this store
+    /// in place instead of rebuilding it, so no per-switch row objects are
+    /// allocated and the sort/selection chain re-keys only the diff.
     pub store: gio::ListStore,
+    filter_model: gtk::FilterListModel,
     pub selection: gtk::MultiSelection,
     pub column_view: gtk::ColumnView,
     pub view: gtk::ScrolledWindow,
     pub stack: gtk::Stack,
+    state: Rc<RefCell<LeafFilter>>,
+    /// Flat mirrors of the master rows' ids and durations, so the status-bar
+    /// aggregate is a membership pass over two `Vec`s. Walking the GTK model
+    /// for it boxed + downcast 50k objects (~70 ms per `[All]` lift); this
+    /// pass is sub-millisecond (issue #10). Updated only by `set_master`, the
+    /// same places the store is rebuilt.
+    ids: RefCell<Vec<i64>>,
+    durations: RefCell<Vec<f64>>,
     empty_page: StatusPage,
+}
+
+/// The active leaf narrowing: the id sets the current facet selection and the
+/// filter-bar grammar select, each `None` when that surface imposes no
+/// constraint. The sets come from SQL (`facet_track_ids` / the grammar's
+/// `search_track_ids`), so narrowing is exactly the `WHERE` clause the browse
+/// always evaluated; the master store matches by membership instead of
+/// re-projecting every row per switch (issue #10). `Default` = show everything.
+#[derive(Default)]
+pub struct LeafFilter {
+    pub facet_ids: Option<std::collections::HashSet<i64>>,
+    pub query_ids: Option<std::collections::HashSet<i64>>,
 }
 
 fn track(obj: &glib::Object) -> TrackRow {
@@ -74,12 +101,16 @@ fn track(obj: &glib::Object) -> TrackRow {
 }
 
 /// A `CustomSorter` that orders two rows by `key`, ascending; the `ColumnView`
-/// header reverses it for descending. Both rows route through `cmp_tracks`.
+/// header reverses it for descending. Both rows route through `cmp_tracks`,
+/// read through the rows' `with` (no per-comparison `TrackBrief` clone: a
+/// full model invalidation used to clone two briefs per comparison, ~n·log n
+/// allocations across a 50k leaf; issue #10).
 fn column_sorter(key: TrackSort) -> gtk::CustomSorter {
     gtk::CustomSorter::new(move |a, b| {
-        let a = track(a).brief();
-        let b = track(b).brief();
-        cmp_tracks(&a, &b, key, false).into()
+        let a = track(a);
+        let b = track(b);
+        a.with(|ba| b.with(|bb| cmp_tracks(ba, bb, key, false)))
+            .into()
     })
 }
 
@@ -614,9 +645,26 @@ pub fn build_leaf(
     let store = gio::ListStore::new::<TrackRow>();
     let cover_cache = CoverCache::new();
 
-    // Wrap the store in a SortListModel so header clicks reorder the rows; its
-    // sorter is the ColumnView's own (set once the view exists, just below).
-    let sort_model = gtk::SortListModel::new(Some(store.clone()), None::<gtk::Sorter>);
+    // The master store narrows through a custom id-membership filter (the
+    // active `LeafFilter`), then sorts, then selects; a switch updates the
+    // filter state and re-runs the filter, and the chain only emits the diff.
+    let state: Rc<RefCell<LeafFilter>> = Rc::new(Default::default());
+    let filter = {
+        let state = state.clone();
+        gtk::CustomFilter::new(move |obj| {
+            let row = obj.downcast_ref::<TrackRow>().expect("TrackRow");
+            let guard = state.borrow();
+            let id = row.id();
+            guard.facet_ids.as_ref().is_none_or(|s| s.contains(&id))
+                && guard.query_ids.as_ref().is_none_or(|s| s.contains(&id))
+        })
+    };
+    let filter_model = gtk::FilterListModel::new(Some(store.clone()), Some(filter));
+
+    // Wrap the filter model in a SortListModel so header clicks reorder the
+    // rows; its sorter is the ColumnView's own (set once the view exists, just
+    // below).
+    let sort_model = gtk::SortListModel::new(Some(filter_model.clone()), None::<gtk::Sorter>);
     let selection = gtk::MultiSelection::new(Some(sort_model.clone()));
 
     let view = gtk::ColumnView::new(Some(selection.clone()));
@@ -672,33 +720,94 @@ pub fn build_leaf(
 
     Leaf {
         store,
+        filter_model,
         selection,
         column_view: view,
         view: scroller,
         stack,
+        state,
+        ids: RefCell::new(Vec::new()),
+        durations: RefCell::new(Vec::new()),
         empty_page,
     }
 }
 
 impl Leaf {
-    /// Repopulate the table and swap to the empty state when there are no rows.
-    /// `filtered` distinguishes "the library is empty" from "nothing matches the
-    /// current filter" so the empty state can say the useful thing.
-    pub fn set_tracks(&self, tracks: &[TrackBrief], filtered: bool) {
-        // One splice, one items-changed emission: remove_all + an append loop
-        // emitted per row, and every emission cascades through the sort and
-        // selection models (the MultiSelection re-keys an internal item map
-        // per emission), which was the facet-click freeze on a 10k library.
+    /// Rebuild the master store from a full library load. The only caller is
+    /// the window's data-refresh path (`populate_initial`): startup and every
+    /// edit / move / import / delete, the one place row data can change. One
+    /// splice, one items-changed emission: remove_all + an append loop emitted
+    /// per row, and every emission cascades through the filter, sort and
+    /// selection models (the MultiSelection re-keys an internal item map per
+    /// emission), which was the facet-click freeze on a 10k library (1cec3f6).
+    pub fn set_master(&self, tracks: &[TrackBrief]) {
         let rows: Vec<TrackRow> = tracks.iter().map(TrackRow::new).collect();
         self.store.splice(0, self.store.n_items(), &rows);
-        if tracks.is_empty() {
-            if filtered {
-                self.empty_page
-                    .set_icon_name(Some("system-search-symbolic"));
-                self.empty_page.set_title("No matches");
-                self.empty_page
-                    .set_description(Some("No tracks match the current filter."));
-            } else {
+        *self.ids.borrow_mut() = tracks.iter().map(|t| t.id).collect();
+        *self.durations.borrow_mut() = tracks.iter().map(crate::statusbar::row_duration).collect();
+        self.refresh_empty_state();
+    }
+
+    /// Apply a new narrowing (`LeafFilter`) to the master store and refresh the
+    /// empty state. The facet/query switch path: no SQL re-projection of the
+    /// rows, no row objects allocated, only the diff emitted (issue #10).
+    /// Selection resets, as the old full-rebuild behavior did (fresh rows had
+    /// no selection to preserve).
+    ///
+    /// The change hint tells GTK which direction the set moved so its diff
+    /// can chunk cheaply: lifting to no constraint is the `LessStrict` worst
+    /// case (every master row re-enters), adding the first constraint is
+    /// `MoreStrict`, everything else re-evaluates outright.
+    pub fn apply_filter(&self, filter: LeafFilter) {
+        let hint = {
+            let old = self.state.borrow();
+            let was_unconstrained = old.facet_ids.is_none() && old.query_ids.is_none();
+            let is_unconstrained = filter.facet_ids.is_none() && filter.query_ids.is_none();
+            match (was_unconstrained, is_unconstrained) {
+                (true, true) | (false, false) => gtk::FilterChange::Different,
+                (true, false) => gtk::FilterChange::MoreStrict,
+                (false, true) => gtk::FilterChange::LessStrict,
+            }
+        };
+        *self.state.borrow_mut() = filter;
+        if let Some(f) = self.filter_model.filter() {
+            f.changed(hint);
+        }
+        self.selection.unselect_all();
+        self.refresh_empty_state();
+    }
+
+    /// (visible count, total duration in seconds) over the visible set, for
+    /// the status bar's aggregate: the skip-unknown rule
+    /// (`statusbar::row_duration`) applied over the flat mirrors, filtered by
+    /// the same id-membership state the model's filter runs. Sub-millisecond
+    /// at 50k; the GTK-model walk this replaced measured ~70 ms per `[All]`
+    /// lift (issue #10).
+    pub fn aggregate(&self) -> (usize, f64) {
+        let ids = self.ids.borrow();
+        let durations = self.durations.borrow();
+        let state = self.state.borrow();
+        let passes = |id: i64| {
+            state.facet_ids.as_ref().is_none_or(|s| s.contains(&id))
+                && state.query_ids.as_ref().is_none_or(|s| s.contains(&id))
+        };
+        let mut total = 0.0;
+        let mut n = 0;
+        for (i, id) in ids.iter().enumerate() {
+            if passes(*id) {
+                n += 1;
+                total += durations[i];
+            }
+        }
+        (n, total)
+    }
+
+    /// Swap the table for the empty state when nothing shows, wording it by
+    /// cause: an empty master is "no tracks yet", an empty filter result over
+    /// a loaded master is "no matches".
+    fn refresh_empty_state(&self) {
+        if self.filter_model.n_items() == 0 {
+            if self.store.n_items() == 0 {
                 self.empty_page.set_icon_name(Some(COVER_PLACEHOLDER));
                 self.empty_page.set_title("No tracks yet");
                 // Both import paths (19b-i drag-drop + the CLI), so the empty
@@ -708,6 +817,12 @@ impl Leaf {
                      or from a terminal:\n\
                      conservatory-cli import <library.db> <source folder> <library root>",
                 ));
+            } else {
+                self.empty_page
+                    .set_icon_name(Some("system-search-symbolic"));
+                self.empty_page.set_title("No matches");
+                self.empty_page
+                    .set_description(Some("No tracks match the current filter."));
             }
             self.stack.set_visible_child_name("empty");
         } else {

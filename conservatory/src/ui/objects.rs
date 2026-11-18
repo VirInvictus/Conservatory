@@ -134,13 +134,21 @@ impl TrackRow {
         self.set_rating(rating);
     }
 
-    fn with<R>(&self, f: impl FnOnce(&TrackBrief) -> R) -> R {
+    pub(crate) fn with<R>(&self, f: impl FnOnce(&TrackBrief) -> R) -> R {
         f(self.imp().brief.borrow().as_ref().expect("brief set"))
     }
 
-    /// A clone of the underlying brief, for the `CustomSorter` comparison.
+    /// A clone of the underlying brief, for callers that need an owned value
+    /// (the comparator and the hot walks read through [`Self::with`] instead:
+    /// a per-comparison / per-row clone was the sorter and glyph churn on a
+    /// 50k leaf, issue #10).
     pub fn brief(&self) -> TrackBrief {
         self.with(|b| b.clone())
+    }
+
+    /// The track id, the membership key the master-store filter matches.
+    pub fn id(&self) -> i64 {
+        self.with(|b| b.id)
     }
 
     pub fn title(&self) -> String {

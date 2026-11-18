@@ -16,8 +16,8 @@ mod writes;
 mod fts_tests;
 
 pub use facets::{
-    FacetField, FacetFilter, FacetRow, TrackBrief, TrackSort, cmp_tracks, facet_rows, facet_tracks,
-    sort_tracks,
+    FacetField, FacetFilter, FacetRow, TrackBrief, TrackSort, cmp_tracks, facet_rows,
+    facet_track_ids, facet_tracks, sort_tracks,
 };
 pub use migrations::CURRENT_VERSION;
 pub use models::{

@@ -60,6 +60,24 @@ against the spec §13 budget (under 200 MB idle, under 300 MB active on a
 (`heaptrack`, `massif`); the built-in sampler is for a quick RSS read, not a heap
 profile.
 
+## The facet-switch bench
+
+`CONSERVATORY_BENCH=1` turns one GUI launch into a facet-switch timing report on
+stderr (the §13 facet-change latency budget; no-op without the env var):
+
+```bash
+conservatory-cli debug-fixture --scale gate /tmp/bench.db   # the 50k corpus
+CONSERVATORY_BENCH=1 conservatory /tmp/bench.db
+```
+
+After startup it narrows the leaf by a sampled genre five times, lifts back to
+`[All]` (the worst case: every master row re-enters), times a second lift (the
+first big diff through the models carries a one-time warm-up cost), times a
+master rebuild (the data-refresh path), and prints the pre-0.10.0 switch cost
+(the full row projection plus a fresh row-object rebuild) for comparison, plus
+the downstream facet-pane recompute. Reported numbers cover the model work; the
+frame paints the visible rows afterwards, off that clock. Zero cost when unset.
+
 ## A note on the sleep-timer test
 
 The `after_timer_fires_pauses_and_tap_extends` integration test drives a

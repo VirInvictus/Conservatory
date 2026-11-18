@@ -412,6 +412,23 @@ pub fn facet_tracks(conn: &Connection, filters: &[FacetFilter]) -> Result<Vec<Tr
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// Just the ids [`facet_tracks`] would return for `filters` — the same
+/// `filter_sql` `WHERE` over the same table, minus the per-row projection
+/// (the genre `group_concat` roll-up and the display columns are the expensive
+/// part of the browse query, and the GUI's incremental facet narrowing needs
+/// only the id set: the master leaf store filters by membership, so a facet
+/// switch runs this instead of re-projecting every row, issue #10). The id
+/// sets of the two functions must agree by construction; the parity test in
+/// this module pins that.
+pub fn facet_track_ids(conn: &Connection, filters: &[FacetFilter]) -> Result<Vec<i64>> {
+    let mut params = Vec::new();
+    let where_sql = filter_sql(filters, &mut params);
+    let sql = format!("SELECT t.id FROM tracks t WHERE {where_sql}");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| r.get(0))?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

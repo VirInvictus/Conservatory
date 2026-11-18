@@ -47,7 +47,7 @@ use crate::playqueue::PlaylistIdsFn;
 use crate::playqueue::{
     MixedQueueRow, build_mixed_queue, build_play_queue, fmt_position, shuffle_play_order,
 };
-use crate::query::{materialize_smart, query_leaf};
+use crate::query::{load_master, materialize_smart, query_leaf_ids};
 use crate::ui::coalescing::CoalescingQueue;
 use crate::ui::facet_pane::{FacetPane, build_pane};
 use crate::ui::fields::{collect_assignments, credit_fields, inspector_fields};
@@ -60,7 +60,7 @@ use crate::ui::objects::TrackRow;
 use crate::ui::queue_panel::{QueuePanel, build_queue_panel};
 use crate::ui::rows;
 use crate::ui::sound;
-use crate::ui::track_list::{Leaf, build_leaf};
+use crate::ui::track_list::{Leaf, LeafFilter, build_leaf};
 use vir_gtk::widgets::{Alert, Appearance};
 
 type Coalescer = CoalescingQueue<usize, Box<dyn FnMut(Vec<usize>)>>;
@@ -1035,6 +1035,7 @@ impl ConservatoryWindow {
             self.populate_initial();
             self.refresh_perspectives();
             self.refresh_playlists();
+            self.run_facet_bench();
         }
         // Debug mode (Phase 14): a one-shot RSS sample once the library is loaded,
         // then a periodic sampler, so `--debug` can be checked against the spec §13
@@ -5381,8 +5382,13 @@ impl ConservatoryWindow {
         let n = leaf.store.n_items();
         for i in 0..n {
             if let Some(row) = leaf.store.item(i).and_downcast::<TrackRow>() {
-                let s =
-                    crate::statusbar::play_state(row.brief().id, playing_id, is_track, snap.paused);
+                // Read the id through the row's `with`, no per-row clone: a
+                // full walk used to clone a `TrackBrief` per row (~8-10
+                // allocations each) on the GTK thread per state change (issue
+                // #10). The walk covers the whole master store, so rows a
+                // filter currently hides carry the right state when it lifts.
+                let id = row.id();
+                let s = crate::statusbar::play_state(id, playing_id, is_track, snap.paused);
                 if row.playing() != s {
                     row.set_playing(s);
                 }
@@ -6923,11 +6929,153 @@ impl ConservatoryWindow {
         self.imp().suppress.set(false);
     }
 
+    /// The facet-switch bench (`CONSERVATORY_BENCH=1`, docs/debugging.md): the
+    /// §13 "facet selection-change to track-list repaint" cost measured on the
+    /// real models at whatever scale the launched library is. One narrowing
+    /// (facet id query + in-memory filter apply + aggregate) and the lift back
+    /// to `[All]` (the worst case: every master row becomes visible), plus one
+    /// master rebuild (the data-refresh path). The model work only; the frame
+    /// paints the ~30 visible rows afterwards, off this clock. Reported to
+    /// stderr; a no-op without the env var.
+    fn run_facet_bench(&self) {
+        if std::env::var_os("CONSERVATORY_BENCH").is_none() {
+            return;
+        }
+        let imp = self.imp();
+        let (Some(pool), Some(leaf)) = (imp.pool.get(), imp.leaf.get()) else {
+            return;
+        };
+        let Ok(conn) = pool.open() else {
+            return;
+        };
+        let Some(sample) = facet_rows(&conn, FacetField::Genre, &[])
+            .unwrap_or_default()
+            .into_iter()
+            .next()
+            .map(|r| r.value)
+        else {
+            eprintln!("bench: no genre facet values to narrow with");
+            return;
+        };
+        drop(conn);
+        let filters = vec![FacetFilter {
+            field: FacetField::Genre,
+            values: vec![sample],
+        }];
+        // The downstream pane recompute the cascade also runs (two GROUP BYs
+        // under the same filter here): part of the switch's total work, so
+        // the report carries it alongside the leaf's share.
+        {
+            let conn = pool.open();
+            if let Ok(conn) = conn {
+                let t0 = std::time::Instant::now();
+                let artist_rows =
+                    facet_rows(&conn, FacetField::AlbumArtist, &filters).unwrap_or_default();
+                let t1 = std::time::Instant::now();
+                let album_rows = facet_rows(&conn, FacetField::Album, &filters).unwrap_or_default();
+                let t2 = std::time::Instant::now();
+                eprintln!(
+                    "bench: pane recompute: artist {:?} ({} rows) + album {:?} ({} rows)",
+                    t1 - t0,
+                    artist_rows.len(),
+                    t2 - t1,
+                    album_rows.len()
+                );
+            }
+        }
+        let today = chrono::Utc::now().date_naive();
+        eprintln!("bench: master rows = {}", leaf.store.n_items());
+        for run in 0..5 {
+            let t0 = std::time::Instant::now();
+            let (facet_ids, query_ids, _) = query_leaf_ids(pool, &filters, "", today);
+            let t1 = std::time::Instant::now();
+            leaf.apply_filter(LeafFilter {
+                facet_ids,
+                query_ids,
+            });
+            let t2 = std::time::Instant::now();
+            let (n, total) = leaf.aggregate();
+            let t3 = std::time::Instant::now();
+            eprintln!(
+                "bench: narrow #{run}: id query {:?} + filter apply {:?} + aggregate {:?} ({} rows, {:.0}s)",
+                t1 - t0,
+                t2 - t1,
+                t3 - t2,
+                n,
+                total
+            );
+        }
+        let t0 = std::time::Instant::now();
+        leaf.apply_filter(LeafFilter::default());
+        let t1 = std::time::Instant::now();
+        let (n, _) = leaf.aggregate();
+        let t2 = std::time::Instant::now();
+        eprintln!(
+            "bench: lift to [All]: filter apply {:?} + aggregate {:?} ({} rows)",
+            t1 - t0,
+            t2 - t1,
+            n
+        );
+        // A second lift tells first-time cost (filter priming, model warm-up)
+        // from the steady-state insertion cost.
+        let (facet_ids, query_ids, _) = query_leaf_ids(pool, &filters, "", today);
+        leaf.apply_filter(LeafFilter {
+            facet_ids,
+            query_ids,
+        });
+        let t0 = std::time::Instant::now();
+        leaf.apply_filter(LeafFilter::default());
+        let t1 = std::time::Instant::now();
+        eprintln!("bench: lift to [All] again: filter apply {:?}", t1 - t0);
+        let t0 = std::time::Instant::now();
+        self.reload_master();
+        let t1 = std::time::Instant::now();
+        eprintln!("bench: master rebuild {:?}", t1 - t0);
+
+        // The legacy switch, simulated for comparison: the pre-#10 shape
+        // re-projected every row per switch (the full `facet_tracks`) and
+        // rebuilt fresh row objects into the store. Same two steps, timed
+        // against this library.
+        let t0 = std::time::Instant::now();
+        let tracks = load_master(pool);
+        let t1 = std::time::Instant::now();
+        let legacy: gio::ListStore = gio::ListStore::new::<TrackRow>();
+        let rows: Vec<TrackRow> = tracks.iter().map(TrackRow::new).collect();
+        legacy.splice(0, 0, &rows);
+        let t2 = std::time::Instant::now();
+        eprintln!(
+            "bench: legacy switch (projection {:?} + row rebuild {:?}) = {:?}",
+            t1 - t0,
+            t2 - t1,
+            t2 - t0
+        );
+        drop(rows);
+        drop(tracks);
+        drop(legacy);
+
+        // Leave the browse as populate_initial left it: everything visible.
+        leaf.apply_filter(LeafFilter::default());
+    }
+
     fn populate_initial(&self) {
         self.imp().suppress.set(true);
+        self.reload_master();
         self.cascade_pane0();
         self.cascade(0);
         self.imp().suppress.set(false);
+    }
+
+    /// The master-load half of a browse refresh: re-query the whole library
+    /// into the leaf's master store (the only path that rebuilds it; issue
+    /// #10). Startup runs it once, and every data-affecting refresh (edits,
+    /// moves, imports, deletes) funnels through `populate_initial`, so facet
+    /// and query switches never re-project the rows.
+    fn reload_master(&self) {
+        let imp = self.imp();
+        let (Some(pool), Some(leaf)) = (imp.pool.get(), imp.leaf.get()) else {
+            return;
+        };
+        leaf.set_master(&load_master(pool));
     }
 
     fn cascade_pane0(&self) {
@@ -6960,9 +7108,12 @@ impl ConservatoryWindow {
 
     /// Recompute the leaf from the current facet filters and filter-bar text,
     /// intersected (spec §3.4), and tint the bar when the grammar degraded.
+    /// The narrowing is id sets over the master store (issue #10): the switch
+    /// runs one id query per active surface and re-runs the in-memory filter,
+    /// never the full row projection.
     fn set_leaf(&self) {
         let imp = self.imp();
-        let (Some(pool), Some(leaf)) = (imp.pool.get(), imp.leaf.get()) else {
+        let Some(leaf) = imp.leaf.get() else {
             return;
         };
         let query = imp
@@ -6972,22 +7123,25 @@ impl ConservatoryWindow {
             .unwrap_or_default();
         let today = chrono::Utc::now().date_naive();
         let filters = self.current_filters();
-        let (tracks, warnings) = query_leaf(pool, &filters, &query, today);
-        // "Filtered" means the empty result is from a constraint (facet or filter
-        // text), not an empty library: it picks the empty-state wording.
-        let filtered = !query.trim().is_empty() || !filters.is_empty();
-        leaf.set_tracks(&tracks, filtered);
+        let (facet_ids, query_ids, warnings) = match imp.pool.get() {
+            Some(pool) => query_leaf_ids(pool, &filters, &query, today),
+            None => (None, None, Vec::new()),
+        };
+        leaf.apply_filter(LeafFilter {
+            facet_ids,
+            query_ids,
+        });
         // Cache the view aggregate for the status bar (Phase 11b) and refresh it.
-        imp.view_total
-            .set(crate::statusbar::view_aggregate(&tracks));
+        let aggregate = leaf.aggregate();
+        imp.view_total.set(aggregate);
         self.refresh_status_aggregate();
-        // A reload rebuilds the selection model, so re-derive the header
-        // Edit/Embed sensitivity rather than trust the last signal (16.5b).
+        // A narrowing resets the selection, so re-derive the header Edit/Embed
+        // sensitivity rather than trust the last signal (16.5b).
         self.refresh_edit_sensitivity();
-        // The fresh rows default to no glyph; force the play-status column to
-        // re-apply so the playing track (if any) is marked in the new view.
-        imp.last_play_state.set((None, false));
-        self.refresh_play_glyphs();
+        // Rows persist across a narrowing now (the master store), so the
+        // playing glyph each row carries is already correct; the old
+        // reset-and-reapply walk existed because every switch rebuilt the
+        // rows (issue #10).
         if let Some(entry) = imp.filter_entry.get() {
             // The yellow tint alone said nothing about *what* degraded (16.5b):
             // the tooltip carries the parser's warnings while they exist, and

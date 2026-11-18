@@ -9,11 +9,13 @@
 
 use conservatory_core::db::TrackBrief;
 
-/// Count and total duration (seconds) of a track set; the right-hand status
-/// readout. Tracks with no known duration contribute 0 to the total.
-pub fn view_aggregate(rows: &[TrackBrief]) -> (usize, f64) {
-    let total = rows.iter().filter_map(|t| t.duration).sum();
-    (rows.len(), total)
+/// One row's contribution to the view aggregate: its duration in seconds, or 0
+/// when unknown (the skip-unknown rule the status readout has always applied).
+/// The leaf's model walk (`Leaf::aggregate`, issue #10) applies it through the
+/// row's `with`, so the aggregate over a 50k view allocates nothing; the
+/// headless tests pin the rule here.
+pub fn row_duration(t: &TrackBrief) -> f64 {
+    t.duration.unwrap_or(0.0)
 }
 
 /// Group an integer with thousands separators: `1203` → `"1,203"`.
@@ -186,9 +188,10 @@ mod tests {
 
     #[test]
     fn aggregate_sums_known_durations() {
+        // The skip-unknown rule the leaf's model walk applies per row.
         let rows = [brief(1, Some(120.0)), brief(2, None), brief(3, Some(60.5))];
-        let (count, total) = view_aggregate(&rows);
-        assert_eq!(count, 3);
+        let total: f64 = rows.iter().map(row_duration).sum();
+        assert_eq!(rows.len(), 3);
         assert_eq!(total, 180.5);
     }
 

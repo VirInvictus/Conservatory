@@ -1640,6 +1640,8 @@ bugs:
   #8 (undo strands resync covers), #9 (.lrc litter in move-mode
   imports), #10 (facet-switch latency at scale, first fix 1cec3f6
   recorded in the issue). The roadmap carries plans only.
+  *(Shipped in v0.9.2: #7, #8, and #9. #10 is the model-layer pass,
+  still open in the tracker.)*
 
 ### Slotted features (the final audit's L4, ordered 2026-09-15)
 

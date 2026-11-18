@@ -25,6 +25,8 @@ A crash between (2) and (3) leaves the operation `pending` while the file is alr
 
 **Roll-forward, not roll-back:** recovery completes the move the user asked for. Undo is a separate, explicit action (`mover::undo`) on a completed job: it reverts each `done` operation in reverse (move the file back for `Move`; delete the copy for `Copy`) and restores the pre-move DB path.
 
+**Covers are the one deliberate exception to the journal:** the canonical `cover.jpg`/`cover.png` the post-move resync writes are derived data (always re-extractable from embedded art, `covers.rs`), synced idempotently so the trust-critical machinery stays untouched. That used to strand bytes: an undo moved the audio back but left the resync's covers in the now-abandoned folders (13 in the Phase 20 crash drill). Undo now prunes the canonical cover names from the destination folders no live album or book row still claims (`covers::prune_orphaned_covers`, best-effort like the resync itself: a prune failure never un-does the completed revert, and a folder a later job gave to another album keeps its cover). The empty directories themselves stay (the out-of-scope note below).
+
 ## The per-file primitive (`fsops`)
 
 `relocate(src, dst, mode)`:

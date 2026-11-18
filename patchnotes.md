@@ -1,5 +1,45 @@
 # Patch Notes
 
+## v0.9.2: the gate-defect wave (2026-11-17)
+
+Three of the four tracker issues the real-library gate surfaced (#7,
+#8, and #9), the engine-side trio; the fourth (#10, the GUI model-layer
+pass) stays its own lane. Workspace suite green; clippy `-D warnings`
+clean.
+
+- **Import album-merge renders one tree (#7):** two source copies of
+  one album (the same rip shelved under two genre folders, one tagged
+  with a year and one without) resolved into a single `albums` row,
+  but each copy's tracks rendered from its own group fields, landing
+  the album in two folders (`Loyal Bros (2021)/` and `Loyal Bros/`)
+  and leaving a fresh `organize` a pile of surprise relocations on a
+  just-imported library. The import's resolution pass now reads the
+  matched album row (the same `(album_artist_id, title)` identity the
+  writer uses) and renders from the row's fields, with the incoming
+  group filling only the row's NULL holes; the writer backfills the
+  matched row the same way (`COALESCE`), so the tree an import leaves
+  is what the engine renders. Regression tests pin both arrival
+  orders.
+- **Undo prunes the covers the resync wrote (#8):** covers are synced
+  idempotently rather than journaled (by design), so undoing an
+  organize/import moved the audio back but stranded the canonical
+  covers the post-move resync had written into the now-abandoned
+  folders (13 in the Phase 20 crash drill). `mover::undo` now prunes
+  the canonical `cover.jpg`/`cover.png` from the destination folders
+  no live album or book row still claims, best-effort like the resync
+  itself, and a folder a later job gave to another album keeps its
+  cover.
+- **Move-mode imports claim `.lrc` lyrics (#9):** the importer consumed
+  the audio but knew nothing of sibling `.lrc` files, leaving every
+  lyric file behind in an otherwise-consumed source folder (9.5k
+  non-audio strays in the gate's source copy). A move-mode import now
+  journals each claimed `.lrc` as a pure sidecar op beside its audio:
+  the source folder ends empty, a crash rolls forward, and undo brings
+  the lyrics back with the tracks, so the lyrics reader finds them
+  through the managed path with no database changes. Copy mode is
+  unchanged (sources stay).
+
+
 ## v0.9.1: the browse follow-ups (2026-10-11)
 
 The first post-gate hands-on fixes, both from daily-driving the real

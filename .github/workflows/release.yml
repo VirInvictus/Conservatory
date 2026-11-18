@@ -105,7 +105,15 @@ jobs:
             echo "::error::tag $TAG is $OT, not an annotated tag; the verbatim patchnotes entry is unavailable" >&2
             exit 1
           fi
-          git for-each-ref "refs/tags/$TAG" --format='%(contents)' > /tmp/release-notes.md
+          # Command substitution strips every trailing newline and printf
+          # writes none back: for-each-ref appends one newline after the atom
+          # and GitHub appends one more on --notes-file ingestion, so the
+          # minted body ends byte-identical to the tag message (which the
+          # tagging procedure always terminates with exactly one newline).
+          # Verified against v0.10.1: the untrimmed mint carried exactly two
+          # toolchain-added trailing newlines.
+          NOTES="$(git for-each-ref "refs/tags/$TAG" --format='%(contents)')"
+          printf '%s' "$NOTES" > /tmp/release-notes.md
           TITLE="$(head -1 /tmp/release-notes.md)"
           echo "Release title: $TITLE"
           if gh release view "$TAG" >/dev/null 2>&1; then

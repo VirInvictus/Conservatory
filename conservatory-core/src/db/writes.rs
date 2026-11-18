@@ -49,6 +49,10 @@ pub(crate) fn get_or_create_artist(
 /// Resolve an album by `(album_artist_id, title)`, creating it (with the supplied
 /// derived fields) on first sight (Phase 2d). Album identity is artist + title;
 /// a compilation has `album_artist_id = NULL` (the NULL-aware match handles it).
+/// A match keeps the row's fields but takes the incoming values for NULL holes
+/// (`COALESCE`, issue #7): the import renders the matched group's tree from
+/// row-plus-backfill, so the row must converge to the same shape or the next
+/// `organize` would re-plan the split the import just healed.
 pub(crate) fn get_or_create_album(conn: &Connection, album: &Album) -> Result<i64> {
     let existing: Option<i64> = conn
         .query_row(
@@ -60,7 +64,16 @@ pub(crate) fn get_or_create_album(conn: &Connection, album: &Album) -> Result<i6
         )
         .optional()?;
     match existing {
-        Some(id) => Ok(id),
+        Some(id) => {
+            conn.execute(
+                "UPDATE albums
+                 SET shelf_genre = COALESCE(shelf_genre, ?2),
+                     year = COALESCE(year, ?3)
+                 WHERE id = ?1",
+                params![id, album.shelf_genre, album.year],
+            )?;
+            Ok(id)
+        }
         None => insert_album(conn, album),
     }
 }

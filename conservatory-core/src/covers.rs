@@ -7,8 +7,8 @@
 //! than journaled by the mover: the trust-critical move/undo machinery (§5.4) is
 //! left untouched, and a crash mid-sync just re-derives.
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use crate::db::{ReadPool, WorkerHandle, list_albums, track_render_rows};
 use crate::errors::Result;
@@ -136,6 +136,54 @@ pub async fn resync_album_covers(
         }
     }
     Ok(updated)
+}
+
+/// Remove the canonical cover files sitting in `abandoned_dirs` (root-relative)
+/// unless a live album or book row still claims the folder (issue #8, the
+/// Phase 20 gate's "undo cover stragglers"). Covers are deliberately not
+/// journaled (the module doc above), so the resync sweeps that follow an
+/// organize/import write `cover.jpg`/`cover.png` into the destination folders,
+/// and an undo that moves the audio back would strand those bytes in the
+/// abandoned tree. Returns how many files were removed. Never recurses and
+/// never touches anything but the two canonical names, so a folder a later job
+/// has given to another album keeps its cover.
+pub async fn prune_orphaned_covers(
+    pool: &ReadPool,
+    root: &Path,
+    abandoned_dirs: &[PathBuf],
+) -> Result<usize> {
+    if abandoned_dirs.is_empty() {
+        return Ok(0);
+    }
+    let claimed: HashSet<String> = {
+        let conn = pool.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT folder_path FROM albums
+             UNION
+             SELECT folder_path FROM books",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out = HashSet::new();
+        for row in rows {
+            out.insert(row?);
+        }
+        out
+    };
+
+    let mut removed = 0;
+    for dir in abandoned_dirs {
+        if claimed.contains(&dir.to_string_lossy().into_owned()) {
+            continue;
+        }
+        for name in ["cover.jpg", "cover.png"] {
+            let file = root.join(dir).join(name);
+            if file.is_file() && std::fs::remove_file(&file).is_ok() {
+                removed += 1;
+                tracing::debug!(target: "conservatory::io", file = %file.display(), "covers: pruned an abandoned cover");
+            }
+        }
+    }
+    Ok(removed)
 }
 
 #[cfg(test)]

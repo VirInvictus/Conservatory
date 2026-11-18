@@ -14,6 +14,7 @@
 pub mod fsops;
 pub mod journal;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::db::{ReadPool, TrackRenderRow, WorkerHandle};
@@ -267,7 +268,7 @@ pub async fn undo(worker: &WorkerHandle, pool: &ReadPool, job_id: i64) -> Result
     };
     ops.reverse();
 
-    for op in ops {
+    for op in &ops {
         if op.state == OpState::Done {
             let src = PathBuf::from(&op.src_path);
             let dst = PathBuf::from(&op.dst_path);
@@ -281,12 +282,43 @@ pub async fn undo(worker: &WorkerHandle, pool: &ReadPool, job_id: i64) -> Result
                 op.track_id,
                 op.album_id,
                 op.book_id,
-                op.db_old_path,
-                op.db_new_path,
+                op.db_old_path.clone(),
+                op.db_new_path.clone(),
             )
             .await?;
     }
     worker.set_job_state(job_id, JobState::Undone).await?;
+
+    // The destination folders this revert just emptied may hold canonical
+    // cover files the post-move resync wrote (covers are deliberately not
+    // journaled, see covers.rs), and the undo that moves the audio back would
+    // strand those bytes in the abandoned tree (issue #8; the Phase 20 crash
+    // drill stranded 13 of them). Prune the canonical covers from destination
+    // folders no live row still claims. Best-effort like the resync itself: a
+    // prune failure never un-does the completed revert, it only leaves
+    // re-derivable bytes behind.
+    let root = Path::new(&job.library_root);
+    let mut abandoned: HashSet<PathBuf> = HashSet::new();
+    for op in &ops {
+        if op.state != OpState::Done {
+            continue;
+        }
+        if let Some(dir) = Path::new(&op.dst_path).parent()
+            && let Ok(rel) = dir.strip_prefix(root)
+            && !rel.as_os_str().is_empty()
+        {
+            abandoned.insert(rel.to_path_buf());
+        }
+    }
+    let abandoned: Vec<PathBuf> = abandoned.into_iter().collect();
+    if let Err(e) = crate::covers::prune_orphaned_covers(pool, root, &abandoned).await {
+        tracing::warn!(
+            target: "conservatory::io",
+            job = job_id,
+            error = %e,
+            "mover: abandoned-cover prune failed; the revert itself is complete"
+        );
+    }
     Ok(())
 }
 

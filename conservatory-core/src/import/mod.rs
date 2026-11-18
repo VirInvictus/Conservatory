@@ -4,11 +4,12 @@
 //!
 //! Import runs in two passes. The **resolution pass** is in memory: it groups
 //! drafts into albums, decides album artists, derives shelf genres, and renders
-//! target paths (all pure, no DB writes), then pre-checks for conflicts (the
-//! mover's plan: duplicate targets, existing targets, and sources vanished
-//! since the scan). Only if the plan is clear does the **persist pass** create
-//! rows and run the move job, so a conflicting import leaves the database
-//! untouched.
+//! target paths, then pre-checks for conflicts (the mover's plan: duplicate
+//! targets, existing targets, and sources vanished since the scan). The pass
+//! reads the database (the matched-album lookups that keep a merged album's
+//! tree in one shape, issue #7) but never writes it. Only if the plan is clear
+//! does the **persist pass** create rows and run the move job, so a conflicting
+//! import leaves the database untouched.
 
 pub mod resolve;
 pub mod scan;
@@ -20,7 +21,7 @@ use chrono::Utc;
 
 use crate::accent::{CoverSource, compute_accent, find_cover_source};
 use crate::db::models::{Album, Track};
-use crate::db::{ReadPool, WorkerHandle};
+use crate::db::{ReadPool, WorkerHandle, artist_id_by_sort, matched_album};
 use crate::errors::Result;
 use crate::import::resolve::ArtistName;
 use crate::mover::{self, Conflict, MoveKind, MoveMode, MoveOp};
@@ -68,6 +69,17 @@ struct PlannedAlbum {
     /// (two groups can share one source directory; the first group wins).
     sidecar: Option<PathBuf>,
     folder_rel: Option<PathBuf>,
+}
+
+/// One track the import will persist: its album's index into `planned_albums`,
+/// the scanned draft, the resolved track artist, the rendered destination, and
+/// the sibling `.lrc` the move-mode import claimed beside it (issue #9).
+struct PlannedTrack {
+    album_idx: usize,
+    draft: crate::tags::TrackDraft,
+    artist: Option<ArtistName>,
+    rel: PathBuf,
+    lyrics: Option<PathBuf>,
 }
 
 /// Import a folder (or a single file) into the library. See the module docs for
@@ -120,16 +132,20 @@ pub async fn import_folder(
         let conn = pool.open()?;
         GenreVocab::load(&conn)?
     };
+    // One read connection for the whole resolution pass: the matched-album
+    // lookups below (issue #7) ride the same handle as the genre vocab.
+    let identity_conn = pool.open()?;
     let template = PathTemplate::default_music();
 
     // --- Resolution pass (in memory) ---
     let mut planned_albums: Vec<PlannedAlbum> = Vec::new();
-    // (album index, draft, track artist, rendered relative path)
-    let mut planned_tracks: Vec<(usize, crate::tags::TrackDraft, Option<ArtistName>, PathBuf)> =
-        Vec::new();
     // Sidecar covers claimed for journaling, across album groups (two groups
     // can share one source directory; one physical file, one claim).
     let mut claimed_sidecars: HashSet<PathBuf> = HashSet::new();
+    // Sibling .lrc lyrics claimed for journaling, move mode only (issue #9;
+    // one physical file, one claim, same discipline as the covers).
+    let mut claimed_lyrics: HashSet<PathBuf> = HashSet::new();
+    let mut planned_tracks: Vec<PlannedTrack> = Vec::new();
 
     for group in resolve::group_albums(drafts) {
         let album_idx = planned_albums.len();
@@ -164,6 +180,27 @@ pub async fn import_folder(
         };
         let title = group.title.clone();
 
+        // Row-aware fields (issue #7): two source copies of one album (the
+        // same copy shelved under two genre folders, one tagged with a year
+        // and one without) resolve to a single `albums` row, and the tree the
+        // import leaves must be the tree that row renders. The matched row's
+        // fields win; the incoming group fills only the row's NULL holes (the
+        // writer backfills the same way). Rendering from the group's own
+        // fields used to land each copy in its own folder and left the next
+        // `organize` a pile of surprise relocations.
+        let identity_title = title.clone().unwrap_or_else(|| "Unknown Album".into());
+        let artist_id = album_artist
+            .as_ref()
+            .map(|a| artist_id_by_sort(&identity_conn, &a.sort))
+            .transpose()?
+            .flatten();
+        let matched = matched_album(&identity_conn, &identity_title, artist_id)?;
+        let shelf_genre = matched
+            .as_ref()
+            .and_then(|m| m.shelf_genre.clone())
+            .unwrap_or(shelf_genre);
+        let year = matched.as_ref().and_then(|m| m.year).or(year);
+
         planned_albums.push(PlannedAlbum {
             title,
             album_artist,
@@ -177,6 +214,14 @@ pub async fn import_folder(
 
         for draft in group.drafts {
             let track_artist = resolve::track_artist(&draft);
+            // The lyrics sidecar of this audio file, move mode only: the
+            // reader derives `Song.lrc` from the managed audio path, so the
+            // import that consumes the audio must consume its lyrics with it
+            // (issue #9: move-mode imports left every .lrc behind in an
+            // otherwise-consumed source folder).
+            let lyrics = (opts.mode == MoveMode::Move)
+                .then(|| crate::lyrics::sidecar_path(&draft.source_path))
+                .filter(|p| p.is_file() && claimed_lyrics.insert(p.clone()));
             let album = &planned_albums[album_idx];
             let fields = TrackFields {
                 shelf_genre: Some(&album.shelf_genre),
@@ -193,9 +238,16 @@ pub async fn import_folder(
             if planned_albums[album_idx].folder_rel.is_none() {
                 planned_albums[album_idx].folder_rel = rel.parent().map(Path::to_path_buf);
             }
-            planned_tracks.push((album_idx, draft, track_artist, rel));
+            planned_tracks.push(PlannedTrack {
+                album_idx,
+                draft,
+                artist: track_artist,
+                rel,
+                lyrics,
+            });
         }
     }
+    drop(identity_conn);
 
     // --- Conflict pre-check (before any DB write) ---
     // The mover's own plan over the provisional move list (audio + claimed
@@ -206,7 +258,7 @@ pub async fn import_folder(
     let root = &opts.library_root;
     let mut provisional: Vec<(PathBuf, PathBuf)> = planned_tracks
         .iter()
-        .map(|(_, draft, _, rel)| (draft.source_path.clone(), root.join(rel)))
+        .map(|pt| (pt.draft.source_path.clone(), root.join(&pt.rel)))
         .collect();
     for pa in &planned_albums {
         if let (Some(sidecar), Some(folder_rel)) = (&pa.sidecar, &pa.folder_rel) {
@@ -215,6 +267,11 @@ pub async fn import_folder(
                 .map(|n| n.to_os_string())
                 .unwrap_or_default();
             provisional.push((sidecar.clone(), root.join(folder_rel).join(name)));
+        }
+    }
+    for pt in &planned_tracks {
+        if let Some(lrc) = &pt.lyrics {
+            provisional.push((lrc.clone(), root.join(&pt.rel).with_extension("lrc")));
         }
     }
     let conflicts = precheck_conflicts(provisional);
@@ -264,8 +321,16 @@ pub async fn import_folder(
         album_ids.push(worker.get_or_create_album(album).await?);
     }
 
+    let tracks = planned_tracks.len();
     let mut ops = Vec::with_capacity(planned_tracks.len());
-    for (album_idx, draft, track_artist, rel) in planned_tracks {
+    for pt in planned_tracks {
+        let PlannedTrack {
+            album_idx,
+            draft,
+            artist: track_artist,
+            rel,
+            lyrics,
+        } = pt;
         let artist_id = match track_artist {
             Some(a) => {
                 let id = worker.get_or_create_artist(a.name, a.sort, None).await?;
@@ -326,9 +391,22 @@ pub async fn import_folder(
             db_old: Some(src_str),
             db_new: Some(rel.to_string_lossy().into_owned()),
         });
+        // The claimed .lrc rides the same journal as a pure file move (no
+        // track/album/book id, both db paths `None`): the journal reverts it
+        // with the audio on undo, and its `apply_db_path` is a no-op in both
+        // directions because the sidecar carries no DB meaning (issue #9).
+        if let Some(lrc) = lyrics {
+            ops.push(MoveOp {
+                track_id: None,
+                album_id: None,
+                book_id: None,
+                src: lrc,
+                dst: root.join(&rel).with_extension("lrc"),
+                db_old: None,
+                db_new: None,
+            });
+        }
     }
-
-    let tracks = ops.len();
 
     // Sidecar covers ride the same journal in move mode (one op per claimed
     // sidecar): the file is consumed like the audio, so the source folder is

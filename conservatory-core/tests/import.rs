@@ -325,3 +325,257 @@ async fn copy_mode_keeps_the_sidecar_and_writes_the_canonical_cover() {
     let cover_rel = albums[0].cover_path.clone().expect("cover recorded");
     assert!(lib.root.join(&cover_rel).exists());
 }
+
+/// Re-tag a copied fixture file with its own tags minus the year (issue #7's
+/// year-less copy).
+fn strip_year(path: &Path) {
+    let draft = conservatory_core::read_track(path).unwrap();
+    conservatory_core::write_track_tags(
+        path,
+        &conservatory_core::TagWrite {
+            title: draft.title.clone().unwrap_or_else(|| "Untitled".into()),
+            track_artist: draft.artist.clone(),
+            track_artist_sort: draft.artist_sort.clone(),
+            album: draft.album.clone(),
+            album_artist: draft.album_artist.clone(),
+            album_artist_sort: draft.album_artist_sort.clone(),
+            year: None,
+            track_no: draft.track_no,
+            disc_no: draft.disc_no,
+            genres: draft.genres.clone(),
+            credits: draft.credits.clone(),
+        },
+    )
+    .unwrap();
+}
+
+/// Retag a copied fixture file in place: same album and album artist as the
+/// fixture's own tags, with the given title / track number / year / genres.
+/// The vehicle for the two-copy album tests below (issue #7).
+fn retag_as_second_copy(path: &Path, year: Option<i32>, genres: &[&str]) {
+    let draft = conservatory_core::read_track(path).unwrap();
+    conservatory_core::write_track_tags(
+        path,
+        &conservatory_core::TagWrite {
+            title: "Second Track".into(),
+            track_artist: draft.artist.clone(),
+            track_artist_sort: draft.artist_sort.clone(),
+            album: draft.album.clone(),
+            album_artist: draft.album_artist.clone(),
+            album_artist_sort: draft.album_artist_sort.clone(),
+            year,
+            track_no: Some(9),
+            disc_no: draft.disc_no,
+            genres: genres.iter().map(|g| g.to_string()).collect(),
+            credits: Vec::new(),
+        },
+    )
+    .unwrap();
+}
+
+/// Issue #7, the gate's shape: one album shelved under two genre folders, the
+/// copy with the year tag imported first. Both copies resolve to one `albums`
+/// row, and the second copy must render from the ROW's fields, landing beside
+/// the first — not in its own `Test Album/` folder that the row does not
+/// render. A fresh organize then has nothing to do: the tree an import leaves
+/// is what the engine renders.
+#[tokio::test]
+async fn two_genre_copies_of_one_album_render_one_tree() {
+    let src = fixture_source();
+    let lib = lib();
+    import_into(&lib, src.path(), MoveMode::Move).await;
+
+    // Copy B: same album + album artist, the year stripped, a different shelf
+    // genre, a different title — no collision with copy A.
+    let src2 = tempdir().unwrap();
+    let extra = src2.path().join("extra.flac");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio/sample.flac"),
+        &extra,
+    )
+    .unwrap();
+    retag_as_second_copy(&extra, None, &["Post-Rock"]);
+
+    let report = import_into(&lib, src2.path(), MoveMode::Move).await;
+    assert!(report.conflicts.is_empty(), "{:?}", report.conflicts);
+    assert_eq!(report.tracks, 1);
+
+    let pool = ReadPool::new(lib.db.clone(), 3).unwrap();
+    let conn = pool.open().unwrap();
+    let counts = library_counts(&conn).unwrap();
+    assert_eq!(counts.albums, 1, "one album row, not one per copy");
+    assert_eq!(counts.tracks, 5);
+
+    let rows = track_render_rows(&conn).unwrap();
+    let second = rows.iter().find(|r| r.title == "Second Track").unwrap();
+    assert!(
+        second
+            .file_path
+            .starts_with("Music/Ambient/Test Album Artist/Test Album (2021)/"),
+        "the matched group rendered from the row: {}",
+        second.file_path
+    );
+    assert!(
+        lib.root.join(&second.file_path).exists(),
+        "the file is where the row renders it"
+    );
+
+    // The end-to-end guard: organize re-renders from the same row and plans
+    // nothing (every op is a src == dst skip).
+    let ops = conservatory_core::organize_ops(&rows, &lib.root, None);
+    let plan = conservatory_core::plan(ops);
+    assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+    assert_eq!(
+        plan.ops.len(),
+        0,
+        "no surprise relocations on a just-imported library"
+    );
+}
+
+/// Issue #7's other side: the year-less copy arrives FIRST, so the row is
+/// created without a year and copy A's tree has no `(<year>)` group. The
+/// year-tagged copy's import fills the row's NULL hole (the writer's COALESCE
+/// backfill) and renders from the upgraded row; the next organize then
+/// converges copy A's files into the upgraded folder — a bounded, explainable
+/// relocate (the same flow as a year edit), not the unbounded split.
+#[tokio::test]
+async fn reimport_backfills_the_matched_rows_null_year() {
+    let src = fixture_source();
+    for name in ["sample.flac", "sample.mp3", "sample.opus", "sample.m4a"] {
+        strip_year(&src.path().join(name));
+    }
+    let lib = lib();
+    import_into(&lib, src.path(), MoveMode::Move).await;
+
+    let pool = ReadPool::new(lib.db.clone(), 3).unwrap();
+    let year_before = list_albums(&pool.open().unwrap()).unwrap()[0].year;
+    assert_eq!(year_before, None, "the year-less copy created the row");
+
+    let src2 = tempdir().unwrap();
+    let extra = src2.path().join("extra.flac");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio/sample.flac"),
+        &extra,
+    )
+    .unwrap();
+    retag_as_second_copy(&extra, Some(2021), &["Post-Rock"]);
+
+    let report = import_into(&lib, src2.path(), MoveMode::Move).await;
+    assert!(report.conflicts.is_empty(), "{:?}", report.conflicts);
+
+    let conn = pool.open().unwrap();
+    let album = &list_albums(&conn).unwrap()[0];
+    assert_eq!(album.year, Some(2021), "the row's NULL year was backfilled");
+
+    // The second copy sits in the upgraded folder; the first copy's files
+    // still sit in the old one, and exactly they are what a fresh organize
+    // relocates (bounded: one album, one pass).
+    let rows = track_render_rows(&conn).unwrap();
+    let second = rows.iter().find(|r| r.title == "Second Track").unwrap();
+    assert!(second.file_path.contains("Test Album (2021)"));
+    let ops = conservatory_core::organize_ops(&rows, &lib.root, None);
+    let plan = conservatory_core::plan(ops);
+    assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+    assert_eq!(plan.ops.len(), 4, "only the first copy's four tracks move");
+    for op in &plan.ops {
+        assert!(
+            op.db_old
+                .as_deref()
+                .is_some_and(|old| old.contains("Test Album/")),
+            "the relocate targets come from the year-less tree: {:?}",
+            op.db_old
+        );
+    }
+}
+
+/// Issue #9: a move-mode import consumes the sibling `.lrc` beside its audio
+/// (the lyrics reader derives the sidecar path from the managed audio path),
+/// and undo brings both back. The gate's source copy held 9.5k of these
+/// strays in otherwise-consumed folders.
+#[tokio::test]
+async fn move_mode_journals_lrc_sidecars_and_undo_restores_them() {
+    let src = fixture_source();
+    fs::write(src.path().join("sample.lrc"), "[00:01.00]hello\n").unwrap();
+    let lib = lib();
+    let worker = spawn_worker(lib.db.clone()).unwrap();
+    let pool = ReadPool::new(lib.db.clone(), 3).unwrap();
+    let opts = ImportOptions {
+        library_root: lib.root.clone(),
+        mode: MoveMode::Move,
+    };
+    let report = import_folder(&worker, &pool, src.path(), &opts)
+        .await
+        .unwrap();
+    assert!(report.conflicts.is_empty(), "{:?}", report.conflicts);
+    assert_eq!(
+        fs::read_dir(src.path()).unwrap().count(),
+        0,
+        "move consumes the audio with its lyrics"
+    );
+
+    // The managed tree carries the .lrc beside the audio (the rendered file
+    // name is the track title's, so find the sidecar by existence), and the
+    // lyrics reader finds it through the managed path (the consumer the fix
+    // serves).
+    let conn = pool.open().unwrap();
+    let rows = track_render_rows(&conn).unwrap();
+    drop(conn);
+    let audio_path = rows
+        .iter()
+        .map(|r| lib.root.join(&r.file_path))
+        .find(|p| p.with_extension("lrc").exists())
+        .expect("one imported track carries its .lrc");
+    let managed_lrc = audio_path.with_extension("lrc");
+    assert!(managed_lrc.exists(), "the sidecar moved with its track");
+    let lyrics = conservatory_core::lyrics::load_for(&audio_path).unwrap();
+    match lyrics {
+        conservatory_core::lyrics::Lyrics::Synced(lines) => {
+            assert_eq!(lines[0].text, "hello");
+        }
+        other => panic!("expected synced lyrics from the moved sidecar: {other:?}"),
+    }
+
+    // Undo restores the audio and the sidecar together.
+    conservatory_core::mover::undo(&worker, &pool, report.job_id.unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        count_files(src.path()),
+        5,
+        "four audio files + the .lrc restored"
+    );
+    assert!(!managed_lrc.exists(), "the managed sidecar moved back out");
+    worker.shutdown_ack().await.unwrap();
+}
+
+/// Copy mode's contract is unchanged (the issue is move-mode): sources stay,
+/// and no `.lrc` appears in the managed tree (the lyrics ride the source).
+#[tokio::test]
+async fn copy_mode_leaves_lrc_sources_in_place() {
+    fn count_lrc(dir: &Path) -> usize {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .map(|e| {
+                let p = e.path();
+                if p.is_dir() {
+                    count_lrc(&p)
+                } else if p.extension().is_some_and(|x| x == "lrc") {
+                    1
+                } else {
+                    0
+                }
+            })
+            .sum()
+    }
+
+    let src = fixture_source();
+    fs::write(src.path().join("sample.lrc"), "[00:01.00]hello\n").unwrap();
+    let lib = lib();
+    let report = import_into(&lib, src.path(), MoveMode::Copy).await;
+    assert_eq!(report.tracks, 4);
+    assert_eq!(count_files(src.path()), 5, "copy consumes nothing");
+    assert_eq!(count_lrc(&lib.root), 0, "no .lrc in the managed tree");
+}

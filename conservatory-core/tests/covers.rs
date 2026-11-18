@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use conservatory_core::db::{ReadPool, WorkerHandle, get_album, spawn_worker, track_render_rows};
+use conservatory_core::db::{
+    Album, ReadPool, WorkerHandle, get_album, spawn_worker, track_render_rows,
+};
 use conservatory_core::mover::{self, MoveKind, MoveMode, MoveOp};
 use conservatory_core::{
     AlbumEdit, ImportOptions, PathTemplate, TrackFields, import_folder, resync_album_covers,
@@ -322,4 +324,188 @@ async fn resync_never_writes_outside_the_root() {
     assert_eq!(stray.len(), 1, "only the original cover.jpg exists");
 
     worker.shutdown_ack().await.unwrap();
+}
+
+/// Issue #8: the canonical cover the resync wrote into a destination folder
+/// must not survive the undo that abandons that folder. The post-undo resync
+/// only reaches a cover the DB pointer still names; the Phase 20 crash drill
+/// stranded 13 whose pointer had moved on. This is the pointer-less shape:
+/// the pointer is cleared before the undo, exactly as a crash between the
+/// cover write and the pointer write leaves it, and the undo's own prune
+/// removes the bytes anyway.
+#[tokio::test]
+async fn undo_prunes_the_resync_cover_in_the_abandoned_folder() {
+    let dir = tempdir().unwrap();
+    let (pool, worker, lib) = managed_lib(dir.path()).await;
+    let before = {
+        let conn = pool.open().unwrap();
+        get_album(&conn, 1).unwrap().unwrap().cover_path.unwrap()
+    };
+
+    worker
+        .update_album(
+            1,
+            AlbumEdit {
+                year: Some(Some(1990)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let job = organize_all(&worker, &pool, &lib).await;
+    resync_album_covers(&worker, &pool, &lib).await.unwrap();
+    let moved = {
+        let conn = pool.open().unwrap();
+        get_album(&conn, 1).unwrap().unwrap().cover_path.unwrap()
+    };
+    assert!(
+        lib.join(&moved).exists(),
+        "the resync wrote the moved cover"
+    );
+
+    // The crash-drill shape: the pointer no longer names the abandoned file.
+    worker.set_album_cover_path(1, None, None).await.unwrap();
+
+    mover::undo(&worker, &pool, job).await.unwrap();
+
+    // The undo's own prune removed the abandoned folder's cover bytes; no
+    // resync is needed for the cleanup itself.
+    let moved_dir = lib.join(&moved).parent().unwrap().to_path_buf();
+    assert!(
+        !moved_dir.join("cover.png").exists() && !moved_dir.join("cover.jpg").exists(),
+        "no canonical cover stranded in the abandoned folder"
+    );
+
+    // And the post-undo resync re-derives the cover at the restored folder
+    // from the embedded art, as the CLI does.
+    resync_album_covers(&worker, &pool, &lib).await.unwrap();
+    let after = {
+        let conn = pool.open().unwrap();
+        get_album(&conn, 1).unwrap().unwrap().cover_path.unwrap()
+    };
+    assert_eq!(after, before, "cover_path restored to the original folder");
+    assert!(lib.join(&after).exists());
+    worker.shutdown_ack().await.unwrap();
+}
+
+/// The import flavour of issue #8: a move-mode import's canonical cover write
+/// is not journaled, and the import's undo reverts the rows to absolute source
+/// paths — the shape where the post-undo resync skips the album entirely (the
+/// absolute-path gate) and could never clean the stranded cover.
+#[tokio::test]
+async fn import_undo_prunes_the_canonical_cover_from_the_abandoned_folder() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("lib.db");
+    let lib = dir.path().join("lib");
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    for f in ["sample.flac", "sample.mp3", "sample.m4a", "sample.opus"] {
+        std::fs::copy(fixture_audio(f), src.join(f)).unwrap();
+    }
+    let worker = spawn_worker(db.clone()).unwrap();
+    let pool = ReadPool::new(db, 3).unwrap();
+    let report = import_folder(
+        &worker,
+        &pool,
+        &src,
+        &ImportOptions {
+            library_root: lib.clone(),
+            mode: MoveMode::Move,
+        },
+    )
+    .await
+    .unwrap();
+
+    // The embedded art became a canonical cover in the managed folder.
+    let album_folder = {
+        let conn = pool.open().unwrap();
+        let album = get_album(&conn, 1).unwrap().unwrap();
+        album.folder_path.clone()
+    };
+    let managed_cover = lib.join(&album_folder).join("cover.png");
+    assert!(
+        managed_cover.exists(),
+        "the import wrote its canonical cover"
+    );
+
+    mover::undo(&worker, &pool, report.job_id.unwrap())
+        .await
+        .unwrap();
+
+    assert!(
+        !managed_cover.exists(),
+        "the abandoned album folder carries no cover bytes"
+    );
+    assert_eq!(count_dir_files(&src), 4, "the audio is back at the source");
+    worker.shutdown_ack().await.unwrap();
+}
+
+/// The prune's guard: a folder a later album now claims keeps its cover even
+/// when an older job's undo abandons it for its own album.
+#[tokio::test]
+async fn undo_spares_a_cover_in_a_folder_another_album_now_claims() {
+    let dir = tempdir().unwrap();
+    let (pool, worker, lib) = managed_lib(dir.path()).await;
+
+    worker
+        .update_album(
+            1,
+            AlbumEdit {
+                year: Some(Some(1990)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let job = organize_all(&worker, &pool, &lib).await;
+    resync_album_covers(&worker, &pool, &lib).await.unwrap();
+    let moved = {
+        let conn = pool.open().unwrap();
+        get_album(&conn, 1).unwrap().unwrap().cover_path.unwrap()
+    };
+    let moved_dir = lib.join(&moved).parent().unwrap().to_path_buf();
+    let moved_rel = moved_dir
+        .strip_prefix(&lib)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+
+    // A later album takes over the folder (imported straight into it).
+    worker
+        .get_or_create_album(Album {
+            id: 0,
+            title: "Other Album".into(),
+            album_artist_id: None,
+            shelf_genre: Some("Ambient".into()),
+            year: None,
+            release_date: None,
+            musicbrainz_release_id: None,
+            cover_path: None,
+            accent_rgb: None,
+            folder_path: moved_rel.clone(),
+            added_at: None,
+        })
+        .await
+        .unwrap();
+
+    mover::undo(&worker, &pool, job).await.unwrap();
+
+    assert!(
+        moved_dir.join("cover.png").exists() || moved_dir.join("cover.jpg").exists(),
+        "the claimed folder keeps its cover"
+    );
+    worker.shutdown_ack().await.unwrap();
+}
+
+fn count_dir_files(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|e| {
+            let p = e.path();
+            if p.is_dir() { count_dir_files(&p) } else { 1 }
+        })
+        .sum()
 }

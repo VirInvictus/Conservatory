@@ -61,6 +61,57 @@ pub fn get_album(conn: &Connection, id: i64) -> Result<Option<Album>> {
     .map_err(Into::into)
 }
 
+/// The identity-relevant fields of the album row `get_or_create_album` would
+/// match (`(album_artist_id, title)`, the same NULL-aware predicate), read
+/// during the import's resolution pass so a group of a *matched* album renders
+/// from the row's fields instead of its own (issue #7: two source copies of one
+/// album used to land in two folders, one per field set). `artist_id` is the
+/// row the import's `get_or_create_artist` (by `sort_name`) would resolve to;
+/// `None` mirrors the writer's Various-Artists match, including the case of an
+/// artist that does not exist yet (then only a NULL-artist row can match).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchedAlbum {
+    pub id: i64,
+    pub shelf_genre: Option<String>,
+    pub year: Option<i32>,
+}
+
+pub fn matched_album(
+    conn: &Connection,
+    title: &str,
+    artist_id: Option<i64>,
+) -> Result<Option<MatchedAlbum>> {
+    conn.query_row(
+        "SELECT id, shelf_genre, year FROM albums
+         WHERE title = ?1
+           AND ((album_artist_id IS NULL AND ?2 IS NULL) OR album_artist_id = ?2)",
+        params![title, artist_id],
+        |r| {
+            Ok(MatchedAlbum {
+                id: r.get(0)?,
+                shelf_genre: r.get(1)?,
+                year: r.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// The artist id `get_or_create_artist` would resolve `sort_name` to (its
+/// unique key), or `None` when the artist does not exist yet. The read-side
+/// mirror of the writer's identity lookup, for the import's matched-album
+/// rendering (issue #7).
+pub fn artist_id_by_sort(conn: &Connection, sort_name: &str) -> Result<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM artists WHERE sort_name = ?1",
+        params![sort_name],
+        |r| r.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
 pub fn get_track(conn: &Connection, id: i64) -> Result<Option<Track>> {
     conn.query_row(
         "SELECT * FROM tracks WHERE id = ?1",

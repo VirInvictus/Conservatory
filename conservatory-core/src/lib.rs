@@ -49,7 +49,7 @@ pub use audit::{
     RgCoverage, TagDeficiency, TagFlags, run_audit,
 };
 pub use config::{Config, ImportMode, ScrobbleConfig, config_path, load_default, save_default};
-pub use covers::{resync_album_covers, sync_album_cover, write_cover};
+pub use covers::{prune_orphaned_covers, resync_album_covers, sync_album_cover, write_cover};
 pub use dedup::{
     DedupOptions, DuplicateReport, ExactAlbumDupe, MultiformatDupe, SimilarAlbums, TrackDupe,
     find_duplicates,

@@ -1,5 +1,55 @@
 # Patch Notes
 
+## v0.10.0: the master-store browse (2026-11-17)
+
+Tracker issue #10, the last of the four the real-library gate
+surfaced: facet switches at real-library scale missed the spec §13
+budget (< 100 ms) because every switch re-projected the whole library
+and rebuilt the leaf's row objects. The browse leaf is now a stable
+master store with an incremental filter, the deadbeef-cui shape.
+Measured with the new `CONSERVATORY_BENCH` harness (docs/debugging.md)
+on release builds: ~10 ms per facet switch at the 11k real-library
+scale, ~36 ms at the 50k design scale, and ~28 ms / ~92 ms for the
+worst case (the lift back to `[All]`, every row re-entering), against
+~112 ms / ~299 ms for the pre-0.10.0 shape at the same scales. The
+§13 facet-change budget is met at both scales; the per-click cost no
+longer scales with library size. Workspace suite green; clippy
+`-D warnings` clean.
+
+- **The master store + incremental filter:** the leaf's rows persist
+  for the window's lifetime. A facet or search switch runs one cheap
+  id-set query per active surface (`facet_track_ids`, the same SQL
+  `WHERE` the browse always evaluated, minus the per-row projection;
+  a parity test pins it to the full projection) and re-runs an
+  in-memory id-membership filter over the store, so the model chain
+  emits only the diff. Data refreshes (edits, moves, imports,
+  deletes) remain the only path that rebuilds the master, through
+  `populate_initial` as before. The narrowing is SQL-exact by
+  construction (same `WHERE`), pinned by `tests/facet_parity.rs`.
+- **The clone churn is gone:** the column sorter compared two
+  whole-`TrackBrief` clones per comparison (~n·log n allocations
+  across a sorted 50k leaf on every model invalidation) and now reads
+  both rows through a borrow; the playing-glyph walk cloned a full
+  payload per row per playback state change and now reads one id;
+  the status-bar aggregate walked the GTK model boxing every row
+  (~70 ms per `[All]` lift) and now sums flat id/duration mirrors
+  against the same filter state (sub-millisecond at 50k).
+- **The bench (`CONSERVATORY_BENCH=1`):** one GUI launch prints the
+  facet-switch decomposition to stderr (id query, filter apply,
+  aggregate, lift to `[All]`, second lift for the one-time warm-up,
+  master rebuild, the legacy shape for comparison, and the downstream
+  facet-pane recompute), so the §13 budget stays measurable at any
+  library scale with no profiler. Zero cost when unset.
+- **Known residual, measured and documented:** the first big diff
+  through the model chain after launch pays a one-time warm-up
+  (a few hundred ms; ~370 ms at the real-library scale, ~110 ms at
+  50k), so the first facet click after launch is slower than the
+  steady state. The 50k idle memory budget (§13, < 200 MB) is
+  untouched by this lane and still over (230 MB VmHWM measured): the
+  cost is per-row content, and the row-object diet remains the
+  memory lane's open item on the roadmap.
+
+
 ## v0.9.2: the gate-defect wave (2026-11-17)
 
 Three of the four tracker issues the real-library gate surfaced (#7,

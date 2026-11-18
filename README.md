@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Language-Rust-blue" alt="Language: Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/GTK-4.14%2B-4a86cf" alt="GTK 4.14+">
-  <img src="https://img.shields.io/badge/status-v0.9.2%20%C2%B7%20in%20development-brightgreen" alt="Status: v0.9.2, in development">
+  <img src="https://img.shields.io/badge/status-v0.10.0%20%C2%B7%20in%20development-brightgreen" alt="Status: v0.10.0, in development">
 </p>
 
 ---
@@ -158,7 +158,7 @@ Five workspace crates, plus the shared `vir-search` and `vir-gtk` libraries cons
 
 ## Project status
 
-**v0.9.2. A music library manager, a real player, a full podcast client, and an audiobook player in one app, in development toward the daily-driver bar.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
+**v0.10.0. A music library manager, a real player, a full podcast client, and an audiobook player in one app, in development toward the daily-driver bar.** The managed tree is laid out as `Music/ | Podcasts/ | Audiobooks/` under the library root.
 
 Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [patchnotes](patchnotes.md) the per-release notes):
 
@@ -185,8 +185,9 @@ Shipped, by phase (the [roadmap](roadmap.md) carries the sub-phase detail, the [
 - **0.9.0, the real-library gate and the browse interaction lane:** the full-library move-safety pass passed (byte-identical undos, crash-replay to completion) and the 50k memory gate measured, both against a working copy of the real library; six real-library defects fixed (a multi-byte name panic, Windows-forbidden characters in rendered paths, unreadable conflict reports, cover writes outside the root, `organize` skipping the recovery gate, plus the confirmed-prior mover and search wave); the mem_check harness (one-command memory gate); double-click plays and editing moved to `Ctrl+E` / `Alt+Enter` / the context menu; the facet-click and double-click freezes lifted (one model splice, batched off-thread queue writes); every UI icon bundled so nothing depends on the desktop icon theme; and the GNOME Circle readiness half-landed (`.doap`, validating metainfo, the criteria assessed).
 - **0.9.1, the browse follow-ups:** shuffle is engine-authoritative (toggling it reshuffles the engine's live queue around the playing item and mirrors the returned permutation into the DB, so a stale UI snapshot can no longer skip the reorder) and cover decodes drain through a budgeted idle queue (8 ms slices at idle priority) instead of stalling a cold facet bind.
 - **0.9.2, the gate-defect wave:** the engine-side trio of the real-library gate's tracker issues fixed: album-merge imports render one tree from the matched album row (a matched group renders from the row's fields with NULL holes backfilled, so two genre-shelved copies of one album land in one folder and a fresh `organize` plans nothing), undo prunes the canonical covers the resync wrote into abandoned folders (folders another album now claims keep theirs), and move-mode imports journal sibling `.lrc` lyrics beside their audio so consumed source folders end empty.
+- **0.10.0, the master-store browse:** the leaf track list became a stable master store with an incremental id-membership filter (the deadbeef-cui shape, tracker issue #10): facet and search switches narrow the loaded library in place instead of re-projecting and rebuilding ~11k row objects per click. Measured on the new `CONSERVATORY_BENCH` harness: ~10 ms per facet switch at the 11k real-library scale and ~36 ms at the §13 50k design scale (the worst-case lift back to `[All]`: ~28 ms / ~92 ms), all inside the §13 100 ms budget that motivated the issue; the per-switch row churn that drove the memory spikes is gone, and the sorter and glyph walks stop cloning a full row payload per row.
 
-Not built yet: the 1.0 endgame. The real-library verification session has run (the move-safety pass passed; the 50k memory gate measured over budget, so the model-layer optimize pass is owed before the tag), and 0.9.2 cleared three of the four gate defects it surfaced (issues #7, #8, and #9); issue #10 is that model-layer optimize pass. What remains is the model-layer optimize pass, the sandboxed install-and-run pass, the screenshots, and the Flathub submission. The roadmap has the full picture.
+Not built yet: the 1.0 endgame. The real-library verification session has run (the move-safety pass passed; the 50k memory gate measured over budget), and the tracker issues from that session are resolved: 0.9.2 cleared the three engine-side defects (#7, #8, #9) and 0.10.0 cleared the facet-latency one (#10). The 50k idle memory budget (§13) remains the open gate item: 230 MB measured against the 200 MB budget, attributed to per-row content, with the row-object diet as the remaining lane. What also remains is the sandboxed install-and-run pass, the screenshots, and the Flathub submission. The roadmap has the full picture.
 
 ## Documentation
 

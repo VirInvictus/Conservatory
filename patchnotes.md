@@ -1,5 +1,15 @@
 # Patch Notes
 
+## Unreleased
+
+- **vir-gtk adopted at 1.5.0** (consumer wave): the base sheet's
+  checked/active default went quiet (upstream issue #1; state display
+  stops spending the accent). Conservatory's own LIT-not-PAINTED
+  `button:checked` rule and quiet `button:active` rule already restate
+  both states at the app tier and win the equal-specificity ties, so
+  nothing visible changes here; lock bump only.
+  `data/cargo-sources.json` regenerated against the moved lock.
+
 ## v0.10.1: the Release mint reads the tag object (2026-11-17)
 
 Issue #11, filed from the fleet-wide release-notes sweep: the Release
